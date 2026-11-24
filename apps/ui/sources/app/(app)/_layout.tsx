@@ -10,6 +10,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { getPreferredLanguage, t } from '@/text';
 import { createAppStackScreenOptions, useAppStackUsesCustomHeader } from '@/components/navigation/createAppStackScreenOptions';
 import { useAuth } from '@/auth/context/AuthContext';
+import { useLaunchCurtainState } from '@/boot/launchCurtain';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
 import { useRootStackRouteOptions } from '@/components/navigation/root/useRootStackRouteOptions';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
@@ -101,6 +102,8 @@ function AuthenticatedAppRuntimeMountsGate({
 }
 
 function MobileBottomChromeMountGate(): React.ReactElement | null {
+    // This web portal sits outside the curtain's stacking context. Release it with the curtain's fade.
+    if (useLaunchCurtainState() === 'up') return null;
     // The retained navigator is hidden while the workspace owns the visible session.
     // Keep its single bottom-chrome host visible and in the same React registry.
     const chrome = <MobileBottomChromeHost />;

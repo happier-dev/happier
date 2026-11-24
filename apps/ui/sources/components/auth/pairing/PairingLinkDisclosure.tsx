@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { FIELD_BOX_METRICS } from '@/components/ui/forms/fieldBox';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -44,6 +45,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     link: {
         marginTop: theme.space.s10,
+    },
+    linkAction: {
+        marginStart: FIELD_BOX_METRICS.triggerGapPx,
     },
     actions: {
         marginTop: theme.space.s12,
@@ -94,20 +98,22 @@ export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(p
                                 editable={false}
                                 monospace
                                 trailing={
-                                    <RoundButton
-                                        testID={`${props.testIDPrefix}-copy`}
-                                        size="small"
-                                        title={t('common.copy')}
-                                        display="inverted"
-                                        action={async () => {
-                                            const copied = await writeClipboard(props.link!);
-                                            if (!copied) {
-                                                await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
-                                                return;
-                                            }
-                                            copyFeedback.markCopied();
-                                        }}
-                                    />
+                                    <View style={styles.linkAction}>
+                                        <RoundButton
+                                            testID={`${props.testIDPrefix}-copy`}
+                                            size="small"
+                                            title={t('common.copy')}
+                                            display="inverted"
+                                            action={async () => {
+                                                const copied = await writeClipboard(props.link!);
+                                                if (!copied) {
+                                                    await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
+                                                    return;
+                                                }
+                                                copyFeedback.markCopied();
+                                            }}
+                                        />
+                                    </View>
                                 }
                             />
                         </View>

@@ -49,7 +49,7 @@ it('uses only the clearance below the shell header for a Welcome notice', async 
     expect(screen.findAllByTestId('welcome-notice-slot')).toHaveLength(1);
 });
 
-it('keeps the door reservation when the Welcome discovery notice clears in a short window', async () => {
+it('reserves space only while the Welcome discovery notice is present', async () => {
     const setOverflow = vi.fn<(height: number) => void>();
     const model: WelcomeEntryViewModel = {
         heading: { title: 'Welcome', subtitle: 'Continue here' },
@@ -64,6 +64,8 @@ it('keeps the door reservation when the Welcome discovery notice clears in a sho
             </ShellHeaderClearanceContext.Provider>
         </ShellWelcomeOverflowContext.Provider>
     );
+    const ready = await renderScreen(view([]));
+    expect(ready.findByTestId('welcome-notice-slot')).toBeNull();
     const screen = await renderScreen(view(model.notices));
     const measure = async (height: number) => {
         await act(async () => {
@@ -75,9 +77,9 @@ it('keeps the door reservation when the Welcome discovery notice clears in a sho
     await measure(60);
     expect(setOverflow).toHaveBeenLastCalledWith(60);
     await screen.update(view([]));
-    await measure(0);
     expect(screen.findByTestId('loading-home')).toBeNull();
-    expect(setOverflow).toHaveBeenLastCalledWith(60);
+    expect(setOverflow).toHaveBeenLastCalledWith(0);
+    expect(screen.findByTestId('welcome-notice-slot')).toBeNull();
 });
 
 it('renders the same display model live and in an inert opening replica', async () => {

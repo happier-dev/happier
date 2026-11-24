@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Animated, Easing, Platform, View, type GestureResponderEvent, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
+import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { motionTokens } from '../motionTokens';
 import { findNativeStepAnchor } from './capturePressedElement.native';
@@ -33,6 +34,29 @@ const MotionLayerContext = React.createContext<Readonly<{ active: boolean; first
 
 export function useFirstRunWorkflowMotion() {
     return React.useContext(MotionLayerContext)?.firstRun === true;
+}
+
+/** Keep the heading at its painted position as the notice beneath it settles out. */
+export function useStepNoticeLift(lift: number, animate: boolean) {
+    const [offset] = React.useState(() => new Animated.Value(-lift));
+    const previousLift = React.useRef(lift);
+    React.useLayoutEffect(() => {
+        const from = previousLift.current;
+        previousLift.current = lift;
+        if (!animate || from <= lift || readReducedMotionPreference()) {
+            offset.setValue(-lift);
+            return;
+        }
+        const settle = Animated.timing(offset, {
+            toValue: -lift,
+            duration: motionTokens.stepMotion.noticeCrossFadeMs,
+            easing: motionTokens.easing.standard,
+            useNativeDriver: Platform.OS !== 'web',
+        });
+        settle.start();
+        return () => settle.stop();
+    }, [animate, lift, offset]);
+    return offset;
 }
 
 export function useFirstRunRouteMove() {

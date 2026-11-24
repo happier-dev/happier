@@ -21,6 +21,7 @@ import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAut
 import { WelcomeActionCard, WelcomeWayButton } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { CertificateAuthenticationProblem } from './CertificateAuthenticationProblem';
 import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { UNAUTH_BACK_TEST_ID } from '@/components/onboarding/unauthShell/stepBack';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeDestinationNotice';
 import { useExactHomeArrival } from '@/components/account/auth/useExactHomeDestination';
@@ -232,7 +233,7 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             onRetry={() => { void admission.run(homeActionTestId(action), () => runHomeAction(action)); }}
             retryDisabled={pendingActionId !== null}
             onBack={chosenAction ? undefined : backToMethods}
-        />, 'home-auth-certificate-back');
+        />, UNAUTH_BACK_TEST_ID);
     }
 
     if (browserWait) {
