@@ -34,8 +34,10 @@ export const DatabaseCaptureCostsReadResultV1Schema = z.union([DatabaseFailureV1
 })]);
 export type DatabaseCaptureCostsReadInputV1 = z.infer<typeof DatabaseCaptureCostsReadInputV1Schema>;
 export type DatabaseCaptureCostOperandV1 = z.infer<typeof DatabaseCaptureCostOperandV1Schema>;
-export type DatabaseCaptureCostMetadataV1 = Pick<DatabaseCaptureCostOperandV1,
-    'provider' | 'modelId' | 'requestedModel' | 'operation' | 'tokens' | 'tokenCategories' | 'reportedCost'>;
+export const DatabaseCaptureCostMetadataV1Schema = z.pick(DatabaseCaptureCostOperandV1Schema, {
+    provider: true, modelId: true, requestedModel: true, operation: true, tokens: true, tokenCategories: true, reportedCost: true,
+});
+export type DatabaseCaptureCostMetadataV1 = z.infer<typeof DatabaseCaptureCostMetadataV1Schema>;
 export type DatabaseCaptureCostsReadResultV1 = z.infer<typeof DatabaseCaptureCostsReadResultV1Schema>;
 export const DatabaseCaptureCostsReadInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureCostsReadInputV1Schema);
 export const DatabaseCaptureCostsReadResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureCostsReadResultV1Schema);

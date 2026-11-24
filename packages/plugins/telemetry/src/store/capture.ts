@@ -1,5 +1,5 @@
 import type { DaemonDatabase, DaemonDatabaseMigration, DaemonDatabaseRow, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
-import type { DatabaseCaptureQueryGetResultV1 } from '@happier-dev/database-protocol';
+import type { DatabaseCaptureQueryGetResultV1, DatabaseCaptureTracesListInputV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 import { createMetricStore, metricMigration, metricRetention, writeMetricPoint } from './metrics.js';
 import { costMigration, createCostStore } from './costs.js';
@@ -151,6 +151,13 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
     if (input.traceId) { predicates.push('traceId = ?'); params.push(input.traceId); }
     if (input.spanKind !== undefined) { predicates.push('spanKind = ?'); params.push(input.spanKind); }
     if (input.serviceName !== undefined) { predicates.push('serviceName = ?'); params.push(input.serviceName); }
+    if (input.appLlmCalls) {
+     predicates.push('genAi IS NOT NULL', "traceId IS NOT NULL AND traceId <> ''");
+     for (const field of ['serviceName', 'serviceVersion'] as const) {
+      const value = input.appLlmCalls[field];
+      if (value !== undefined) { predicates.push(`${field} = ?`); params.push(value); }
+     }
+    }
     if (input.severityNumber !== undefined) { predicates.push('severityNumber = ?'); params.push(input.severityNumber); }
     if (input.since !== undefined) { predicates.push('at >= ?'); params.push(input.since); }
     if (input.until !== undefined) { predicates.push('at < ?'); params.push(input.until); }
@@ -161,7 +168,8 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
     // existing host-bound paging. No telemetry-specific size cap or detail reads.
     const prefixLength = Math.floor(limits.maximumResultBytes / requested / 6);
     const includeLogs = (input.kind === undefined || input.kind === 'log') && input.spanKind === undefined;
-    const selected = `SELECT ${summaryFields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`;
+    const fields = input.appLlmCalls ? [...summaryFields, 'serviceVersion', 'genAi'] : summaryFields;
+    const selected = `SELECT ${fields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`;
     // Only already-redacted retained bodies are projected, scoped by BOTH keys.
     // substr works in Unicode code points, so the prefix cannot split UTF-8.
     const statement = includeLogs ? `WITH selected AS (${selected}),
@@ -174,12 +182,17 @@ SELECT ${summaryFields.join(',')},substr(logLine,1,${prefixLength}) AS bodyPrefi
     const { rows: page, pageSize } = await queryPage(statement, params, requested);
     // The table is produced only by this store; SQLite scalar decoding is the genuine boundary.
     const summaries = page as unknown as readonly CaptureSummary[];
-    rows.push(...summaries.map(summary => {
-     if (!includeLogs) return summary;
-     const { bodyPrefix, bodyPrefixTruncated, ...rest } = summary;
-     return bodyPrefix === null || bodyPrefix === undefined ? rest
-      : { ...rest, bodyPrefix, bodyPrefixTruncated: Boolean(bodyPrefixTruncated) };
-    }));
+    if (input.appLlmCalls) {
+     const calls = page as unknown as readonly (Omit<CaptureSummary, 'genAi'> & { genAi: string })[];
+     rows.push(...calls.map(call => ({ ...call, genAi: JSON.parse(call.genAi) as DatabaseCaptureCostMetadataV1 })));
+    } else {
+     rows.push(...summaries.map(summary => {
+      if (!includeLogs) return summary;
+      const { bodyPrefix, bodyPrefixTruncated, ...rest } = summary;
+      return bodyPrefix === null || bodyPrefix === undefined ? rest
+       : { ...rest, bodyPrefix, bodyPrefixTruncated: Boolean(bodyPrefixTruncated) };
+     }));
+    }
     if (page.length < pageSize) break;
     const last = summaries.at(-1);
     if (!last) break;
@@ -331,13 +344,14 @@ ORDER BY selected.at DESC,selected.id DESC`, [input.worktree, ...params], Math.m
 export type CaptureSummary = Readonly<{
  id: string; worktree: string; kind: 'query' | 'transaction' | 'span' | 'log' | 'coverage'; source: 'wire' | 'otlp' | 'capture'; at: number;
  bodyPrefix?: string; bodyPrefixTruncated?: boolean;
+ serviceVersion?: string | null; genAi?: DatabaseCaptureCostMetadataV1;
  shape?: string | null; traceId?: string | null; spanId?: string | null; durationMs?: number | null; outcome?: string | null;
  parentSpanId?: string | null; spanKind?: number | null; serviceName?: string | null; severityNumber?: number | null; endpointMethod?: string | null; endpointRoute?: string | null; httpStatusCode?: number | null;
  statementKind?: 'select' | 'control' | 'other' | 'unknown' | null; parameterIdentity?: string | null; executionIdentity?: string | null; callsite?: string | null; transactionId?: string | null; retryOf?: string | null; connectionId?: string | null;
 }>;
 /** Values here have already passed the canonical dialect's masking boundary. */
 export type CaptureSummaryEvent = CaptureSummary & Readonly<{ detail?: Readonly<Record<string, unknown>>;
- serviceVersion?: string; genAi?: DatabaseCaptureCostMetadataV1 }>;
+ serviceVersion?: string }>;
 /** One redacted exception occurrence; identity is span/event position or the emitter's log uid. */
 export type CaptureExceptionOccurrence = Readonly<{
  id: string; worktree: string; at: number; fingerprint: string; origin: 'span' | 'log';
@@ -358,7 +372,7 @@ export type CaptureExceptionGroup = Readonly<{
 export type CaptureExceptionGroupsInput = Readonly<{ worktree: string; limit: number; fingerprints?: readonly string[];
  after?: Readonly<{ lastAt: number; fingerprint: string }> }>;
 export type CaptureExceptionOccurrencesInput = Readonly<{ worktree: string; fingerprint: string; limit: number; before?: Readonly<{ at: number; id: string }> }>;
-export type CaptureListInput = Readonly<{worktree: string; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
+export type CaptureListInput = Readonly<{worktree: string; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
 export type CaptureEndpointCursor = Readonly<{ serviceName: string; method: string; route: string }>;
 export type CaptureEndpointSummary = CaptureEndpointCursor & Readonly<{ requestCount: number; errorCount: number; totalDurationMs: number; databaseTimeMs: number }>;
 export type CaptureEndpointListInput = Readonly<{ worktree: string; limit: number; before?: CaptureEndpointCursor; since?: number; until?: number; endpoint?: CaptureEndpointCursor }>;

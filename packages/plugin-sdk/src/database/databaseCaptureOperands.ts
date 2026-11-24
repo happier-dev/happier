@@ -5,6 +5,7 @@ import {
     DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DatabaseCaptureSourceV1Schema } from './databaseCaptureSource.js';
+import { DatabaseCaptureCostsReadInputV1Schema } from './databaseCaptureCosts.js';
 
 const id = z.string().check(z.minLength(1));
 const time = z.number().check(z.int(), z.nonnegative());
@@ -17,7 +18,11 @@ export const databaseCaptureSourceInput = { source: DatabaseCaptureSourceV1Schem
 export const databaseCaptureSelectedPage = {
     ...databaseCaptureSourceInput, page: DatabaseCapturePageV1Schema, since: z.optional(time), until: z.optional(time),
 };
-export const DatabaseCaptureTracesListInputV1Schema = z.strictObject(databaseCaptureSelectedPage);
+const { serviceName, serviceVersion } = DatabaseCaptureCostsReadInputV1Schema.shape;
+export const DatabaseCaptureTracesListInputV1Schema = z.strictObject({
+    ...databaseCaptureSelectedPage,
+    appLlmCalls: z.optional(z.strictObject({ serviceName, serviceVersion })),
+});
 export const DatabaseCaptureTraceGetInputV1Schema = z.strictObject({
     ...databaseCaptureSourceInput, traceId: id, page: z.strictObject({ limit: DatabaseCapturePageV1Schema.shape.limit }),
 });

@@ -47,7 +47,8 @@ vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
 );
 afterEach(standardCleanup);
 
-const { DeploymentTelemetryPanel } = await import('./DeploymentTelemetryPanel');
+const { DeploymentTelemetryPanel, TelemetryRequestDetail } = await import('./DeploymentTelemetryPanel');
+const { createTelemetryCaptureReads } = await import('./telemetryCaptureReads');
 const { TelemetryCaptureFixtureProvider, createTelemetryCaptureFixtureTransport } =
   await import('@/dev/testkit/fixtures/telemetryCaptureFixtures');
 const { ModalProvider } = await import('@/modal');
@@ -392,6 +393,38 @@ describe('Environment Telemetry tabs', () => {
       refused.resolve({ ok: false, code: 'capture_source_unavailable' });
       await screen.unmount();
     }
+  });
+
+  it('opens the selected individual App LLM call in the existing Trace detail', async () => {
+    const genAi = { provider: 'example', modelId: 'fixture-model', requestedModel: null, operation: 'chat',
+      tokens: { input: 12, output: 3, total: null, reasoning: null, cacheRead: null, cacheWrite: null },
+      tokenCategories: null, reportedCost: { amount: 0.002, currency: 'USD' } };
+    const selection = { serviceName: 'api', serviceVersion: 'v2' };
+    const call = { id: 'call-b', worktree: 'environment:production', kind: 'span', source: 'otlp',
+      at: 1001, serviceName: 'api', serviceVersion: 'v2', traceId: 'trace-1', genAi } as const;
+    const { invoke, calls } = collector((request) => {
+      if (request.actionId.endsWith('/capture/traces/list')) {
+        return { ok: true, source, items: [{ ...call, id: 'call-a', traceId: 'other-trace' }, call] };
+      }
+      return answers(request);
+    });
+    const reads = createTelemetryCaptureReads(invoke, { scope: lifetime.scope, collectorMachineId: 'collector',
+      environmentId: source.environmentId });
+    const retained = await reads.appLlmCalls(selection, 1_000, 2_000, null);
+    const selected = retained.items.find(item => item.id === 'call-b');
+    expect(selected?.genAi).toEqual(genAi);
+    if (!selected) throw new Error('Expected a retained App LLM call');
+    const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryRequestDetail
+      reads={reads} lifetime={lifetime} active request={selected} locale="en" onBack={() => {}} />
+      </AppPresentationPlatformProvider>);
+    try {
+      await settle();
+      expect(calls.map(request => request.input)).toEqual([
+        expect.objectContaining({ source, since: 1_000, until: 2_000, appLlmCalls: selection }),
+        expect.objectContaining({ source, traceId: 'trace-1' }),
+      ]);
+      expect(screen.findByTestId('project-deployments.telemetry.request')).not.toBeNull();
+    } finally { await screen.unmount(); }
   });
 
   it('opens a trace row as its request: one trace read by its id, then where its time went and its logs', async () => {

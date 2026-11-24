@@ -2,7 +2,7 @@ import { z } from 'zod/mini';
 import type { ProtocolComposableSchema, ProtocolJsonValue } from '../protocol/protocolFacade.js';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DatabaseFailureV1Schema } from './schemas/databaseOperations.js';
-import { DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
+import { DatabaseCaptureCostMetadataV1Schema, DatabaseCaptureCostsReadInputV1Schema, DatabaseCaptureCostsReadResultV1Schema } from './databaseCaptureCosts.js';
 import { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 import {
     databaseCaptureSelectedPage as selectedPage,
@@ -77,7 +77,12 @@ export const DatabaseCaptureQueryGetInputV1Schema = z.strictObject({ ...sourceIn
 export const DatabaseCaptureQueryGetResultV1Schema = z.union([DatabaseFailureV1Schema,
     z.strictObject({ ok: z.literal(true), source: DatabaseCaptureSourceV1Schema, detail: z.nullable(z.record(z.string(), z.json())) }),
 ]);
-export const DatabaseCaptureTracesListResultV1Schema = z.union([DatabaseFailureV1Schema, summaryPage]);
+export const DatabaseCaptureTracesListResultV1Schema = z.union([DatabaseFailureV1Schema, z.extend(summaryPage, {
+    items: z.array(z.extend(DatabaseCaptureSummaryV1Schema, {
+        serviceVersion: optionalText,
+        genAi: z.optional(DatabaseCaptureCostMetadataV1Schema),
+    })),
+})]);
 export const DatabaseCaptureTraceGetResultV1Schema = z.union([DatabaseFailureV1Schema, z.strictObject({
     ok: z.literal(true), ...sourceInput, traceId: id, summaries: z.array(DatabaseCaptureSummaryV1Schema),
     repeatedQueries: z.array(DatabaseCaptureRepeatedQueryV1Schema),

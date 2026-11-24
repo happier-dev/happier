@@ -25,6 +25,7 @@ import {
   type DatabaseCaptureCursorV1,
   type DatabaseCaptureSummaryV1,
   type DatabaseCaptureSourceV1,
+  type DatabaseCaptureTracesListInputV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -291,6 +292,21 @@ export function createTelemetryCaptureReads(
             : DatabaseCaptureQueriesListResultV1Schema;
       const page = settle(schema.safeParse(raw));
       return { items: page.items, nextCursor: page.nextCursor ?? null };
+    },
+    /** Retained individual calls for the LLM calls view; each row keeps its own Trace detail operand. */
+    async appLlmCalls(
+      selection: NonNullable<DatabaseCaptureTracesListInputV1['appLlmCalls']>,
+      since: number,
+      until: number,
+      before: DatabaseCaptureCursorV1 | null,
+      signal?: AbortSignal,
+    ) {
+      const input = { source: source(environment), page: { limit: PAGE_LIMIT, ...(before ? { before } : {}) },
+        ...window(since, until), appLlmCalls: selection };
+      const result = settle(DatabaseCaptureTracesListResultV1Schema.safeParse(
+        await call(DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, input, signal),
+      ));
+      return { items: result.items, nextCursor: result.nextCursor ?? null };
     },
     async trace(
       traceId: string,

@@ -213,7 +213,7 @@ export type CaptureSourceAdmission = (input: database.DatabaseCaptureStatusInput
 /** Actions and a demanded Resource share the exact same selected-source DTO projection. */
 export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSource) {
     const machineId = selected.source.kind === 'worktree' ? selected.source.machineId : selected.collectorMachineId;
-    const page = (items: readonly database.DatabaseCaptureSummaryV1[], limit: number) => {
+    const page = <Item extends database.DatabaseCaptureSummaryV1>(items: readonly Item[], limit: number) => {
         const last = items.at(-1);
         return { ok: true as const, source: selected.source, items: [...items], ...(last && items.length === limit ? { nextCursor: { at: last.at, id: last.id } } : {}) };
     };
@@ -238,8 +238,11 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
             return { ok: true as const, source: selected.source, detail: await selected.runtime.store.detail(selected.partition, input.id) };
         },
         async listCapturedTraces(input: database.DatabaseCaptureTracesListInputV1) {
-            return page(await createCaptureReader(selected.runtime.store).requests({ ...input.page, since: input.since,
-                until: input.until, worktree: selected.partition }), input.page.limit);
+            const operands = { ...input.page, since: input.since, until: input.until, worktree: selected.partition };
+            const items = input.appLlmCalls
+                ? await selected.runtime.store.list({ ...operands, kind: 'span', appLlmCalls: input.appLlmCalls })
+                : await createCaptureReader(selected.runtime.store).requests(operands);
+            return page(items, input.page.limit);
         },
         async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1) {
             const { source, runtime, partition } = selected;

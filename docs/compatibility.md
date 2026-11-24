@@ -10562,6 +10562,13 @@ strict input supplies Session evidence for the setup brief. The existing
 worktree task remains available. Use matching bundled declarations and daemon
 source for the Environment task.
 
+In unreleased 0.3, the Telemetry traces list accepts an optional `appLlmCalls`
+selector with service and version filters. Selected rows carry their retained
+trace ID and Usage cost operands. Use the same collector and the existing
+Trace detail read with that ID. Use matching clients, daemon and bundled
+declarations for the strict request and response shapes. The cost aggregate
+continues to report grouped totals and coverage.
+
 In unreleased 0.3, the selected capture trace result may include committed
 findings. Each finding retains the emitting Machine, observation window,
 coverage, and the typed capture trace and trace-list inputs for verification.

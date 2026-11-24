@@ -81,6 +81,37 @@ describe('authenticated collector writer admission through HTTP and SQLite', () 
         } finally { await receiver.release(); f.close(); }
     });
 
+    it('looks up only retained App LLM calls and opens the selected call’s exact trace', async () => {
+        const f = await fixture();
+        const source = { kind: 'environment', serverId: 'home', environmentId: 'production' } as const;
+        const reads = createCaptureSelectedSourceReaders({ source, partition, runtime: f.runtime });
+        const tokens = { input: 12, output: 3, total: null, reasoning: null, cacheRead: null, cacheWrite: null };
+        const genAi = { provider: 'example', requestedModel: null, modelId: 'test-model', operation: 'chat',
+            tokens, tokenCategories: null, reportedCost: { amount: 0.002, currency: 'USD' } };
+        const span = { worktree: partition, kind: 'span', source: 'otlp', spanKind: 2,
+            at: 1000, serviceName: 'api', serviceVersion: 'v2' } as const;
+        try {
+            await f.runtime.ingest.write([
+                { ...span, id: 'first', traceId: 'trace-a', genAi },
+                { ...span, id: 'selected', at: 1001, traceId: 'trace-b', genAi },
+                { ...span, id: 'ordinary', at: 1002, traceId: 'ordinary' },
+                { ...span, id: 'neighbor', traceId: 'wrong-env', worktree: 'environment:neighbor', genAi },
+                { ...span, id: 'older-release', traceId: 'wrong-version', serviceVersion: 'v1', genAi },
+                { ...span, id: 'outside-window', at: 2000, traceId: 'wrong-window', genAi },
+            ]);
+            const input = { source, page: { limit: 2 }, since: 1000, until: 2000,
+                appLlmCalls: { serviceName: 'api', serviceVersion: 'v2' } };
+            const listed = await reads.listCapturedTraces(input);
+            expect(listed.items.map(call => [call.id, call.traceId])).toEqual([['selected', 'trace-b'], ['first', 'trace-a']]);
+            expect(listed.items[0]).toMatchObject({ serviceVersion: 'v2', genAi });
+            const selected = listed.items.find(call => call.id === 'selected');
+            if (!selected?.traceId) throw new Error('Expected the selected retained call’s trace');
+            expect(await reads.getCapturedTrace({ source, traceId: selected.traceId, page: { limit: 5 } })).toMatchObject({
+                traceId: 'trace-b', summaries: [{ id: 'selected' }],
+            });
+        } finally { f.close(); }
+    });
+
     it('returns redacted log bodies at rest from one authenticated batch and one list query', async () => {
         const f = await fixture();
         const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => f.assignments.admit(request) });
