@@ -146,7 +146,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
         }
     };
     return {
-        launch: { async prepare(input) {
+        launch: { providesWorktreeDatabaseMembers: true, async prepare(input) {
             if (!input.requester || !input.workspace.projectKey || input.executionPlacement.machineId !== input.workspace.machineId) return { kind: 'unchanged' };
             const readEnvironment = input.readDeclaredEnvironment ?? input.readEnvironment;
             const projection = await readEnvironment();
@@ -159,7 +159,19 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             const entry: Entry = { scope, serviceId: input.serviceId, variables, readEnvironment };
             const key = entryKey(entry);
             entries.set(key, entry);
-            return { kind: 'unchanged', async release() { if (entries.get(key) === entry) entries.delete(key); } };
+            return { kind: 'unchanged',
+                get worktreeDatabaseMembers() {
+                    return Object.entries(projection.projectedEnvironment).flatMap(([variable, value]) => {
+                        try {
+                            if (findDatabaseConnectionDescriptor(value)) return [{ ...scope,
+                                source: { kind: 'service' as const, serviceId: entry.serviceId, variable } }];
+                        } catch (error) {
+                            if (!(error instanceof DatabaseConnectionUrlError)) throw error;
+                        }
+                        return [];
+                    });
+                },
+                async release() { if (entries.get(key) === entry) entries.delete(key); } };
         } },
         async list(request) {
             request.signal?.throwIfAborted();

@@ -1,4 +1,5 @@
 import type { DaemonDatabase, DaemonDatabaseMigration, DaemonDatabaseRow, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
+import { createCanonicalJsonSigningInput, type PluginWorktreeDatabaseMemberV1 } from '@happier-dev/plugin-sdk';
 import type { DatabaseCaptureQueryGetResultV1, DatabaseCaptureTracesListInputV1 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 import { createMetricStore, metricMigration, metricRetention, writeMetricPoint } from './metrics.js';
@@ -31,9 +32,11 @@ export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version:
  await tx.execute(`DELETE FROM captureDetails AS detail
   WHERE NOT EXISTS (SELECT 1 FROM captureSummaries AS summary WHERE summary.worktree = detail.worktree AND summary.id = detail.id)
     AND NOT EXISTS (SELECT 1 FROM captureExceptions AS exception WHERE exception.worktree = detail.worktree AND exception.id = detail.id)`);
+} }, { version: 9, id: 'worktree-database-member', async up(tx) {
+ await tx.execute('ALTER TABLE captureSummaries ADD COLUMN databaseMemberKey TEXT');
 } }];
 const summaryFields = ['id','worktree','kind','source','at','shape','traceId','spanId','durationMs','outcome','parentSpanId','spanKind','serviceName','endpointMethod','endpointRoute','httpStatusCode','statementKind','parameterIdentity','executionIdentity','callsite','transactionId','retryOf','connectionId','severityNumber'] as const;
-const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi'] as const;
+const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi', 'databaseMemberKey'] as const;
 const changingFields = summaryWriteFields.filter(field => field !== 'id' && field !== 'worktree');
 // Disabling future numeric capture does not erase an already retained call on an exporter retry.
 const summaryUpdateValue = (field: typeof changingFields[number]) => field === 'genAi'
@@ -148,6 +151,9 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
     const predicates = ['worktree = ?'];
     const params: (string | number)[] = [input.worktree];
     if (input.kind) { predicates.push('kind = ?'); params.push(input.kind); }
+    if (input.databaseMember !== undefined) {
+     predicates.push('databaseMemberKey = ?'); params.push(createCanonicalJsonSigningInput(input.databaseMember));
+    }
     if (input.traceId) { predicates.push('traceId = ?'); params.push(input.traceId); }
     if (input.spanKind !== undefined) { predicates.push('spanKind = ?'); params.push(input.spanKind); }
     if (input.serviceName !== undefined) { predicates.push('serviceName = ?'); params.push(input.serviceName); }
@@ -350,7 +356,7 @@ export type CaptureSummary = Readonly<{
  statementKind?: 'select' | 'control' | 'other' | 'unknown' | null; parameterIdentity?: string | null; executionIdentity?: string | null; callsite?: string | null; transactionId?: string | null; retryOf?: string | null; connectionId?: string | null;
 }>;
 /** Values here have already passed the canonical dialect's masking boundary. */
-export type CaptureSummaryEvent = CaptureSummary & Readonly<{ detail?: Readonly<Record<string, unknown>>;
+export type CaptureSummaryEvent = CaptureSummary & Readonly<{ detail?: Readonly<Record<string, unknown>>; databaseMemberKey?: string;
  serviceVersion?: string }>;
 /** One redacted exception occurrence; identity is span/event position or the emitter's log uid. */
 export type CaptureExceptionOccurrence = Readonly<{
@@ -372,7 +378,7 @@ export type CaptureExceptionGroup = Readonly<{
 export type CaptureExceptionGroupsInput = Readonly<{ worktree: string; limit: number; fingerprints?: readonly string[];
  after?: Readonly<{ lastAt: number; fingerprint: string }> }>;
 export type CaptureExceptionOccurrencesInput = Readonly<{ worktree: string; fingerprint: string; limit: number; before?: Readonly<{ at: number; id: string }> }>;
-export type CaptureListInput = Readonly<{worktree: string; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
+export type CaptureListInput = Readonly<{worktree: string; databaseMember?: PluginWorktreeDatabaseMemberV1; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
 export type CaptureEndpointCursor = Readonly<{ serviceName: string; method: string; route: string }>;
 export type CaptureEndpointSummary = CaptureEndpointCursor & Readonly<{ requestCount: number; errorCount: number; totalDurationMs: number; databaseTimeMs: number }>;
 export type CaptureEndpointListInput = Readonly<{ worktree: string; limit: number; before?: CaptureEndpointCursor; since?: number; until?: number; endpoint?: CaptureEndpointCursor }>;

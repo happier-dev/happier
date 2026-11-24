@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginServiceLaunchEnvironmentInputV1 } from '@happier-dev/plugin-sdk';
+import * as workbench from '@happier-dev/plugins-database-workbench';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { activatePluginRuntimeRegistry } from '../manager';
@@ -33,12 +34,16 @@ describe('service launch environment contribution activation', () => {
         const statePath = join(rootPath, 'host', 'ports.json');
         const ports = createWorktreePortsOwner({ statePath });
         const received: Awaited<ReturnType<PluginServiceLaunchEnvironmentInputV1['readEnvironment']>>[] = [];
+        let databaseMembers: unknown;
         const demandedNames: string[][] = [];
         let allocatedPort: number | undefined;
         let allocatedOtlpPort: number | undefined;
         let existingDatabasePort: number | undefined;
         const listenerDemands: string[][] = [];
-        const hostInput = { ...input, async requestListenerPorts(keys: readonly string[]) {
+        const hostInput = { ...input, workspace: { ...input.workspace, projectKey: 'accepted-project' },
+            requester: { accountId: 'alice', installationId: 'installation' },
+            readDeclaredEnvironment: () => input.readEnvironment(['DATABASE_URL']),
+            async requestListenerPorts(keys: readonly string[]) {
             listenerDemands.push([...keys]);
             return ports.assign({ rootPath, listenerKeys: keys });
         }, async readEnvironment(names: readonly string[]) {
@@ -51,6 +56,7 @@ describe('service launch environment contribution activation', () => {
                 async prepare(request) {
                     expect(request.assignedPorts).toEqual({ database: existingDatabasePort });
                     received.push(await request.readEnvironment());
+                    databaseMembers = await request.readWorktreeDatabaseMembers?.();
                     const assigned = await request.requestListenerPorts?.(['database', 'otlp']);
                     if (assigned?.kind !== 'ready') throw new Error('Expected named listener assignment');
                     allocatedPort = assigned.assignment.listenerPorts.database;
@@ -67,21 +73,34 @@ describe('service launch environment contribution activation', () => {
             } },
         } });
         const ingested = ingestCanonicalPluginManifest(plugin.manifest, { sourceProvenance: 'registryCustodied' });
+        const admittedWorkbench = ingestCanonicalPluginManifest(workbench.manifest, {
+            sourceProvenance: 'registryCustodied', manifestAuthority: 'bundled_first_party', purpose: 'admission',
+        });
         expect(ingested).toMatchObject({ ok: true });
         if (!ingested.ok) throw new Error('Expected admitted service environment declaration');
+        expect(admittedWorkbench.ok, admittedWorkbench.diagnostics?.map(diagnostic => diagnostic.code).join(', ')).toBe(true);
+        if (!admittedWorkbench.ok) throw new Error('Expected admitted Worktree database discovery');
         const contributes = createResolvedContributionRegistry({ activationTargets: [{
             provenance: 'first_party', source: { kind: 'bundled' }, pluginId: plugin.manifest.id,
             manifestPath: '/virtual/capture/plugin.json', daemonEntryPath: '/virtual/capture/daemon.mjs',
             sourceSpec: { kind: 'package', locator: '@acme/capture', trustPolicy: 'local_trusted', installPolicy: 'copy' },
             activationEvents: [], manifest: ingested.manifest,
+        }, {
+            provenance: 'first_party', source: { kind: 'bundled' }, pluginId: workbench.manifest.id,
+            manifestPath: '/virtual/workbench/plugin.json', daemonEntryPath: '/virtual/workbench/daemon.mjs',
+            sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-database-workbench', trustPolicy: 'local_trusted', installPolicy: 'copy' },
+            activationEvents: [], manifest: admittedWorkbench.manifest,
         }] });
         const registry = await activatePluginRuntimeRegistry({ contributes, generation: 1,
-            resolveActivationSource: () => ({ kind: 'bundled', moduleId: '@acme/capture/daemon', load: async () => plugin }),
+            resolveActivationSource: target => target.pluginId === workbench.manifest.id
+                ? { kind: 'bundled', moduleId: '@happier-dev/plugins-database-workbench', load: async () => workbench }
+                : { kind: 'bundled', moduleId: '@acme/capture/daemon', load: async () => plugin },
         });
         try {
             // A role/background service activates the plugin before launch preparation.
             // The contribution call itself must never acquire plugin readiness.
             expect(await prepareServiceLaunchEnvironments({ targets: contributes.activationTargets, registry, input: hostInput })).toMatchObject([
+                { result: { kind: 'unavailable', code: 'service_launch_environment_unavailable' } },
                 { result: { kind: 'unavailable', code: 'service_launch_environment_unavailable' } },
                 { result: { kind: 'unavailable', code: 'service_launch_environment_unavailable' } },
                 { result: { kind: 'unavailable', code: 'service_launch_environment_unavailable' } },
@@ -94,10 +113,16 @@ describe('service launch environment contribution activation', () => {
                 listenerKeys: ['acme.capture/capture/database', 'acme.capture/other/database'] });
             if (ordinaryPorts.kind !== 'ready') throw new Error('Expected ordinary worktree assignment');
             existingDatabasePort = ordinaryPorts.assignment.listenerPorts['acme.capture/capture/database'];
-            await registry.activateContributionsOnDemand([{ pluginId: 'acme.capture', family: 'serviceLaunchEnvironments', localId: 'capture' }]);
+            await registry.activateContributionsOnDemand([
+                { pluginId: 'acme.capture', family: 'serviceLaunchEnvironments', localId: 'capture' },
+                { pluginId: workbench.manifest.id, family: 'serviceLaunchEnvironments', localId: 'database-discovery' },
+            ]);
             const results = await prepareServiceLaunchEnvironments({ targets: contributes.activationTargets, registry,
                 input: { ...hostInput, assignedPorts: ordinaryPorts.assignment.listenerPorts } });
             expect(received).toHaveLength(2);
+            expect(databaseMembers).toEqual([{ kind: 'worktree', accountId: 'alice', installationId: 'installation', projectKey: 'accepted-project',
+                workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'checkout', rootPath: '/work/project' },
+                source: { kind: 'service', serviceId: 'web', variable: 'DATABASE_URL' } }]);
             expect(listenerDemands).toEqual([['acme.capture/capture/database', 'acme.capture/capture/otlp']]);
             expect(received[0]?.projectedEnvironment).toEqual({ DATABASE_URL: 'postgres://localhost/original' });
             expect(received[1]?.projectedEnvironment).toEqual({ DATABASE_URL: 'postgres://localhost/original' });
@@ -115,11 +140,14 @@ describe('service launch environment contribution activation', () => {
                 { contribution: { pluginId: 'acme.capture', localId: 'capture' }, result: { kind: 'replace', defaults: { OTEL_SERVICE_NAME: 'project/web' } } },
                 { contribution: { pluginId: 'acme.capture', localId: 'broken' }, result: { kind: 'unavailable', code: 'service_launch_environment_failed' } },
                 { contribution: { pluginId: 'acme.capture', localId: 'off' }, result: { kind: 'unchanged' } },
+                { contribution: { pluginId: workbench.manifest.id, localId: 'database-discovery' }, result: { kind: 'unchanged' } },
             ]);
             const replacement = results[0]?.result;
             if (replacement?.kind !== 'replace') throw new Error('Expected retained service contribution');
             expect(releases).toBe(0);
             await replacement.release();
+            const discovery = results[3]?.result;
+            if (discovery?.kind === 'unchanged') await discovery.release?.();
             expect(releases).toBe(1);
             expect(originalEnvironment.DATABASE_URL).toBe('postgres://localhost/original');
         } finally { await registry.dispose(); await rm(rootPath, { recursive: true, force: true }); }

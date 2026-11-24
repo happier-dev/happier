@@ -57,6 +57,8 @@ it('discovers the selected launched service from prepared originals, isolates cu
         const retained = await observer.prepare(launch);
         if (retained.kind === 'unchanged') release = retained.release;
         expect(retained).toMatchObject({ kind: 'unchanged', release: expect.any(Function) });
+        expect(retained).toHaveProperty('worktreeDatabaseMembers', [{ ...scope,
+            source: { kind: 'service', serviceId: 'postgres', variable: 'CUSTOM_DATABASE' } }]);
         const list = (selectedScope: typeof scope = scope) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1),
             { scope: selectedScope }, identity);
         const result = await list();

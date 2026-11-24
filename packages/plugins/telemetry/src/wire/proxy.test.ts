@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
+import { bindLocalCapture } from '../launch.js';
 import { startPostgresProxy } from '../proxy';
 import { createCaptureReader } from '../read.js';
 import { createCaptureRuntime } from '../runtime.js';
@@ -18,6 +19,77 @@ async function readBytes(socket: Socket, length: number): Promise<Buffer> {
 }
 
 describe('loopback Postgres proxy', () => {
+    it('retains an exact database member only while the listening socket can distinguish its traffic', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) {
+            if (migration.id === 'worktree-database-member') {
+                await fixture.db.execute(`INSERT INTO captureSummaries(id,worktree,kind,source,at,shape)
+                    VALUES ('older','selected','query','wire',1,'select ?')`);
+            }
+            await migration.up(fixture.db);
+        }
+        const runtime = createCaptureRuntime({ database: fixture.db, normalizeStatement: createPostgresqlObservationNormalizer(), publish: () => {} });
+        const upstream = createServer();
+        upstream.listen(0, '127.0.0.1');
+        await once(upstream, 'listening');
+        const address = upstream.address();
+        if (!address || typeof address === 'string') throw new Error('missing upstream address');
+        const owner = {
+            kind: 'worktree', accountId: 'alice', installationId: 'installation', projectKey: 'project',
+            workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'chosen', rootPath: '/chosen' },
+        } as const;
+        const member = { ...owner, source: { kind: 'service', serviceId: 'web', variable: 'DATABASE_URL' } } as const;
+        const other = { ...owner, source: { kind: 'service', serviceId: 'worker', variable: 'DATABASE_URL' } } as const;
+        const original = `postgres://user:secret@127.0.0.1:${address.port}/db`;
+        const context = { partition: 'selected', physicalRootIdentity: '/selected', runtime, enabled: true, signal: new AbortController().signal };
+        const offer = { name: 'DATABASE_URL', original, upstream: { host: '127.0.0.1', port: address.port }, assignedPort: 0,
+            hostSpan: { start: original.indexOf('127.0.0.1'), end: original.lastIndexOf('/') } };
+        const selectedOffer = { ...offer, databaseMember: member };
+        const otherOffer = { ...offer, databaseMember: other };
+        const selected = await bindLocalCapture({ ...context, urls: [selectedOffer] });
+        const connection = once(upstream, 'connection');
+        const client = createConnection(Number(new URL(selected.replacements.DATABASE_URL!).port), '127.0.0.1');
+        const [database] = await connection as [Socket];
+        let shared: Awaited<ReturnType<typeof bindLocalCapture>> | undefined;
+        try {
+            const ready = frame('Z', 'I');
+            client.write(startup());
+            expect(await readBytes(database, 8)).toEqual(startup());
+            database.write(ready);
+            expect(await readBytes(client, ready.length)).toEqual(ready);
+            const execute = async (value: number) => {
+                const query = frame('Q', `SELECT ${value}\0`);
+                client.write(query);
+                expect(await readBytes(database, query.length)).toEqual(query);
+                const result = Buffer.concat([frame('C', 'SELECT 1\0'), ready]);
+                database.write(result);
+                expect(await readBytes(client, result.length)).toEqual(result);
+                await runtime.ingest.settled();
+            };
+            const list = { worktree: context.partition, kind: 'query', limit: 10 } as const;
+            const listSelected = { ...list, databaseMember: member };
+            const listOther = { ...list, databaseMember: other };
+            await execute(1);
+            const attributed = await runtime.store.list(listSelected);
+            expect(attributed).toHaveLength(1);
+            shared = await bindLocalCapture({ ...context, urls: [otherOffer] });
+            expect(shared.replacements).toEqual(selected.replacements);
+            await execute(2);
+            await shared.release();
+            await execute(3);
+            expect(await runtime.store.list(list)).toHaveLength(4);
+            expect(await runtime.store.list(listSelected)).toEqual(attributed);
+            expect(await runtime.store.list(listOther)).toEqual([]);
+        } finally {
+            client.destroy();
+            database.destroy();
+            await shared?.release();
+            await selected.release();
+            await new Promise<void>(resolve => upstream.close(() => resolve()));
+            fixture.close();
+        }
+    });
+
     it('pairs late OTLP evidence with one proven wire execution and preserves reused execution tags', async () => {
         const fixture = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);

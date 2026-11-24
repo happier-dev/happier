@@ -83,7 +83,7 @@ export function createCaptureRuntime(input: {
   recordCoverage(partition: string, reason: string, physicalRootIdentity?: string) {
    ingest.recordLoss(partition, reason, 1, physicalRootIdentity);
   },
-  observeWire(observation: WireObservation, { partition, physicalRootIdentity }: CapturePartition) {
+  observeWire(observation: WireObservation, { partition, physicalRootIdentity }: CapturePartition, databaseMemberKey?: string) {
    if (observation.kind === 'transaction') {
     ingest.offer([{ id: observation.id, worktree: partition, kind: 'transaction', source: 'wire', connectionId: observation.connectionId,
      physicalRootIdentity,
@@ -102,6 +102,7 @@ export function createCaptureRuntime(input: {
    ingest.offer([{ id: observation.id, worktree: partition, kind: 'query', source: 'wire', at: observation.startedAt,
     physicalRootIdentity,
     shape: normalized.shape, durationMs: observation.durationMs, outcome: observation.outcome,
+    ...(databaseMemberKey !== undefined && normalized.shape ? { databaseMemberKey } : {}),
     statementKind: normalized.statementKind, parameterIdentity: normalized.parameterIdentity,
     ...(normalized.shape && tagged?.identity), transactionId: observation.transactionId, connectionId: observation.connectionId,
     detail: { sql: normalized.maskedSql, parameters: normalized.maskedParameters ?? null,

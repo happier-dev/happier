@@ -1,7 +1,11 @@
 import type { PluginServiceLaunchEnvironmentContributionV1 } from '@happier-dev/protocol/plugins/contributions/serviceLaunchEnvironments';
+import type { DatabaseWorktreeSourceV1, DatabaseWorktreeTargetV1 } from '@happier-dev/protocol/databases/databaseTargetIdentityV1';
 import type { WorktreePortsResultV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 
 export type { PluginServiceLaunchEnvironmentContributionV1 };
+export type PluginWorktreeDatabaseMemberV1 = Omit<DatabaseWorktreeTargetV1, 'source'> & Readonly<{
+    source: Extract<DatabaseWorktreeSourceV1, { kind: 'service' }>;
+}>;
 
 export type PluginServiceLaunchEnvironmentProjectionV1 = Readonly<{
     projectedEnvironment: Readonly<Record<string, string>>;
@@ -26,9 +30,12 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     readEnvironment(): Promise<PluginServiceLaunchEnvironmentProjectionV1>;
     /** Original declared config projection from this same preparation; secret bindings stay excluded. */
     readDeclaredEnvironment?(): Promise<PluginServiceLaunchEnvironmentProjectionV1>;
+    /** References supplied by discovery for this exact admitted launch. They contain no connection values. */
+    readWorktreeDatabaseMembers?(): Promise<readonly PluginWorktreeDatabaseMemberV1[]>;
 }>;
 export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{
     kind: 'unchanged';
+    worktreeDatabaseMembers?: readonly PluginWorktreeDatabaseMemberV1[];
     /** Optional cleanup for an observation that does not change the launch. */
     release?(): Promise<void>;
 }>
@@ -36,6 +43,8 @@ export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{
     | Readonly<{ kind: 'replace'; replacements?: Readonly<Record<string, string>>; defaults?: Readonly<Record<string, string>>;
         release(): Promise<void> }>;
 export type PluginServiceLaunchEnvironmentRuntimeV1 = Readonly<{
+    /** The host makes discovery output available to other contributors in this preparation. */
+    providesWorktreeDatabaseMembers?: true;
     prepare(input: PluginServiceLaunchEnvironmentInputV1): Promise<PluginServiceLaunchEnvironmentResultV1>;
 }>;
 export type PluginServiceLaunchEnvironmentDefinitionV1 = Readonly<{

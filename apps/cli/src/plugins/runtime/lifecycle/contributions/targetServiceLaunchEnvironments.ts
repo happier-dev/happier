@@ -3,7 +3,7 @@ import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins
 import type { ResolvedActivationTarget } from '../../../projection/registry/types';
 import type { ActivatedPluginRuntimeRegistry } from '../manager';
 
-export type ServiceLaunchEnvironmentHostInput = Omit<PluginServiceLaunchEnvironmentInputV1, 'readEnvironment'> & Readonly<{
+export type ServiceLaunchEnvironmentHostInput = Omit<PluginServiceLaunchEnvironmentInputV1, 'readEnvironment' | 'readWorktreeDatabaseMembers'> & Readonly<{
     readEnvironment(names: readonly string[]): ReturnType<PluginServiceLaunchEnvironmentInputV1['readEnvironment']>;
 }>;
 export type PreparedServiceLaunchEnvironmentContribution = Readonly<{
@@ -16,18 +16,24 @@ export async function prepareServiceLaunchEnvironments(params: Readonly<{
     registry: Pick<ActivatedPluginRuntimeRegistry, 'targetRegistrations' | 'isPluginOccurrenceCurrent'>;
     input: ServiceLaunchEnvironmentHostInput;
 }>): Promise<readonly PreparedServiceLaunchEnvironmentContribution[]> {
-    return Promise.all(params.targets.flatMap(target => target.manifest.contributes.serviceLaunchEnvironments.map(async declaration => {
+    const entries = params.targets.flatMap(target => target.manifest.contributes.serviceLaunchEnvironments.map(declaration => {
         const contribution = { pluginId: target.pluginId, localId: declaration.id };
         const entry = params.registry.targetRegistrations.find(candidate => candidate.pluginId === target.pluginId
             && candidate.registration.family === 'serviceLaunchEnvironments' && candidate.registration.localId === declaration.id);
-        if (!entry || entry.registration.family !== 'serviceLaunchEnvironments'
-            || !params.registry.isPluginOccurrenceCurrent(target.pluginId, entry.occurrenceId)) {
+        const runtime = entry?.registration.family === 'serviceLaunchEnvironments'
+            && params.registry.isPluginOccurrenceCurrent(target.pluginId, entry.occurrenceId) ? entry.registration.value : undefined;
+        return { contribution, declaration, runtime };
+    }));
+    async function prepare({ contribution, declaration, runtime }: (typeof entries)[number],
+        readWorktreeDatabaseMembers?: PluginServiceLaunchEnvironmentInputV1['readWorktreeDatabaseMembers'],
+    ): Promise<PreparedServiceLaunchEnvironmentContribution> {
+        if (!runtime) {
             return { contribution, result: { kind: 'unavailable', code: 'service_launch_environment_unavailable' } } as const;
         }
         try {
             const requestListenerPorts = params.input.requestListenerPorts;
-            const listenerPrefix = `${target.pluginId}/${declaration.id}/`;
-            const result = await entry.registration.value.prepare({ ...params.input,
+            const listenerPrefix = `${contribution.pluginId}/${declaration.id}/`;
+            const result = await runtime.prepare({ ...params.input, readWorktreeDatabaseMembers,
                 assignedPorts: Object.fromEntries(Object.entries(params.input.assignedPorts)
                     .filter(([name]) => name.startsWith(listenerPrefix))
                     .map(([name, port]) => [name.slice(listenerPrefix.length), port])),
@@ -46,5 +52,10 @@ export async function prepareServiceLaunchEnvironments(params: Readonly<{
             // A plugin exception may contain an upstream URL or password.
             return { contribution, result: { kind: 'unavailable', code: 'service_launch_environment_failed' } } as const;
         }
-    })));
+    }
+    const discovery = new Map(entries.filter(entry => entry.runtime?.providesWorktreeDatabaseMembers).map(entry => [entry, prepare(entry)]));
+    const discoverMembers = () => Promise.all(discovery.values()).then(results => results.flatMap(({ result }) =>
+        result.kind === 'unchanged' ? result.worktreeDatabaseMembers ?? [] : []));
+    let members: ReturnType<typeof discoverMembers> | undefined;
+    return Promise.all(entries.map(entry => discovery.get(entry) ?? prepare(entry, () => members ??= discoverMembers())));
 }

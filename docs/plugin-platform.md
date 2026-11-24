@@ -90,6 +90,14 @@ targets for the selected Account and worktree. It retains only the preparation's
 private reader until the service releases it; connection URLs do not enter target
 metadata or persistent associations. This is unreleased 0.3 source behavior.
 
+Discovery also supplies the exact Worktree service-variable address to capture
+in the same private launch. Telemetry retains that address only for a parsed
+wire query whose listener has carried a single known member. A listener that
+serves indistinguishable launches keeps their queries as Worktree evidence.
+Retained queries from before attribution and unmatched OTLP are Worktree
+evidence as well. Selected database access still uses the database target's
+ordinary admission.
+
 Target listing can also discover network database URLs before any service starts.
 The daemon resolves the requesting Account's accepted checkout, reads its
 effective Project definition and prepares one dotenv snapshot for the declared

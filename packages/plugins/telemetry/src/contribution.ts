@@ -51,13 +51,15 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
    ports = result.assignment.listenerPorts;
   }
   for (const key of keys) if (ports[key] === undefined) return unavailable('project_worktree_ports_unavailable');
+  const members = selected.length ? await input.readWorktreeDatabaseMembers?.() : undefined;
   const controller = new AbortController();
   let lease: Awaited<ReturnType<typeof bindLocalCapture>>;
   try {
    lease = await options.acquireLocalCapture({ enabled: true,
     projectScope: scope, ownerAccountId, physicalRootIdentity: input.physicalRootIdentity,
     partition: captureSourcePartition({ kind: 'worktree', ...scope, workspaceId: input.workspace.id }, ownerAccountId),
-    urls: selected.map(({ slot, offer }) => ({ ...offer, assignedPort: ports[slot]! })),
+    urls: selected.map(({ slot, offer }) => ({ ...offer, assignedPort: ports[slot]!,
+     databaseMember: members?.find(member => member.source.variable === offer.name) })),
     ...(localOtlp ? { otlpPort: ports.otlp! } : {}), signal: options.signal ?? controller.signal });
   } catch (error) {
    controller.abort();

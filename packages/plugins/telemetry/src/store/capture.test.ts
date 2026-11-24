@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 import { captureMigrations, createCaptureStore } from './capture.js';
+import { writeCaptureWorktree } from './worktrees.js';
 import { createCaptureSqliteFixture as fixture } from '../testing/sqlite.js';
 describe('capture store through SQLite', () => {
  it('returns bounded redacted log prefixes for N rows in one list read, with details on demand', async () => {
@@ -52,17 +53,21 @@ describe('capture store through SQLite', () => {
   try {
    for (const migration of captureMigrations.filter(migration => migration.version <= 7)) await migration.up(f.db);
    const store = createCaptureStore(f.db, () => {});
-   await store.write([
-    { id: 'query', worktree: 'chosen', kind: 'query', source: 'wire', at: 1, shape: 'select ?', transactionId: 'tx',
-     physicalRootIdentity: '/chosen', detail: { parameters: ['previous format'] } },
-    { id: 'tx', worktree: 'chosen', kind: 'transaction', source: 'wire', at: 1, detail: { executionIds: ['query'] } },
-    { id: 'expired-first', worktree: 'chosen', kind: 'query', source: 'otlp', at: 1,
-     detail: { span: { database: { maskedParameters: ['previous format'] } } } },
-    { id: 'query', worktree: 'other', kind: 'log', source: 'otlp', at: 1,
-     physicalRootIdentity: '/other', detail: { log: { body: 'unrelated log' } } },
-   ]);
+   // Seed the historical columns directly: the current writer expects the latest schema.
+   await f.db.execute(`INSERT INTO captureSummaries(id,worktree,kind,source,at,shape,transactionId) VALUES
+    ('query','chosen','query','wire',1,'select ?','tx'), ('tx','chosen','transaction','wire',1,NULL,NULL),
+    ('query','other','log','otlp',1,NULL,NULL)`);
+   for (const [id, worktree, detail] of [
+    ['query', 'chosen', { parameters: ['previous format'] }],
+    ['tx', 'chosen', { executionIds: ['query'] }],
+    ['expired-first', 'chosen', { span: { database: { maskedParameters: ['previous format'] } } }],
+    ['query', 'other', { log: { body: 'unrelated log' } }],
+   ] as const) {
+    await f.db.execute('INSERT INTO captureDetails(id,worktree,at,body) VALUES(?,?,1,?)', [id, worktree, JSON.stringify(detail)]);
+   }
+   await writeCaptureWorktree(f.db, 'chosen', '/chosen');
+   await writeCaptureWorktree(f.db, 'other', '/other');
    // Retention can expire the summary before its separately retained detail.
-   await f.db.execute('DELETE FROM captureSummaries WHERE worktree = ? AND id = ?', ['chosen', 'expired-first']);
    await f.db.execute('CREATE TABLE unrelated (value TEXT)');
    await f.db.execute('INSERT INTO unrelated VALUES (?)', ['retained']);
    for (const migration of captureMigrations.filter(migration => migration.version > 7)) {
