@@ -1684,6 +1684,126 @@ describe('plugin daemon database owner', () => {
         }
     });
 
+    it.each(['matching', 'mismatched', 'missing'] as const)(
+        'prepares a retained database on a cold host with a %s migration history',
+        async (history) => {
+            const happyHomeDir = await makeHappyHome();
+            const paths = resolvePluginStorePaths({ happyHomeDir });
+            const firstOwner = {
+                pluginId: 'acme.indexer',
+                paths,
+                signal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
+                limits: {
+                    maximumDatabaseBytes: 1_048_576,
+                    maximumInputBytes: 16_384,
+                    maximumResultBytes: 16_384,
+                    maximumResultRows: 100,
+                    maximumAffectedRows: 1_000,
+                    maximumElapsedMs: 5_000,
+                },
+            } as const;
+            const initialMigration = {
+                version: 1,
+                id: 'create-records',
+                up: async (transaction: import('@happier-dev/plugin-sdk/storage').DaemonDatabaseMigrationTransaction) => {
+                    await transaction.execute('CREATE TABLE records (value TEXT NOT NULL)');
+                },
+            };
+            const first = createPluginDaemonDatabaseOwner({
+                ...firstOwner,
+                declarations: [{
+                    id: 'main',
+                    migrations: [{ version: 1, id: initialMigration.id }],
+                    incumbentQueryFixtureId: 'records-v1',
+                }],
+            });
+            const databasePath = join(paths.storageDir, firstOwner.pluginId, 'databases', 'main.sqlite');
+            const migrations = [
+                { ...initialMigration, id: history === 'mismatched' ? 'different-history' : initialMigration.id },
+                {
+                    version: 2,
+                    id: 'add-label',
+                    up: async (transaction: import('@happier-dev/plugin-sdk/storage').DaemonDatabaseMigrationTransaction) => {
+                        await transaction.execute('ALTER TABLE records ADD COLUMN label TEXT');
+                    },
+                },
+            ];
+            const successorDefinition = {
+                migrations,
+                incumbentQueryFixture: {
+                    id: 'records-v2',
+                    run: async (transaction: import('@happier-dev/plugin-sdk/storage').DaemonDatabaseMigrationReadTransaction) => {
+                        await transaction.query('SELECT value, label FROM records');
+                    },
+                },
+            };
+            const host = createStablePluginDaemonDatabaseHost({
+                paths,
+                daemonDatabaseLimits: {
+                    protocolMaximumDatabaseBytes: firstOwner.limits.maximumDatabaseBytes,
+                    resolvePluginLimits: () => firstOwner.limits,
+                },
+            });
+            try {
+                const database = await first.storage.database('main', {
+                    migrations: [initialMigration],
+                    incumbentQueryFixture: {
+                        id: 'records-v1',
+                        run: async (transaction) => { await transaction.query('SELECT value FROM records'); },
+                    },
+                });
+                await database.execute('INSERT INTO records VALUES (?)', ['retained']);
+                await first.close();
+                if (history === 'missing') {
+                    const raw = openSqliteDatabaseSync(databasePath);
+                    try {
+                        raw.exec('DROP TABLE _happier_plugin_schema');
+                    } finally {
+                        raw.close();
+                    }
+                }
+
+                const successor = {
+                    pluginId: firstOwner.pluginId,
+                    occurrenceId: 'cold',
+                    signal: new AbortController().signal,
+                    isOccurrenceCurrent: () => true,
+                };
+                const prepared = host.prepare({
+                    ...successor,
+                    declarations: [{
+                        id: 'main',
+                        migrations: migrations.map(({ version, id }) => ({ version, id })),
+                        incumbentQueryFixtureId: successorDefinition.incumbentQueryFixture.id,
+                    }],
+                    runtime: { main: successorDefinition },
+                });
+                if (history === 'matching') {
+                    await prepared;
+                    const upgraded = await host.bind(successor).database('main', successorDefinition);
+                    await expect(upgraded.query('SELECT value, label FROM records')).resolves.toEqual([
+                        { value: 'retained', label: null },
+                    ]);
+                } else {
+                    await expect(prepared).rejects.toMatchObject({
+                        code: history === 'missing' ? 'daemon_database_ledger_invalid' : 'daemon_database_declaration_mismatch',
+                    });
+                    const raw = openSqliteDatabaseSync(databasePath);
+                    try {
+                        expect(raw.prepare('SELECT * FROM records').all()).toEqual([{ value: 'retained' }]);
+                    } finally {
+                        raw.close();
+                    }
+                }
+            } finally {
+                await host.close();
+                await first.close();
+                await rm(happyHomeDir, { recursive: true, force: true });
+            }
+        },
+    );
+
     it('refuses a retained migration when the carried prior fixture identity was altered', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });

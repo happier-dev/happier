@@ -3345,6 +3345,14 @@ opens a child on admitted SQL work, can reuse it for already queued operations o
 that database, and closes it when the queue drains. The database file and its
 prepared migration contract survive that close.
 
+When the daemon prepares a retained database without a running incumbent, it
+uses the SQLite migration ledger to identify the applied migration prefix.
+Matching migrations already in the ledger are skipped. A retained schema
+without a migration history needs a backup with its ledger or recovery from
+the plugin author before migration can proceed. During a live replacement, the
+host also runs the serving incumbent's query fixture before committing pending
+migrations so the incumbent can resume if adoption fails.
+
 In 0.3 development, a `daemonDatabases` declaration may include
 `retention: [{ table, timeColumn }]`. The declared ordinary SQLite tables retain
 their unshadowed `rowid`; each time column stores epoch milliseconds. The existing

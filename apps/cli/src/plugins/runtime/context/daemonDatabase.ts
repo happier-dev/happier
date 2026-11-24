@@ -903,9 +903,9 @@ async function readLedger(worker: DaemonDatabaseWorkerLease): Promise<readonly R
     return Object.freeze(ledger);
 }
 
-async function hasApplicationTables(worker: DaemonDatabaseWorkerLease): Promise<boolean> {
+async function hasApplicationSchema(worker: DaemonDatabaseWorkerLease): Promise<boolean> {
     const row = await worker.get(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != ? LIMIT 1",
+        "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' AND name != ? LIMIT 1",
         [LEDGER_TABLE],
     );
     return Boolean(row);
@@ -1457,13 +1457,18 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             return;
         }
         const incumbentContract = params.incumbentContracts?.get(entry.localId);
-        if (
-            (ledger.length > 0 || await hasApplicationTables(initialWorker))
-            && !isExactPreparedIncumbentContract(incumbentContract, entry.localId)
-        ) {
+        if (incumbentContract && !isExactPreparedIncumbentContract(incumbentContract, entry.localId)) {
             fail(
                 'daemon_database_migration_requires_future_contract',
-                'A retained daemon database migration requires the exact prior-generation query fixture',
+                'A live daemon database migration requires the exact incumbent query fixture',
+            );
+        }
+        // The ledger proves which migrations the retained file has applied. A
+        // live incumbent additionally needs its query contract to survive adoption.
+        if (!incumbentContract && ledger.length === 0 && await hasApplicationSchema(initialWorker)) {
+            fail(
+                'daemon_database_ledger_invalid',
+                'The retained daemon database is missing its migration history. Restore a backup with its ledger or contact the plugin author for recovery.',
             );
         }
         const incumbentFixture = incumbentContract?.incumbentQueryFixture;

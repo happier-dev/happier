@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { createDaemonArchivePluginChangePreparer } from '@/plugins/daemon/archiveChangePreparer';
 import type { PluginPendingChangeEntry } from './changeContract';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   createDaemonPluginChangeService,
   type DaemonPluginChangeOwner,
@@ -905,7 +906,14 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           const reason = `${COLD_START_READINESS_STAGE_REASONS[stage]}: ${
             projectPluginFailureText(error)
           }`;
-          await registry.recordPluginActivationFailure(pluginId, reason);
+          const failure = stage === 'daemonDatabases' && isPluginError(error)
+            ? {
+              code: 'plugin_activation_failed' as const,
+              message: reason,
+              details: { failureCause: projectActionFailureCauseV1(error, 'plugin.activation') },
+            }
+            : reason;
+          await registry.recordPluginActivationFailure(pluginId, failure);
           logger.warn(
             '[PLUGIN RUNTIME] Cold startup fenced a failed plugin readiness participant',
             { pluginId, stage, error: projectPluginFailureText(error) },

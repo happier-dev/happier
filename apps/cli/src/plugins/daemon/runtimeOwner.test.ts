@@ -15,6 +15,8 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import type { ResolvedActivationTarget } from '@/plugins/projection/registry/types';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
+import { PluginContextServiceError } from '@/plugins/runtime/context/errors';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createTargetedContributionsService } from '@/plugins/runtime/invocation/services/targetedContributions';
@@ -876,11 +878,11 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
   // the activated set. A published cold registry may not advertise a participant
   // whose readiness was rejected, and it may not fence a healthy peer either.
   function createReadinessFencingRecorder(activatedPluginIds: Set<string>) {
-    const fenced: Array<Readonly<{ pluginId: string; message: string }>> = [];
+    const fenced: Array<Readonly<{ pluginId: string; failure: string | PluginCompatibilityDiagnostic }>> = [];
     return Object.freeze({
       fenced,
-      recordPluginActivationFailure(pluginId: string, message: string): void {
-        fenced.push(Object.freeze({ pluginId, message }));
+      recordPluginActivationFailure(pluginId: string, failure: string | PluginCompatibilityDiagnostic): void {
+        fenced.push(Object.freeze({ pluginId, failure }));
         activatedPluginIds.delete(pluginId);
       },
     });
@@ -893,7 +895,7 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     const events: string[] = [];
     const prepareDaemonDatabases = vi.fn(async (input: Readonly<{ pluginIds: readonly string[] }>) => {
       if (input.pluginIds.includes('com.acme.bundled-indexer')) {
-        throw new Error('bundled daemon database preparation rejected');
+        throw new PluginContextServiceError('daemon_database_ledger_invalid', 'Restore the retained plugin database migration ledger');
       }
       events.push(`database-prepared:${input.pluginIds.join(',')}`);
     });
@@ -946,8 +948,11 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     // The rejected participant is fenced once at the canonical activation owner;
     // the healthy peer is left untouched.
     expect(fencing.fenced.map((entry) => entry.pluginId)).toEqual(['com.acme.bundled-indexer']);
-    expect(fencing.fenced[0]?.message).toContain('cold-start daemon database preparation failed');
-    expect(fencing.fenced[0]?.message).toContain('bundled daemon database preparation rejected');
+    expect(fencing.fenced[0]?.failure).toMatchObject({
+      code: 'plugin_activation_failed',
+      message: expect.stringContaining('Restore the retained plugin database migration ledger'),
+      details: { failureCause: { errorCode: 'daemon_database_ledger_invalid' } },
+    });
     expect(fencedCreateRuntime).not.toHaveBeenCalled();
     expect(dispose).not.toHaveBeenCalled();
   });
