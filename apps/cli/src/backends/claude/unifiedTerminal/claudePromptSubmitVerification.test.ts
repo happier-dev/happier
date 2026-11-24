@@ -235,6 +235,21 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toThrow();
   });
 
+  it('stages an unscrolled composer whose top rule carries the session name', () => {
+    const screenText = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.331-named-composer.ansi', import.meta.url),
+      'utf8',
+    );
+    const sentence = 'Dies ist ein harmloser Absatz fuer den Eingabefeld-Mitschnitt und enthaelt keinen Auftrag.';
+    const promptText = [`${sentence} ${sentence} ${sentence}`, `${sentence} ${sentence} ${sentence}`].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(true);
+    expect(() => policy.isPromptStagedBeforeSubmit({
+      promptText,
+      screenText: screenText.replace('Eingabefeld-Mitschnitt und enthaelt keinen Auftrag. Dies ist ein harmloser', 'Eingabefeld-Mitschnitt und enthaelt keinen Auftrag. Dies ist ein harmlosXr'),
+    })).toThrow();
+  });
+
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const words = Array.from({ length: 90 }, (_, index) => `incident-word-${index}`);

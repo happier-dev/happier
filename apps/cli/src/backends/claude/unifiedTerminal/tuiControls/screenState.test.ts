@@ -1461,6 +1461,15 @@ describe('parseClaudeScreenState — labelled composer rule rows', () => {
     expect(state.userDraftPresent).toBe(true);
   });
 
+  it('reads the real capture of an unscrolled composer whose top rule carries the session name', () => {
+    const raw = readFileSync(new URL('./__fixtures__/claude-2.1.331-named-composer.ansi', import.meta.url), 'utf8');
+    const sentence = 'Dies ist ein harmloser Absatz fuer den Eingabefeld-Mitschnitt und enthaelt keinen Auftrag.';
+    const state = parseClaudeScreenState(raw);
+    expect(state.composerContent).toMatch(/^Dies ist ein harmloser Absatz/);
+    expect(state.composerContent).toContain(sentence.split(' ').slice(0, 4).join(' '));
+    expect(state.userDraftPresent).toBe(true);
+  });
+
   it.each([
     ['overflow marker only', rule('↑ 2 more'), rule()],
     ['session name after the marker', rule('↑ 2 more', 'Website-Auftrag Fortsetzung'), rule()],
