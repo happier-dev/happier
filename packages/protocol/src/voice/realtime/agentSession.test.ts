@@ -1,4 +1,3 @@
-import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -16,7 +15,7 @@ import {
   AgentSessionRealtimeWatchResultV1Schema,
 } from './agentSession.js';
 
-function emitAgentSessionDeclarations(): Map<string, string> {
+function createAgentSessionDeclarationReader() {
   const configPath = fileURLToPath(new URL('../../../tsconfig.json', import.meta.url));
   const sourcePath = fileURLToPath(new URL('./agentSession.ts', import.meta.url));
   const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {}, {
@@ -38,29 +37,38 @@ function emitAgentSessionDeclarations(): Map<string, string> {
     },
     projectReferences: parsed.projectReferences,
   });
-  const sourceFile = program.getSourceFile(sourcePath);
-  if (!sourceFile) throw new Error(`Missing ${sourcePath}`);
+  const host = ts.createCompilerHost(program.getCompilerOptions());
+  const declarations = new Map<string, DeclarationModule>();
+  function read(fileName: string): DeclarationModule {
+    const cached = declarations.get(fileName);
+    if (cached) return cached;
+    const sourceFile = program.getSourceFile(fileName);
+    if (!sourceFile) throw new Error(`Missing declaration source ${fileName}`);
 
-  const diagnostics = program.getDeclarationDiagnostics(sourceFile);
-  if (diagnostics.length > 0) {
-    throw new Error(diagnostics.map((diagnostic) => (
-      ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-    )).join('\n'));
+    // Emit only modules reached by the public declaration's referenced symbols.
+    // Whole-program emit serializes unrelated result and Action schema exports.
+    let text = sourceFile.isDeclarationFile ? sourceFile.text : undefined;
+    if (!sourceFile.isDeclarationFile) {
+      const result = program.emit(sourceFile, (outputName, contents) => {
+        if (outputName.endsWith('.d.ts')) text = contents;
+      }, undefined, true);
+      if (result.diagnostics.length > 0) {
+        throw new Error(ts.formatDiagnostics(result.diagnostics, host));
+      }
+    }
+    if (text === undefined) throw new Error(`No declaration emitted for ${fileName}`);
+    const declaration = declarationModule(fileName, text);
+    declarations.set(fileName, declaration);
+    return declaration;
   }
-
-  const declarations = new Map<string, string>();
-  const emitted = program.emit(undefined, (fileName, contents) => {
-    if (fileName.endsWith('.d.ts')) declarations.set(fileName, contents);
-  }, undefined, true);
-  if (emitted.diagnostics.length > 0) {
-    throw new Error(emitted.diagnostics.map((diagnostic) => (
-      ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-    )).join('\n'));
-  }
-  if (![...declarations.keys()].some((fileName) => fileName.endsWith('/voice/realtime/agentSession.d.ts'))) {
-    throw new Error('Agent Session realtime declaration was not emitted');
-  }
-  return declarations;
+  return {
+    entry: () => read(sourcePath),
+    resolve(fromFileName: string, moduleSpecifier: string): DeclarationModule | undefined {
+      if (!moduleSpecifier.startsWith('.')) return undefined;
+      const resolved = ts.resolveModuleName(moduleSpecifier, fromFileName, program.getCompilerOptions(), host).resolvedModule;
+      return resolved && read(resolved.resolvedFileName);
+    },
+  };
 }
 
 type DeclarationImport = Readonly<{
@@ -127,35 +135,10 @@ function declarationModule(fileName: string, text: string): DeclarationModule {
   return { fileName, declarations, imports };
 }
 
-function resolveDeclarationModule(
-  declarations: ReadonlyMap<string, DeclarationModule>,
-  fromFileName: string,
-  moduleSpecifier: string,
-): DeclarationModule | undefined {
-  if (!moduleSpecifier.startsWith('.')) return undefined;
-  const unresolved = resolve(dirname(fromFileName), moduleSpecifier);
-  for (const candidate of [
-    unresolved.replace(/\.js$/u, '.d.ts'),
-    `${unresolved}.d.ts`,
-    resolve(unresolved, 'index.d.ts'),
-  ]) {
-    const declaration = declarations.get(candidate);
-    if (declaration) return declaration;
-  }
-  return undefined;
-}
-
 function collectStartRequestDeclarationLeaks(): readonly string[] {
-  const emitted = emitAgentSessionDeclarations();
-  const declarations = new Map<string, DeclarationModule>(
-    [...emitted].map(([fileName, text]) => [fileName, declarationModule(fileName, text)]),
-  );
-  const agentSessionFileName = [...declarations.keys()].find((fileName) => (
-    fileName.endsWith('/voice/realtime/agentSession.d.ts')
-  ));
-  if (!agentSessionFileName) throw new Error('Missing emitted Agent Session realtime declaration');
-  const agentSessionDeclaration = declarations.get(agentSessionFileName);
-  if (!agentSessionDeclaration) throw new Error('Missing Agent Session realtime declaration module');
+  const declarations = createAgentSessionDeclarationReader();
+  const agentSessionDeclaration = declarations.entry();
+  const agentSessionFileName = agentSessionDeclaration.fileName;
 
   const leaks = new Set<string>();
   const visited = new Set<string>();
@@ -175,7 +158,7 @@ function collectStartRequestDeclarationLeaks(): readonly string[] {
       leaks.add(`${fileName}: zod.${imported.importedName}`);
       return;
     }
-    const importedModule = resolveDeclarationModule(declarations, fileName, imported.moduleSpecifier);
+    const importedModule = declarations.resolve(fileName, imported.moduleSpecifier);
     if (!importedModule) {
       leaks.add(`${fileName}: unresolved declaration import ${imported.moduleSpecifier}`);
       return;
