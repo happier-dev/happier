@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { ProviderRuntimeBindingBasisV1Schema, SessionProviderBindingMetadataV1Schema, resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol';
+import { ProviderRuntimeBindingBasisV1Schema, SessionProviderBindingMetadataV1Schema, resolveProviderManagedRuntimeFromContributionV1 } from '@happier-dev/protocol';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { RunnerDaemonManagedProviderBootstrapV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -25,8 +25,8 @@ it('attests the current development Gateway source for a peer without acquiring 
         contributionKey: `${identity.pluginId}/${identity.localId}`,
         deployment: { kind: 'managedLocal', gatewayPlacement: { kind: 'machine', machineId: 'hub' },
           implementationIdentity: identity,
-          managedRuntime: resolveProviderManagedRuntimeDeclarationV1({ implementationIdentity: identity,
-            managedRuntime: contribution.definition.managedRuntime }),
+          managedRuntime: resolveProviderManagedRuntimeFromContributionV1({ implementationIdentity: identity,
+            definition: { ...contribution.definition, managedRuntime: contribution.definition.managedRuntime } }),
           purposeBindings: { v: 1, bindings: [{ purpose: { consumer: identity, purpose: 'openai-upstream' },
             target: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
               accountId: 'fixture-account' } } }] },

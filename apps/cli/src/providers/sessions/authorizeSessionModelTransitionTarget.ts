@@ -18,6 +18,7 @@ import {
   subscribeActiveAccountSettingsKeys,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createRuntimeProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 
 import {
@@ -155,6 +156,7 @@ export async function authorizeSessionModelTransitionProviderTargetWithLease(
     agentTargetKey: string;
     lease: PluginRuntimeRegistryLease;
     signal?: AbortSignal;
+    savedSecretOperationContext?: SavedSecretOperationContextV1;
     input: Parameters<SessionModelTransitionProviderTargetAuthorizer>[0];
   }>,
 ): Promise<SessionModelTransitionProviderTargetAuthorization> {
@@ -162,7 +164,9 @@ export async function authorizeSessionModelTransitionProviderTargetWithLease(
     happyHomeDir: configuration.happyHomeDir,
     machineId: params.machineId,
   });
-  const accountLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+  const requester = params.savedSecretOperationContext;
+  const readSnapshot = requester?.readSnapshot ?? getActiveAccountSettingsSnapshot;
+  const accountLifetime = requester ? undefined : getActiveAccountSettingsSnapshotLifetimeToken();
   const result = await createRuntimeProviderSpawnAuthorizationAttempt({
     signal: params.signal,
     selection: modelSelection(params.input.selection),
@@ -170,15 +174,17 @@ export async function authorizeSessionModelTransitionProviderTargetWithLease(
     agentTargetKey: params.agentTargetKey,
     agentId: params.agentId,
     lease: params.lease,
-    getAccountSettingsSnapshot: getActiveAccountSettingsSnapshot,
-    subscribeAccountSettingsSnapshot: (listener, keys) =>
-      subscribeActiveAccountSettingsKeys(keys, () => listener()),
+    getAccountSettingsSnapshot: readSnapshot,
+    subscribeAccountSettingsSnapshot: requester?.subscribeAccountSettings ?? ((listener, keys) =>
+      subscribeActiveAccountSettingsKeys(keys, () => listener())),
+    ...(requester ? { savedSecretOperationContext: requester } : {}),
     runtimeStateStore,
     readModelProjection: createAccountScopedProviderModelProjectionReader({
-      serverUrl: resolveServerHttpBaseUrl(),
-      readCredentials: readStoredCredentials,
-      readAccountSettingsSnapshot: async () => getActiveAccountSettingsSnapshot(),
-      isCurrent: () => getActiveAccountSettingsSnapshotLifetimeToken() === accountLifetime,
+      serverUrl: requester?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+      readCredentials: requester ? async () => requester.credentials : readStoredCredentials,
+      readAccountSettingsSnapshot: async () => readSnapshot(),
+      isCurrent: requester ? () => requester.isCurrent(params.signal)
+        : () => getActiveAccountSettingsSnapshotLifetimeToken() === accountLifetime,
     }),
     materializationBaseDir: join(
       configuration.happyHomeDir,

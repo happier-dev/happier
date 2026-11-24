@@ -842,7 +842,7 @@ import { resolveTrackedConnectedServiceBindingsRaw } from '../connectedServices/
 
 import { removeRuntimeAuthFailureReportOutboxItemsForSession } from '../connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
 import { createConnectedServiceRecoverySupersessionCleaner } from '../connectedServices/continuation/continuationRecoverySupersession';
-import { createDaemonRunnerInvocationServices } from '@/daemon/agentRuntime/invocationServices';
+import { createDaemonRunnerInvocationServices, type OpenRunnerAccountConnectionProviderBrokerAccess } from '@/daemon/agentRuntime/invocationServices';
 import { acquireWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
 import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
 
@@ -1156,7 +1156,7 @@ export async function startDaemonSessionControlRuntime(
      * Without it the public Action route is deliberately not mounted.
      */
     externalActionAccountId?: string | null;
-    openAccountConnectionProviderBrokerAccess?: import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
+    openAccountConnectionProviderBrokerAccess?: OpenRunnerAccountConnectionProviderBrokerAccess;
     openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
     projectProviderModels?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModels'];
     projectProviderModelsForAccount?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModelsForAccount'];
@@ -7218,6 +7218,7 @@ export async function startDaemonSessionControlRuntime(
     });
   };
   const runnerDaemonPluginServicesHost = createDaemonRunnerInvocationServices({
+    managedProviderAccountAuthorityFor,
     readSessionMetadata: readPersistedConnectedServiceSwitchSessionMetadata,
     params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry,
   });
@@ -13670,18 +13671,18 @@ export async function startDaemonSessionControlRuntime(
                         null,
                       requestAgentId: retainedAgent.agentId,
                       requestedSelection: request.operation.selection,
-                      authorizeProviderTarget: async (authority) =>
-                        await authorizeSessionModelTransitionProviderTargetWithLease(
-                          {
+                      authorizeProviderTarget: authority =>
+                        withSessionAccountContext(sessionId, requester =>
+                          authorizeSessionModelTransitionProviderTargetWithLease({
                             sessionId,
                             machineId: params.machineId,
                             agentId: authority.agentId,
                             agentTargetKey: authority.agentTargetKey,
                             signal: context.signal,
                             lease,
+                            savedSecretOperationContext: requester?.bootstrap.savedSecretOperationContext,
                             input: authority.input,
-                          },
-                        ),
+                          }), undefined, context.signal),
                     }),
                   );
                 return {

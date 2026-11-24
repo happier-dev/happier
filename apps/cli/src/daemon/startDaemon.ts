@@ -2774,16 +2774,23 @@ export async function startDaemon(
       } } : {}),
       ...(openRunAccountConnectionSource ? { openAccountConnectionManagedConsumerSource: openRunAccountConnectionSource } : {}),
       ...(managedPolicyHomeId && externalActionAccountId ? {
-        openAccountConnectionProviderBrokerAccess: async request => {
+        openAccountConnectionProviderBrokerAccess: async (request, requester) => {
           const runtime = machineIrohRuntime;
           if (!runtime) throw createNativeRuntimeAbsentProviderBrokerError(request);
+          const accountId = requester ? requester.bootstrap.attribution.accountId : externalActionAccountId;
+          if (requester && requester.bootstrap.homeServerIdentityId !== managedPolicyHomeId) {
+            throw new PluginError({ code: 'requester_session_not_current' });
+          }
           const openTunnel = createProviderBrokerMachineCarrierTunnelOpen({
-            homeId: managedPolicyHomeId, accountId: externalActionAccountId, localMachineId: machineId,
+            homeId: managedPolicyHomeId, accountId, localMachineId: machineId,
             runtime, resolveTrustRoots: resolvePeerMediationTrustRoots,
           });
           return await openAccountConnectionProviderBrokerAccess({
-            ...request, homeId: managedPolicyHomeId, accountId: externalActionAccountId, initiatorMachineId: machineId,
-            openBroker: async (openRequest, signal) => await api.openAccountConnectionProviderBroker(openRequest, { signal }),
+            ...request, homeId: managedPolicyHomeId, accountId, initiatorMachineId: machineId,
+            openBroker: (openRequest, signal) => requester
+              ? runWithServerHttpBaseUrl(requester.bootstrap.serverHttpBaseUrl,
+                () => requester.api.openAccountConnectionProviderBroker(openRequest, { signal }))
+              : api.openAccountConnectionProviderBroker(openRequest, { signal }),
             openTunnel,
           });
         },

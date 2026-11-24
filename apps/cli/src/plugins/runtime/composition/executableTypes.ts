@@ -361,6 +361,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     createRetainedManagedProviderRuntimeInvocationServices?(input: Readonly<{
         scope: RetainedManagedProviderRuntimeInvocationScope;
         sharedGateway?: SharedManagedProviderGatewayBinding;
+        accountAuthority?: ManagedProviderInvocationAccountAuthority;
         signal: AbortSignal;
         isCurrent(): boolean;
         readAdoptedPublicOutcome():

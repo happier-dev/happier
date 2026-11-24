@@ -12,6 +12,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from "@/configuration";
 import type { RequesterSessionRuntimeContext, RequesterSessionRuntimeContextPorts } from "@/daemon/sessionEncryption/requesterSessionCredentials";
 import type { StoredCredentials } from '@/persistence';
+import type { ManagedProviderInvocationAccountAuthority } from '@/plugins/runtime/providerBindings/runtimeTypes';
 import { createRunnerIsolationIdentity } from '@/daemon/agentRuntime/runnerIsolationIdentity';
 import { createRunnerAgentProjectLaunchInvocation } from "@/daemon/agentRuntime/runnerAgentProjectLaunch";
 import { ExecutionRunGetResponseSchema, ExecutionRunStopResponseSchema } from "@happier-dev/protocol/execution/runs/responseSchemas";
@@ -53,8 +54,15 @@ import { ConnectedServiceRuntimeRegistry } from "@/daemon/connectedServices/runt
 import { readRunnerConnectedAccountBinding } from './runnerConnectedAccountBinding';
 import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
+type OpenAccountConnectionProviderBrokerAccess = import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
+type ManagedProviderRequesterBrokerContext = Pick<RequesterSessionRuntimeContext, 'api' | 'bootstrap'>;
+export type OpenRunnerAccountConnectionProviderBrokerAccess = (
+  input: Parameters<OpenAccountConnectionProviderBrokerAccess>[0],
+  requester?: ManagedProviderRequesterBrokerContext,
+) => ReturnType<OpenAccountConnectionProviderBrokerAccess>;
+
 export function createDaemonRunnerInvocationServices({
-  params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry, readSessionMetadata,
+  managedProviderAccountAuthorityFor, params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry, readSessionMetadata,
 }: Readonly<{
   params: Readonly<{
 agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
@@ -63,7 +71,7 @@ serverId: string;
 serverBaseUrl: string;
 credentials: StoredCredentials;
 externalActionAccountId?: string | null;
-openAccountConnectionProviderBrokerAccess?: import('@/providers/broker/accountConnectionClient').OpenAccountConnectionProviderBrokerAccess;
+openAccountConnectionProviderBrokerAccess?: OpenRunnerAccountConnectionProviderBrokerAccess;
 resolveCurrentMachineExecutionOriginContext?: (
       signal?: AbortSignal,
     ) => Promise<CurrentMachineExecutionOriginContext | null>;
@@ -77,6 +85,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
   createSessionManagedProviderCustodyClient: (scope: RunnerManagedProviderCustodyScopeV1, dependencies: Parameters<
       typeof createRunnerManagedServicesClient
     >[0]['dependencies']) => Promise<ReturnType<typeof createRunnerManagedServicesClient>>;
+  managedProviderAccountAuthorityFor: (requester: RequesterSessionRuntimeContext) => ManagedProviderInvocationAccountAuthority | null | undefined;
   resolveSessionAccountContext: (sessionId: string | null, retainedAttribution?: TrackedSession['requesterWorkAttributionV1'], signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>;
   withSessionAccountHome: <T>(context: RequesterSessionRuntimeContext | null, operation: () => Promise<T>) => Promise<T>;
   shutdownCancellationDomains: ReturnType<typeof createDaemonShutdownCancellationDomains>;
@@ -162,6 +171,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
         const lease = runSnapshot ? { ...runSnapshot.snapshot.runtimeRegistryLease, release: async () => {} }
           : await acquireDaemonPluginRuntimeRegistryLease();
         let releaseLease = true;
+        let providerRequester: RequesterSessionRuntimeContext | null = null;
         const supervisionLaunchAuthorities = new Map<
           string,
           RunnerManagedProviderServerLaunchAuthority
@@ -286,6 +296,17 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             });
           }
           preparationStage = 'managed_provider';
+          if (!runSnapshot && (managedProviderRetention
+            || tracked.spawnOptions?.providerBindingMetadataV1?.runtimeBindingBasis?.deployment.kind === 'managedLocal')) {
+            providerRequester = await resolveSessionAccountContext(sessionId, undefined, signal);
+          }
+          const savedSecretOperationContext = providerRequester?.bootstrap.savedSecretOperationContext;
+          const requireRequesterProviderAuthority = () => {
+            if (!providerRequester) return undefined;
+            const accountAuthority = managedProviderAccountAuthorityFor(providerRequester);
+            if (!accountAuthority) throw createManagedProviderAuthorityError('runtime_invocation_services');
+            return accountAuthority;
+          };
           const revalidateAdoptedManagedProviderPolicy = async (
             runtimeBindingBasis: ProviderRuntimeBindingBasisV1,
           ): Promise<boolean> => {
@@ -312,7 +333,8 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   providerConnectionId: trackedSelection.providerConnectionId,
                 },
               });
-              const accountSnapshot = getActiveAccountSettingsSnapshot();
+              const accountSnapshot = savedSecretOperationContext
+                ? savedSecretOperationContext.readSnapshot() : getActiveAccountSettingsSnapshot();
               if (!accountSnapshot) return false;
               const providerSettings = readProviderSettingsForCli(
                 accountSnapshot,
@@ -330,12 +352,14 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             basis: ProviderRuntimeBindingBasisV1,
           ) => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(signal);
-            if (!origin || origin.machineId !== params.machineId || !params.externalActionAccountId) {
+            const accountId = providerRequester ? providerRequester.bootstrap.attribution.accountId : params.externalActionAccountId;
+            if (!origin || origin.machineId !== params.machineId || !accountId
+              || (providerRequester && providerRequester.bootstrap.homeServerIdentityId !== origin.serverIdentityId)) {
               throw createManagedProviderAuthorityError('gateway_execution_identity');
             }
             return Object.freeze({
               homeId: origin.serverIdentityId,
-              accountId: params.externalActionAccountId,
+              accountId,
               connectionId: basis.connectionId,
               machineId: params.machineId,
               consumerId: sessionId,
@@ -433,7 +457,9 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 paths: resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir }),
                 pluginId: scope.pluginId, immutableGenerationId: scope.sourceCustody.immutableGenerationId,
               })),
-            openBroker: params.openAccountConnectionProviderBrokerAccess,
+            openBroker: params.openAccountConnectionProviderBrokerAccess
+              ? request => params.openAccountConnectionProviderBrokerAccess!(request, providerRequester ?? undefined)
+              : undefined,
             installConsumerCleanup: cleanup => { managedProviderCleanup.current = cleanup; },
             cleanup: cleanupManagedProvider, readSupervisionLaunchAuthority,
             capturedAgentProviderBinding, isCapturedAgentRegistrationCurrent,
@@ -539,6 +565,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 throw createManagedProviderAuthorityError('retained_hard_revocation');
               }
               const created = await createRetainedInvocation({
+                accountAuthority: requireRequesterProviderAuthority(),
                 ...(retained.custody === 'daemonShared'
                   ? { sharedGateway: await resolveSharedGatewayBinding(scope.runtimeBindingBasis) }
                   : {}),
@@ -765,6 +792,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 agentId: authority.agentId,
                 agentTargetKey: authority.agentTargetKey,
                 lease,
+                savedSecretOperationContext,
                 input: authority.input,
               });
             const runtimeBindingBasis = authorization.runtimeBindingBasis;
@@ -831,6 +859,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                       agentId: authority.agentId,
                       agentTargetKey: authority.agentTargetKey,
                       lease,
+                      savedSecretOperationContext,
                       input: authority.input,
                     });
                   return (
@@ -856,6 +885,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             }
             const createdManagedProviderInvocation = await createInvocation({
               identity,
+              accountAuthority: requireRequesterProviderAuthority(),
               purposeBindings: runtimeBindingBasis.deployment.purposeBindings,
               ...(runtimeBindingBasis.deployment.managedRuntime.sharing === 'connectionMachine'
                 ? { sharedGateway: await resolveSharedGatewayBinding(runtimeBindingBasis) }
@@ -1654,19 +1684,27 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             currentGlobalMcp,
             currentGlobalExternalSessions,
             dispose: async () => {
-              await projectLaunchInvocation?.disposeProjectAgentLaunch();
-              await cleanupManagedProvider();
-              if (invocationRetainsRegistryLease) {
-                await lease.release();
+              try {
+                await projectLaunchInvocation?.disposeProjectAgentLaunch();
+                await cleanupManagedProvider();
+                if (invocationRetainsRegistryLease) {
+                  await lease.release();
+                }
+              } finally {
+                await releaseSessionAccountContext(providerRequester);
               }
             },
           };
         } finally {
-          if (releaseManagedProviderInvocation) {
-            await cleanupManagedProvider();
-          }
-          if (releaseLease) {
-            await lease.release();
+          try {
+            if (releaseManagedProviderInvocation) {
+              await cleanupManagedProvider();
+            }
+            if (releaseLease) {
+              await lease.release();
+            }
+          } finally {
+            if (releaseManagedProviderInvocation) await releaseSessionAccountContext(providerRequester);
           }
         }
       } catch (error) {

@@ -6276,6 +6276,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         input: Readonly<{
             scope: RetainedManagedProviderRuntimeInvocationScope;
             sharedGateway?: SharedManagedProviderGatewayBinding;
+            accountAuthority?: ManagedProviderInvocationAccountAuthority;
             signal: AbortSignal;
             isCurrent(): boolean;
             readAdoptedPublicOutcome():
@@ -6348,6 +6349,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 purposeBindings:
                     retainedProvider.runtimeBindingBasis.deployment.purposeBindings,
                 ...(input.sharedGateway ? { sharedGateway: input.sharedGateway } : {}),
+                ...(input.accountAuthority ? { accountAuthority: input.accountAuthority } : {}),
                 retained: Object.freeze({
                     declaration: retainedProvider.declaration,
                     pluginVersion: retainedProvider.pluginVersion,
