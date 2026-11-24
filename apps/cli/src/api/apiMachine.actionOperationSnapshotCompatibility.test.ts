@@ -151,6 +151,24 @@ describe('Action operation snapshot producer compatibility', () => {
     // existing Actions still use their unchanged predecessor projection below.
     expect(PredecessorSnapshotSchema.safeParse(opened).success).toBe(false);
   });
+  it('names the withheld operation when a shared Machine holds another Account\'s request, and publishes only its own', async () => {
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: 'bea' })).toString('base64url')}.signature`;
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+    const warn = vi.spyOn(logger, 'warn');
+    const contents: Parameters<typeof emitActionOperationSnapshotV1>[0]['content'][] = [];
+    const publisher = createActionOperationSnapshotPublisher({ resolveAccountId: async () => 'bea',
+      serverBaseUrl: 'https://shared-machine.example', readCredentials: async () => ({ token, encryption: null }),
+      publishContent: content => { contents.push(content); } });
+    const operation = (operationId: string, accountId: string): ActionOperationSnapshotV1 => ({ version: 1, operationId, revision: 1,
+      actionId: 'machines.processes.list', state: 'running', scope: { accountId, machineId: 'shared' },
+      title: 'List processes', createdAt: 1, startedAt: 2, cancellation: 'unsupported' });
+    await publisher(operation('requested-by-ann', 'ann'));
+    await publisher(operation('own', 'bea'));
+    expect(contents.flatMap(content => content.t === 'plain' ? [content.v.operationId] : [])).toEqual(['own']);
+    const withheld = warn.mock.calls.filter(([message]) => String(message).startsWith('Withheld Action operation snapshot'));
+    expect(withheld).toHaveLength(1);
+    expect(withheld[0]![1]).toEqual({ operationIds: ['requested-by-ann'] });
+  });
   it('withholds deployment-child content from the ordinary Account publisher while preserving ordinary publication and internal activity', async () => {
     const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain' });
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'ann' })).toString('base64url')}.signature`;

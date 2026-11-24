@@ -53,12 +53,15 @@ export function createActionOperationSnapshotPublisher(input: Readonly<{
         if (!credentials) return false;
         const accountId = await input.resolveAccountId();
         if (!accountId || readAccountIdFromToken(credentials.token) !== accountId) {
-            logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
+            logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account',
+                { operationIds: snapshots.map(snapshot => snapshot.operationId) });
             return false;
         }
         const admitted = snapshots.filter(snapshot => snapshot.scope.accountId === accountId);
         if (admitted.length !== snapshots.length) {
-            logger.warn('Withheld Action operation snapshot because the credential Account differs from the machine connection Account');
+            // Another Account's request on this shared Machine: its requester reads it; name it for attribution.
+            logger.warn('Withheld Action operation snapshot because the operation belongs to another Account than the machine connection',
+                { operationIds: snapshots.filter(snapshot => snapshot.scope.accountId !== accountId).map(snapshot => snapshot.operationId) });
         }
         if (admitted.length === 0) return false;
         const accountMode = await readAccountEncryptionModeOnce({ credentials, usage: 'identity', scope: { token: credentials.token, serverBaseUrl: input.serverBaseUrl }, request: () => axios.get(
