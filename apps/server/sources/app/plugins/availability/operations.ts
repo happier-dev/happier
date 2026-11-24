@@ -8,7 +8,7 @@ import type { z } from "zod/mini";
 import { deriveArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { type ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
-import { normalizePluginProjectScopeV1, PluginAccountPluginIntentV1Schema, PluginAccountPluginPackageAssetLinkV1Schema, PluginAccountPluginUiArtifactLinkV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, isExactPluginMachineMaterializationReleaseCorrespondenceV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, PluginMachineMaterializationSnapshotV1Schema, PluginMachineMaterializationV1Schema, PluginUiArtifactHostingCapabilityV1Schema, PluginUiReleaseSlotV1Schema, normalizePluginMachineMaterializationSnapshotV1, projectPluginMachineMaterializationReportFactsV1, snapshotPluginReleaseFactsV1, mergePluginReleaseUiSlotsV1, type PluginAccountPluginUiArtifactLinkV1, type PluginAccountPluginPackageAssetLinkV1, type PluginMachineMaterializationV1, type PluginMachineMaterializationSnapshotV1, type PluginReleaseFactsV1, type PluginUiArtifactHostingCapabilityV1, type PluginUiReleaseSlotV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { normalizePluginProjectScopeV1, PluginAccountPluginIntentV1Schema, PluginAccountPluginPackageAssetLinkV1Schema, PluginAccountPluginUiArtifactLinkV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE, isExactPluginMachineMaterializationReleaseCorrespondenceV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, PluginAvailabilityPortableReleaseSourceClassV1Schema, PluginMachineMaterializationV1Schema, PluginUiArtifactHostingCapabilityV1Schema, PluginUiReleaseSlotV1Schema, normalizePluginMachineMaterializationSnapshotV1, projectPluginMachineMaterializationReportFactsV1, snapshotPluginReleaseFactsV1, mergePluginReleaseUiSlotsV1, type PluginAccountPluginUiArtifactLinkV1, type PluginAccountPluginPackageAssetLinkV1, type PluginMachineMaterializationV1, type PluginMachineMaterializationSnapshotV1, type PluginReleaseFactsV1, type PluginUiArtifactHostingCapabilityV1, type PluginUiReleaseSlotV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginAvailabilityIntentReadActionInputV1Schema, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityCollectionWritersClaimActionInputV1Schema, PluginAvailabilityMaterializationsReadActionInputV1Schema, PluginAvailabilityMaterializationsReportActionInputV1Schema, PluginAvailabilityReleaseReadActionInputV1Schema, PluginAvailabilityReleasePublishActionInputV1Schema, PluginAvailabilityPackageAssetPublishActionInputV1Schema, PluginAvailabilityPackageAssetReadActionInputV1Schema, PluginAvailabilityPackageAssetRemoveActionInputV1Schema, PluginAvailabilityUiArtifactPublishActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1Schema, PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1Schema, PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactRemoveActionInputV1Schema, type PluginAvailabilityArtifactReadEnvelopeV1, type PluginAvailabilityIntentReadActionOutputV1, type PluginAvailabilityIntentsListActionOutputV1, type PluginAvailabilityIntentSetActionOutputV1, type PluginAvailabilityCollectionWritersClaimActionOutputV1, type PluginAvailabilityMaterializationsReadActionOutputV1, type PluginAvailabilityMaterializationsReportActionOutputV1, type PluginAvailabilityReleaseReadActionOutputV1, type PluginAvailabilityReleasePublishActionOutputV1, type PluginAvailabilityPackageAssetPublishActionOutputV1, type PluginAvailabilityPackageAssetReadActionOutputV1, type PluginAvailabilityPackageAssetRemoveActionOutputV1, type PluginAvailabilityUiArtifactPublishActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionOutputV1, type PluginAvailabilityUiArtifactBrowserFrameIssueActionInputV1, type PluginAvailabilityUiArtifactReadActionOutputV1, type PluginAvailabilityUiArtifactRemoveActionOutputV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -1212,6 +1212,23 @@ function materializationFromRow(row: StoredMaterializationRow) {
     return PluginMachineMaterializationV1Schema.parse(materializationInputFromRow(row));
 }
 
+/** Project the output of the authenticated report writer. Detect retained pre-slot rows by their old envelope. */
+function projectStoredMaterialization(row: StoredMaterializationRow): PluginMachineMaterializationV1 | null {
+    if (
+        (row.portableRelease && !PluginAvailabilityPortableReleaseSourceClassV1Schema.safeParse(row.sourceClass).success)
+        || !Array.isArray(row.uiArtifacts)
+        || row.uiArtifacts.some((artifact: unknown) => (
+            artifact === null || typeof artifact !== "object"
+            || !("artifactId" in artifact) || typeof artifact.artifactId !== "string"
+            || !("hostUiApiRange" in artifact) || typeof artifact.hostUiApiRange !== "string"
+        ))
+    ) {
+        return null;
+    }
+    // All other fields come from the validated replacement writer and typed database columns.
+    return materializationInputFromRow(row) as PluginMachineMaterializationV1;
+}
+
 function safeMaterializationFromRow(row: StoredMaterializationRow) {
     return PluginMachineMaterializationV1Schema.safeParse(materializationInputFromRow(row));
 }
@@ -2034,31 +2051,31 @@ export function createPluginAvailabilityOperations(options: Readonly<{
             pluginIds: readonly string[];
         }>> = [];
         const snapshots = machines.flatMap((machine) => {
-            const parsedRows = machine.pluginMaterializations.map((row) => ({
-                row,
-                parsed: safeMaterializationFromRow(row),
-            }));
-            const unreadableRows = parsedRows.filter((entry) => !entry.parsed.success);
+            // A retained complete snapshot can have been reported by a prior Home.
+            const reportedServerIdentityId = machine.pluginMaterializations[0]?.serverIdentityId ?? serverIdentityId;
+            const materializations: PluginMachineMaterializationV1[] = [];
+            const unreadableRows: StoredMaterializationRow[] = [];
+            for (const row of machine.pluginMaterializations) {
+                const projected = projectStoredMaterialization(row);
+                if (projected === null || row.serverIdentityId !== reportedServerIdentityId) unreadableRows.push(row);
+                else materializations.push(projected);
+            }
             if (unreadableRows.length > 0) {
                 unreadableMachines.push({
                     machineId: machine.id,
                     materializationCount: unreadableRows.length,
-                    pluginIds: [...new Set(unreadableRows.map((entry) => entry.row.pluginId))]
+                    pluginIds: [...new Set(unreadableRows.map((row) => row.pluginId))]
                         .sort(comparePluginIds),
                 });
                 // A partial machine body is not an exact removal observation.
                 // Retain that machine's prior accepted body on clients instead.
                 return [];
             }
-            const materializations = parsedRows.flatMap((entry) => (
-                entry.parsed.success ? [entry.parsed.data] : []
-            ));
-            if (materializations.length === 0 && unreadableRows.length > 0) return [];
-            return [PluginMachineMaterializationSnapshotV1Schema.parse({
-                serverIdentityId: materializations[0]?.serverIdentityId ?? serverIdentityId,
+            return [{
+                serverIdentityId: reportedServerIdentityId,
                 machineId: machine.id,
                 materializations,
-            })];
+            }];
         });
         if (unreadableMachines.length > 0) {
             warn({

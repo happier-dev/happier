@@ -22,6 +22,8 @@ import {
     PluginAvailabilityReleaseReadActionOutputV1Schema,
     PluginAvailabilityMaterializationsReportActionInputV1Schema,
     PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+    PluginMachineMaterializationSnapshotV1Schema,
+    PluginMachineMaterializationV1Schema,
     PluginReleaseFactsV1Schema,
     type PluginAvailabilityMaterializationsReportActionOutputV1,
     type FeaturesResponse,
@@ -510,7 +512,7 @@ describe("plugin Availability operations", () => {
         } finally { observed.mockRestore(); decoding.mockRestore(); }
     });
 
-    it('sends each distinct Machine UI-artifact list once per materializations read, however many Machines report it', async () => {
+    it('admits Machine reports once and serves repeated full and named reads without full-schema parses', async () => {
         await seedAccountAndMachine();
         const service = operations();
         const machineIds = [MACHINE_ID, ...Array.from({ length: 7 }, (_, index) => `machine-ui-set-${index}`)];
@@ -518,30 +520,81 @@ describe("plugin Availability operations", () => {
             await db.machine.create({ data: { id: machineId, accountId: ACCOUNT_ID, metadata: "{}", installationId: `${machineId}-installation` } });
         }
         const marker = (index: number) => `sha256:${index.toString(16).padStart(2, '0')}${'e'.repeat(62)}`;
-        const uiArtifacts = Array.from({ length: 6 }, (_, index) => ({ contributionId: `panel-${index}`, artifactId: `panel-${index}`,
-            tier: 'reactNative' as const, platform: 'web' as const, artifactDigest: marker(index), hostUiApiRange: '^1.0.0' }));
-        for (const machineId of machineIds) {
-            await service.reportMaterializations({ accountId: ACCOUNT_ID, publisherMachineId: machineId,
-                input: { expectedRevision: null, snapshot: { serverIdentityId: SERVER_IDENTITY_ID, machineId, materializations: [{
-                    serverIdentityId: SERVER_IDENTITY_ID, machineId, materializationId: `bundled-${machineId}`, pluginId: PLUGIN_ID,
-                    version: RELEASE.version, sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts,
-                    enabled: true, trustState: 'trusted', observedAt: 1,
-                }] } } });
+        const artifactsForPlugin = (offset: number) => Array.from({ length: 6 }, (_, index) => ({
+            contributionId: `panel-${index}`, artifactId: `panel-${index}`,
+            tier: 'reactNative' as const, platform: 'web' as const, artifactDigest: marker(offset + index), hostUiApiRange: '^1.0.0',
+        }));
+        const pluginIds = [PLUGIN_ID, DISABLED_PLUGIN_ID];
+        // Observe Zod's real execution, including when it runs these schemas as nested fields.
+        const snapshotParser = vi.spyOn(PluginMachineMaterializationSnapshotV1Schema._zod, 'run');
+        const rowParser = vi.spyOn(PluginMachineMaterializationV1Schema._zod, 'run');
+        try {
+            for (const machineId of machineIds) {
+                await expect(service.reportMaterializations({ accountId: ACCOUNT_ID, publisherMachineId: machineId,
+                    input: { expectedRevision: null, snapshot: { serverIdentityId: SERVER_IDENTITY_ID, machineId, materializations: pluginIds.map((pluginId, index) => ({
+                        serverIdentityId: SERVER_IDENTITY_ID, machineId, materializationId: `bundled-${pluginId}`, pluginId,
+                        version: RELEASE.version, sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts: artifactsForPlugin(index * 6),
+                        enabled: true, trustState: 'trusted', observedAt: 1,
+                    })) } } })).resolves.toMatchObject({ outcome: 'replaced' });
+            }
+            const writeCounts = { snapshots: snapshotParser.mock.calls.length, rows: rowParser.mock.calls.length };
+            snapshotParser.mockClear();
+            rowParser.mockClear();
+            let loadedRows = 0;
+            const snapshot = prismaStorage.withSqliteReadSnapshot;
+            const observed = vi.spyOn(prismaStorage, 'withSqliteReadSnapshot').mockImplementation((read, options) => snapshot(async tx => {
+                const machine = new Proxy(tx.machine, {
+                    get(model, key, receiver) {
+                        if (key !== 'findMany') return Reflect.get(model, key, receiver);
+                        return async (args: Parameters<typeof model.findMany>[0]) => {
+                            const rows = await model.findMany(args);
+                            for (const row of rows) {
+                                if ('pluginMaterializations' in row && Array.isArray(row.pluginMaterializations)) {
+                                    loadedRows += row.pluginMaterializations.length;
+                                }
+                            }
+                            return rows;
+                        };
+                    },
+                });
+                return read(new Proxy(tx, {
+                    get(target, key, receiver) {
+                        return key === 'machine' ? machine : Reflect.get(target, key, receiver);
+                    },
+                }));
+            }, options));
+            try {
+                await withAuthenticatedTestApp(app => registerPluginAvailabilityRoutes(app, { operations: service }), async app => {
+                    for (const payload of [{}, {}, { pluginIds: [PLUGIN_ID] }, { pluginIds: [PLUGIN_ID] }]) {
+                        loadedRows = 0;
+                        const response = await app.inject({ method: 'POST', headers: { 'x-test-user-id': ACCOUNT_ID }, payload,
+                            url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'] });
+                        expect(response.statusCode, response.body).toBe(200);
+                        const named = 'pluginIds' in payload;
+                        const expectedRows = machineIds.length * (named ? 1 : 2);
+                        expect(loadedRows).toBe(expectedRows);
+                        expect(response.body.split(marker(0)).length - 1).toBe(1);
+                        expect(response.body.split(marker(6)).length - 1).toBe(named ? 0 : 1);
+                        const decoded = PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(response.json());
+                        expect(decoded.inventoryComplete).toBe(true);
+                        expect(decoded.snapshots.map(item => item.machineId)).toEqual([...machineIds].sort());
+                        const rows = decoded.snapshots.flatMap(item => item.materializations);
+                        expect(rows).toHaveLength(expectedRows);
+                        const lists = rows.filter(row => row.pluginId === PLUGIN_ID).map(row => row.uiArtifacts);
+                        expect(lists[0]).toEqual(artifactsForPlugin(0));
+                        expect(new Set(lists).size).toBe(1);
+                    }
+                    expect({ snapshots: snapshotParser.mock.calls.length, rows: rowParser.mock.calls.length })
+                        .toEqual({ snapshots: 0, rows: 0 });
+                    expect(writeCounts).toEqual({ snapshots: machineIds.length, rows: machineIds.length * pluginIds.length });
+                });
+            } finally {
+                observed.mockRestore();
+            }
+        } finally {
+            snapshotParser.mockRestore();
+            rowParser.mockRestore();
         }
-        const canonical = await service.readMaterializations({ accountId: ACCOUNT_ID, input: {} });
-        await withAuthenticatedTestApp(registerPluginAvailabilityRoutes, async app => {
-            const response = await app.inject({ method: 'POST', headers: { 'x-test-user-id': ACCOUNT_ID }, payload: {},
-                url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'] });
-            expect(response.statusCode, response.body).toBe(200);
-            // Delivery: one copy of the shared list instead of one per Machine.
-            expect(response.body.split(marker(0)).length - 1).toBe(1);
-            // The canonical reader decodes the same inventory, sharing one list across Machines.
-            const decoded = PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(response.json());
-            expect(decoded).toEqual(JSON.parse(JSON.stringify(canonical)));
-            const lists = decoded.snapshots.map(snapshot => snapshot.materializations[0]!.uiArtifacts);
-            expect(lists).toHaveLength(machineIds.length);
-            expect(new Set(lists).size).toBe(1);
-        });
     });
 
     it('reads a named plugin set in one exact request with the single-read projection, Account-scoped', async () => {
@@ -2991,8 +3044,7 @@ describe("plugin Availability operations", () => {
                 pluginId: PLUGIN_ID,
                 version: RELEASE.version,
                 sourceClass: "bundledFirstParty",
-                portableRelease: true,
-                archiveDigestSha256: `sha256:${"a".repeat(64)}`,
+                portableRelease: false,
                 uiArtifacts: [{
                     contributionId: "hosted",
                     tier: "hostedWeb",
@@ -3005,6 +3057,8 @@ describe("plugin Availability operations", () => {
             },
         });
         const service = operations();
+        await expect(service.readMaterializations({ accountId: ACCOUNT_ID, input: {} }))
+            .resolves.toMatchObject({ inventoryComplete: false, snapshots: [] });
         const currentSnapshot = {
             serverIdentityId: SERVER_IDENTITY_ID,
             machineId: MACHINE_ID,

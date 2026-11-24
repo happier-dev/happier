@@ -46,12 +46,12 @@ describe('plugin-aware Account administration Machine selection', () => {
       sourceClass: 'localPath', portableRelease: false, enabled: true, trustState: 'trusted', uiArtifacts: [], observedAt: 1,
     }] }], releases: [] });
 
-  it('filters the existing reachable selection by the plugin census before preferring a Machine', async () => {
+  it('requests only the required plugin before preferring a reachable Machine', async () => {
     boundaries.axiosGet.mockResolvedValue({ data: ['unrelated', 'capable'].map(id => ({ ...currentMachine(id), activeAt: Date.now() })) });
     boundaries.axiosPost.mockResolvedValue({ data: census() });
     expect(await listCurrentAccountAdministrationMachines({ token: 'captured', serverHttpBaseUrl: 'https://captured.test',
       preferredMachineId: 'unrelated', requiredPluginId: pluginId })).toEqual(['capable']);
-    expect(boundaries.axiosPost).toHaveBeenCalledWith('https://captured.test/v1/plugins/availability/materializations/read', {},
+    expect(boundaries.axiosPost).toHaveBeenCalledWith('https://captured.test/v1/plugins/availability/materializations/read', { pluginIds: [pluginId] },
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer captured' }) }));
   });
 

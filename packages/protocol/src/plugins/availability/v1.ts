@@ -706,28 +706,26 @@ export const PluginAccountAvailabilityMaterializationsReadResponseV1Schema: z.Zo
 ));
 
 function normalizePluginMachineMaterializationV1(
-  input: PluginMachineMaterializationV1,
+  materialization: PluginMachineMaterializationV1,
 ): PluginMachineMaterializationV1 {
-  const parsed = PluginMachineMaterializationV1Schema.parse(input);
   return Object.freeze({
-    ...parsed,
-    uiArtifacts: Object.freeze([...parsed.uiArtifacts]
+    ...materialization,
+    uiArtifacts: Object.freeze([...materialization.uiArtifacts]
       .sort((left, right) => uiSlotKey(left).localeCompare(uiSlotKey(right)))
       .map((artifact) => Object.freeze({ ...artifact }))),
   });
 }
 
 /**
- * Produces the one canonical full-inventory representation used for equal-revision
- * retry comparison. It is not persisted as a second snapshot or fingerprint.
+ * Orders an admitted inventory for equal-revision retry comparison.
+ * The report schema admits the complete snapshot before this projection.
  */
 export function normalizePluginMachineMaterializationSnapshotV1(
-  input: unknown,
+  snapshot: PluginMachineMaterializationSnapshotV1,
 ): PluginMachineMaterializationSnapshotV1 {
-  const parsed = PluginMachineMaterializationSnapshotV1Schema.parse(input);
   return Object.freeze({
-    ...parsed,
-    materializations: Object.freeze([...parsed.materializations]
+    ...snapshot,
+    materializations: Object.freeze([...snapshot.materializations]
       .sort((left, right) => left.materializationId.localeCompare(right.materializationId))
       .map(normalizePluginMachineMaterializationV1)),
   });

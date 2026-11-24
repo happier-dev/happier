@@ -269,13 +269,14 @@ export async function listCurrentAccountAdministrationMachines(params: Parameter
     try {
       const projection = params.authorization?.requesterHttpProjection;
       const path = PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'];
-      const headers = projection ? await projection.createRequestHeaders({ method: 'POST', path, body: {},
+      const body = { pluginIds: [params.requiredPluginId] };
+      const headers = projection ? await projection.createRequestHeaders({ method: 'POST', path, body,
         effectActionId: params.effectActionId ?? params.authorization!.binding.actionId,
         ...(params.signal ? { signal: params.signal } : {}),
       }) : { Authorization: `Bearer ${params.token}` };
       if (!headers) throw new Error('Requester plugin inventory authority is unavailable');
       const home = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl ?? projection?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl());
-      const response = await axios.post(`${home}${path}`, {}, {
+      const response = await axios.post(`${home}${path}`, body, {
         headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers },
         timeout: 0, ...(params.signal ? { signal: params.signal } : {}),
       });
