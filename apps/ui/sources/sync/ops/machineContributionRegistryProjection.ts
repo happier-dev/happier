@@ -58,7 +58,8 @@ import type { DaemonProjectionSectionStore } from './machineProjectionSectionSto
 import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { isEnvironmentDatabaseAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { PluginActionFailureResponseV1Schema } from '@happier-dev/protocol/plugins/actions/failureResponse';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { randomUUID } from '@/platform/randomUUID';
@@ -267,6 +268,16 @@ export function mapMachinePluginUiResourceTransportFailure(
         case 'error':
             return { code: 'plugin_resource_transport_error', retryable: true };
     }
+}
+
+/** Home's socket admission refusal (`buildForbiddenRpcResponse`): nothing reached the daemon. */
+function readHomeRpcAdmissionRefusal(response: unknown): DaemonPluginStructuredMessageActionExecuteResponse | null {
+    if (!response || typeof response !== 'object') return null;
+    const value = response as Readonly<{ ok?: unknown; errorCode?: unknown; failureCause?: unknown }>;
+    if (value.ok !== false || value.errorCode !== RPC_ERROR_CODES.FORBIDDEN) return null;
+    const refusal = PluginActionFailureResponseV1Schema.safeParse({ ok: false, code: RPC_ERROR_CODES.FORBIDDEN,
+        effectAttempted: false, ...(value.failureCause === undefined ? {} : { failureCause: value.failureCause }) });
+    return refusal.success ? refusal.data : { ok: false, code: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false };
 }
 
 function classifyMachinePluginTransportError(error: unknown): MachinePluginTransportReason {
@@ -1009,10 +1020,15 @@ export async function machinePluginStructuredMessageActionExecute(
             ? projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, actionInput) : undefined;
         const mounted = payload.invocation?.kind === 'mountedPluginSurface' || payload.invocation?.kind === 'clientPluginAction'
             ? payload.invocation : undefined;
-        if (!payload.invocation || selectedRead) {
+        // An Environment database Action is admitted by its Environment owner at Home's mint (P3 M7);
+        // the raw Machine RPC carries no such decision, so it always takes the Home relay below.
+        const environmentDatabase = Boolean(mounted && actionInput && !selectedRead
+            && isEnvironmentDatabaseAdmissionV1(projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, actionInput)));
+        if (!payload.invocation || selectedRead || environmentDatabase) {
             // A mounted deployment read requires the same Home admission as
             // an ordinary signed Action. A refused selection cannot fall through to Machine RPC.
-            if (!actionInput || (selectedRead ? !mounted || !('databaseTarget' in selectedRead) || selectedRead.access !== 'read' : payload.requiredReadOnly)) return {
+            if (!actionInput || (selectedRead ? !mounted || !('databaseTarget' in selectedRead) || selectedRead.access !== 'read'
+                : !environmentDatabase && payload.requiredReadOnly)) return {
                 supported: true, result: { ok: false, code: 'plugin_action_unavailable' },
             };
             const serverId = resolveMachineRpcTargetServerId(opts.accountLifetime?.scope.serverId ?? opts.serverId);
@@ -1077,6 +1093,9 @@ export async function machinePluginStructuredMessageActionExecute(
             onIssued,
         });
         if (isRpcMethodNotFoundResult(response)) return { supported: false, reason: 'not-supported' };
+        // Home's definite admission refusal is a typed cause, never an unknown outcome.
+        const homeRefusal = readHomeRpcAdmissionRefusal(response);
+        if (homeRefusal) return { supported: true, result: homeRefusal };
         const parsed = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(response);
         if (!parsed.success) return { supported: false, reason: issued ? 'outcomeUnknown' : 'error' };
         const approval = parsed.data.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(parsed.data.result) : null;

@@ -146,6 +146,16 @@ describe('machine contribution registry projection ops', () => {
         }));
     });
 
+    it('retains Machine admission exclusions alongside source declarations', async () => {
+        const unavailablePlugins = [{ pluginId: 'acme.disabled', code: 'plugin_disabled' }];
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ status: 'sourceDeclarations',
+            pluginId: mountedTarget.pluginId, sourceDeclarations: [], unavailablePlugins });
+        const { machinePluginUiTargetedContributionsRead } = await import('./machineContributionRegistryProjection');
+        expect(await machinePluginUiTargetedContributionsRead('machine-1', {
+            serverId: serverAId, pluginId: mountedTarget.pluginId, readMode: 'sourceDeclarations',
+        })).toEqual({ supported: true, sourceDeclarations: [], unavailablePlugins });
+    });
+
     it('reads a Machine\'s source declarations once per projection revision across targeted operations', async () => {
         const { PluginContributesV2Schema } = await import('@happier-dev/protocol/plugins/contributions/v2');
         const contributes = PluginContributesV2Schema.parse({ targetedPluginContributions: [{ id: 'external-source',
@@ -1386,6 +1396,29 @@ describe('machine contribution registry projection ops', () => {
         expect(Object.prototype.hasOwnProperty.call(omittedPayload, 'input')).toBe(false);
         expect(Object.prototype.hasOwnProperty.call(nullPayload, 'input')).toBe(true);
         expect(nullPayload.input).toBeNull();
+    });
+
+    it('passes Home\'s Machine admission refusal through typed instead of an unknown outcome', async () => {
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'access_denied', httpStatus: 403 };
+        machineRpcWithServerScopeMock.mockResolvedValueOnce({ ok: false, error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            failureCause, effectAttempted: false });
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
+        await expect(machinePluginStructuredMessageActionExecute('machine-1', {
+            serverId: serverAId, expectedContributorOccurrenceId: 'preview-occurrence-7',
+            qualifiedActionId: 'acme.preview/open-preview', invocation: mountedActionInvocation, executionSurface: 'ui',
+        })).resolves.toEqual({ supported: true, result: { ok: false, code: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false, failureCause } });
+    });
+
+    it('sends a mounted Environment database Action through Home\'s admitted relay, never the raw Machine RPC', async () => {
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
+        await machinePluginStructuredMessageActionExecute('machine-1', {
+            serverId: serverAId, expectedContributorOccurrenceId: 'happier.database:29',
+            qualifiedActionId: 'happier.database/describe', invocation: mountedActionInvocation, executionSurface: 'ui',
+            input: { operation: 'describe', target: { kind: 'deployment_service', environment: { serverId: 'home',
+                projectSourceId: 'source', environmentId: 'environment' }, deploymentId: 'deployment', targetLinkId: 'link',
+                serviceId: 'database', database: 'app' } },
+        });
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
     it('distinguishes a structured Action failure before issuance from a lost acknowledgement after issuance', async () => {
