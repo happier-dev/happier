@@ -1,4 +1,5 @@
 import {
+    DATABASE_ACCESS_READ_ACTION_ID_V1,
     DATABASE_CONNECTION_RESOURCE_ID_V1,
     DATABASE_PLUGIN_ID_V1,
     DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
@@ -7,6 +8,7 @@ import {
     type DatabaseDemandSnapshotV1,
 } from '@happier-dev/database-protocol';
 import {
+    type DatabaseAccessReadResultV1,
     type DatabaseDescriptorV1,
     type DatabaseOperationResultV1,
     type DatabaseTargetV1,
@@ -146,10 +148,14 @@ export function createHostWorkbenchClient(
       // The SDK admitted the result against DatabaseOperationResultV1ProtocolSchema.
       return result as unknown as DatabaseOperationResultV1;
     },
-    // The access read producer (P3 database.access.read) has not landed; the rail reads the
-    // describe-time summary carried by the selected descriptor instead of guessing a level.
-    async access() {
-      throw new Error('Database access details are not available yet');
+    async access(target, signal) {
+      const result = await hostApi.executeAction(
+        databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1),
+        projectNativeJsonValueForTransport({ target }),
+        { signal },
+      );
+      // The SDK admitted the result against the declared access-result union.
+      return result as unknown as DatabaseAccessReadResultV1;
     },
     subscribeOwnWrites(listener) {
       listeners.add(listener);

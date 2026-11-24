@@ -3,6 +3,7 @@
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+    DATABASE_ACCESS_READ_ACTION_ID_V1,
     DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
     DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
     DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
@@ -31,6 +32,8 @@ import {
 import { encodeBase64, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
+import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
+import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
 import { renderSurface as renderPage } from './WorkbenchPage.js';
 import { renderSurface as renderRail } from './DatabaseRailTab.js';
@@ -265,6 +268,52 @@ describe('Database workbench surfaces', () => {
       const current = [...document.querySelectorAll('[role="button"][aria-current="page"]')];
       expect(current.map(row => row.getAttribute('aria-label') ?? row.textContent)).toEqual(['Console']);
     } finally { await fixture.dispose(); }
+  });
+
+  it('loads the selected database agent access only when the access popover opens', async () => {
+    const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
+    const daemon = daemonAnswers([descriptor]);
+    const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
+      if (request.action !== readAccess) return daemon(request);
+      return projectNativeJsonValueForTransport({
+        setBy: 'machine', agentAccess: 'readWriteAsk', access: descriptor.access,
+      });
+    });
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'read-access', mountNonce: 'read-access' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => (
+        <PluginUiHostPresentationScope
+          environment={projectHappierUiEnvironment(context.surface)}
+          presentationHost={{
+            renderCodeBlock: () => null,
+            renderIcon: () => null,
+            renderMarkdown: () => null,
+            renderPopover: input => input.content({
+              presentation: 'popover', maxHeight: 240, requestClose: input.onRequestClose,
+            }),
+          }}
+        >
+          {renderPage(context)}
+        </PluginUiHostPresentationScope>
+      ),
+      subPath: savedDatabasePath,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction },
+    });
+    const reads = () => executeAction.mock.calls.map(([call]) => call).filter(call => call.action === readAccess);
+    try {
+      await settle(20);
+      expect(reads()).toHaveLength(0);
+      await act(async () => fixture.press(await fixture.getByRole('button', { name: 'Read only' })));
+      await settle(20);
+      expect(reads()).toMatchObject([{ input: { target: descriptor.target } }]);
+      expect(await fixture.getByText('Agents can read and ask before writing.')).toBeTruthy();
+    } finally {
+      await fixture.dispose();
+    }
   });
 
   it('reopens a saved database when the person retries its failed connection read', async () => {

@@ -1,4 +1,5 @@
 import type {
+    DatabaseAccessReadResultV1,
     DatabaseCellResultV1,
     DatabaseCellV1,
     DatabaseDescriptorV1,
@@ -22,7 +23,6 @@ import type {
 } from '@happier-dev/plugin-sdk/database';
 import type { DatabaseSelectedRowsExportInputV1 } from '@happier-dev/database-protocol';
 import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
-import type { SharePrincipalPresentation } from '@happier-dev/plugin-ui/components';
 import type { ConsoleDeviceStorage } from './consoleState.js';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type { HostDatabaseActivityResource, HostDatabaseLastLook } from '@happier-dev/plugin-ui/hostApi';
@@ -42,14 +42,7 @@ export type WorkbenchLocation = Readonly<{
     fkTrail: readonly Readonly<{ relation: DatabaseRelationV1; conditions?: DatabaseFilterV1;
         mode?: WorkbenchLocation['mode']; sort?: WorkbenchLocation['sort']; columns?: WorkbenchLocation['columns']; page?: WorkbenchLocation['page'] }>[];
 }>;
-export type WorkbenchAccess = Readonly<{
-    word: string;
-    editing: Readonly<{ on: boolean; viewerMayChange: boolean }>;
-    editors: readonly Readonly<{ principal: SharePrincipalPresentation['ref']; display: string }>[];
-    agentLevel: 'none' | 'read';
-    writer: 'environment' | 'machineLocal';
-    environment?: Readonly<{ name: string; production: boolean }>;
-}>;
+export type WorkbenchAccess = DatabaseAccessReadResultV1;
 export type WorkbenchTarget = Readonly<{
     targetKey: string; target: DatabaseTargetV1; name: string; engineLabel: string;
     origin: Readonly<{ variable: string; serviceName: string }> | Readonly<{ connectedBy: string }>;

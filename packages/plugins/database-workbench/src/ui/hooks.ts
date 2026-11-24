@@ -172,7 +172,7 @@ export function useDatabaseAccess(targetKey: string) {
     const instance = useWorkbenchInstance();
     const resource = instance.access(targetKey);
     const snapshot = useResource(resource);
-    return useMemo(() => ({ ...snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error }), [snapshot]);
+    return useMemo(() => ({ value: snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error }), [snapshot]);
 }
 export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<{ targetKey: string; relation: DatabaseRelationV1 }>) {
     const changes = useSyncExternalStore(instance.drafts.subscribe, instance.drafts.changes, instance.drafts.changes);

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { DatabaseDescriptorV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
+import { isPluginError } from '@happier-dev/plugin-sdk';
+import type { DatabaseAgentAccessV1, DatabaseDescriptorV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
 import {
   ErrorState,
   Icon,
@@ -12,12 +13,14 @@ import {
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import {
+  useDatabaseAccess,
   useDatabaseRelations,
   useDatabaseSchemaRelations,
   useWorkbenchInstance,
   useWorkbenchLocation,
 } from '../hooks.js';
 import { sameRelation } from '../location.js';
+import { workbenchTargetKey } from '../workbench.js';
 import { approxRowsLabel } from './sizes.js';
 import { databaseEngineName } from './engines.js';
 import { CataloguePagination } from './CataloguePagination.js';
@@ -37,7 +40,9 @@ export function AccessWord(
   props: Readonly<{ descriptor: DatabaseDescriptorV1 }>,
 ) {
   const translate = usePluginTranslation();
+  const instance = useWorkbenchInstance();
   const [open, setOpen] = React.useState(false);
+  const targetKey = workbenchTargetKey(props.descriptor.target);
   const access = props.descriptor.access;
   if (!access) return null;
   const word = access.canWrite
@@ -46,7 +51,10 @@ export function AccessWord(
   return (
     <Popover
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={next => {
+        if (next) instance.access(targetKey).invalidate();
+        setOpen(next);
+      }}
       trigger={word}
       triggerAccessibilityLabel={word}
       triggerAppearance="text"
@@ -67,17 +75,33 @@ export function AccessWord(
                 )
           }
         />
-        <Text
-          tone="secondary"
-          variant="meta"
-          value={translate(
-            'plugins.database.access.agentsNone',
-            'Agents can’t use this database yet.',
-          )}
-        />
+        {open ? <AgentAccess targetKey={targetKey} /> : null}
       </Stack>
     </Popover>
   );
+}
+
+function AgentAccess({ targetKey }: Readonly<{ targetKey: string }>) {
+  const t = usePluginTranslation();
+  const { status, value, error } = useDatabaseAccess(targetKey);
+  if (status === 'loading') return <LoadingState layout="line" rows={1} />;
+  if (status !== 'ready' || value === undefined) {
+    return <ErrorState layout="line" kind="unavailable"
+      title={t('plugins.database.access.readUnavailable', 'Database access could not be read')}
+      details={isPluginError(error) ? error.code : error instanceof Error ? error.message : undefined} />;
+  }
+  const text = value.setBy === 'machine' ? agentAccessLabel(t, value.agentAccess)
+    : t('plugins.database.access.setByEnvironment', 'Agent access is managed by the Environment.');
+  return <Text tone="secondary" variant="meta" value={text} />;
+}
+
+function agentAccessLabel(t: PluginTranslate, access: DatabaseAgentAccessV1): string {
+  switch (access) {
+    case 'none': return t('plugins.database.access.agentsOff', 'Agents can’t use this database.');
+    case 'read': return t('plugins.database.access.agentsRead', 'Agents can read this database.');
+    case 'readWriteAsk': return t('plugins.database.access.agentsAsk', 'Agents can read and ask before writing.');
+    case 'readWriteNoApproval': return t('plugins.database.access.agentsWrite', 'Agents can read and write. Your approval rules still apply.');
+  }
 }
 
 /** One fact line under the name: engine and where it came from, the same facts the Dev servers row shows. */
