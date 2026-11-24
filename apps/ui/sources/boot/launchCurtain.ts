@@ -73,21 +73,21 @@ function subscribe(listener: () => void) {
   };
 }
 
-let bodyMounted = false;
+let mountedBodyPathname: string | null | undefined;
 /** The addressed destination is on screen and can own the remainder of its launch. */
-export function markLaunchDestinationBodyMounted(): void {
-  if (bodyMounted) return;
-  bodyMounted = true;
+export function markLaunchDestinationBodyMounted(pathname: string | null = null): void {
+  if (state === 'leaving' || state === 'gone' || mountedBodyPathname === pathname) return;
+  mountedBodyPathname = pathname;
   for (const listener of listeners) listener();
 }
-export function useMarkLaunchDestinationBodyMounted(presented: boolean): void {
+export function useMarkLaunchDestinationBodyMounted(presented: boolean, pathname?: string): void {
   React.useLayoutEffect(() => {
-    if (presented) markLaunchDestinationBodyMounted();
-  }, [presented]);
+    if (presented) markLaunchDestinationBodyMounted(pathname);
+  }, [pathname, presented]);
 }
-const readBodyMounted = () => bodyMounted;
-export function useLaunchDestinationBodyMounted(): boolean {
-  return React.useSyncExternalStore(subscribe, readBodyMounted, readBodyMounted);
+export function useLaunchDestinationBodyMounted(pathname?: string): boolean {
+  const read = () => pathname === undefined ? mountedBodyPathname !== undefined : mountedBodyPathname === pathname;
+  return React.useSyncExternalStore(subscribe, read, read);
 }
 
 export function useLaunchCurtainState(): LaunchCurtainState {

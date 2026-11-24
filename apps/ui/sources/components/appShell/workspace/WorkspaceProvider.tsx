@@ -176,7 +176,10 @@ export function WorkspaceProvider(props: Readonly<{
     const ownsHref = React.useCallback((href: string) => canHostRoutes
         && resolveDestinationRefFromHref(props.catalog, href) !== null, [canHostRoutes, props.catalog]);
     const ownsRoute = ownsHref(routeHref);
-    const launchBodyMounted = useLaunchDestinationBodyMounted();
+    // Read the same canonical address as the retained host. A body at the old address cannot release the new one.
+    const launchHref = routeDestination && props.waitForLaunchBody ? hrefForDestinationRef(props.catalog, routeDestination) : null;
+    const launchPathname = launchHref?.split(/[?#]/, 1)[0];
+    const launchBodyMounted = useLaunchDestinationBodyMounted(launchPathname === '/' ? undefined : launchPathname);
     useLaunchCurtainHold(props.waitForLaunchBody === true && ownsRoute && !launchBodyMounted);
     const hostsMobileWeb = phone && Platform.OS === 'web' && (ownsRoute || newSessionOverlay);
     const hostsRoute = props.enabled || hostsMobileWeb || (entry && ownsRoute);

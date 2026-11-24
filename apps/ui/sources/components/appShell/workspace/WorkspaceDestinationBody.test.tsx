@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -53,6 +54,7 @@ function MachineBody() {
 // Expo's context/module loader is the boundary. Fixture modules retain real React providers,
 // route adapters and local editor state beneath that boundary.
 beforeAll(async () => {
+    document.documentElement.classList.add('launch-planet');
     const { AutomationSettingsRoute } = await import('@/app/(app)/automations/settings');
     const modules: Record<string, unknown> = {
         './(app)/settings/_layout.tsx': { default: RootLayout },
@@ -130,19 +132,28 @@ describe('workspace destination route composition', () => {
         act(() => renderer.unmount());
     });
 
-    it('reports a non-Home launch destination when its lazy page commits', async () => {
-        function LaunchPresentation() {
-            return React.createElement('LaunchPresentation', { presented: useLaunchDestinationBodyMounted() });
+    it('waits for the addressed lazy destination when an earlier launch body has committed', async () => {
+        function LaunchPresentation({ pathname }: { pathname: string }) {
+            return React.createElement('LaunchPresentation', { presented: useLaunchDestinationBodyMounted(pathname) });
+        }
+        function destination(pathname: string) {
+            return <>{hosted(pathname)}<LaunchPresentation pathname={pathname} /></>;
         }
         let renderer!: ReturnType<typeof create>;
         act(() => {
-            renderer = create(<>{hosted('/settings/server')}<LaunchPresentation /></>);
+            renderer = create(destination('/settings/server'));
         });
         try {
             expect(renderer.root.findAllByType('HostedEditor')).toHaveLength(0);
             expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(false);
             await act(async () => {});
             expect(renderer.root.findAllByType('HostedEditor')).toHaveLength(1);
+            expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(true);
+            act(() => renderer.update(destination('/artifacts/next')));
+            expect(renderer.root.findAllByType('HostedArtifact')).toHaveLength(0);
+            expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(false);
+            await act(async () => {});
+            expect(renderer.root.findAllByType('HostedArtifact')).toHaveLength(1);
             expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(true);
         } finally {
             act(() => renderer.unmount());
