@@ -3,9 +3,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import dns from 'node:dns';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { hostname, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from 'node:inspector/promises';
 import type { HeapProfiler, Profiler } from 'node:inspector';
@@ -15,7 +15,7 @@ import { createLogRetentionOwner } from '@/utils/logs/logRetention';
 import { localCaptureBackground } from '../../../../packages/plugins/telemetry/src/background';
 import { telemetryPartition } from '../../../../packages/plugins/telemetry/src/telemetry/assignments';
 import { inspectBuiltinTailscaleAccessProvider } from '../../../../packages/cli-common/src/relayAccess/providers/tailscale/inspect';
-import { projectMachineReachabilityObservation } from '@/machines/reachability/readMachineReachability';
+import { projectMachineReachabilityObservation, reachabilityPostureField } from '@/machines/reachability/readMachineReachability';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
@@ -23,6 +23,12 @@ import { DoctorSnapshotDaemonStatusSchema } from '@happier-dev/protocol/diagnost
 import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
 import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/accessActionIdsV1';
+import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
+import { MachineAdminAccessInspectResultV1Schema, MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
+import { getMachineMetadataFieldV1, mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY, MANAGED_TOOLS_ROOT_ENV_KEY, resolveInstalledFirstPartyComponentPaths,
+    resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { CORE_MACHINE_ROLE_IDS_V1, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema,
     projectPublishedMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
@@ -74,7 +80,7 @@ import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/bu
 import { createOwnServerNativeRuntime } from './targets/ownServer/nativeRuntime';
 import * as nativeRuntimeBoundary from './targets/ownServer/nativeRuntime';
 import { acquirePrivateServiceContainerBridge } from './targets/ownServer/privateServiceContainerBridge';
-import { parseNativeDockerEngineInfo } from '@happier-dev/cli-common/machineSetup';
+import { nativeCaddyProfile, parseNativeDockerEngineInfo } from '@happier-dev/cli-common/machineSetup';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import {
     DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1, DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
@@ -88,12 +94,22 @@ import {
 const { execFile } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
 const execute = promisify(execFile);
 
-async function createCollectorHomeSocketOrigin(cleanup: Array<() => Promise<void>>) {
+async function createCollectorHomeSocketOrigin(cleanup: Array<() => Promise<void>>, disposableDomainHost: boolean) {
     const engine = parseNativeDockerEngineInfo((await execute('docker', ['info', '--format', '{{json .}}'])).stdout);
     if (!engine) throw new Error('F14 requires observable native Docker engine facts');
+    const readCaddyId = async () => (await execute('docker', ['container', 'ls', '--all', '--quiet', '--no-trunc',
+        '--filter', `name=^/${nativeCaddyProfile.containerName}$`])).stdout.trim();
+    if (disposableDomainHost && await readCaddyId()) throw new Error('F14 requires a disposable Domain host without an existing Caddy container');
     const key = randomUUID();
     const networkId = (await execute('docker', ['network', 'create', `happier-f14-home-${key}`])).stdout.trim();
-    cleanup.push(async () => { await execute('docker', ['network', 'rm', networkId]); });
+    cleanup.push(async () => {
+        if (disposableDomainHost) {
+            // Domain setup retains the guest's Caddy and attaches it to this network.
+            const containerId = await readCaddyId();
+            if (containerId) await execute('docker', ['container', 'rm', '--force', containerId]);
+        }
+        await execute('docker', ['network', 'rm', networkId]);
+    });
 
     // Docker uses the admitted relay's DNS name. The controller resolves that
     // same HTTPS origin to its local test server, preserving TLS and discovery.
@@ -228,6 +244,10 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
         // The disposable DB-contract runner owns this native journey's deadline.
         it.each(['plain', 'e2ee'] as const)('reads deployed SDK queries and traces through admitted Actions in %s mode', async encryptionMode => {
             expect(process.platform, 'F14 requires native Linux Docker').toBe('linux');
+            const limaGuest = process.env.HAPPIER_DBW_F14_LIMA_GUEST;
+            if (limaGuest && (!/^happier-dbw-f14-[a-z0-9-]+$/.test(limaGuest) || hostname() !== `lima-${limaGuest}`)) {
+                throw new Error('Native F14 setup requires the named disposable Lima guest');
+            }
             const native = await execute('docker', ['info', '--format', '{{.OSType}}']);
             expect(native.stdout.trim()).toBe('linux');
             const engine = await execute('docker', ['info', '--format', '{{.ID}}']);
@@ -236,8 +256,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
             const setupRequests = { bindings: 0, secretCreate: 0, secretUpdate: 0 };
             const cleanup: Array<() => Promise<void>> = [];
             const lifetime = new AbortController();
+            let journeyFailed = false;
             try {
-                const collectorHome = await createCollectorHomeSocketOrigin(cleanup);
+                const collectorHome = await createCollectorHomeSocketOrigin(cleanup, !!limaGuest);
                 const home = await createDeploymentSocketHome({ encryptionMode, dbProvider: 'postgres', serverId, socketOrigin: collectorHome,
                     configureApp: app => {
                         if (process.env.HAPPIER_RUN_DBW_COSTS_F17 === '1') sessionRoutes(app);
@@ -263,6 +284,18 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 vi.stubEnv('HAPPIER_DEV_GUEST_CLI_EXPORT', '1');
                 vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', guestCliPayloadRoot);
                 vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', guestCliPayloadMetadata);
+                if (limaGuest) {
+                    // Both Accounts use the same plugin registry. Only the native CLI installation is per Account.
+                    vi.stubEnv(MANAGED_TOOLS_ROOT_ENV_KEY, resolveManagedToolsRoot({
+                        ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir,
+                    }));
+                    vi.stubEnv(FIRST_PARTY_INSTALL_HOME_ENV_KEY, home.baseDir);
+                    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', undefined);
+                    const paths = resolveInstalledFirstPartyComponentPaths({ componentId: 'happier-cli',
+                        channel: resolveManagedCliReleaseChannelSync().ringId });
+                    await mkdir(dirname(paths.currentPath), { recursive: true });
+                    await symlink(guestCliPayloadRoot, paths.currentPath);
+                }
                 // The background collector signs through the async identity store, outside the RPC fixture context.
                 const originalInstallationFile = configuration.installationIdentityFile;
                 const installationFile = join(home.baseDir, 'installation-identity.json');
@@ -270,9 +303,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 Reflect.set(configuration, 'installationIdentityFile', installationFile);
                 cleanup.push(async () => { Reflect.set(configuration, 'installationIdentityFile', originalInstallationFile); });
                 // Observe the real OS boundary without retaining native arguments or output.
-                const failedDockerCommands: Array<Readonly<{ verb: string; operation: string; exitCode: number | null; reasons: string[] }>> = [];
-                const verbs = new Set(['image', 'buildx', 'compose', 'version', 'info', 'inspect', 'network', 'volume', 'container', 'ps']);
-                const operations = new Set(['inspect', 'save', 'pull', 'imagetools', 'bake', 'version', 'config', 'up', 'down', 'ls', 'rm', 'tag']);
+                const failedDockerCommands: Array<Readonly<{ verb: string; operation: string; exitCode: number | null; reasons: string[]; phase?: string }>> = [];
+                const verbs = new Set(['image', 'buildx', 'compose', 'version', 'info', 'inspect', 'network', 'volume', 'container', 'ps', 'exec']);
+                const operations = new Set(['inspect', 'save', 'pull', 'imagetools', 'bake', 'version', 'config', 'up', 'down', 'ls', 'rm', 'tag', 'exec']);
                 const observedReadyMachines = new Set<string>();
                 const createNativeRuntime = nativeRuntimeBoundary.createOwnServerNativeRuntime;
                 const nativeObservation = vi.spyOn(nativeRuntimeBoundary, 'createOwnServerNativeRuntime').mockImplementation(input => {
@@ -310,13 +343,21 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         const verbIndex = argv.findIndex(value => verbs.has(value));
                         if (result.exitCode !== 0) {
                             const message = (result.stderr ?? '').toLowerCase();
+                            const operation = argv.slice(verbIndex + 1).find(command => operations.has(command)) ?? 'other';
+                            const script = operation === 'exec' ? argv.at(-1) ?? '' : '';
+                            const phases = [['bootstrap-upload', 'payload-staging'], ['umask 077; cat >', 'payload-transfer'],
+                                ['sha256sum', 'payload-verification'], ["'auth' 'request'", 'auth-request'],
+                                ["'auth' 'wait'", 'auth-wait'], ["'daemon' 'status'", 'daemon-status']];
+                            const phase = phases.find(([marker]) => script.includes(marker))?.[1];
                             const reasons = ['permission denied', 'no such file', 'unknown flag', 'unknown command',
                                 'requires at least', 'no such image', 'denied', 'connection refused', 'not found',
-                                'unexpected eof', 'x509', 'failed to resolve', 'too many requests', 'failed to dial', 'dial unix']
+                                'unexpected eof', 'x509', 'failed to resolve', 'too many requests', 'failed to dial', 'dial unix',
+                                'exec format error', 'no matching manifest', 'cannot execute', 'not writable',
+                                'docker.sock', 'cannot create', 'cannot open', 'operation not permitted', 'oci runtime', 'no space left',
+                                '/home/happier/.happier/cli/current/happier', '/home/happier/home-fixture-ca.pem']
                                 .filter(reason => message.includes(reason));
                             failedDockerCommands.push({ verb: argv[verbIndex] ?? 'other',
-                                operation: operations.has(argv[verbIndex + 1]) ? argv[verbIndex + 1] : 'other',
-                                exitCode: result.exitCode, reasons });
+                                operation, exitCode: result.exitCode, reasons, ...(phase ? { phase } : {}) });
                         }
                         return result;
                     };
@@ -359,7 +400,10 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
                     acquirePluginRuntimeRegistryLease: () => pluginReloadController.acquireRuntimeRegistry(),
                     signal: lifetime.signal });
+                let metadataPort: MachineMetadataFieldPortV1 | undefined;
                 const daemon = await createS0DeploymentDaemonIngress({ home, installRolesReceiver: true,
+                    ...(limaGuest ? { nativeDomainSetup: true,
+                        configureRpc: (_rpc, context) => { metadataPort = context.captureMetadataPort(); return []; } } : {}),
                     resolveDeploymentRequesterIdentity: support.sourceRequesterForHome(home),
                     createDeploymentActionDeps: requester => createDaemonDeploymentActionDeps({
                         resolveRequesterIdentity: support.sourceRequesterForHome(home), credentials: requester?.credentials ?? credentials,
@@ -457,6 +501,29 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
                     return result.result;
                 };
+                if (limaGuest) {
+                    const target = { serverId: home.serverId, machineId: home.machineId };
+                    const initial = MachineAdminAccessInspectResultV1Schema.parse(await accepted('machines.setup.adminAccess.inspect', target));
+                    if (!('adminAccess' in initial)) throw new Error(`F14 guest administrator access is ${initial.status}`);
+                    expect(initial.adminAccess.mode).toBe('none');
+                    expect(initial.observation.passwordlessSudoToRoot).toBe('allowed');
+                    const adminAccess = { version: 1, mode: 'preauthorized' } as const;
+                    const applied = MachineAdminAccessMutationResultV1Schema.parse(await accepted(MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1, {
+                        ...target, expectedMetadataVersion: initial.metadataVersion, expectedAdminAccess: initial.adminAccess,
+                        adminAccess, comparison: 'field',
+                    }));
+                    expect(applied).toMatchObject({ status: 'applied', policy: adminAccess, effect: { outcome: 'applied' } });
+                    console.info('F14 guest administrator access applied', { encryptionMode, machineId: home.machineId });
+                    if (!metadataPort) throw new Error('F14 guest needs the enrolled Machine metadata port');
+                    const current = await getMachineMetadataFieldV1(metadataPort, reachabilityPostureField);
+                    if (current.status !== 'ready') throw new Error(`F14 guest reachability posture is ${current.status}`);
+                    // The guest is reached from the Lima console. Its public SSH policy is closed.
+                    const seeded = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: current.metadataVersion,
+                        expectedPolicy: current.policy, comparison: 'revision', policy: { revision: 0,
+                            management: { providers: [], publicSsh: { kind: 'closed' } }, defaultServiceIngress: { kind: 'none' } } },
+                        metadataPort, reachabilityPostureField);
+                    expect(seeded.status).toBe('applied');
+                }
                 const createReader = async () => {
                     const keys = encryptionMode === 'e2ee' ? nacl.box.keyPair() : null;
                     const account = await db.account.create({ data: { encryptionMode,
@@ -470,6 +537,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         support.settlePublicApproval(invokeReader, await invokeReader(name, input, machineId));
                     const acceptedReader = async (name: string, input: unknown, machineId?: string) => {
                         const result = await invokeSettled(name, input, machineId);
+                        if (!result.ok && name === 'deployments.deploy') {
+                            console.info('F14 collector operator Docker command failures', failedDockerCommands);
+                        }
                         expect(result.ok, JSON.stringify(result.ok ? { name, state: 'accepted' }
                             : { name, errorCode: result.errorCode, failureCause: result.failureCause, details: result.details })).toBe(true);
                         if (!result.ok) throw new Error(`${name}: ${result.errorCode}`);
@@ -877,6 +947,22 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     environmentId: otherEnvironmentId, expectedRevision: other.environment.revision, collector: { machineId: home.machineId } });
                 const otherAppUrl = await deploy(otherEnvironmentId);
                 const otherMeasurement = await measureRequests(otherAppUrl);
+                if (otherMeasurement.sdk.exportedRecords < 8) {
+                    const assignment = await db.deploymentEnvironment.findUnique({
+                        where: { id: otherEnvironmentId },
+                        select: { telemetryMachineId: true, telemetryTokenHash: true },
+                    });
+                    const probe = await readIngestClient(otherEnvironmentId)
+                        .then(client => client.send())
+                        .then(result => result.status, () => null);
+                    console.info('F14 isolation export diagnostics', {
+                        sdk: otherMeasurement.sdk,
+                        flushStatus: otherMeasurement.flushStatus,
+                        collectorSelected: assignment?.telemetryMachineId === home.machineId,
+                        settledTokenHashPresent: Boolean(assignment?.telemetryTokenHash),
+                        probeStatus: probe,
+                    });
+                }
                 expect(otherMeasurement.sdk.exportedRecords).toBeGreaterThanOrEqual(8);
                 const otherSource = { ...captureSource, environmentId: otherEnvironmentId };
                 const listQueries = async (source = captureSource, machineId?: string) => {
@@ -1068,12 +1154,16 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 // Detaching a running app still serves requests after its
                 // Environment is deleted and its next export is refused.
                 expect((await fetch(`${reenabledAppUrl}/orders`)).status).toBe(200);
+            } catch (error) {
+                journeyFailed = true;
+                throw error;
             } finally {
                 const failures: unknown[] = [];
                 for (const dispose of cleanup.reverse()) try { await dispose(); } catch (error) { failures.push(error); }
                 vi.restoreAllMocks();
                 vi.unstubAllEnvs();
-                if (failures.length) throw new AggregateError(failures, 'F14 fixture cleanup failed');
+                if (failures.length && journeyFailed) console.warn('F14 fixture cleanup failed', { failureCount: failures.length });
+                if (failures.length && !journeyFailed) throw new AggregateError(failures, 'F14 fixture cleanup failed');
             }
         }, 0);
     });

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { chmod, copyFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { expect, vi } from 'vitest';
 import { z } from 'zod';
 import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
@@ -89,9 +91,13 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
     // configuration. The image and enrollment transport remain unchanged.
     const caPath = process.env.NODE_EXTRA_CA_CERTS;
     if (!caPath) throw new Error('The native Home fixture must publish its public CA certificate path');
+    // The container runs under its image UID, which may differ from the Home fixture owner.
+    const mountedCaPath = join(home.baseDir, 'collector-public-ca.pem');
+    await copyFile(caPath, mountedCaPath);
+    await chmod(mountedCaPath, 0o644);
     const guestCaPath = '/home/happier/home-fixture-ca.pem';
     service.environment.NODE_EXTRA_CA_CERTS = guestCaPath;
-    service.volumes = [...service.volumes ?? [], { type: 'bind', source: caPath, target: guestCaPath, read_only: true }];
+    service.volumes = [...service.volumes ?? [], { type: 'bind', source: mountedCaPath, target: guestCaPath, read_only: true }];
     await initiator.accepted('deployments.environments.update', { serverId: home.serverId, environmentId,
         expectedRevision: detail.environment.revision, contentArtifactId: detail.environment.contentArtifactId,
         contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
@@ -189,12 +195,16 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
             const existing = domains.get(monitoredId);
             const id = existing?.id ?? randomUUID();
             const hostname = existing?.hostname ?? `f14-telemetry-${id}.localhost`;
-            const domain = DeploymentDomainMutationResultV1Schema.parse(await context.accepted('deployments.domains.add', {
+            const domain = await context.accepted('deployments.domains.add', {
                 serverId: home.serverId, environmentId: monitoredId, targetLinkId: link.id,
                 expectedRevision: current.environment.revision, expectedTargetLinkRevision: link.revision,
                 domainId: id, ...(existing ? { expectedDomainRevision: existing.revision } : {}), requestKey: randomUUID(),
-                content: { hostname, target: { kind: 'telemetry' } } }));
+                content: { hostname, target: { kind: 'telemetry' } } }).then(result => DeploymentDomainMutationResultV1Schema.parse(result), async (error: unknown) => {
+                console.info('F14 live collector containers at Domain refusal', { count: (await listCollectorContainers().catch(() => null))?.length ?? null });
+                throw error;
+            });
             if (!domain.ok || domain.domain.state === 'failed') throw new Error('The selected collector must expose the normal telemetry Domain');
+            console.info('F14 telemetry Domain accepted', { state: domain.domain.state });
             domains.set(monitoredId, { id, hostname, revision: domain.domain.revision });
         },
     };

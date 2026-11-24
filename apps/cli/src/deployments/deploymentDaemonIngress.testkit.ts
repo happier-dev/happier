@@ -4,6 +4,11 @@ import { io } from 'socket.io-client';
 import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
     encodeBase64, signMachineInstallationProof, readMachineAdminAccessV1, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
+import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
+import { getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { callSocketRpc } from '@happier-dev/sync-client';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2, type ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -39,8 +44,13 @@ import { createActionOperationSnapshotPublisher, emitActionOperationSnapshotV1 }
 import { readOpenedMachineMetadataSnapshot, publishMachineMetadataOnce } from '@/api/machine/machineMetadataPublication';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { registerDaemonMachineAdminAccessRpcHandlers } from '@/rpc/handlers/daemonMachineAdminAccess';
+import { registerCapabilitiesHandlers } from '@/rpc/handlers/capabilities';
 import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { createMachineAdminAccessHost } from '@/machines/adminAccess/machineAdminAccessHost';
+import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { settleMachineCaddyFirewallForHost, settleMachinePrivateWorkloadFirewallForHost } from '@/machines/reachability/machineReachabilityHost';
+import { observeOwnDaemonReachability } from '@/machines/reachability/observeOwnDaemonReachability';
+import type { DomainNativeSetupForHost } from './targets/ownServer/ownServerDomainNative';
 import { createMachineRolesRuntime } from '@/daemon/roles/machineRolesRuntime';
 import { machineRoleCatalogFromPluginsV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { bindMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
@@ -101,6 +111,8 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     }>): ReturnType<DaemonExternalActionExecutorFactory>;
     machineServiceAction?: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport']>['machineServiceAction'];
     resolveDeploymentRequesterIdentity?: DeploymentSourceRequesterIdentityResolver;
+    /** This fixture runs the actual native effects on a disposable Linux Machine. */
+    nativeDomainSetup?: boolean;
     nativeBoundary?: EnrollmentJourneyNativeBoundary;
     isolationWorkspace?: Readonly<{ rootId: string; path: string }>;
     isolationReadinessSystem?: AgentIsolationReadinessSystem;
@@ -111,7 +123,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     configureRpc?(rpc: RpcHandlerManager, context: Readonly<{
         isolationNative: ReturnType<typeof createAgentIsolationEffectsBoundary> | null;
         readIsolation: () => ReturnType<typeof readAgentIsolationSnapshot> | null;
-        captureMetadataPort: () => import('@happier-dev/protocol/machines/machineMetadataFieldV1').MachineMetadataFieldPortV1;
+        captureMetadataPort: () => MachineMetadataFieldPortV1;
     }>): readonly string[] | Promise<readonly string[]>;
     /** Observe the actual socket frame without replacing admission or dispatch. */
     observeReceivedRequest?(request: SocketRpcRequestPayload): Promise<void>;
@@ -243,6 +255,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         prepareRequesterAccountContext,
         resolveEncryption, executor, externalActionMachineRequestPrivateKey: home.keys.secretKey,
     });
+    let nativeDomainSetup: DomainNativeSetupForHost | undefined;
     if (input.resolveDeploymentRequesterIdentity) {
         registerDaemonDeploymentChildRpcHandler(rpc, {
             machineId: home.machineId, signal: daemonLifetime.signal,
@@ -257,6 +270,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
                 isCurrent: async () => !signal.aborted && !daemonLifetime.signal.aborted,
             },
             acquirePluginRuntimeRegistryLease: () => pluginReloadController.acquireRuntimeRegistry(),
+            ...(input.nativeDomainSetup ? { captureNativeSetup: () => nativeDomainSetup! } : {}),
         });
     }
     registerActionOperationRpcHandlers(rpc, actionOperations.handlers);
@@ -332,6 +346,47 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         acknowledgeDaemonStatePublication() {}, discardUnverifiedIrohEndpoint: state => state,
         synchronizeIrohMachineEndpointAuthority: async () => {},
     }) : null;
+    if (input.nativeDomainSetup) {
+        if (!daemonStatePublication || !input.resolveDeploymentRequesterIdentity || isolationNative) {
+            throw new Error('Native Domain setup requires the enrolled fixture Machine and its deployment child ingress');
+        }
+        const port = captureMetadataPort();
+        const admin = createDaemonMachineAdminAccessRoutes({
+            target: () => ({ serverId: home.serverId, machineId: home.machineId, installationId: home.installationId,
+                custodianAccountId: home.accountId }),
+            getMachineClient: () => ({ updateDaemonState: daemonStatePublication }),
+        });
+        registerDaemonMachineAdminAccessRpcHandlers(rpc, { ...admin, captureMetadataPort, runActionOperation: actionOperations.runActionOperation });
+        registerCapabilitiesHandlers(rpc);
+        methods.push(...MACHINE_ADMIN_ACCESS_ACTION_IDS, RPC_METHODS.CAPABILITIES_DESCRIBE);
+        const readDaemonProof = (signal?: AbortSignal) => observeOwnDaemonReachability({
+            custodianAccountId: home.accountId, signal,
+            client: {
+                isMachineControlRegistrationReady: () => machineSocket.connected,
+                async callConnectedClientRpc<TResult>(method: string, params: unknown) {
+                    const result = await callSocketRpc<TResult>({ socket: machineSocket,
+                        target: { kind: 'machine', id: home.machineId }, method, params, timeoutMs: null, signal,
+                        content: isolationCodec.mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
+                            encryptRaw: async value => isolationCodec.encodeRpc(value),
+                            decryptRaw: async value => isolationCodec.decodeRpc(value),
+                        } },
+                    });
+                    return { ok: true, result } as const;
+                },
+            },
+        });
+        nativeDomainSetup = {
+            readDesired: () => getMachineSetupDesiredV1(port),
+            elevation: { observe: async () => (await admin.observer.inspect()).observation,
+                readPolicy: async () => {
+                    const current = await getMachineAdminAccessV1(port);
+                    if (current.status !== 'ready') throw new Error(`Machine administrator access is ${current.status}`);
+                    return current.policy;
+                } },
+            settleCaddyFirewall: options => settleMachineCaddyFirewallForHost({ ...options, port, readDaemonProof: () => readDaemonProof(options.signal) }),
+            settlePrivateWorkloadFirewall: options => settleMachinePrivateWorkloadFirewallForHost({ ...options, port, readDaemonProof: () => readDaemonProof(options.signal) }),
+        };
+    }
     if (isolationNative && isolationMachine) {
         if (!input.nativeBoundary || !input.isolationReadinessSystem) throw new Error('S0 isolation must consume its enrolled guest OS boundary and readiness system');
         const adminObserver = createMachineAdminAccessObserver({ ...input.nativeBoundary.admin, onChanged: async () => {} });
