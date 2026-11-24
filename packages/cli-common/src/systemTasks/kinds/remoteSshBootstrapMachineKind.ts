@@ -1176,7 +1176,16 @@ async function runRemoteMachineBootstrapRecipe({
         const options = { signal: ctx.signal, timeoutMs: remainingEnrollmentMs() };
         ctx.emit({ type: 'progress', stepId: 'daemon.start', message: 'Starting daemon process' });
         if (startDaemonProcess) await startDaemonProcess(options);
-        else await executor.runHappierJson(['daemon', 'start', '--json'], options);
+        else {
+          try {
+            await executor.runHappierJson(['daemon', 'start', '--json'], options);
+          } catch (error) {
+            if (!(error instanceof SystemTaskExecutionError) || error.code !== 'cli_command_failed') throw error;
+            throw new SystemTaskExecutionError('daemon_process_start_failed',
+              'The remote daemon process could not start. Run "happier daemon start --json" on the SSH host as the enrollment user and inspect the reported daemon log.',
+              { details: error.details });
+          }
+        }
         daemonStatus = await createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor }).waitForReadyDaemon!({
           signal: ctx.signal, timeoutMs: remainingEnrollmentMs(), requireServiceInstalled: false,
           requireMachineControlReady: parsedRemote.managedEnrollment !== undefined,

@@ -43,19 +43,23 @@ it('refuses a controller-only descriptor before contacting an SSH machine', asyn
 });
 
 describe('native transport through the remote bootstrap task', () => {
-  it.each(['unavailable', 'unavailable-after-write', 'install-failed', 'start-failed', 'service'] as const)(
+  it.each(['unavailable', 'process-start-failed', 'unavailable-after-write', 'install-failed', 'start-failed', 'service'] as const)(
     'uses service preflight availability and reports lifecycle phases (%s)', async scenario => {
       const commands: string[][] = [];
       const phases: string[] = [];
       let running = false;
+      const preflightUnavailable = scenario === 'unavailable' || scenario === 'process-start-failed';
       const executor = createHappierJsonExecutorFromTextRunner(async args => {
         commands.push([...args]);
         if (args[0] === 'service' && (args[1] === 'install' && scenario !== 'service' && scenario !== 'start-failed'
           || args[1] === 'start' && scenario === 'start-failed')) {
           return { status: 1, stdout: '', stderr: JSON.stringify({ ok: false,
-            error: scenario.startsWith('unavailable') ? 'service_manager_unavailable' : 'service_command_failed',
-            serviceStep: scenario === 'unavailable' ? 'preflight' : 'command',
-            serviceStepStatus: scenario === 'unavailable' ? 'unavailable' : 'failed' }) };
+            error: preflightUnavailable || scenario === 'unavailable-after-write' ? 'service_manager_unavailable' : 'service_command_failed',
+            serviceStep: preflightUnavailable ? 'preflight' : 'command',
+            serviceStepStatus: preflightUnavailable ? 'unavailable' : 'failed' }) };
+        }
+        if (scenario === 'process-start-failed' && args[0] === 'daemon' && args[1] === 'start') {
+          return { status: 1, stderr: '', stdout: JSON.stringify({ ok: false, error: 'start_failed' }) };
         }
         if ((args[0] === 'daemon' || args[0] === 'service') && args[1] === 'start') running = true;
         return { status: 0, stderr: '', stdout: JSON.stringify({ data: { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined' }, authenticated: true,
@@ -74,6 +78,11 @@ describe('native transport through the remote bootstrap task', () => {
         expect(running).toBe(true);
         expect(commands.filter(args => args[0] === 'daemon' && args[1] === 'start')).toHaveLength(scenario === 'unavailable' ? 1 : 0);
         expect(commands.filter(args => args[0] === 'service' && args[1] === 'start')).toHaveLength(scenario === 'service' ? 1 : 0);
+      } else if (scenario === 'process-start-failed') {
+        await expect(result).rejects.toMatchObject({ code: 'daemon_process_start_failed',
+          message: expect.stringContaining('happier daemon start'),
+          details: { kind: 'managedNative', nativeCause: { exitCode: 1 } } });
+        expect(phases.at(-1)).toBe('daemon.start');
       } else {
         await expect(result).rejects.toMatchObject({ code: 'cli_command_failed' });
         expect(phases.at(-1)).toBe(scenario === 'install-failed' || scenario === 'unavailable-after-write' ? 'daemon.service.install' : 'daemon.service.start');
