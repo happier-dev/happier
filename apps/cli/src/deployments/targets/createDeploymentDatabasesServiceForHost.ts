@@ -503,7 +503,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 return { descriptor: { ...resolved.descriptor, target,
                     origin: { ...admission.origin, label: resolved.descriptor.origin.label },
                     automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary, placement: bound.placement },
-                    connection: { engine: resolved.connection.engine, execute: resolved.connection.execute.bind(resolved.connection), close } };
+                    connection: { engine: resolved.connection.engine,
+                        ...(resolved.connection.normalizeStatementShape
+                            ? { normalizeStatementShape: resolved.connection.normalizeStatementShape.bind(resolved.connection) } : {}),
+                        execute: resolved.connection.execute.bind(resolved.connection), close } };
             } catch (error) { bound.dispose(); throw error; }
         },
     });

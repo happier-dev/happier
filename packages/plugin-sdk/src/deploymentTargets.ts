@@ -1,9 +1,8 @@
 import type { ReadonlyAuthorDeclaration } from './authorDeclaration.js';
 import type { PluginAccountActionContext } from './actions/contracts.js';
-import type { DatabaseEnginesServiceV1 } from './databaseEngines.js';
+import type { DatabaseEngineConnectionV1, DatabaseEnginesServiceV1 } from './databaseEngines.js';
 import type {
-    DatabaseDescriptorV1, DatabaseEngineIdV1, DatabaseManagedDeploymentTargetV1,
-    DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseOperationResultV1,
+    DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1, DatabaseOperationClassV1,
     DatabaseTargetsListResultV1,
 } from './database/index.js';
 import { isPluginError, PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from './errors.js';
@@ -104,11 +103,7 @@ export type DeploymentTargetCommonV1 = Pick<DeploymentTargetContributionV1,
     'id' | 'title' | 'description' | 'icon' | 'targetKind' | 'targetSchema' | 'linkSchema'>;
 
 /** An in-process connection; credentials and native transports never enter Action JSON. */
-export interface DeploymentDatabaseConnectionV1 {
-    readonly engine: DatabaseEngineIdV1;
-    execute(input: DatabaseOperationInputV1, signal?: AbortSignal): Promise<DatabaseOperationResultV1>;
-    close(): Promise<void>;
-}
+export type DeploymentDatabaseConnectionV1 = DatabaseEngineConnectionV1;
 
 export type DeploymentDatabaseResolutionV1 = Readonly<{
     descriptor: DatabaseDescriptorV1;

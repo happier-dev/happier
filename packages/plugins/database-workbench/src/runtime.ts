@@ -6,7 +6,7 @@ import type {
     DatabaseOperationResultV1,
 } from '@happier-dev/plugin-sdk/database';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
-import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { databaseActionOperationClass } from '@happier-dev/plugin-sdk/actions';
 import type { DatabaseActionProducers } from './actions.js';
@@ -14,6 +14,7 @@ import type { DatabaseWorkbenchConnection } from './connection.js';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from './resources.js';
 import { projectDatabaseFindingObservation } from './insights/findings.js';
 import { emitDatabaseFindingObservation } from './insights/events.js';
+import { projectCommittedDatabaseWrite } from './writeAudit.js';
 
 export type DatabaseOperationResolver = (request: Readonly<{
     input: DatabaseOperationInputV1;
@@ -21,7 +22,7 @@ export type DatabaseOperationResolver = (request: Readonly<{
     access: DatabaseOperationClassV1;
 }>) => Promise<Readonly<{
     descriptor: DatabaseDescriptorV1;
-    connection: Pick<DatabaseWorkbenchConnection, 'execute' | 'close'>;
+    connection: Pick<DatabaseWorkbenchConnection, 'execute' | 'close' | 'normalizeStatementShape'>;
 }>>;
 
 /** The one per-request access decision for the request's own requester (R4); no credential or connection. */
@@ -40,6 +41,7 @@ export function createDatabaseRuntime(options: Readonly<{
         // The registered Action identity and its declaration are admitted by the SDK.
         const access = databaseActionOperationClass(context.contribution.qualifiedId as DatabaseActionIdV1, input);
         let result: DatabaseOperationResultV1;
+        let writeAudit: Readonly<Record<string, JsonValue>> | undefined;
         if (access === 'read' && input.subscriptionId) {
             // The demand was opened for whoever subscribed; this request is admitted for its own requester first.
             await options.admit({ input, context, access });
@@ -54,6 +56,9 @@ export function createDatabaseRuntime(options: Readonly<{
                 result = input.operation === 'describe'
                     ? { ok: true, operation: 'describe', descriptor }
                     : await connection.execute(input, context.signal);
+                if (access === 'write') writeAudit = projectCommittedDatabaseWrite(input, result, {
+                    engine: descriptor.engine, normalizeStatementShape: connection.normalizeStatementShape?.bind(connection),
+                });
             } finally {
                 try { await connection.close(); }
                 catch (error) {
@@ -70,8 +75,12 @@ export function createDatabaseRuntime(options: Readonly<{
             if (subject.ok) await emitDatabaseFindingObservation({ observation, subject: subject.subject,
                 observationReceivedAt: Date.now(), observedDelta: 1 }, context);
         }
-        if (result.ok && ((input.operation === 'statement.run' && input.mode === 'write')
-            || (input.operation === 'edits.apply' && result.operation === 'edits.apply' && result.status === 'committed'))) {
+        if (writeAudit) {
+            context.services.logger.info('Database write committed', {
+                ...writeAudit, target: input.target,
+                ...(context.requesterAccount ? { requesterAccountId: context.requesterAccount.accountId } : {}),
+                ...(context.agentCaller && context.session ? { sessionId: context.session.id } : {}),
+            });
             try {
                 await context.services.resources.notifyDemands({ resourceId: DATABASE_CONNECTION_RESOURCE_ID_V1,
                     input: { target: input.target, ...(input.operation === 'edits.apply' ? { relation: input.relation } : {}) } });

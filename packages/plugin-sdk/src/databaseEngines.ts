@@ -18,6 +18,8 @@ export type PluginDatabaseEngineDefinitionV1 = Readonly<{
 }>;
 export interface DatabaseEngineConnectionV1 {
     readonly engine: DatabaseEngineIdV1;
+    /** A value-free shape using the lexical mode of this connection, when available. */
+    normalizeStatementShape?(sql: string): string | undefined;
     execute(input: DatabaseOperationInputV1, signal?: AbortSignal): Promise<DatabaseOperationResultV1>;
     close(): Promise<void>;
 }

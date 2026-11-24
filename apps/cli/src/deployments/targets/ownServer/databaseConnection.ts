@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import type { DatabaseEngineConnectionV1 } from '@happier-dev/plugin-sdk';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type {
     DatabaseDeploymentServiceTargetV1,
@@ -22,7 +23,8 @@ import { postgresqlWriteRoleSetupSql } from '@happier-dev/deployment-protocol';
 
 const refuse = (code: string): never => { throw new PluginError({ code }); };
 type Host = OwnServerDataServiceHost & Readonly<{ credentials: StoredCredentials; serverHttpBaseUrl: string }>;
-type NativeConnection = PostgresqlConnection & Readonly<{ engine: 'postgresql' | 'mysql'; database: string }>;
+type NativeConnection = PostgresqlConnection & Pick<DatabaseEngineConnectionV1, 'normalizeStatementShape'>
+    & Readonly<{ engine: 'postgresql' | 'mysql'; database: string }>;
 
 /** The existing native owner supplies the selected generation and Docker launch.
  * PostgreSQL can consume its observed loopback binding. Private engines borrow
@@ -119,6 +121,7 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
         if (signal.aborted) { await close(); signal.throwIfAborted(); }
         return {
             engine: scope.definition.engine, database: scope.definition.database,
+            ...('normalizeStatementShape' in connection ? { normalizeStatementShape: connection.normalizeStatementShape } : {}),
             execute: (request, requestSignal) => connection.execute(request, requestSignal ? AbortSignal.any([signal, requestSignal]) : signal),
             close,
         };

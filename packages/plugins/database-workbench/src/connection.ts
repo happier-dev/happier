@@ -5,10 +5,8 @@ import {
     type DatabaseCapabilityV1,
     type DatabaseManualTargetV1,
     type DatabaseOperationClassV1,
-    type DatabaseOperationInputV1,
-    type DatabaseOperationResultV1,
 } from '@happier-dev/plugin-sdk/database';
-import { PluginError, type DatabaseEnginesServiceV1 } from '@happier-dev/plugin-sdk';
+import { PluginError, type DatabaseEngineConnectionV1, type DatabaseEnginesServiceV1 } from '@happier-dev/plugin-sdk';
 import type { SecretsService } from '@happier-dev/plugin-sdk/secrets';
 import { builtinDatabaseConnectionEngine, databaseConnectionScheme, parseDatabaseConnectionUrl, sqliteDatabaseFileUrl } from '@happier-dev/databases';
 import { builtinDatabaseCapabilities } from './capabilities.js';
@@ -16,11 +14,7 @@ import { openPostgresqlConnection } from './postgresql.js';
 import { openMysqlConnection } from './mysql.js';
 import { openSqliteConnection } from './sqlite.js';
 
-export interface DatabaseWorkbenchConnection {
-    readonly engine: DatabaseEngineIdV1;
-    execute(input: DatabaseOperationInputV1, signal?: AbortSignal): Promise<DatabaseOperationResultV1>;
-    close(): Promise<void>;
-}
+export type DatabaseWorkbenchConnection = DatabaseEngineConnectionV1;
 
 function selectDatabaseConnection(connectionString: string, databaseEngines?: DatabaseEnginesServiceV1) {
     const scheme = databaseConnectionScheme(connectionString);

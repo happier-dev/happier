@@ -17,6 +17,7 @@ import {
     DATABASE_ACCESS_SET_ACTION_ID_V1,
     DATABASE_DESCRIBE_ACTION_ID_V1,
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
+    DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
@@ -90,7 +91,11 @@ describe('semantic database Action runtime', () => {
             async invokeDemand(input, options) { return await producer!.invoke!(input.input, { signal: options?.signal ?? resourceContext.signal }); },
             async notifyDemands(input) { await producer!.notify!(input.input); },
         };
-        const kit = await createPluginTestkit({ manifest: databasePlugin.manifest, module: databasePlugin, services: { storage, secrets, resources } });
+        const writeAudit: unknown[] = [];
+        const logger = { debug() {}, warn() {}, error() {}, diagnostic() {}, info(message: string, fields?: unknown) {
+            if (message === 'Database write committed') writeAudit.push(fields);
+        } };
+        const kit = await createPluginTestkit({ manifest: databasePlugin.manifest, module: databasePlugin, services: { storage, secrets, resources, logger } });
         try {
             expect({ storageReads, acquisitions }).toEqual({ storageReads: 0, acquisitions: 0 });
             const scope = { kind: 'worktree', accountId: 'alice', installationId: 'installation', projectKey: 'project', workspace: target.workspace } as const;
@@ -130,7 +135,10 @@ describe('semantic database Action runtime', () => {
                 expect(await kit.invokeAction(runId, read, invocation)).toMatchObject({ ok: true });
                 expect(acquisitions).toBe(heldAcquisitions);
                 expect(await kit.invokeAction(runId, { operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
-                    statements: [{ sql: "UPDATE selected SET label='committed'", parameters: [] }] }, invocation)).toMatchObject({ ok: true });
+                    statements: [{ sql: "UPDATE selected SET label='committed' WHERE label=? /* audit-private-comment */",
+                        parameters: [{ type: 'text', value: 'before' }] }] }, invocation)).toMatchObject({ ok: true });
+                expect(writeAudit).toEqual([{ operation: 'statement.run', target, requesterAccountId: 'alice',
+                    statements: [{ shape: 'update selected set label = ? where label = ?', affectedRows: '1' }] }]);
                 expect(publications).toBe(1);
                 expect(await kit.invokeAction(runId, read, invocation)).toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ value: 'committed' }] }] }] });
                 // G1: the agent reads through the held demand at Read; then the owner sets None.
@@ -175,6 +183,39 @@ describe('semantic database Action runtime', () => {
         afterAll(async () => {
             if (started) await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);
             if (directory) await rm(directory, { recursive: true, force: true });
+        });
+        it('disposes the index-advice connection while the pane keeps its read demand', async () => {
+            const postgresDescriptor = { ...descriptor, engine: 'postgresql' } as const;
+            const demand = createDatabaseConnectionResourceRuntime({ async resolve() {
+                return { descriptor: postgresDescriptor, connection: await openManualDatabaseConnection({ target, secretValue, access: 'read' }) };
+            } });
+            const resourceContext = createTestResourceInvocationContext({ requesterAccount: { accountId: 'alice' },
+                context: { kind: 'surface', mountInstanceKey: 'selected', launchInput: { operation: 'describe', target } } });
+            const held = await demand.createProducer!(resourceContext);
+            let advisorClosures = 0;
+            const runtime = createDatabaseRuntime({ async admit() {}, async resolve(input) {
+                const connection = await openManualDatabaseConnection({ target, secretValue, access: input.access });
+                return { descriptor: postgresDescriptor, connection: { ...connection, async close() {
+                    await connection.close();
+                    advisorClosures++;
+                } } };
+            } });
+            const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database', actions: createDatabaseActions(runtime) });
+            const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { resources: {
+                ...resourceContext.resources, async invokeDemand(input, options) {
+                    return await held.invoke!(input.input, { signal: options?.signal ?? resourceContext.signal });
+                },
+            } } });
+            try {
+                const operand = { target, subscriptionId: 'open-pane' };
+                const read = { ...operand, operation: 'statement.run', mode: 'read', statement: { sql: 'SELECT label FROM selected', parameters: [] } };
+                expect(await kit.invokeAction(runId, read)).toMatchObject({ ok: true });
+                expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1), {
+                    ...operand, operation: 'stats.read', request: { kind: 'stats.read', group: 'indexAdvice', selection: { statementKey: 'observed' } },
+                })).toMatchObject({ ok: true, observation: { status: 'unavailable', reason: 'extension_missing' } });
+                expect(advisorClosures).toBe(1);
+                expect(await kit.invokeAction(runId, read)).toMatchObject({ ok: true });
+            } finally { await kit.dispose(); await held.dispose(); }
         });
         it('preserves native settlement when connection cleanup rejects', async () => {
             const warnings: unknown[] = [];
@@ -258,7 +299,9 @@ describe('semantic database Action runtime', () => {
             return { descriptor, connection: { ...connection, async close() { closures++; await connection.close(); } } };
         } });
         const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database', actions: createDatabaseActions(runtime) });
-        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { resources, secrets } });
+        const audit = vi.fn();
+        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { resources, secrets,
+            logger: { debug() {}, warn() {}, error() {}, diagnostic() {}, info: audit } } });
         const read = { operation: 'statement.run', target, subscriptionId: 'open-pane', mode: 'read', statement: { sql: 'SELECT label FROM selected', parameters: [] } } satisfies JsonValue;
         try {
             expect(await kit.invokeAction(runId, read)).toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'before' }] }] }] });
@@ -288,6 +331,12 @@ describe('semantic database Action runtime', () => {
                     values: [{ column: 'label', value: { kind: 'value', cell: { type: 'text', value: 'edited' } } }],
                 }],
             })).toMatchObject({ ok: true, status: 'committed', updated: '1' });
+            expect(audit.mock.calls).toEqual([
+                ['Database write committed', { operation: 'statement.run', target,
+                    statements: [{ shape: 'update selected set label = ?', affectedRows: '1' }] }],
+                ['Database write committed', { operation: 'edits.apply', target, relation, columns: ['id', 'label'],
+                    inserted: '0', updated: '1', deleted: '0' }],
+            ]);
             expect(publications).toBe(2);
             expect(JSON.parse(String(await producer.read(context)))).toMatchObject({
                 ownWriteRevision: 1, relationRevisions: [{ relation, revision: 1 }],

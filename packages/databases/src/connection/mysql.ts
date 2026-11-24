@@ -4,6 +4,7 @@ import type { Duplex } from 'node:stream';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 import { statsOperationResultV1 } from '../stats.js';
 import { DatabaseStatementError } from '../statement.js';
+import { normalizeMysqlStatement } from '../mysql/statement.js';
 import { fitDatabaseOperationResult } from '../resultEnvelope.js';
 import { databaseConnectionUrlWithoutOptions, parseDatabaseConnectionUrl, withDatabaseConnectionUrlOptions, databaseTlsVerification, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
@@ -20,6 +21,7 @@ export { mysqlFailureCause } from '../mysql/index.js';
 export { mysqlCapabilities } from '../capabilities.js';
 
 export interface MysqlConnection {
+    normalizeStatementShape(sql: string): string;
     execute(input: DatabaseOperationInputV1, signal?: AbortSignal): Promise<DatabaseOperationResultV1>;
     close(): Promise<void>;
 }
@@ -262,6 +264,7 @@ export async function openMysqlConnection(connectionString: string, signal?: Abo
             partialRevokes: settings.partialRevokes };
     };
     return {
+        normalizeStatementShape: sql => normalizeMysqlStatement(sql, lexical).shape,
         execute: (input, operationSignal) => schedule(() => options.runOperation
             ? options.runOperation(() => execute(input, operationSignal), operationSignal)
             : execute(input, operationSignal)),
