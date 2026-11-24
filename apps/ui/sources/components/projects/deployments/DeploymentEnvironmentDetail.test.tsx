@@ -1207,7 +1207,8 @@ describe('Project deployments page', () => {
       const { controller } = controllerFor({ detail, destinations: [destination, nonProduction], onListEnvironments: list });
       const request = vi.fn();
       const { HappyError } = await import('@/utils/errors/errors');
-      const promote = vi.fn(async () => {
+      type Promote = NonNullable<React.ComponentProps<typeof DeploymentEnvironmentDetail>['promote']>;
+      const promote = vi.fn<Promote>(async () => {
         throw new HappyError('approval_request_created', false, { code: 'approval_request_created',
           details: { kind: 'approval_request_created', actionId: 'deployments.promote', artifactId: 'promotion-review' } });
       });
@@ -1227,8 +1228,9 @@ describe('Project deployments page', () => {
         await act(async () => { await screen.pressByTestIdAsync('project-deployments.promote.destination:production'); });
         await act(async () => { await screen.pressByTestIdAsync('project-deployments.promote.confirm'); });
         await waitForHomeGovernance(() => expect(request).toHaveBeenCalledWith('promotion-review'));
-        expect(promote).toHaveBeenCalledExactlyOnceWith({ environmentId: destination.id,
-          sourceEnvironmentId: detail.environment.id, sourceDeploymentId: live, artifact: 'image' });
+        expect(promote.mock.calls.map(([input]) => input)).toEqual([{
+          environmentId: destination.id, sourceEnvironmentId: detail.environment.id, sourceDeploymentId: live, artifact: 'image',
+        }]);
       } finally { await screen?.unmount(); await act(async () => { controller.retire(); }); }
     });
 
