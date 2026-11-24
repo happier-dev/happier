@@ -6,7 +6,7 @@ import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/review
 import { z } from 'zod/mini';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createMachineFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture, standardCleanup, waitForTestEvent } from '@/dev/testkit';
-import type { SelectionListSection, SelectionListOption } from '@/components/ui/selectionList';
+import type { SelectionListSectionDescriptor, SelectionListOption } from '@/components/ui/selectionList';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -80,7 +80,8 @@ describe('Review inventory order through Start selection', () => {
         await waitForTestEvent(screen.subscribe, who, list => list !== undefined);
         if (screen.findByTestId('second-opinion.reviewers-more')) await screen.pressByTestIdAsync('second-opinion.reviewers-more');
         const targetRows = (): readonly SelectionListOption[] => who()!.props.rootStep.sections.flatMap(
-            (section: SelectionListSection) => section.kind === 'static' ? section.options : []);
+            (section: SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : []).filter(
+            (option: SelectionListOption) => option.testID?.startsWith('contextual-start-agent:'));
         await waitForTestEvent(screen.subscribe, targetRows, rows => rows.some(row => !row.disabled));
         const selected = targetRows().filter(row => who()!.props.selection.selectedIds.has(row.id));
         // A fresh review asks who should answer; explicit retry selections survive.
