@@ -379,6 +379,19 @@ describe('machine contribution registry projection ops', () => {
             .resolves.toEqual({ supported: false, reason });
     });
 
+    it('preserves the Home Machine availability reason on a refused projection read', async () => {
+        const { machineContributionRegistryProjectionDescribe } = await import('./machineContributionRegistryProjection');
+        network.setRpcAckResponder(async () => ({
+            ok: false,
+            error: 'target_unavailable',
+            errorCode: 'target_unavailable',
+            details: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+        }));
+
+        await expect(machineContributionRegistryProjectionDescribe('machine-1', { serverId: serverAId }))
+            .resolves.toEqual({ supported: false, reason: 'machine_offline' });
+    });
+
     it.each([
         ['machine_unavailable', 'machine-unavailable'],
         ['machine_admin_access_required', 'access-denied'],

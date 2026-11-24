@@ -43,7 +43,8 @@ import {
     isRpcMethodNotFoundError,
     readRpcErrorCode,
 } from '@/sync/runtime/rpcErrors';
-import { isRpcMachineAdmissionUnavailableError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcError, isRpcMachineAdmissionUnavailableError } from '@happier-dev/protocol/rpcErrors';
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import {
     parseDaemonContributionRegistryProjectionDescribeResponse,
     parseDaemonPluginUiTargetedContributionsReadResponse,
@@ -94,6 +95,7 @@ export {
  */
 export type MachineContributionRegistryProjectionFailureReason =
     | MachinePluginTransportReason
+    | MachineAvailabilityDiagnosticV1['reason']
     | 'invalid-response'
     | 'projection-stale'
     | 'request-failed'
@@ -278,6 +280,9 @@ function classifyMachinePluginTransportError(error: unknown): MachinePluginTrans
 
 /** Projection reads expose recovery categories, never arbitrary peer codes or prose. */
 function classifyMachineProjectionReadError(error: unknown): MachineContributionRegistryProjectionFailureReason {
+    if (isRpcError(error) && error.rpcErrorCode === 'target_unavailable' && error.details && 'reason' in error.details) {
+        return error.details.reason;
+    }
     switch (readRpcErrorCode(error)) {
         case DAEMON_PROJECTION_SECTION_STALE_CODE:
             return 'projection-stale';

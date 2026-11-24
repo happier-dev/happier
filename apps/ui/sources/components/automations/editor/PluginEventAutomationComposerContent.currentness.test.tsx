@@ -299,7 +299,20 @@ describe('PluginEventAutomationComposerContent currentness', () => {
 
         expect(screen.findByProps({ testID: 'automation-event-configure-source' }).props.disabled).toBe(true);
         expect(screen.findByProps({ testID: 'automation-event-source-unavailable' }).props.children)
-            .toBe('automations.form.trigger.sourceUnavailable');
+            .toBe('settingsProviders.detail.machineOffline');
+    });
+
+    it('presents the Machine refusal carried by the source setup Action', async () => {
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={{
+            ...createModel({ eventAvailable: true }),
+            sourceStatus: 'unavailable',
+            sourceFailure: { code: 'target_unavailable', reason: 'machine_offline' },
+        }} />);
+
+        expect(screen.findByProps({ testID: 'automation-event-source-unavailable' }).props.children)
+            .toBe('errors.machineNotAnswering');
+        expect(screen.findByProps({ testID: 'automation-event-configure-source' }).props.accessibilityHint)
+            .toBe('errors.machineNotAnswering');
     });
 
     it('does not invite a source setup Action while the Event filter is invalid', async () => {

@@ -12,6 +12,7 @@ import { getPluginExecutionOriginCandidateOrigin, getPluginExecutionOriginCandid
 import { PluginPresentedExecutionOriginProjectionDemand, readPluginPresentedExecutionOriginProjectionTargets } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import type { PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { resolvePluginExecutionOriginReasonDetail as originReasonDetail } from '@/sync/domains/surfaces/copy';
+import { resolvePluginEventSourceFailureCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/settings/catalog/pageCatalog';
@@ -161,19 +162,19 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const watcherFailureByOrigin = React.useMemo(() => new Map((props.model.watcherFailures ?? []).map(failure => [
         createCanonicalJsonSigningInput(failure.origin), failure,
     ])), [props.model.watcherFailures]);
+    const selectedWatcherFailure = selectedWatcher
+        ? watcherFailureByOrigin.get(createCanonicalJsonSigningInput(selectedWatcher)) : undefined;
     const selectedWatcherCurrent = selectedWatcher === null || props.model.eventCatalogStatus === 'loading'
         ? null
-        : props.model.watcherCandidates.some((candidate) => {
-            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
-            return arePluginMachineExecutionOriginsEqual(origin, selectedWatcher)
-                && !watcherFailureByOrigin.has(createCanonicalJsonSigningInput(origin));
-        });
-    const eventOptionByKey = React.useMemo(() => new Map(props.model.eligibleEvents.map((event) => {
+        : !selectedWatcherFailure && props.model.watcherCandidates.some(candidate =>
+            arePluginMachineExecutionOriginsEqual(getPluginExecutionOriginCandidateOrigin(candidate), selectedWatcher));
+    const displayedEvents = props.model.retainedEventOptions ?? props.model.eligibleEvents;
+    const eventOptionByKey = React.useMemo(() => new Map(displayedEvents.map((event) => {
         const presentation = props.model.getPluginPresentation(event);
         return [presentation.eventKey, event] as const;
-    })), [props.model.eligibleEvents, props.model.getPluginPresentation]);
+    })), [displayedEvents, props.model.getPluginPresentation]);
     const eventSelectionOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(
-        () => props.model.eligibleEvents.map((event) => {
+        () => displayedEvents.map((event) => {
             const plugin = props.model.getPluginPresentation(event);
             const presentation = props.model.getEventPresentation(event);
             return {
@@ -197,7 +198,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                 disabled: plugin.availability !== 'available',
             };
         }),
-        [props.model.eligibleEvents, props.model.getPluginPresentation, props.model.getEventPresentation],
+        [displayedEvents, props.model.getPluginPresentation, props.model.getEventPresentation],
     );
     const eventSelectionStep = React.useMemo<SelectionListStep>(() => ({
         id: 'automation-events',
@@ -271,13 +272,11 @@ export function PluginEventAutomationComposerContent(props: Props) {
         || selectedWatcherCurrent !== true
         || !props.model.filterValid
         || !props.model.maximumObservationAgeMsValid;
-    const sourceDisplayText = sourceCurrentnessUnavailable
-        ? t('automations.form.trigger.sourceUnavailable')
-        : props.model.sourceStatus === 'configured'
-            ? props.model.sourceDisplayLabel ?? t('automations.form.trigger.sourceConfigured')
-            : props.model.sourceStatus === 'settingUp'
-                ? t('common.loading')
-                : t('automations.form.trigger.configureSource');
+    const sourceDisplayText = props.model.sourceStatus === 'configured' && !sourceCurrentnessUnavailable
+        ? props.model.sourceDisplayLabel ?? t('automations.form.trigger.sourceConfigured')
+        : props.model.sourceStatus === 'settingUp'
+            ? t('common.loading')
+            : t('automations.form.trigger.configureSource');
     const sourceUnavailable = props.model.eventCatalogStatus !== 'loading'
         && (props.model.sourceStatus === 'unavailable' || sourceCurrentnessUnavailable);
     const sourceFailureDetails = sourceUnavailable && props.model.sourceFailure ? (
@@ -291,8 +290,14 @@ export function PluginEventAutomationComposerContent(props: Props) {
     const sourceSettingsPath = props.model.sourceFailure?.remediation?.kind === 'openSettings'
         ? props.model.sourceFailure.remediation.path
         : null;
-    const sourceSetupHint = sourceUnavailable
-        ? t('automations.form.trigger.sourceUnavailable')
+    const sourceFailureCopy = resolvePluginEventSourceFailureCopy(props.model.sourceFailure);
+    const sourceUnavailableCopy = sourceUnavailable
+        ? sourceFailureCopy ?? (selectedWatcherFailure
+            ? watcherFailureDetail(selectedWatcherFailure)
+            : t('automations.form.trigger.sourceUnavailable'))
+        : undefined;
+    const sourceSetupHint = sourceUnavailableCopy
+        ? sourceUnavailableCopy
         : !props.model.filterValid
             ? t('automations.form.trigger.eventFilterInvalid')
             : !props.model.maximumObservationAgeMsValid
@@ -400,18 +405,18 @@ export function PluginEventAutomationComposerContent(props: Props) {
     return (
         <View testID="automation-event-composer" style={styles.section}>
                 <View style={styles.eventFields}>
-                    {props.model.eventCatalogStatus !== 'ready' ? (
+                    {props.model.eventCatalogStatus !== 'ready' && props.model.retainedEventOptions === undefined ? (
                         <Text testID="automation-event-catalog-status" style={styles.unavailableText}>
                             {props.model.eventCatalogStatus === 'idle'
                                 // Only a saved push endpoint waits on placement; anything else waits on a Machine.
                                 ? props.model.observationTransport === 'durablePush'
                                     ? chooseObservationPlacement
                                     : t('automations.form.trigger.eventCatalogNeedsMachine')
-                                : t(props.model.eventCatalogStatus === 'loading'
-                                    ? 'automations.form.trigger.eventCatalogLoading'
-                                    : 'automations.form.trigger.eventCatalogUnavailable')}
+                                : props.model.eventCatalogStatus === 'loading'
+                                    ? t('automations.form.trigger.eventCatalogLoading')
+                                    : sourceFailureCopy ?? t('automations.form.trigger.eventCatalogUnavailable')}
                         </Text>
-                    ) : props.model.eligibleEvents.length === 0 && !selectedEvent ? (
+                    ) : displayedEvents.length === 0 && !selectedEvent ? (
                         // The Machine's catalog is the owner's answer: name it and offer that Machine's Store, not an empty picker.
                         <View testID="automation-event-catalog-empty" style={styles.watcherRemedies}>
                             <Text style={styles.unavailableText}>
@@ -545,14 +550,14 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         </Text>
                                         <Icon name="gear" size={14} color={theme.colors.text.secondary} />
                                     </HappierPressable>
-                                    {sourceUnavailable ? (
+                                    {sourceUnavailableCopy ? (
                                         <Text
                                             testID="automation-event-source-unavailable"
                                             accessibilityRole="alert"
                                             accessibilityLiveRegion="polite"
                                             style={styles.unavailableText}
                                         >
-                                            {t('automations.form.trigger.sourceUnavailable')}
+                                            {sourceUnavailableCopy}
                                         </Text>
                                     ) : null}
                                     {sourceFailureDetails}

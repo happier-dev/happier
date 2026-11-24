@@ -76,6 +76,62 @@ function answerOwnedMachine() {
     homes.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
 }
 
+it.each(['project', 'child refusal', 'connection lost'] as const)(
+    'settles a read-only Railway options Action through the Account bridge: %s', async outcome => {
+        if (!account) throw new Error('Expected captured Account');
+        const { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1: actionId } = await import('@happier-dev/protocol/actions/actionIds');
+        const { formatQualifiedPluginActionId } = await import('@happier-dev/protocol/plugins/actions/qualifiedActionId');
+        const { createDeploymentTargetOptionsResource } = await import('@happier-dev/plugin-sdk/resources');
+        const { isPluginError } = await import('@happier-dev/plugin-sdk/errors');
+        const { createTestResourceInvocationContext } = await import('@happier-dev/plugin-sdk/testing');
+        const child = { pluginId: 'happier.deploy.railway', localId: 'target-options-read' };
+        const option = { value: 'railway-project', label: 'Selected Railway project' };
+        const childFailure = { ok: false as const, errorCode: 'missing_option_dependency', error: 'missing_option_dependency',
+            details: { requiredDraftPath: 'providerAccountId' } };
+        const credentialRef = { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'selected' };
+        const optionInput = { actionId: formatQualifiedPluginActionId({ ...child, localId: 'targets-inspect-v1' }),
+            fieldPath: outcome === 'child refusal' ? 'railwayEnvironmentId' : 'providerAccountId',
+            draftInput: { credentialRef,
+                credentialPrincipal: { kind: 'account', accountId: 'owner', target: { kind: 'account', account: credentialRef } } } };
+        const optionsBinding = { ...binding, actionId, requestId: 'railway-options' };
+        const optionsPath = '/v1/actions/' + actionId;
+        const resource = createDeploymentTargetOptionsResource(child, 'deployment.railway.options', () => ({}));
+        homes.answer(serverId, optionsPath, { select: async body => {
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+            const query = getActionSpec(actionId).inputSchema.parse(envelope.input);
+            let execution;
+            try {
+                const bytes = await resource.read(createTestResourceInvocationContext({ query,
+                    async readAction(ref, input) {
+                        expect(ref).toEqual(child);
+                        expect(input).toMatchObject({ credentialRef, fieldPath: optionInput.fieldPath });
+                        return outcome === 'child refusal' ? childFailure : { ok: true, result: { options: [option] } };
+                    },
+                }));
+                const page = JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
+                execution = { ok: true, result: getActionSpec(actionId).outputSchema!.parse({
+                    actionId: query.actionId, fieldPath: query.fieldPath, optionsSourceId: null, ...page,
+                }) };
+            } catch (error) {
+                if (!isPluginError(error)) throw error;
+                execution = { ok: false, errorCode: error.code, error: error.code, details: error.details };
+            }
+            return outcome === 'connection lost' ? { dispatchThenFail: true }
+                : { body: { v: 1, actionId, requestId: envelope.requestId, execution } };
+        } });
+        const result = await executeOriginalAccountActionTransport({ account, binding: optionsBinding, input: optionInput });
+        if (outcome === 'project') {
+            expect(result).toEqual({ ok: true, result: { actionId: optionInput.actionId, fieldPath: optionInput.fieldPath,
+                optionsSourceId: null, options: [option] } });
+        } else if (outcome === 'child refusal') {
+            expect(result).toEqual({ ...childFailure, requestId: optionsBinding.requestId });
+        } else {
+            expect(result).toMatchObject({ ok: false, errorCode: 'server_unreachable',
+                failureCause: { phase: 'external_action.http.execute' } });
+        }
+    },
+);
+
 it('routes a Team Environment capture read to Home admission without a Machine grant', async () => {
     if (!account) throw new Error('Expected captured Account');
     const admissionPath = '/v1/actions/action.invoke/execution-authorization';

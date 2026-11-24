@@ -2,6 +2,8 @@ import type { BrowserSurfaceUnavailableReason } from '@/components/browser/surfa
 import type { BrowserAdapterUnavailableReasonCode } from '@/sync/domains/browser/adapters/availability';
 import type { BrowserPreviewRefusalReasonCode } from '@/sync/domains/browser/adapters/targets/localPreview';
 import { t } from '@/text';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import type { PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -903,6 +905,28 @@ function resolveKnownMessage(kind: ReasonCopyKind, reasonCode: string, servicesA
             return key ? t(key) : null;
         }
     }
+}
+
+/** The Home's typed Machine refusal uses the same copy wherever it reaches a surface. */
+function resolveMachineAvailabilityReasonCopy(reason: string | null | undefined): string | null {
+    return reason === 'machine_offline' || reason === 'machine-unavailable'
+        ? t('errors.machineNotAnswering') : null;
+}
+
+export function resolveMachineTargetUnavailableReasonCopy(details: unknown): string | null {
+    const diagnostic = MachineAvailabilityDiagnosticV1Schema.safeParse(readRecord(details).diagnostic ?? details).data;
+    return resolveMachineAvailabilityReasonCopy(diagnostic?.reason);
+}
+
+export function resolvePluginEventSourceFailureCopy(failure: Readonly<{
+    code: string;
+    reason: string;
+    details?: unknown;
+}> | null): string | null {
+    if (!failure) return null;
+    return resolveMachineAvailabilityReasonCopy(failure.reason)
+        ?? (failure.code === 'target_unavailable' ? resolveMachineTargetUnavailableReasonCopy(failure.details) : null)
+        ?? (Object.hasOwn(PLUGIN_RUNTIME_KEYS, failure.reason) ? resolveKnownMessage('pluginRuntime', failure.reason) : null);
 }
 
 /**

@@ -53,6 +53,7 @@ import { tellRequesterMachineUseOnce } from '@/components/machines/managed/reque
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
+import { readServerUnreachableFetchCode } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectDeploymentTelemetryReadAdmissionV1, type DeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
@@ -449,8 +450,9 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         if (retainsEffectReceipt) return await account.requestEffectReceipt(path, init, options, readResponse);
         response = await account.request(path, init, options);
     } catch (error) {
-        // Losing the response after issuance cannot prove that the Action failed.
-        if (issued) return withActionFailureDiagnostic({ ...failure('outcome_unknown'),
+        // An issued effect needs reconciliation. For a read, report the network failure.
+        const code = retainsEffectReceipt ? (issued ? 'outcome_unknown' : null) : readServerUnreachableFetchCode(error);
+        if (code) return withActionFailureDiagnostic({ ...failure(code),
             failureCause: projectActionFailureCauseV1(error, 'external_action.http.execute'),
         }, { phase: 'external_action.http.execute', causeKind: 'incomplete', error });
         if (error instanceof ServerFetchWriteTimeoutError) {

@@ -123,6 +123,8 @@ const RETIRED_SETUP_FAILURE = {
 
 export type PluginEventAutomationComposerModel = Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
+    /** Same-scope cached choices to display while the catalog reader refreshes its answer. */
+    retainedEventOptions?: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     eventCatalogStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
     /** The Machine whose catalog this is, so an empty catalog can name it and offer that Machine's Store. */
     catalogMachineId?: string | null;
@@ -571,11 +573,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         return { watcherFailures, selectableWatchers };
     }, [movingSavedSource, watcherEvent, watcherCandidates]);
 
-    // A source seed can bind its observer to one Machine. Keep that owner's
-    // settled failure visible while the ordinary editor configures that source.
+    // The catalog refusal applies to every row. Only seed-bound rows ask for a
+    // failure on their required watcher before a person has chosen one.
     const catalogFailure = params.projectionPhase === 'unsupported' ? 'not-supported'
         : params.projectionPhase === 'error' ? params.projectionFailureReason ?? 'request-failed' : undefined;
-    const seedSetupFailure = React.useMemo(() => monitoringMachineId ? readSeededPluginEventAutomationSetupFailure({
+    const setupAvailabilityFailure = React.useMemo(() => monitoringMachineId || catalogFailure ? readSeededPluginEventAutomationSetupFailure({
         catalogReady: eventCatalogStatus === 'ready',
         ...(catalogFailure ? { catalogFailure } : {}),
         event: watcherEvent,
@@ -1188,8 +1190,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     const sourceDisplayLabel = configuredSetup?.draft.source.displayLabel ?? null;
     const sourceInstanceId = configuredSetup?.draft.source.sourceInstanceId ?? null;
 
+    const retainedEventOptions = eventCatalogStatus === 'loading' ? params.projectionInputs?.automationEligibleEvents : undefined;
     return React.useMemo(() => ({
         eligibleEvents,
+        retainedEventOptions,
         eventCatalogStatus,
         catalogMachineId: params.machineId,
         catalogServerId: params.serverId,
@@ -1201,8 +1205,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         selectEvent: chooseEvent,
         getPluginPresentation,
         getEventPresentation,
-        sourceStatus: seedSetupFailure ? 'unavailable' : sourceStatus,
-        sourceFailure: seedSetupFailure ?? sourceFailure,
+        sourceStatus: setupAvailabilityFailure ? 'unavailable' : sourceStatus,
+        sourceFailure: setupAvailabilityFailure ?? sourceFailure,
         sourceDisplayLabel,
         sourceInstanceId,
         configureSource,
@@ -1272,7 +1276,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         sourceInstanceId,
         sourceStatus,
         sourceFailure,
-        seedSetupFailure,
+        setupAvailabilityFailure,
+        retainedEventOptions,
         setFilterClauseField,
         setFilterClauseOperator,
         setFilterClauseValueText,

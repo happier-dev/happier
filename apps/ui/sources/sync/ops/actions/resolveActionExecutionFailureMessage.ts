@@ -1,4 +1,3 @@
-import { MachineAvailabilityDiagnosticV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
@@ -23,7 +22,7 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
-import { resolvePluginSurfaceStaleReasonMessage, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { resolveMachineTargetUnavailableReasonCopy, resolvePluginSurfaceStaleReasonMessage, resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 import { getUiFeatureDefinition } from '@/sync/domains/features/featureRegistry';
 
@@ -307,8 +306,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     // HTTP refusal body or as the diagnostic itself): say so instead of a bare "Request failed."
     if (code === 'target_unavailable') {
         const details = asRecord(record.details);
-        const availability = MachineAvailabilityDiagnosticV1Schema.safeParse(details?.diagnostic ?? details).data;
-        if (availability?.reason === 'machine_offline') return t('errors.machineNotAnswering');
+        const availabilityCopy = resolveMachineTargetUnavailableReasonCopy(details);
+        if (availabilityCopy) return availabilityCopy;
         // A Workflow start whose project folder the target Machine could not use (`workflow_workspace` refusal).
         if (details?.reason === 'workspace_unavailable') return t('errors.workspaceUnavailableOnMachine');
     }

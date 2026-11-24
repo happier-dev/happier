@@ -821,6 +821,29 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
         expect(endpointReads()).toHaveLength(0);
     });
 
+    it('keeps the last Event options during refresh and presents the settled Machine refusal', async () => {
+        const event = eligibleEvent();
+        const inputs = projectionInputs(event);
+        const { t } = await import('@/text');
+        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
+        function Composer({ phase }: Readonly<{ phase: DaemonMergedProjectionPhase }>) {
+            const model = usePluginEventAutomationComposer({
+                machineId: WATCHER_MACHINE_ID, serverId, projectionPhase: phase, projectionInputs: inputs,
+                projectionFailureReason: phase === 'error' ? 'machine-unavailable' : undefined,
+                initialEventRef: event.event.identity,
+            });
+            return <PluginEventAutomationComposerContent model={model} />;
+        }
+        const screen = await renderScreen(<Composer phase="ready" />);
+        expect(screen.findByTestId('automation-event-picker')).not.toBeNull();
+        await screen.update(<Composer phase="loading" />);
+        expect(screen.findByTestId('automation-event-picker')).not.toBeNull();
+        expect(screen.findByTestId('automation-event-catalog-status')).toBeNull();
+        await screen.update(<Composer phase="error" />);
+        expect(screen.findByProps({ testID: 'automation-event-catalog-status' }).props.children)
+            .toBe(t('errors.machineNotAnswering'));
+    });
+
     it('does not borrow the trigger Project Machine for repository-only Event intent', async () => {
         const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
         const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
