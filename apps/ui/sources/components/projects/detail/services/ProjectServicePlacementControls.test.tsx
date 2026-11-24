@@ -342,8 +342,8 @@ async function setup(options: Readonly<{
             workspace: { ...target.workspace, machineId: worker.machineId, workspaceId: worker.id, rootPath: worker.rootPath },
             cwd: worker.rootPath, declaration: { ...target.declaration, workspaceRefId: worker.id } } : {}),
         }] : options.liveFeeds && !params?.projection && machineId === source.machineId ? [{
-          ...target, sourceClass: undefined, serviceState: undefined, endpointUrl: undefined, readiness: undefined,
-          state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [],
+          ...target, sourceClass: undefined, serviceState: 'stopped', endpointUrl: undefined, readiness: undefined,
+          state: 'available', unavailableReason: undefined, actions: ['start'],
         }] : [],
     },
   };
@@ -712,7 +712,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
             id: 'server-target', source: 'managed_service', machineId, workspaceId: 'checkout',
             workspace: { serverId: h.serverId, machineId, workspaceId: 'checkout', rootPath: '/src/happier' },
             declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'server' } },
-            cwd: '/src/happier', title: 'server', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [],
+            cwd: '/src/happier', title: 'server', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'],
           }] : [] } }),
       });
       const workspace = { serverId: h.serverId, machineId: 'devbox', workspaceId: 'checkout', rootPath: '/src/happier' };

@@ -180,6 +180,8 @@ export async function observeProjectServicePlacementActualV1(input: Readonly<{
         const target = observed.data;
         if (target.workspaceId !== ref.ref.id) continue;
         if (!target.workspace || resolveWorkspaceRefV1([ref.ref], target.workspace, input.context).kind !== 'resolved') { invalidBinding = true; break; }
+        // A confirmed stopped lifetime is retained history, not an actual placement.
+        if (target.serviceState === 'stopped') continue;
         const selection = target.declaration?.selection;
         if (selection?.kind === 'manifest' ? selection.name === input.serviceName
           : selection && createProjectServiceDeclarationTargetIdV1(source.ref, selection) === input.serviceName) observedTargets.push(target);

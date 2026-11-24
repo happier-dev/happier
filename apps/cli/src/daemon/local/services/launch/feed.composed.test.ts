@@ -12,6 +12,8 @@ import { buildLocalServiceRows } from '../../../../../../../apps/ui/sources/sync
 import { buildBrowserLaunchpadRows, selectRunningServiceForEndedPreview } from '../../../../../../../apps/ui/sources/sync/domains/browser/targets/suggestions';
 import { createProjectServiceRelocation } from '@/workspaces/execution/projectServiceRelocation';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { observeProjectServicePlacementActualV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { join } from 'node:path';
 import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -137,13 +139,15 @@ describe('createLocalServiceLauncherFeed', () => {
     it.each([
         ['Start', 'source'], ['Start', 'worker'], ['Move', 'source'], ['Move', 'worker'],
     ] as const)('keeps a complete binding read pending through %s settlement on %s, then offers Open without prior registration', async (operation, destination) => {
-        const createOwner = () => createManagedServicesOwner({
+        const historyDirectory = operation === 'Move' ? await fs.mkdtemp(join(tmpdir(), 'happier-move-history-')) : undefined;
+        const createOwner = (retained = false) => createManagedServicesOwner({
+            ...(retained ? { projectServiceStateDirectory: historyDirectory } : {}),
             processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
             // Literal Project launches never install plugin dependencies.
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
         const owner = createOwner();
-        const oldOwner = createOwner();
+        const oldOwner = createOwner(operation === 'Move');
         const workspace: WorkspaceRefV1 = { id: `${destination}-ref`, serverId: 'home', machineId: destination,
             rootPath: process.cwd(), createdAtMs: 1 };
         const oldWorkspace = { ...workspace, id: `${destination}-old-ref`, machineId: destination === 'source' ? 'worker' : 'source' };
@@ -218,7 +222,36 @@ describe('createLocalServiceLauncherFeed', () => {
             expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: snapshot.targets, sessionId: null, scope: 'workspace' }))
                 .toEqual([expect.objectContaining({ status: 'running',
                     primaryAction: expect.objectContaining({ kind: 'open', openTarget: snapshot.targets[0] }) })]);
-        } finally { release(); await completion?.catch(() => {}); await owner.dispose(); await oldOwner.dispose(); }
+            if (operation === 'Move') {
+                const oldFeed = createLocalServiceLauncherFeed({ machineId: oldWorkspace.machineId, projectManagedServices: oldOwner,
+                    inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry() });
+                const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+                const observePlacement = () => observeProjectServicePlacementActualV1({
+                    workspace: { serverId: 'home', refId: oldWorkspace.id }, serviceName: 'httpPort',
+                    workspaceRefs: [oldWorkspace, workspace], relationships: [{ v: 1, relationshipId: 'move-copy',
+                        controllerMachineId: oldWorkspace.machineId, alphaWorkspaceRefId: oldWorkspace.id, betaWorkspaceRefId: workspace.id,
+                        mode: 'keep_synced', enabled: true, contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+                        createdAtMs: 1, updatedAtMs: 1 }], isCurrent: () => true,
+                    // Only the daemon-to-daemon transport is substituted; both feeds and native owners stay real.
+                    readSnapshot: async request => ({ protocolVersion: 1,
+                        snapshot: await (request.machineId === destination ? feed : oldFeed).getSnapshot(request) }),
+                });
+                expect(oldOwner.listProjectServices().map(handle => handle.snapshot().state)).toEqual(['stopped']);
+                expect(await observePlacement()).toMatchObject({ status: 'present', target: {
+                    machineId: destination, sourceClass: { managedServiceId: handle.instanceId }, serviceState: 'healthy',
+                } });
+                // A second real native process must still compete with the moved destination.
+                const second = await supervise(oldOwner, oldWorkspace, false);
+                const double = await observePlacement();
+                expect(double.status).toBe('ambiguous');
+                if (double.status !== 'ambiguous') throw new Error('Two live placements were not reported');
+                expect(double.targets.map(target => target.sourceClass?.kind === 'managed_service'
+                    ? target.sourceClass.managedServiceId : undefined).sort()).toEqual([handle.instanceId, second.instanceId].sort());
+            }
+        } finally {
+            release(); await completion?.catch(() => {}); await owner.dispose(); await oldOwner.dispose();
+            if (historyDirectory) await fs.rm(historyDirectory, { recursive: true, force: true });
+        }
     });
 
     it('settles a pending complete read as failed when native establishment fails, without reporting absence', async () => {

@@ -101,7 +101,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const declaration = LocalServiceLaunchTargetV1Schema.parse({ id: 'source-service', source: 'managed_service', machineId: source.machineId,
       workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
       declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } }, cwd: source.rootPath,
-      title: 'web', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] });
+      title: 'web', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'] });
     const actual = LocalServiceLaunchTargetV1Schema.parse({ ...declaration, id: 'native-instance',
       sourceClass: { kind: 'managed_service', managedServiceId: 'native-instance' }, serviceState: 'healthy',
       state: 'available', unavailableReason: undefined, readiness: 'ready', actions: ['manage'] });
@@ -180,7 +180,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const declaration = LocalServiceLaunchTargetV1Schema.parse({ id: 'source-service', source: 'managed_service', machineId: source.machineId,
       workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
       declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } }, cwd: source.rootPath,
-      title: 'web', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] });
+      title: 'web', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'] });
     const actual = LocalServiceLaunchTargetV1Schema.parse({ ...declaration, id: 'native-instance',
       sourceClass: { kind: 'managed_service', managedServiceId: 'native-instance' }, serviceState: 'healthy',
       state: 'available', unavailableReason: undefined, readiness: 'ready', actions: ['manage'] });
@@ -377,7 +377,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const declaration = LocalServiceLaunchTargetV1Schema.parse({ id: 'source-service', source: 'managed_service', machineId: source.machineId,
       workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
       declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } }, cwd: source.rootPath,
-      title: 'web', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] });
+      title: 'web', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'] });
     const actual = LocalServiceLaunchTargetV1Schema.parse({ ...declaration,
       sourceClass: { kind: 'managed_service', managedServiceId: 'source-instance' }, serviceState: 'healthy',
       state: 'available', unavailableReason: undefined, readiness: 'ready', actions: ['manage'] });
@@ -477,7 +477,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const declaration = LocalServiceLaunchTargetV1Schema.parse({ id: 'source-service', source: 'managed_service', machineId: source.machineId,
       workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
       declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } }, cwd: source.rootPath,
-      title: 'web', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] });
+      title: 'web', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'] });
     let releaseBinding!: () => void;
     const bindingRead = new Promise<void>(resolve => { releaseBinding = resolve; });
     let bindingRequested = false;
@@ -544,7 +544,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const declaration = LocalServiceLaunchTargetV1Schema.parse({ id: 'source-service', source: 'managed_service', machineId: source.machineId,
       workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
       declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } }, cwd: source.rootPath,
-      title: 'web', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] });
+      title: 'web', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'] });
     remote.mockImplementation(async ({ method, machineId, payload }: {
       method: string; machineId: string; payload: { projection?: 'managed_bindings' };
     }) => {
@@ -669,7 +669,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const declaration: LocalServiceLaunchTargetV1 = { id: 'source-service', source: 'managed_service', machineId: source.machineId,
       workspaceId: source.id, workspace: { serverId, machineId: source.machineId, workspaceId: source.id, rootPath: source.rootPath },
       declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } }, cwd: source.rootPath,
-      title: 'web', confidence: 'high', state: 'unavailable', unavailableReason: 'launch_unavailable', actions: [] };
+      title: 'web', confidence: 'high', state: 'available', serviceState: 'stopped', actions: ['start'] };
     const actual: LocalServiceLaunchTargetV1 = { ...declaration, id: 'worker-service', machineId: worker.machineId,
       workspaceId: worker.id, workspace: { serverId, machineId: worker.machineId, workspaceId: worker.id, rootPath: worker.rootPath },
       declaration: { workspaceRefId: worker.id, selection: { kind: 'manifest', name: 'web' } }, cwd: worker.rootPath,
@@ -736,7 +736,7 @@ describe('Project Services source feed plus actual native binding', () => {
     const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [...hook.getCurrent().launcherState!.targetsById.values()],
       sessionId: null, scope: 'workspace' });
     expect(row).toMatchObject({ status: 'stopped', primaryAction: { kind: 'start', target: declarations[0] } });
-    expect(row!.target.actions).toEqual([]);
+    expect(row!.target.actions).toEqual(['start']);
     expect(workerBroadRequests).toBe(0);
     await hook.unmount();
     if (bindChild) {
