@@ -224,6 +224,7 @@ export function createDatabaseInsightProducers(options: Readonly<{
         async buildInsightBrief(input, context) {
             if ('task' in input) return { ok: true, brief: buildDatabaseFindingBriefV1(input.task) };
             if ('sourceSelection' in input) {
+                await options.admit({ input: { operation: 'describe', target: input.target }, context, access: 'read' });
                 const current = await selectCurrentTargetedContribution<AdmittedSource>({
                     service: context.services.targetedContributions, point: sourcePoint,
                     selection: input.sourceSelection, operationRole: 'detail', signal: context.signal,

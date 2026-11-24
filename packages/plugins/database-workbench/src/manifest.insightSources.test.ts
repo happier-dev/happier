@@ -1,8 +1,9 @@
 import { expect, it } from 'vitest';
-import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue, type PluginServices } from '@happier-dev/plugin-sdk';
+import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import { DATABASE_INSIGHT_SOURCES_POINT_REF_V1, DatabaseFindingBriefBuildResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { DatabaseInsightSourceContributionProtocolV1 as sourceProtocol, DatabaseInsightSourceOperationSchemasV1 as sourceSchemas } from '@happier-dev/database-protocol/v1';
 import { PLUGIN_MANIFEST, plugin } from './manifest.js';
 
@@ -37,6 +38,7 @@ it('prepares the shared brief from the selected public source and preserves its 
     } as const;
     const refusal = { ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' } as const;
     let expired = false;
+    let detailReads = 0;
     const sourcePlugin = definePlugin({
         id: source.pluginId, version: '0.0.0',
         actions: {
@@ -49,6 +51,7 @@ it('prepares the shared brief from the selected public source and preserves its 
                 resultSchema: sourceSchemas.detailResult,
                 run: async input => {
                     expect(input).toEqual({ target, recordKey });
+                    detailReads++;
                     return expired ? refusal : { ok: true as const, finding };
                 } },
         },
@@ -66,9 +69,34 @@ it('prepares the shared brief from the selected public source and preserves its 
         readCurrent: async () => kit!.readTargetedContributionFixture(point),
         dispose() {},
     }) } as PluginServices['targetedContributions'];
+    const entries = new Map<string, JsonValue>();
+    const storage: StorageScopeService = {
+        async get<T extends JsonValue = JsonValue>(key: string) { return (entries.get(key) ?? null) as T | null; },
+        async set(key, value) { entries.set(key, value); },
+        async delete(key) { entries.delete(key); },
+        async list() { return { items: [...entries.keys()].map(key => ({ key })) }; },
+        consistency() { return { kind: 'authoritativeSerializable' }; },
+        async transaction(run) { return run(storage); },
+    };
+    let release: (() => void | Promise<void>) | undefined;
     try {
         kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: plugin,
-            targetedContributionContributors: [contributor] });
+            targetedContributionContributors: [contributor], services: { storage: {
+                daemon: { ...storage, async database(): Promise<never> { throw new Error('No daemon database requested'); } },
+                daemonSession: storage, ephemeral: storage,
+            } } });
+        const launch = kit.registration('serviceLaunchEnvironments', 'database-discovery');
+        if (!launch) throw new Error('Missing database discovery contribution');
+        const retained = await launch.prepare({
+            workspace: { id: workspace.workspaceId, serverId: workspace.serverId, machineId: workspace.machineId,
+                rootPath: workspace.rootPath, projectKey: target.projectKey },
+            project: { serverId: workspace.serverId, projectId: target.projectKey },
+            requester: { accountId: target.accountId, installationId: target.installationId },
+            serviceId: target.source.serviceId, physicalRootIdentity: workspace.rootPath,
+            executionPlacement: { mode: 'spawn', machineId: workspace.machineId }, assignedPorts: {},
+            async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://localhost/selected' }, provenance: {} }; },
+        });
+        if (retained.kind === 'unchanged') release = retained.release;
         const snapshot = kit.readTargetedContributionFixture(point);
         expect(snapshot.contributions).toHaveLength(1);
         const selected = snapshot.contributions[0].contributor;
@@ -76,8 +104,11 @@ it('prepares the shared brief from the selected public source and preserves its 
             point: { pointId, protocol }, contributor: { pluginId: selected.pluginId, contributionId: selected.contributionId,
                 sourceCustody: selected.sourceCustody } } };
         const action = databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1);
-        const invocation = { services: { targetedContributions } };
-        const reply = DatabaseFindingBriefBuildResultV1Schema.parse(await kit.invokeAction(action, input, invocation));
+        const invocation = { services: { targetedContributions }, requesterAccount: { accountId: target.accountId },
+            chosenMachine: { machineId: workspace.machineId, installationId: target.installationId },
+            agentCaller: false, authority: 'present_user' as const };
+        const agent = { ...invocation, agentCaller: true };
+        const reply = DatabaseFindingBriefBuildResultV1Schema.parse(await kit.invokeAction(action, input, agent));
         expect(reply).toMatchObject({ ok: true, brief: { text: expect.stringContaining(finding.exercise), evidence: { items: [
             expect.objectContaining({ source: { kind: 'databaseFinding', label: finding.title },
                 text: expect.stringContaining(finding.evidenceIdentity) }),
@@ -87,11 +118,18 @@ it('prepares the shared brief from the selected public source and preserves its 
             currentDetail: finding, verification: { action: DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, input },
         });
         expired = true;
+        await expect(kit.invokeAction(action, input, agent)).resolves.toEqual(refusal);
+        const setAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1);
+        await expect(kit.invokeAction(setAccess, { target, agentAccess: 'none' }, invocation))
+            .resolves.toEqual({ ok: true, agentAccess: 'none' });
+        await expect(kit.invokeAction(action, input, agent)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+        expect(detailReads).toBe(2);
         await expect(kit.invokeAction(action, input, invocation)).resolves.toEqual(refusal);
         await contributor.dispose();
         await expect(kit.invokeAction(action, input, invocation)).resolves.toMatchObject({ ok: false, status: 'unavailable',
             reason: 'contributor_unavailable' });
     } finally {
+        await release?.();
         await kit?.dispose();
         await contributor.dispose();
     }
