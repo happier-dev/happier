@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createNativeAgentSessionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import * as daemonControl from '@/daemon/controlHttp';
 import { createCliBrowserRuntimeActionExecutor } from '@/daemon/browser/actions/controlTransport';
 import {
@@ -362,9 +363,12 @@ describe('CLI input requester through protected custody and danger approval', ()
   ])('retains the $senderKind sender on $surface $mode input through $toolSurface for $effect.actionId and executes Allow only once', async ({ mode, surface, toolSurface, senderKind, effect }) => {
     const { credentials, accept, accepted, acceptedLocalIds, spawned } = installHomeBoundary(mode);
     await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
+    const preparedTarget = { ok: true, directory: '/workspace', directoryKind: 'path', directoryCreationRequired: false, checkout: null } as const;
     const deps = createCliActionDeps({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null, serverId,
       sessionSpawnDirectTargetTransport: { machineId,
-        prepare: async () => ({ ok: true, directory: '/workspace', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+        prepare: async () => preparedTarget,
+        // Session birth reads this daemon's own published metadata (d3f37986068).
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1, metadata: {} }),
         spawnedSession: {
           spawn: async options => { spawned(options); return { type: 'success', sessionId,
             sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
@@ -376,6 +380,28 @@ describe('CLI input requester through protected custody and danger approval', ()
       } });
     // The public Action owner builds the CLI request; only Home HTTP and the
     // authenticated Machine socket are replaced. Encryption/admission stay real.
+    // Session birth asks the Machine to preflight a path folder (49abd3d602d)
+    // and to describe its Agents; only that authenticated network hop is replaced.
+    const birthMachine = async (request: Readonly<{ machineId: string; method: string; request?: unknown }>) => {
+      expect(request.machineId).toBe(machineId);
+      if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+        expect(request.request).toMatchObject({ directory: { kind: 'path', path: '/workspace' }, prepareAgentIsolationMember: true });
+        return preparedTarget;
+      }
+      if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1,
+        projection: { v: 2, generation: 1, familiesById: {}, agentsById: { codex: { id: 'codex', title: 'Codex',
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } } } };
+      // Agent readiness reads the installed, signed-in Codex detection.
+      if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: { 'cli.codex': {
+        ok: true, checkedAt: Date.now(), data: { installed: true, available: true, resolvedPath: '/agent/codex',
+          version: null, latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedIn', loginSupport: 'login_terminal' },
+          platform: { supported: true }, install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null }, dependencies: [] },
+      } } };
+      throw new Error(`Unexpected Machine RPC ${request.method}`);
+    };
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(birthMachine as typeof machineRpc.callExactMachineRpc);
+    vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(birthMachine as typeof machineRpc.callMachineRpc);
     const sender = createActionExecutor(deps);
     const firstInputHandoff = buildSessionSpawnInitialInputAdmissionForLocalIdV1({
       actionCaller: { kind: 'host' }, callerSurface: surface, callerAuthority: 'present_user', localId,
