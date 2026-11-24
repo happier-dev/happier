@@ -539,6 +539,7 @@ describe('managed catalog original Account transport', () => {
     let diagnosticPatBearer: string | undefined;
     let watchOwnedCopyBirth = false;
     let ownedCopyChildId: string | undefined;
+    let ownedCopyInstructionsCreated = false;
     let interveningMetadataVersion: number | undefined;
     const httpOutcomes: Array<{ method: string; url: string; status: number; error?: unknown;
       effectActionId?: string; authorityCeiling?: string | null; usedInstalledAccountBearer?: boolean;
@@ -568,8 +569,12 @@ describe('managed catalog original Account transport', () => {
       }
       if (ownedCopyChildId && watchOwnedCopyBirth && request.method === 'POST' && request.url === '/v1/artifacts'
         && reply.statusCode === 200) {
-        // A second Account client changes a different Session field while the
-        // reviewed Copy awaits the instructions Doc acknowledgement.
+        ownedCopyInstructionsCreated = true;
+      }
+      if (ownedCopyChildId && watchOwnedCopyBirth && ownedCopyInstructionsCreated && request.method === 'GET'
+        && request.url.split('?')[0] === `/v2/sessions/${ownedCopyChildId}` && reply.statusCode === 200) {
+        // The read has materialized the child snapshot. Another Account client
+        // commits a different field before Copy receives it and attaches Instructions.
         watchOwnedCopyBirth = false;
         const sessionId = ownedCopyChildId;
         const changed = await runWithServerHttpBaseUrl(serverUrl, () => updateSessionMetadataForTarget({

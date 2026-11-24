@@ -83,7 +83,9 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
     create: async input => { const artifactId = `doc-${docs.size + 1}`;
       docs.set(artifactId, { id: artifactId, header: input.header, body: input.body,
         ...(input.savedBy ? { savedBy: input.savedBy } : {}), owned: true, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 } });
-      events.push(docs.size === 1 ? 'instructions-created' : 'content-created'); return { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } }; },
+      events.push(docs.size === 1 ? 'instructions-created' : 'content-created');
+      return { artifactId, revision: { headerVersion: 1, bodyVersion: 1 }, acknowledgedBody: input.body };
+    },
     update: async () => { throw new Error('Unexpected document update'); },
   };
   const skillRules: SkillRulesActionPortV1 = { serverId: 'home', assertCurrent: () => {},
@@ -168,7 +170,9 @@ function fixture(carried = false, operations = false, observeCommit = false, fai
           } } }),
     })(actionId, input, { surface: context.surface ?? null, invocationServices: context.invocationServices }, context.signal),
     sessionStateFieldSet: async write => { if (write.fieldId !== 'intent.context') throw new Error('Unexpected field');
-      if (write.expectedMetadataRevision !== revision) return { ok: false, errorCode: 'revision_conflict', error: 'revision_conflict' };
+      if (write.expectedMetadataRevision !== undefined && write.expectedMetadataRevision !== revision) {
+        return { ok: false, errorCode: 'revision_conflict', error: 'revision_conflict' };
+      }
       metadata = writeSessionContextIntentV1ToMetadata(metadata, write.value); revision++; events.push('instructions-attached'); return { ok: true, version: revision }; },
     sessionSpawnNew: async (input, continuation) => {
       spawnContext = input.context;

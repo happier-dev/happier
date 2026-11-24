@@ -84,7 +84,7 @@ export type SessionStateFieldActionValue =
   | Readonly<{ fieldId: 'intent.memoryEnabled'; value: boolean; expectedMetadataRevision: number }>
   | Readonly<{ fieldId: 'intent.approvalProfileId'; value: string | null; expectedMetadataRevision: number }>
   | Readonly<{ fieldId: 'intent.voicePreference'; value: SessionVoicePreferenceV1 | null; expectedMetadataRevision: number }>
-  | Readonly<{ fieldId: 'intent.context'; value: SessionContextIntentV1; expectedMetadataRevision: number }>;
+  | Readonly<{ fieldId: 'intent.context'; value: SessionContextIntentV1; expectedMetadataRevision?: number }>;
 export type SessionStateFieldActionWrite = Readonly<{
   context: ActionExecutorContext;
   actionId: SessionStateFieldActionId;
@@ -96,17 +96,23 @@ export function isSessionStateFieldActionId(value: string): value is SessionStat
   return Object.prototype.hasOwnProperty.call(SESSION_STATE_FIELD_ACTIONS, value);
 }
 
+export const SESSION_INSTRUCTIONS_CONTEXT_ENTRY_ID_V1 = 'session.instructions';
+
 /** Existing Instructions Actions and fresh authoring use the same reserved Session entry. */
-export function buildSessionInstructionsContextIntentV1(ref: PromptDocArtifactRefV1 | null): SessionContextIntentV1 {
+export function buildSessionInstructionsContextIntentV1(
+  ref: PromptDocArtifactRefV1 | null,
+  kind: 'set' | 'attach' = 'set',
+): SessionContextIntentV1 {
   return ref === null
-    ? { kind: 'detach', entryId: 'session.instructions' }
-    : SessionContextIntentV1Schema.parse({ kind: 'set', entry: { id: 'session.instructions',
+    ? { kind: 'detach', entryId: SESSION_INSTRUCTIONS_CONTEXT_ENTRY_ID_V1 }
+    : SessionContextIntentV1Schema.parse({ kind, entry: { id: SESSION_INSTRUCTIONS_CONTEXT_ENTRY_ID_V1,
       ref: PromptDocArtifactRefV1Schema.parse(ref), enabled: true, required: true, placement: 'system_append' } });
 }
 
 export function resolveSessionStateFieldActionWrite(
   actionId: SessionStateFieldActionId,
   input: AdmittedActionInputById[SessionStateFieldActionId],
+  initializeInstructions = false,
 ): SessionStateFieldActionValue {
   if (actionId === 'session.approval_profile.set') {
     const request = input as AdmittedActionInputById['session.approval_profile.set'];
@@ -135,6 +141,9 @@ export function resolveSessionStateFieldActionWrite(
   }
   if (actionId === 'session.instructions.set') {
     const request = input as AdmittedActionInputById['session.instructions.set'];
+    if (initializeInstructions && request.ref !== null) {
+      return { fieldId: 'intent.context', value: buildSessionInstructionsContextIntentV1(request.ref, 'attach') };
+    }
     return { fieldId: 'intent.context', expectedMetadataRevision: request.expectedMetadataRevision,
       value: buildSessionInstructionsContextIntentV1(request.ref) };
   }

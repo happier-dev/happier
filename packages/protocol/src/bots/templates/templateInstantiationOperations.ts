@@ -23,6 +23,7 @@ import type { BotTemplateAcceptedVersionReporterV1 } from './templateAcceptedVer
 import { MachineSetupPlanResultV1Schema, MachineSetupApplyResultV1Schema, machineSetupApplyTargetFromPlanV1,
   buildMachineSetupTargetApplyInput, waitForMachineSetupOperationV1 } from '../../machines/managed/actionsV1.js';
 import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from './botTemplateActionIdsV1.js';
+import { SESSION_INSTRUCTIONS_CONTEXT_ENTRY_ID_V1 } from '../../actions/sessionStateFieldActions.js';
 
 export type BotTemplateRecipientPortV1 = BotTemplateAcceptedVersionReporterV1 & Readonly<{
   readSession(ref: Readonly<{ serverId: string; sessionId: string }>, context: ActionExecutorContext): Promise<Readonly<{
@@ -162,9 +163,16 @@ export async function prepareBotTemplateInstantiationV1(port: BotTemplateOperati
               }));
               if (typeof instructions.artifactId !== 'string') return fail('invalid_action_output');
               resourceIds.push(instructions.artifactId);
-              const snapshot = await recipient.readSession(ref, context);
+              // Fresh birth adds one absent entry. The context owner can preserve
+              // concurrent metadata changes while refusing an existing entry.
+              const birthRevision = birth.metadataRevision;
+              const initializeInstructions = birth.disposition === 'created' && birthRevision !== undefined
+                && !birthInput.promptStack?.some(entry => entry.id === SESSION_INSTRUCTIONS_CONTEXT_ENTRY_ID_V1);
+              const expectedMetadataRevision = initializeInstructions
+                ? birthRevision : (await recipient.readSession(ref, context)).revision;
               const attached = readRecord(await invoke('session.instructions.set', 'attach_instructions', { ...ref,
-                expectedMetadataRevision: snapshot.revision, ref: { kind: 'doc', serverId, artifactId: instructions.artifactId } }));
+                expectedMetadataRevision, ref: { kind: 'doc', serverId, artifactId: instructions.artifactId },
+              }, initializeInstructions ? { templateInstructionsSessionId: birth.sessionId } : undefined));
               let memoryTarget: { ref: NonNullable<ReturnType<typeof MemoryMutationResultV1Schema.parse>['ref']>;
                 expectedRevision: NonNullable<ReturnType<typeof MemoryMutationResultV1Schema.parse>['revision']> } | undefined;
               for (const rule of content.memoryRules) {

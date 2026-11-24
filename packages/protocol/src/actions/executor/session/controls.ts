@@ -69,8 +69,9 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
           }
           const serverId = 'serverId' in data && typeof data.serverId === 'string'
             ? data.serverId : resolveServerIdForSession(deps, ctx, sessionId);
-          const res = await deps.sessionStateFieldSet({ context: ctx, actionId, sessionId,
-            ...resolveSessionStateFieldActionWrite(actionId, parsed.data as AdmittedActionInputById[typeof actionId]), ...(serverId ? { serverId } : {}) });
+          const write = resolveSessionStateFieldActionWrite(actionId, parsed.data as AdmittedActionInputById[typeof actionId],
+            ctx.invocationServices?.templateInstructionsSessionId === sessionId);
+          const res = await deps.sessionStateFieldSet({ context: ctx, actionId, sessionId, ...write, ...(serverId ? { serverId } : {}) });
           return completeActionResult(res);
         }
 

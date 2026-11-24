@@ -1463,6 +1463,8 @@ export type HostReviewedChildInvocationServicesV1 = Readonly<{
   deploymentPreviewDomain?: import('../../deployments/deploymentPreviewTemplateV1.js').DeploymentPreviewDomainFactV1;
   /** Trusted composition callback retained by the reviewed parent; never a public spawn operand. */
   sessionCreation?: SessionCreationHostContinuationV1;
+  /** The newly committed Session whose reserved Instructions entry the Copy is initializing. */
+  templateInstructionsSessionId?: string;
   /** Explicit recipient inclusion for a template's new skill; never an Everywhere default. */
   templateSkillSessionId?: string;
   /** Same host-admitted purpose seed; carried beside, never inside, child operands. */
