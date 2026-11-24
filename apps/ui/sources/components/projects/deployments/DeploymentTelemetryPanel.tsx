@@ -333,6 +333,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
     if (!lifetime?.isCurrent()) return;
     discardOlder();
     setOpenTrace(current => current?.reads === reads ? null : current);
+    setAttempt(value => value + 1);
   } : null;
   const offline = collectorOnline === false;
   const readLogBody = React.useCallback((id: string) => active && reads ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [active, reads]);

@@ -770,7 +770,7 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('clears the selected Environment for a manager and refreshes its list', async () => {
+  it('clears the selected Environment for a manager and refreshes its list and collector status', async () => {
     let cleared = false;
     const refreshed = createDeferred<void>();
     const clearId = 'happier.telemetry/actions/capture/clear';
@@ -784,17 +784,27 @@ describe('Environment Telemetry tabs', () => {
         refreshed.resolve();
         return { ok: true, source, items: [] };
       }
+      if (call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1) {
+        return cleared
+          ? { ok: true, source, lastReceivedAt: null, coverage: { lostObservations: 0, reason: null } }
+          : { ok: true, source, lastReceivedAt: request.at, coverage: { lostObservations: 1, reason: 'daemon_database_quota_exceeded' } };
+      }
       return answers(call);
     });
     const transport = createTelemetryCaptureFixtureTransport(invoke);
-    const screen = await renderScreen(panel(invoke, setUpDetail(), undefined, transport));
+    const screen = await renderScreen(panel(invoke, setUpDetail(), { telemetryApplied: true }, transport));
     await settle();
     try {
+      const collectorStatus = () => screen.findByTestId('project-deployments.telemetry.collector')?.props.children;
+      expect(collectorStatus()).toBe('Collector storage full');
       await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
       expect(screen.findByTestId('project-deployments.telemetry.menu.settings')).not.toBeNull();
       await screen.pressByTestIdAsync('project-deployments.telemetry.menu.clear');
       await refreshed.promise;
+      await settle();
+      expect(collectorStatus()).toBe('Waiting for first data');
+      expect(calls.filter(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1)).toHaveLength(2);
       expect(calls.filter(call => call.actionId === clearId)).toEqual([expect.objectContaining({
         collectorMachineId: 'collector',
         input: { source },
