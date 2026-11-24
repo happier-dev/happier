@@ -9921,6 +9921,28 @@ describe('plugin-surface action branch selection', () => {
         });
     });
 
+    it('keeps the daemon retirement cause and refreshes the Machine projection', async () => {
+        const scope = { machineId: 'typed-retirement-machine', serverId: 'typed-retirement-home' };
+        const before = getMachineContributionRegistryProjectionRevision(scope);
+        const failureCause = {
+            phase: 'plugin.action_generation.machine', errorClass: 'Error', httpStatus: null,
+            errorCode: 'plugin_action_generation_retired', nativeErrorReason: 'registration_withdrawn',
+        } as const;
+        const execute: PluginSurfaceContributedActionTransport = async () => ({
+            supported: true, result: {
+                ok: false, code: 'plugin_action_generation_retired', failureCause, actionHandlerInvocation: 'notStarted',
+            },
+        });
+
+        await expect(dispatchPluginSurfaceAction({
+            callerPluginId: CALLER_PLUGIN_ID,
+            action: 'refresh-index',
+            input: {},
+            contributedAction: { ...scope, execute },
+        })).resolves.toMatchObject({ ok: false, failureCause, actionHandlerInvocation: 'notStarted' });
+        expect(getMachineContributionRegistryProjectionRevision(scope)).toBeGreaterThan(before);
+    });
+
     it('refreshes a stale occurrence refused by the Action schema read before dispatch', async () => {
         const scope = { serverId: 'schema-home', machineId: 'schema-machine' };
         const before = getMachineContributionRegistryProjectionRevision(scope);

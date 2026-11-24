@@ -350,6 +350,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
 
     const options = {
         actions: readActions(),
+        executionRealm: params.executionRealm,
         subjectKinds: params.contributes.subjectKinds ?? [],
         expectedActions,
         readActions,

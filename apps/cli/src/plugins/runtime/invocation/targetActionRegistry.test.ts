@@ -2562,7 +2562,7 @@ describe('target action invocation registry', () => {
         expect(oldHandler).not.toHaveBeenCalled();
         expect(newHandler).not.toHaveBeenCalled();
         expect(diagnostic).toHaveBeenCalledWith('Plugin Action generation refused', expect.objectContaining({
-            pluginId: 'acme.alpha', localId: 'run', reason: 'prepared_invocation_replaced',
+            pluginId: 'acme.alpha', localId: 'run', reason: 'occurrence_not_current',
             occurrenceId: '7', currentOccurrenceId: '8', requestId: 'retirement-request',
         }));
         diagnostic.mockRestore();
@@ -2655,6 +2655,45 @@ describe('target action invocation registry', () => {
             pluginId: 'acme.alpha', localId: 'run', input: { value: 'x' }, surface: 'cli',
         })).resolves.toEqual({ status: 'executed', value: { echoed: 'lazy' } });
     });
+
+    it.each(['unchanged', 'disabled', 'changed schema'] as const)(
+        'settles the first prepared read after Action publication (%s)', async (publication) => {
+            const registration = { ...action({ readOnly: true }), handler: async () => ({ echoed: 'listed' }) };
+            let actions: Parameters<typeof createTargetActionInvocationRegistry>[0]['actions'] = [registration];
+            const registry = createRegistry({ actions, readActions: () => actions });
+
+            const prepared = await registry.prepare({
+                pluginId: registration.pluginId, localId: registration.localId, input: { value: 'x' }, surface: 'cli',
+            });
+            if (prepared.kind !== 'ready') throw new Error('Expected the read to be admitted');
+
+            // Publication can project fresh schema objects for the same occurrence.
+            const projected = structuredClone(registration.definition);
+            const definition = publication === 'changed schema'
+                ? { ...projected, inputSchema: { ...projected.inputSchema, required: ['value', 'other'] } }
+                : projected;
+            actions = publication === 'disabled' ? [] : [{ ...registration, definition }];
+            registry.refresh();
+
+            const result = await prepared.run();
+            if (publication === 'unchanged') {
+                expect(result).toEqual({ status: 'executed', value: { echoed: 'listed' } });
+            } else {
+                expect(result).toMatchObject({
+                    status: 'unavailable', code: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted',
+                    data: {
+                        failureCause: {
+                            phase: 'plugin.action_generation.machine',
+                            errorCode: 'plugin_action_generation_retired',
+                            nativeErrorReason: publication === 'disabled'
+                                ? 'registration_withdrawn'
+                                : 'prepared_invocation_replaced',
+                        },
+                    },
+                });
+            }
+        },
+    );
 
     it('compiles an action schema on first invoke and not again when the index is refreshed', async () => {
         // Compiling an Action's JSON Schema is the expensive part: it constructs an AJV instance

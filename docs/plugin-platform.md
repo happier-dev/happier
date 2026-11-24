@@ -4465,6 +4465,12 @@ display locale. The response envelope and Agent metadata remain unchanged.
 
 In 0.3 development source, admitted targeted Actions use the existing contributor-materialization and target-occurrence checks in [`executeContributedAction.ts`](../apps/cli/src/plugins/runtime/invocation/actions/executeContributedAction.ts) before demanding activation and again before admitting the handler. If activation fails, the Action returns the owning lifecycle diagnostic. A subsequent request for the same contributor occurrence retains that diagnostic when the failure removed the serving occurrence. A stale admission for a different occurrence returns the retirement result. Each refusal settles before a handler starts.
 
+The target Action registry keeps a prepared invocation when a publication retains its
+occurrence, schemas, read effect and executable parsers. If the registry refuses a
+retired admission, the existing Action failure cause names the Machine or Account
+execution realm and the registry reason. The public code remains
+`plugin_action_generation_retired`.
+
 For retained targeted-operation input, the same admission projection retains
 the Action's declared `connectedAccountPurposeBindings` field path even when
 it has no UI form hints. Reconstruction accepts only that one selected Account

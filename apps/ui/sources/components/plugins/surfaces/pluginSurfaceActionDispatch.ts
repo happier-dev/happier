@@ -2868,9 +2868,10 @@ async function executeContributedAction(
         return { ok: true, result: result.result.result as PluginUiJsonValueV1 };
     }
     const metadata = projectPluginActionFailure({ ...result.result, requestId: result.result.requestId ?? input.actionRequestId });
+    // Refresh a superseded Machine projection even when the daemon supplied a typed refusal.
+    const stale = staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime);
     return metadata.failureCause ? metadata : actionOutcomeUnknownFailure(result.result.code, projectedAction, actionInput, metadata)
-        ?? staleDaemonProjectionFailure(result.result.code, projectionScope, projectionRevision, binding.accountLifetime)
-        ?? metadata;
+        ?? stale ?? metadata;
     };
     if (input.spokenActionRequest && (input.invocationSurface ?? 'ui') === 'voice') {
         return executePreparedPluginSurfaceAction({ input, identity, action: projectedAction,

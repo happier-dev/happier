@@ -1,6 +1,6 @@
 import { withActionFailureDiagnostic, carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { randomUUID } from 'node:crypto';
-import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
+import { isJsonObject, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { logger } from '@/ui/logger';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
 import { projectContributedActionExecuteResult } from './services/actions';
@@ -351,6 +351,7 @@ function unavailable(code: string, message: string): TargetActionInvocationResul
 
 export function createTargetActionInvocationRegistry(params: Readonly<{
     actions: readonly TargetActionInvocationRegistration[];
+    executionRealm?: 'account';
     admitContributedSessionReadSet?: ReturnType<typeof createActionExecutor>['admitContributedSessionReadSet'];
     resourceSessionHomeServerId?: string;
     subjectKinds?: readonly PluginAutomationSubjectKindDeclarationV1[];
@@ -455,9 +456,9 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
      * `refresh()` re-indexes every Action, so recompiling an unchanged Action occurrence wastes
      * preparation even when another plugin is the one that changed.
      *
-     * `createPluginActionInvocation` reads the ids, read effect, schemas and the registry
-     * signal. When all of those are the identical values the previous entry was prepared from,
-     * a recompilation can only reproduce the validators it already holds.
+     * A republish may rebuild the JSON declarations of the same occurrence. Keep the prepared
+     * invocation when its schemas, read effect and executable parsers still agree so a pending
+     * dispatch keeps the admission it already prepared.
      */
     function canReusePreparedInvocation(
         previous: IndexedAction,
@@ -468,11 +469,11 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             && previous.registration.pluginId === registration.pluginId
             && previous.registration.localId === registration.localId
             && previous.registration.occurrenceId === registration.occurrenceId
-            && previous.registration.definition.inputSchema === registration.definition.inputSchema
-            && previous.registration.definition.resultSchema === registration.definition.resultSchema
-            && previous.registration.definition.readOnly === registration.definition.readOnly
             && previous.registration.inputParser === registration.inputParser
-            && previous.registration.resultParser === registration.resultParser;
+            && previous.registration.resultParser === registration.resultParser
+            && sameStrictJsonValue(previous.registration.definition.readOnly, registration.definition.readOnly)
+            && sameStrictJsonValue(previous.registration.definition.inputSchema, registration.definition.inputSchema)
+            && sameStrictJsonValue(previous.registration.definition.resultSchema, registration.definition.resultSchema);
     }
 
     function buildIndex(
@@ -1029,15 +1030,31 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 result: unavailable('plugin_action_handler_missing', 'No committed target action registration exists'),
             });
             let correlationId: string = randomUUID();
-            const generationUnavailable = (reason: string) => {
+            const generationUnavailable = (
+                reason: 'registry_disposed' | 'registration_withdrawn' | 'occurrence_not_current' | 'prepared_invocation_replaced',
+            ): TargetActionInvocationResult => {
+                const realm = params.executionRealm ?? 'machine';
+                const code = 'plugin_action_generation_retired';
                 logger.warnLocalFile('Plugin Action generation refused', {
                     pluginId: invocation.pluginId, localId: invocation.localId,
-                    code: 'plugin_action_generation_retired', requestId: invocation.requestId ?? correlationId,
+                    code, realm, requestId: invocation.requestId ?? correlationId,
                     reason, occurrenceId: indexed.registration.occurrenceId,
                     currentOccurrenceId: actionsByKey.get(key)?.registration.occurrenceId ?? null,
                     registryRetired: registryController.signal.aborted,
                 });
-                return unavailable('plugin_action_generation_retired', 'Plugin action occurrence is no longer current');
+                return Object.freeze({
+                    status: 'unavailable',
+                    code,
+                    message: 'Plugin action occurrence is no longer current',
+                    actionHandlerInvocation: 'notStarted',
+                    data: { failureCause: {
+                        phase: `plugin.action_generation.${realm}`,
+                        errorClass: 'Error',
+                        errorCode: code,
+                        nativeErrorReason: reason,
+                        httpStatus: null,
+                    } },
+                });
             };
             if (registryController.signal.aborted) {
                 return Object.freeze({
@@ -1351,11 +1368,11 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                 }),
                 invoke: async (action, args, serviceBinding) => {
                     const current = actionsByKey.get(key);
-                    if (!current || !indexed.isCurrent() || current.invocation !== indexed.invocation) {
-                        return generationUnavailable(!current ? 'registration_withdrawn'
-                            : current.invocation !== indexed.invocation ? 'prepared_invocation_replaced'
-                                : 'occurrence_not_current');
+                    if (!current) return generationUnavailable('registration_withdrawn');
+                    if (!indexed.isCurrent()) {
+                        return generationUnavailable(registryController.signal.aborted ? 'registry_disposed' : 'occurrence_not_current');
                     }
+                    if (current.invocation !== indexed.invocation) return generationUnavailable('prepared_invocation_replaced');
                     if (invocation.isMountedCallerCurrent) {
                         let mountedCallerCurrent = false;
                         try {
