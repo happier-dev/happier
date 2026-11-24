@@ -1,6 +1,7 @@
 import { ActionIdSchema, isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MANAGED_EXEC_ACTION_ID_V1, isMachineSetupOperationActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -244,7 +245,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     semanticInput?: unknown;
     /** Receiving-host metadata for a typed operation arm, never public input. */
     operation?: ActionOperationDeclarationV1;
-    response?: 'admission';
+    response?: Parameters<typeof runner.observe>[0]['response'];
     joinEarlierActive?: Parameters<typeof runner.observe>[0]['joinEarlierActive'];
     creationContinuationResult?: ManagedCreationContinuationResultPort;
     actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
@@ -684,10 +685,14 @@ export async function runHostActionOperation(
   const workflowOperationReceipt = isMachineSetupOperationActionIdV1(request.actionId);
   const creationContinuationResult = readManagedCreationContinuationResultPort(context);
   const observesExecWake = isReviewedManagedExecWake(request.actionId, request.input, context);
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  // Enrollment consumes the guest's administrator policy result on the same call.
+  const observesEnrollmentAdmin = request.actionId === MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1
+    && binding?.actionId === MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 && binding.managedContinuation !== undefined;
   return observeExecution({ actionId: request.actionId, input: request.input, semanticInput: request.semanticInput,
     rpcContext: rpcContext ?? context, actionContext: context,
     ...(creationContinuationResult ? { creationContinuationResult } : {}),
-    ...(observesExecWake ? { response: 'terminal' as const }
+    ...(observesExecWake || observesEnrollmentAdmin ? { response: 'terminal' as const }
       : (context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
       // Setup completion retains this host receipt before observing terminal
       // output. Other Workflow Actions retain their own declared result shape.

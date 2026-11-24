@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { tmpdir } from 'node:os';
 import nacl from 'tweetnacl';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { AccountSettingsSchema } from '@happier-dev/protocol';
@@ -9,10 +10,21 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { mutateMachineAdminAccessV1, readMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { initializeManagedMachineEnrollmentPolicies } from '@/machines/managed/enrollmentPolicy';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
+import { createEnrollmentJourneyProviderAuthority } from '@/machines/managed/enrollmentJourney.testkit';
+import { fixture as createManagedCustodyFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import type { ManagedMachineAcquisitionDriverInput } from '@/machines/managed/acquire';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { dispatchManagedMachineAdminAccess, verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { encodeStoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -30,9 +42,10 @@ import { executeExternalAction } from './executeExternalAction';
 it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], ['team', false, 'one-off', 'ui'],
   ['team', false, 'preset', 'ui'], ['team', true, 'preset', 'ui'], ['requester', true, 'one-off', 'agent'],
   // A controller signed in through terminal pairing carries terminal authentication (L12 r197-r202).
-  ['requester', true, 'one-off', 'agent', 'terminal']] as const)(
-  'restores admitted Create review on the guest when controller custody is %s (input names controller: %s, selection: %s, surface: %s, authentication: %s)',
-  async (controllerAccountId, inputNamesController, selectionKind, surface, authenticationKind: 'account' | 'terminal' = 'account') => {
+  ['requester', true, 'one-off', 'agent', 'terminal'],
+  ['requester', true, 'one-off', 'agent', 'terminal', 'delayed administrator result']] as const)(
+  'restores admitted Create review on the guest when controller custody is %s (input names controller: %s, selection: %s, surface: %s, authentication: %s) %s',
+  async (controllerAccountId, inputNamesController, selectionKind, surface, authenticationKind: 'account' | 'terminal' = 'account', scenario?: string) => {
   const currentness = await createRequesterCurrentnessSocketHarness();
   onTestFinished(async () => { vi.restoreAllMocks(); await currentness.close(); });
   const homeId = 'srv_reviewed_creation', serverUrl = 'https://reviewed-creation.test';
@@ -77,6 +90,13 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
     expectedAdminAccess: { version: 1 as const, mode: 'none' as const },
     adminAccess: { version: 1 as const, mode: 'none' as const }, comparison: 'field' as const };
   const nativeEffects: unknown[] = [], asks: unknown[] = [];
+  const delayedChild = scenario === 'delayed administrator result';
+  const guestEntered = Promise.withResolvers<void>();
+  const releaseGuest = Promise.withResolvers<void>();
+  const guestMetadata = {};
+  const guestOperations = createHostActionOperationRuntime({ machineId: guest.machineId, resolveAccountId: async () => 'requester',
+    generateOperationId: () => 'guest-admin-operation' });
+  onTestFinished(() => { releaseGuest.resolve(); });
   let differentInstalledAccountResult: Awaited<ReturnType<typeof executeExternalAction>> | undefined;
   let storedChildRoot: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
   const harness = createCliActionExecutorHarness({ token, credentials, mode, ctx: null,
@@ -88,9 +108,21 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
     // The physical guest Machine RPC is the effect boundary, after real Action policy.
     machineActionDirectTargetTransport: { machineId: guest.machineId, invoke: async (method, value) => {
       expect(method).toBe('machines.setup.adminAccess.set'); nativeEffects.push(value);
+      if (delayedChild) {
+        const { serverId: _serverId, machineId: _machineId, ...mutation } = MachineAdminAccessSetInputV1Schema.parse(value);
+        return mutateMachineAdminAccessV1(mutation, {
+          read: async () => {
+            guestEntered.resolve();
+            await releaseGuest.promise;
+            return { status: 'ready', metadata: guestMetadata, metadataVersion: 0 };
+          },
+          compareAndSwap: async () => { throw new Error('An unchanged default policy must not write'); },
+        });
+      }
       return { status: 'applied', policy: { version: 1, mode: 'none' }, metadataVersion: 1 };
     } },
-  }, { approvalsCreate: async ({ request }) => { asks.push(request); return { artifactId: 'unexpected-guest-ask' }; } });
+  }, { ...(delayedChild ? { runActionOperation: guestOperations.runActionOperation } : {}),
+    approvalsCreate: async ({ request }) => { asks.push(request); return { artifactId: 'unexpected-guest-ask' }; } });
   const executor = harness.executor;
   // The original approval may precede a daemon reload. Model the source
   // observer's installed credential read as unavailable after the child replies.
@@ -131,6 +163,9 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
     if (path.endsWith('/v1/machines/managed/controller/context')) return { status: 200, data: {
       requestId: authorization.binding.requestId, enrollmentInstallation: { ...guest,
         installationPublicKey: Buffer.from(guestKeys.publicKey).toString('base64url') } } };
+    if (delayedChild && path === '/v1/actions/machines.agentIsolation.preview') {
+      return { status: 503, data: { error: 'target_unavailable' } };
+    }
     if (path !== '/v1/actions/machines.setup.adminAccess.set') throw new Error(`Unexpected Home POST ${path}`);
     const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse(rawBody);
     expect(body.envelope.managedCreationCodec).toBeDefined();
@@ -138,6 +173,7 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
       ...authorization.binding, custodianAccountId: 'requester', machineId: guest.machineId,
       installationId: guest.installationId, actionId: 'machines.setup.adminAccess.set',
       target: body.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
+      ...(delayedChild ? { admittedMachineRole: 'manage' } : {}),
       managedContinuation: { ...body.managedContinuation, controller,
         acquireRequestEnvelopeDigest: authorization.binding.requestEnvelopeDigest },
     } });
@@ -188,18 +224,78 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
     signal: new AbortController().signal };
   const declaration = getActionSpec('machines.managed.acquire').hostReviewedChildren;
   const children = typeof declaration === 'function' ? declaration(input) : declaration ?? [];
+  const homeTarget = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+    canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }, authority: 'current_connection' });
   const dispatchAdmin = (childContext: ActionExecutorContext) => dispatchManagedMachineAdminAccess({ input: adminInput, serverId: homeId,
     context: childContext, authorization, authority, installationId: controller.installationId,
     ...(mode === 'e2ee' ? { material } : {}),
     observeRecordedApprovalExecution: controllerObserver.observeRecordedApprovalExecution,
     privateKey: controllerKeys.secretKey, serverHttpBaseUrl: serverUrl,
-    homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
-      canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }, authority: 'current_connection' }),
+    homeTarget,
     continuation: { managedId: 'managed', creationRequestId: authorization.binding.requestId, expectedIntentRevision: 0 } });
   const reviewed = createHostReviewedChildPortV1({ actionId: 'machines.managed.acquire', input, context,
     reviewAdmitted: true, plan: { children }, policies: children.map(child => ({ action: child.action, role: child.role, surface })),
     execute: async (_input, childContext) => dispatchAdmin(childContext),
   });
+  if (delayedChild) {
+    const controllerRequester = await prepareRequesterAccountActionContext({
+      authorization: sealExternalActionRequesterAccountContextV1({ authorization,
+        credentials: encodeStoredCredentials(credentials), purpose: { kind: 'external_action' },
+        installationPublicKey: controllerKeys.publicKey, randomBytes: nacl.randomBytes }),
+      purpose: { kind: 'external_action' }, ...controller, installationPrivateKey: controllerKeys.secretKey,
+      serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
+      isCurrent: async () => true, createExecutor: () => controllerObserver,
+    });
+    if (!controllerRequester) throw new Error('Controller requester preparation failed');
+    onTestFinished(() => controllerRequester.dispose?.());
+    const launch = { provider: { pluginId: 'example.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} };
+    const enrolled = ManagedMachineFullV1Schema.parse({
+      id: 'managed', homeId, custodianAccountId: 'requester', controller, launch, allocation: 'bound',
+      resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} }, enrolledMachineId: guest.machineId,
+      creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+      enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+        role: 'server', adminAccessAtCreation: 'none' },
+    });
+    const { runtimeRegistry } = createManagedCustodyFixture();
+    const driver: ManagedMachineAcquisitionDriverInput = { controller, homeId, homeTarget, serverUrl, credentials, token, runtimeRegistry,
+      managedProviderOperationAuthority: createEnrollmentJourneyProviderAuthority(tmpdir()),
+      externalActionMachineRequestPrivateKey: controllerKeys.secretKey,
+      observeRecordedApprovalExecution: controllerObserver.observeRecordedApprovalExecution,
+    };
+    const controllerOperations = createHostActionOperationRuntime({ machineId: controller.machineId,
+      resolveAccountId: async () => 'requester', generateOperationId: () => 'controller-acquire-operation' });
+    const execution = controllerOperations.runActionOperation({ actionId: 'machines.managed.acquire', input,
+      context: { ...context, externalActionExecutionAuthorization: controllerRequester.authorization,
+        approvedActionReplay: { artifactId: 'reviewed-create-approval' } },
+      execute: async operation => {
+        try {
+          await initializeManagedMachineEnrollmentPolicies(driver, enrolled, { requestId: authorization.binding.requestId,
+            signal: operation.signal, context: { ...operation, hostReviewedChild: reviewed } });
+          return { ok: true, result: {} };
+        } catch (error) {
+          if (!(error instanceof ManagedMachineControllerError)) throw error;
+          return error.toActionFailure('machines.managed.acquire');
+        }
+      } });
+    onTestFinished(async () => { releaseGuest.resolve(); await execution.catch(() => undefined); });
+    await Promise.race([guestEntered.promise, execution]);
+    const running = await controllerOperations.handlers.getV2({ operationId: 'controller-acquire-operation' });
+    expect(running).toMatchObject({ kind: 'found', operation: { state: 'running', progress: { phase: 'machines.setup.adminAccess.set' } } });
+    const settled = controllerOperations.handlers.getV2({ operationId: 'controller-acquire-operation', waitForTerminal: true });
+    releaseGuest.resolve();
+    expect(await guestOperations.handlers.getV2({ operationId: 'guest-admin-operation', waitForTerminal: true }))
+      .toMatchObject({ kind: 'found', operation: { state: 'succeeded', result: { status: 'unchanged', policy: { mode: 'none' } } } });
+    expect(readMachineAdminAccessV1(guestMetadata)).toMatchObject({ policy: { mode: 'none' } });
+    expect(asks).toEqual([]);
+    // The next child is deliberately unavailable at the HTTP boundary. Its
+    // phase proves that the controller consumed the real administrator result.
+    expect(await settled).toMatchObject({ kind: 'found', operation: {
+      state: 'failed', progress: { phase: 'machines.agentIsolation.preview' }, error: { errorCode: 'target_unavailable' },
+    } });
+    await execution;
+    return;
+  }
   // The keyholder controller derives a sealed preset's policy from its opened
   // row and dispatches it directly under the acquire's reviewed context (enrollmentPolicy.ts).
   const result = selectionKind === 'preset' ? await dispatchAdmin({ ...context, hostReviewedChild: reviewed })
