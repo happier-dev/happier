@@ -5,16 +5,24 @@ import { StyleSheet } from 'react-native-unistyles';
 import { PendingMessagesTranscriptBlock } from '@/components/sessions/pending/PendingMessagesTranscriptBlock';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { buildTrustedHostSessionInputAdmissionV1, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import {
   storage,
   useActiveServerAccountScope,
 } from '@/sync/domains/state/storage';
 import type {
+  DiscardedPendingMessage,
   PendingMessage,
   Session,
 } from '@/sync/domains/state/storageTypes';
 
-export const PENDING_MESSAGES_SCENES = ['queued', 'held'] as const;
+/**
+ * `queued`: two waiting messages. `held`: queued behind a withdrawn Machine grant. `stopped`: a person stopped
+ * the Session and its message waits (menu: the way forward, then Remove). `notSent`: a message the Session refused
+ * (a reset Team model connection). `approvalResult`: a decided approval's failed result waiting to reach the Agent.
+ */
+export const PENDING_MESSAGES_SCENES = ['queued', 'held', 'stopped', 'notSent', 'approvalResult'] as const;
 export type PendingMessagesScene = (typeof PENDING_MESSAGES_SCENES)[number];
 
 const SESSION_ID = 'dev-pending-messages';
@@ -50,6 +58,28 @@ const MESSAGES: readonly PendingMessage[] = [
   ),
 ];
 
+const NOT_SENT: readonly DiscardedPendingMessage[] = [{
+  ...queuedMessage('dev-not-sent-1', 'Please make the checkout heading more concise.', 3),
+  discardedAt: 4,
+  discardedReason: 'team_credential_binding_not_current',
+} as DiscardedPendingMessage];
+
+const APPROVAL_RESULT: readonly PendingMessage[] = [{
+  ...queuedMessage('dev-approval-result', JSON.stringify({ actionId: 'browser.open', status: 'executed',
+    execution: { executedAtMs: 5, ok: false, errorCode: 'browser_unavailable' } }), 5),
+  localId: 'approval-result:dev-approval',
+  rawRecord: { meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: buildTrustedHostSessionInputAdmissionV1('mcp').provenance } },
+} as PendingMessage];
+
+const STOPPED: readonly PendingMessage[] = MESSAGES.slice(0, 1);
+
+function sceneMessages(scene: PendingMessagesScene): readonly PendingMessage[] {
+  if (scene === 'notSent') return [];
+  if (scene === 'stopped') return STOPPED;
+  if (scene === 'approvalResult') return APPROVAL_RESULT;
+  return MESSAGES;
+}
+
 /**
  * The stopped Session this queue belongs to, client-local and removed on unmount. `held` carries the
  * withdrawal the access owner publishes when a person's Machine access is withdrawn.
@@ -61,19 +91,22 @@ function useSeededSession(
   const [seeded, setSeeded] = React.useState(false);
   React.useEffect(() => {
     if (!serverId) return;
+    const metadata = {
+      path: '/Users/dev/harbor-ledger',
+      host: 'studio-runner',
+      homeDir: '/Users/dev',
+      machineId: 'dev-pending-machine',
+      ...(scene === 'held'
+        ? { lifecycleStateReason: 'machine_access_withdrawn' }
+        : {}),
+    };
     const session = createSessionFixture({
       id: SESSION_ID,
       serverId,
       active: false,
-      metadata: {
-        path: '/Users/dev/harbor-ledger',
-        host: 'studio-runner',
-        homeDir: '/Users/dev',
-        machineId: 'dev-pending-machine',
-        ...(scene === 'held'
-          ? { lifecycleStateReason: 'machine_access_withdrawn' }
-          : {}),
-      } as Session['metadata'],
+      metadata: (scene === 'stopped'
+        ? writeSessionExplicitStopV1ToMetadata(metadata, { v: 1, cause: 'explicit_stop', requestId: 'dev-stop', requestedAtMs: 1 })
+        : metadata) as Session['metadata'],
     });
     const state = storage.getState();
     // Never replace an existing local entry, even in a dev specimen.
@@ -95,7 +128,7 @@ function useSeededSession(
   return seeded;
 }
 
-/** Dev-only: a Session's queued messages drawn by the real Pending block. `scene=queued|held`. */
+/** Dev-only: a Session's queued messages drawn by the real Pending block (`PENDING_MESSAGES_SCENES`). */
 export function PendingMessagesSpecimen(
   props: Readonly<{ scene: PendingMessagesScene }>,
 ) {
@@ -108,8 +141,8 @@ export function PendingMessagesSpecimen(
         <PendingMessagesTranscriptBlock
           sessionId={SESSION_ID}
           serverId={scope.serverId}
-          pendingMessages={MESSAGES}
-          discardedMessages={NO_DISCARDED}
+          pendingMessages={sceneMessages(props.scene)}
+          discardedMessages={props.scene === 'notSent' ? NOT_SENT : NO_DISCARDED}
         />
       </View>
     </View>

@@ -8215,8 +8215,8 @@ export const zhHans: TranslationStructure = {
       },
     },
         pendingActivation: {
-    held: { title: "已由你停止", body: "在你恢复此会话之前，消息会一直保留在队列中。" },
-    held_offline: { title: "已由你停止", body: "此机器已离线。消息会保留在队列中；机器恢复后请重新发送或恢复。" },
+    held: { title: "已停止", body: "有人停止了此会话。在有人恢复之前，消息会一直保留在队列中。" },
+    held_offline: { title: "已停止", body: "此机器已离线。消息会保留在队列中；机器恢复后请重新发送或恢复。" },
             waiting_offline: { title: '消息已加入此机器的队列', body: '这台机器及其守护进程恢复在线后，消息将被处理。' },
             waiting: { title: '等待恢复', body: '守护进程恢复此会话时，你的消息会安全地保留在队列中。' },
             failed: { title: '无法恢复会话', body: '你的消息仍安全地保留在队列中。准备好后请重试。' },

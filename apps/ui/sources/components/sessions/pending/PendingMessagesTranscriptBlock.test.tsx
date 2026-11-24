@@ -373,7 +373,9 @@ describe('PendingMessagesTranscriptBlock', () => {
         // The transcript's runtime row says the cause once; the section says what happened to the message.
         expect(allText).toContain(t('session.pendingMessages.discarded.failedTitle'));
         expect(allText).not.toContain(t('session.pendingMessages.discarded.title'));
-        expect(allText).not.toContain(t('startFailure.cause.team_credential_binding_not_current'));
+        expect(allText).not.toContain(t('session.startFailure.cause.team_credential_binding_not_current'));
+        // "Not sent" is said once: the section header, not again as a label under it.
+        expect(allText.split(t('session.pendingMessages.discarded.failedTitle')).length - 1).toBe(1);
 
         await hoverDiscardedMessageRow(screen, 'reset');
         expect(screen.findByTestId('pendingMessages.discarded.requeue:reset')).toBeNull();
@@ -383,6 +385,16 @@ describe('PendingMessagesTranscriptBlock', () => {
         // Nothing runs, so sending again interrupts nothing and asks nothing.
         expect(modalConfirm).not.toHaveBeenCalled();
         expectSendNowAction({ localId: 'reset', deliveryIntent: 'interrupt_and_send' });
+    });
+
+    it('names a reset Team binding in words on a refused message whose cause the Session does not already say', async () => {
+        sessionValue = { active: false, presence: 'offline', thinking: false };
+        const message = { ...queuedMessage('reset', 1), discardedAt: 2, discardedReason: 'team_credential_binding_not_current' as const };
+        const Component = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
+        const renderedText = screen.findByTestId('pendingMessages.discarded.message:reset')?.findAll(node => String(node.type) === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+        expect(renderedText).toContain(t('session.startFailure.cause.team_credential_binding_not_current'));
+        expect(renderedText).not.toContain('startFailure.cause.');
     });
 
     it('presents a retained launch refusal from its typed cause alone', async () => {
@@ -536,6 +548,17 @@ describe('PendingMessagesTranscriptBlock', () => {
             expect(resume).toHaveBeenCalledWith(undefined, { heldOriginalLocalId: 'held-original' });
             expect(executeDefaultAction).not.toHaveBeenCalled();
             expect(sendPendingMessageNow).not.toHaveBeenCalled();
+            await screen.unmount();
+        });
+
+        it('lists the way forward first in the message menu and Remove last', async () => {
+            sessionValue = personStoppedSession(createSessionAccessFixture('owner'));
+            const screen = await renderHeld(vi.fn(async () => true));
+            await screen.pressByTestIdAsync('pendingMessages.message:pending-held');
+            const menuIds = screen.findAllByType('DropdownMenuItem').map(item => String(item.props.testID ?? item.props.accessibilityLabel));
+            expect(menuIds[0]).toBe('pendingMessages.menu.copy:pending-held');
+            expect(menuIds[1]).toBe('pendingMessages.menu.deliverAndResume:pending-held');
+            expect(menuIds[menuIds.length - 1]).toBe(t('common.remove'));
             await screen.unmount();
         });
 

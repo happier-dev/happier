@@ -747,6 +747,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         disabled: deliveryActionBusy || pendingInputInterruptAndRun.busy,
                     });
                 }
+                // The way forward (Steer, Deliver and resume, Send now) leads, right after Copy; Remove stays last.
+                const forwardAt = items.length;
 	            if (launchFailedDraftId) {
 	                items.push({ id: 'openDraft', testID: `pendingMessages.menu.openDraft:${message.id}`, title: t('session.pendingMessages.actions.openDraft'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
 	            } else if (isCancellationState) {
@@ -770,11 +772,12 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 		                if (!isContentLoading && !isHostOnboarding) items.push({ id: 'edit', title: t('session.pendingMessages.actions.edit'), icon: <Icon name="pencil" size={16} color={theme.colors.text.secondary} /> });
 		                items.push({ id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> });
                 }
+	            const forward: DropdownMenuItem[] = [];
 	            if (canSteerNow && canUseDirectDeliveryActions) {
-	                items.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> });
+	                forward.push({ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> });
 	            }
 	            if (canUseDirectDeliveryActions && canDeliverByResume) {
-	                items.push({
+	                forward.push({
 	                    id: 'deliverAndResume',
 	                    testID: `pendingMessages.menu.deliverAndResume:${message.id}`,
 	                    title: t('session.pendingMessages.actions.deliverAndResume'),
@@ -782,12 +785,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
 	                    disabled: deliveryActionBusy,
 	                });
 	            } else if (canUseDirectDeliveryActions && !deliversByResume) {
-	                items.push({
+	                forward.push({
 	                    id: 'sendNow',
 	                    title: sendNowActionLabel,
 	                    icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} />,
 	                });
 	            }
+	            items.splice(forwardAt, 0, ...forward);
 	            return items;
 	        })();
 
@@ -1573,9 +1577,10 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                 />
                                 {displayedDiscarded.length > 0 ? (
                                     <View style={{ marginTop: theme.space.s4 }}>
-                                        <Text style={[styles.discardedTitle, { color: theme.colors.text.secondary }]}>
+                                        {/* With no queued row above, the header already says it: the title is said once. */}
+                                        {headerLabel !== retainedTitle ? <Text style={[styles.discardedTitle, { color: theme.colors.text.secondary }]}>
                                             {retainedTitle}
-                                        </Text>
+                                        </Text> : null}
                                         {!retainedFailureOnly && <Text style={[styles.discardedSubtitle, { color: theme.colors.text.secondary }]}>
                                             {t('session.pendingMessages.discarded.subtitle')}
                                         </Text>}

@@ -16,7 +16,8 @@ import {
     type PendingMessageVisualStateKind,
 } from './pendingMessageVisualState';
 import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions';
-import { SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { isHostAuthoredInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
 
 function pendingMessage(overrides: Partial<PendingMessage> = {}): PendingMessage {
     return {
@@ -502,6 +503,9 @@ describe('session input failure copy owner', () => {
             .toBe('session.pendingMessages.admissionRejected.permissionModeNotGranted');
         expect(getSessionInputFailureLabelKey(createSessionInputFailureError('execution_run_target_changed')))
             .toBe('sessionDrafts.executionRunStart.targetChanged');
+        const resetKey = getSessionInputFailureLabelKey(createSessionInputFailureError('team_credential_binding_not_current'));
+        expect(resetKey).toBe('session.startFailure.cause.team_credential_binding_not_current');
+        expect(t(resetKey!)).not.toBe(resetKey);
         expect(getSessionInputFailureLabelKey(new Error('participant send rejected'))).toBeNull();
         expect(getSessionInputFailureLabelKey(Object.assign(new Error('x'), { code: 'not_a_known_code' }))).toBeNull();
     });
@@ -533,6 +537,22 @@ describe('a new Bot\'s first-run seed while it is pending', () => {
         const [row] = resolvePendingMessagesPresentation([seed({
             pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'runtime_config_blocked' })]).rows;
         expect(row).toMatchObject({ isHostInput: true, hostOnboarding: true, statesBlockedReason: false });
+    });
+
+    it('reads a decided approval\'s queued result as the host\'s quiet line, not the person\'s bubble', () => {
+        // DESIGN-ACCEPT-152 #5/#43: "Failed · Open a page in the Browser" was drawn as the person's own queued message.
+        // The queued record carries host provenance but no Home authority yet, so the host-authored predicate alone says no.
+        const meta = { [SESSION_MESSAGE_PROVENANCE_META_KEY]: buildTrustedHostSessionInputAdmissionV1('mcp').provenance };
+        expect(isHostAuthoredInputMeta(meta)).toBe(false);
+        const [row] = resolvePendingMessagesPresentation([pendingMessage({
+            localId: 'approval-result:artifact-1',
+            text: JSON.stringify({ actionId: 'browser.open', status: 'executed', execution: { executedAtMs: 1, ok: false, errorCode: 'browser_unavailable' } }),
+            rawRecord: { meta },
+        })]).rows;
+        expect(row).toMatchObject({ isHostInput: true, hostOnboarding: false });
+        // A person's words under the same local id prefix stay theirs.
+        const [own] = resolvePendingMessagesPresentation([pendingMessage({ localId: 'approval-result:artifact-1' })]).rows;
+        expect(own).toMatchObject({ isHostInput: false });
     });
 
     it('leaves an ordinary message the person typed as their own', () => {

@@ -852,17 +852,19 @@ describe('ApprovalPromptCard', () => {
         expect(text).toContain('approvals.staleFailure');
     });
 
-    it('reads a settled failure as one compact row: outcome and reason on one line, no repeated description, Dismiss at its end', async () => {
+    it('reads a settled failure as its outcome, then why and what to do in full, no repeated description, Dismiss at its head', async () => {
         const approval = ApprovalRequestSchema.parse({ ...failedWriteFile(), status: 'failed',
             execution: { executedAtMs: 3, ok: false, errorCode: 'approval_stale', error: 'approval_stale' } });
         const screen = await renderCard(approval, { chrome: 'inline' });
-        // The outcome and why share one truncating line.
-        const line = screen.findAll((node) => node.props?.numberOfLines === 1 && typeof node.props.children === 'string'
+        // The outcome heads the card on its own line; the reason is never cut into that truncating line (DESIGN-ACCEPT-152 #5).
+        const headline = screen.findAll((node) => node.props?.numberOfLines === 1 && typeof node.props.children === 'string'
             && node.props.children.includes('approvals.failureNotRun'));
-        expect(line.at(0)?.props.children).toContain('approvals.staleFailure');
-        // The live request already says what the Action does; the failure does not repeat it, nor its reason below.
+        expect(headline.at(0)?.props.children).not.toContain('approvals.staleFailure');
+        const reason = screen.findByTestId('approval-prompt-execution-failure');
+        expect(reason).toBeTruthy();
+        expect(reason?.findAll((node) => typeof node.props?.numberOfLines === 'number')).toHaveLength(0);
+        // The live request already says what the Action does; the failure does not repeat it, and says its reason once.
         expect(screen.getTextContent()).not.toContain('Write . in mqa2-c14-clone.');
-        expect(screen.findByTestId('approval-prompt-execution-failure')).toBeNull();
         expect(screen.getTextContent().match(/approvals\.staleFailure/g)).toHaveLength(1);
         expect(screen.findByTestId('approval-prompt-dismiss')).toBeTruthy();
     });

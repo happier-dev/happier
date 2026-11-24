@@ -11,6 +11,7 @@ import { presentSessionActivationFailure, presentSessionContinuationFailure, typ
 import { resolveSessionStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
 import { isSessionMachineAccessRemoved } from '@/components/sessions/access/sessionMachineAccessRemoved';
+import { readApprovalResultArtifactId } from '@/components/sessions/transcript/references/approvalResultInput';
 
 export type PendingMessageVisualStateKind =
     /** A new Session's launch owns this first message and has not confirmed it. */
@@ -130,7 +131,10 @@ export function resolvePendingMessageContentPresentation(message: PendingMessage
     const followInput = contentOpen ? readHostFollowInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput) : null;
     const hostOnboarding = contentOpen && isHostOnboardingInputMeta(message.rawRecord?.meta);
     return {
-        isHostInput: hostOnboarding || (contentOpen && isHostAuthoredInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput)),
+        // A decided approval's result is host input too: its pending record carries host provenance before any
+        // Home authority, and its receipt ("Failed · <Action>") is never drawn as the person's own message.
+        isHostInput: hostOnboarding || (contentOpen && (isHostAuthoredInputMeta(message.rawRecord?.meta, message.pendingHostFollowInput)
+            || readApprovalResultArtifactId({ localId: message.localId, meta: message.rawRecord?.meta }) !== null)),
         hostOnboarding,
         followInput,
         followSourceKey: followInput ? followNoticeSourceKey(followInput) : null,
@@ -274,7 +278,7 @@ const sessionInputFailureLabelKeys = {
     model_not_granted: 'session.pendingMessages.admissionRejected.modelNotGranted',
     permission_mode_not_granted: 'session.pendingMessages.admissionRejected.permissionModeNotGranted',
     session_model_transition_apply_failed: 'modelTransitionFailure.title',
-    team_credential_binding_not_current: 'startFailure.cause.team_credential_binding_not_current',
+    team_credential_binding_not_current: 'session.startFailure.cause.team_credential_binding_not_current',
     attachment_unavailable: 'files.transfers.failureReasons.sourceUnavailable',
     session_input_archived: 'session.pendingMessages.admissionRejected.archived',
     session_input_unauthorized: 'session.pendingMessages.admissionRejected.unauthorized',

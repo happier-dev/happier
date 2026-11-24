@@ -147,7 +147,11 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         || input.connectedServicesRestartState?.status === 'pending_confirmation';
     // The usage-limit card is the one place the limit and its recovery are said while it shows; queued
     // input blocked behind that limit adds only its count, never a second failure line.
-    const queueLine = input.usageLimitRecoveryCardShown === true ? null : input.pendingQueue?.line ?? null;
+    // A refused start's notice says why the Session is not running, with its Retry (the same Resume): a queue line
+    // that only says it is stopped, or offers that Resume again, defers to it. A different cause with its own step speaks.
+    const queueLineStatedByStartFailure = input.startFailureNoticeShown === true
+        && (input.pendingQueue?.line?.action == null || input.pendingQueue.line.action === 'resume' || input.pendingQueue.line.action === 'retry');
+    const queueLine = input.usageLimitRecoveryCardShown === true || queueLineStatedByStartFailure ? null : input.pendingQueue?.line ?? null;
     if (queueLine && !restartActive && !input.sessionStatusResuming) {
         return {
             text: queueLine.text,

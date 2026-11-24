@@ -441,13 +441,11 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
 
     // A Computer ask is asked by its one act line ("Click in Safari?"); its card starts at where.
     const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? (computerAction ? readComputerActLine(computerAction) : actionTitle);
-    // A settled failure is one compact row (UI refinements, 2026-11-23): what failed and why on one truncating line, then
-    // Details. The live request beside it already says what the Action does, so the failure does not repeat that.
+    // A settled failure heads with what failed on one line, then says why and what to do in full beneath it, then
+    // Details: a reason cut into the headline lost its next step in the tray and at 390 (DESIGN-ACCEPT-152 #5). The live
+    // request beside it already says what the Action does, so the failure does not repeat that.
     const settledFailure = failureOutcome !== null && props.approval.status !== 'open' && !petImport?.outcome;
-    const failureReasonInline = settledFailure && failureOutcome?.reason && !checksCarryRefusal ? failureOutcome.reason : null;
-    const cardTitle = petImport?.outcome ? requestTitle
-        : failureOutcome ? (failureReasonInline ? `${failureOutcome.headline} · ${failureReasonInline}` : failureOutcome.headline)
-            : requestTitle;
+    const cardTitle = petImport?.outcome ? requestTitle : failureOutcome ? failureOutcome.headline : requestTitle;
     // A summary that only repeats the title says nothing more: the card reads it once.
     // The failure headline names the action, so a summary that only repeats that name is not a second line.
     const failureSummary = failureOutcome && !settledFailure && !projectCommand && !petImport?.outcome ? props.approval.summary?.trim() || null : null;
@@ -552,11 +550,11 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             {confidentialOutcome ? (
                 <Text testID="approval-prompt-confidential-outcome" style={styles.previewText}>{confidentialOutcome}</Text>
             ) : null}
-            {(!petImport?.outcome && failureOutcome?.reason && !checksCarryRefusal && !failureReasonInline) || failureOutcome?.serviceStartFailure?.recovery ? (
+            {(!petImport?.outcome && failureOutcome?.reason && !checksCarryRefusal) || failureOutcome?.serviceStartFailure?.recovery ? (
                 // The outcome is one paragraph: why it failed and its output, set apart from what was
                 // approved below, so "Review output" never reads as the caption of the command block.
                 <View style={styles.failureGroup}>
-                    {failureOutcome?.reason && !checksCarryRefusal && !failureReasonInline ? (
+                    {failureOutcome?.reason && !checksCarryRefusal ? (
                         <View testID="approval-prompt-execution-failure" accessibilityRole="alert">
                             <Text style={styles.previewText}>{failureOutcome.reason}</Text>
                         </View>

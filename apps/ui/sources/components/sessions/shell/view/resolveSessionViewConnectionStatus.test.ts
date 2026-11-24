@@ -489,6 +489,17 @@ describe('resolveSessionViewConnectionStatus', () => {
             pendingQueue: { line: null, countText: '1 queued' } })).toMatchObject({ text: '1 queued' });
     });
 
+    it('lets a refused start\'s notice keep its one cause and Retry over a queue line that would resume the same Session', () => {
+        // DESIGN-ACCEPT-152 #38: the notice said the cause with Retry while the line said "Stopped by you · Resume" (PF1: one handler).
+        const stopped = { ...baseInput, sessionStatusState: 'disconnected', inactiveStatusText: 'Inactive (resumable)',
+            inactiveResumeAvailable: true, startFailureNoticeShown: true,
+            pendingQueue: { line: { text: 'Stopped by you', action: 'resume', color: 'status-color' }, countText: '1 queued' } } as const;
+        expect(resolveSessionViewConnectionStatus(stopped)).toEqual({ text: '1 queued', color: 'status-color', dotColor: 'dot-color', isPulsing: false });
+        // A different cause with its own recovery still speaks.
+        const account = { ...stopped, pendingQueue: { line: { text: 'Choose an account', action: 'choose_account', color: 'attention' }, countText: '1 queued' } } as const;
+        expect(resolveSessionViewConnectionStatus(account)).toMatchObject({ text: 'Choose an account', pendingQueueAction: 'choose_account' });
+    });
+
     it('leaves a starting launch to its first message: no second "Starting session…" line, Resume or Ask Happier', () => {
         // QA-SESSION-1109 D18: the first bubble and the line both said "Starting session…".
         const starting = { ...baseInput, sessionStatusState: 'disconnected', inactiveStatusText: 'Inactive (resumable)',
