@@ -34,7 +34,6 @@ import { createLayoutArtifactHttpBoundary, createHomeHubArtifactHttpBoundary } f
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 // Static area consumers reach Sync during collection; install the canonical transport
@@ -96,6 +95,7 @@ vi.mock('@/modal/components/BaseModal', () => ({
 // Match app startup: publish the real Sync singleton before loading its UI consumers.
 await loadSyncSingletonForTests();
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+const { ModalProvider } = await import('@/modal/ModalProvider');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
 const { CardGridCell } = await import('@/components/ui/cardGrid/CardGrid');
@@ -617,7 +617,7 @@ describe('a plugin page widget area', () => {
         } else {
             const step = screen.root.findByType(WidgetSetupStep);
             expect(screen.findByTestId(`${step.props.testID}.why`)).not.toBeNull();
-            expect(screen.getTextContent()).toContain('widgetAdd.addFailed');
+            expect(screen.getTextContent()).toContain('errors.permissionDenied');
         }
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
         expect(widgetPlacements(await area.store.read())).toEqual([]);
@@ -682,7 +682,7 @@ describe('a plugin page widget area', () => {
         await flushHookEffects({ cycles: 4 });
         await submitAreaAdd(screen);
         expect(screen.getTextContent()).not.toContain('widgetAdd.justAdded');
-        expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'widgetAdd.addFailed');
+        expect(screen.getTextContent()).toContain(kind === 'approvalPending' ? 'widgetAdd.areaApprovalPending' : 'errors.permissionDenied');
         expect(widgetPlacements(await area.store.read()).map(entry => entry.instance)).toEqual([pin]);
         // The Add surface stays open after an Add for another; close it from wherever its composition puts Close.
         await act(async () => {
@@ -694,7 +694,7 @@ describe('a plugin page widget area', () => {
         const setup: WidgetSetup = screen.root.findByType(WidgetSetupStep).props.setup;
         let result: WidgetSetupSubmitResult | undefined;
         await act(async () => { result = await setup.submit({ bindings: { repository: { kind: 'value', value: 'edited' } } }); });
-        expect(result).toEqual(kind === 'approvalPending' ? { ok: true, approvalPending: true } : { ok: false, message: 'widgetAdd.saveFailed' });
+        expect(result).toEqual(kind === 'approvalPending' ? { ok: true, approvalPending: true } : { ok: false, message: 'errors.permissionDenied' });
         expect(widgetPlacements(await area.store.read()).map(entry => entry.instance)).toEqual([pin]);
     });
     it.each(['plugin', 'declarative', 'project'] as const)('defers never-near %s widgets and retains loaded bodies without new reads on scroll reentry', async kind => {
@@ -1120,7 +1120,7 @@ describe('a plugin page widget area', () => {
     it.each([
         ['widget_area_unavailable', 'widgetAdd.refusals.areaUnavailable'],
         ['widget_edit_denied', 'widgetAdd.refusals.editDenied'],
-        ['permission_denied', 'widgetAdd.areaWriteFailed'],
+        ['permission_denied', 'errors.permissionDenied'],
     ] as const)('says why a refused remove failed on its card, from the one failure presenter (%s)', async (errorCode, reason) => {
         const area = createArea();
         await area.store.apply({ kind: 'add', instance: pin });
@@ -1135,11 +1135,11 @@ describe('a plugin page widget area', () => {
         expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).not.toBeNull();
         expect(screen.getTextContent()).toContain(reason);
         // A reason the presenter owns replaces the static line; it never shows next to it.
-        if (reason !== 'widgetAdd.areaWriteFailed') expect(screen.getTextContent()).not.toContain('widgetAdd.areaWriteFailed');
+        expect(screen.getTextContent()).not.toContain('widgetAdd.areaWriteFailed');
         expect(widgetPlacements(await area.store.read())).toEqual([{ instance: pin, size: 'medium' }]);
     });
 
-    it.each(['approve', 'reject', 'group-reject', 'execution-failed', 'context-replaced'] as const)('settles an area approval after %s without another edit or remount', async scenario => {
+    it.each(['approve', 'reject', 'group-reject', 'execution-failed', 'context-replaced'] as const)('settles an area confirmation after %s without another edit or remount', async scenario => {
         const grouping = scenario === 'group-reject';
         const decision = scenario === 'reject' || grouping ? 'reject' : 'approve';
         const actionId = grouping ? 'widgets.group.create' : 'widgets.item.frame.set';
@@ -1178,28 +1178,28 @@ describe('a plugin page widget area', () => {
             const hostApi = { widgetArea: (request: unknown, options?: { signal?: AbortSignal }) => hostPort.execute(request, options?.signal),
                 readResource: async () => { throw new Error('The page reads no Resource'); } } as unknown as PluginUiHostApi;
             const areaPort: WidgetAreaPort = { execute: (operation, signal) => hostPort.execute({ area: 'pinned', context: { repository: 'happier' }, operation }, signal) };
-            const screen = await renderScreen(page(hostApi, 'happier', grouping ? <WidgetArea port={areaPort}
-                context={pluginPageWidgetContext({ repository: 'happier' })} geometry="grid" title="Pinned" surfaceName="PRs & Issues" testID="prs.pinned" /> : undefined));
+            const screen = await renderScreen(<ModalProvider>{page(hostApi, 'happier', grouping ? <WidgetArea port={areaPort}
+                context={pluginPageWidgetContext({ repository: 'happier' })} geometry="grid" title="Pinned" surfaceName="PRs & Issues" testID="prs.pinned" /> : undefined)}</ModalProvider>);
             await flushHookEffects({ cycles: 4 });
             await runAction(screen, pin.id, grouping ? 'groupWith-follow' : 'frameStyle');
-            // The real executor and Artifact reader settle on publications, not a microtask count
-            // or vi.waitFor's shorter default deadline. The containing test owns that deadline.
-            if (grouping) await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('widgetAdd.areaApprovalPending'));
-            else await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).not.toBeNull());
+            await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
             expect(widgetPlacements(http.layout())[0]?.frameStyle).not.toBe('plain');
-            expect(approvalRows.list()).toHaveLength(1);
-            const receipt = approvalRows.list()[0]!;
-            expect(JSON.parse(approvalRows.readPlainBody(receipt.id)!)).toMatchObject({ actionId, status: 'open' });
+            expect(http.layout().items.every(item => item.kind === 'widget')).toBe(true);
+            // A present person's saved UI Ask holds the native confirmation, not an Inbox receipt.
+            expect(approvalRows.list()).toHaveLength(0);
+            expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull();
             if (scenario === 'execution-failed') http.setCallerAccess('view');
             if (scenario === 'context-replaced') {
-                await screen.update(page(hostApi, 'website'));
+                await screen.update(<ModalProvider>{page(hostApi, 'website')}</ModalProvider>);
                 await flushHookEffects({ cycles: 4 });
                 expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull();
                 expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).toBeNull();
             }
-            expect(await decideApprovalAsInbox(scope.serverId, receipt.id, decision)).toMatchObject({ ok: true });
+            await screen.pressByTestIdAsync(decision === 'approve'
+                ? 'actions.confirmation-review.decision-approve'
+                : 'actions.confirmation-review.decision-reject');
             if (grouping) {
-                await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('widgetAdd.areaWriteFailed'));
+                await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('prs.pinned.meta')?.props.children).toBe('voiceSurface.actionCanceled'));
                 expect(http.layout().items.every(item => item.kind === 'widget')).toBe(true);
             } else if (scenario === 'approve' || scenario === 'context-replaced') {
                 await waitForTestEvent(screen.subscribe, () => {
@@ -1213,10 +1213,11 @@ describe('a plugin page widget area', () => {
                     expect(screen.findByTestId('prs.pinned.widget.pin.frame.pending')).toBeNull();
                     expect(widgetPlacements(http.layout())[0]?.frameStyle).not.toBe('plain');
                     expect(screen.findByTestId('prs.pinned.widget.pin.frame.stale')).not.toBeNull();
-                    expect(screen.getTextContent()).toContain(scenario === 'execution-failed' ? 'widgetAdd.refusals.editDenied' : 'widgetAdd.areaWriteFailed');
+                    expect(screen.getTextContent()).toContain(scenario === 'execution-failed' ? 'errors.permissionDenied' : 'voiceSurface.actionCanceled');
                 });
             }
             expect(screen.findByTestId('prs.pinned.widget.pin')).not.toBeNull();
+            expect(approvalRows.list()).toHaveLength(0);
         } finally { standardCleanup(); restoreLoader(); storage.setState(previous, true); }
     });
 
