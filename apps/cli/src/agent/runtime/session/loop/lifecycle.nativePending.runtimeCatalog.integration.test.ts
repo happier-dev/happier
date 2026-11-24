@@ -2,7 +2,12 @@ import axios from 'axios';
 import { setImmediate } from 'node:timers/promises';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
-import { AgentSessionRuntimeEventV1Schema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import {
+  AgentSessionRuntimeEventV1Schema,
+  FeaturesResponseSchema,
+  SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
+  SessionPendingAdmissionSettlementRequestV1Schema,
+} from '@happier-dev/protocol';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
 
 import { ApiSessionClient } from '@/api/session/sessionClient';
@@ -53,6 +58,11 @@ it.each(['presentation', 'runtime', 'model-readback', 'send-now'] as const)('dra
   // Home and the external Agent are the boundaries; Pending custody, queue,
   // native event admission, lifecycle and prompt dispatch stay real.
   const socket = createApiSessionSocketStub({ connected: true, emitWithAck(event, payload) {
+    if (event === SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1) {
+      const settlement = SessionPendingAdmissionSettlementRequestV1Schema.parse(payload);
+      expect(settlement).toMatchObject({ sessionId, localId: 'pending-input', decision: { kind: 'admit' } });
+      return { v: 1, result: { status: 'accepted', localId: settlement.localId } };
+    }
     if (event === 'pending-delivery-accepted-v1') {
       receipts.push(payload);
       return { ok: true, didResolve: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2,
@@ -157,13 +167,19 @@ it.each(['presentation', 'runtime', 'model-readback', 'send-now'] as const)('dra
     watch(value) { listener = value; return { dispose() { listener = undefined; } }; },
     dispose() {},
   };
-  const runtime = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
+  const nativeOperations = createNativeAgentSessionOperations(provider, sessionId, undefined, undefined, undefined, undefined, undefined, {
     // This Agent fixture uses no optional host service.
     context: {} as AgentSessionRuntimeContext, cwd: '/tmp/project', connectedAccounts: [],
     capabilities: { open: ['resume'], delivery: ['newTurn'], cancel: false },
     cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
   });
-  const base = createLifecycleParams({ runPermissionModePromptLoopFn: options => {
+  const runtime = {
+    ...nativeOperations,
+    // The watched Agent is already open. This fixture has no factory to reopen
+    // it with startup instructions, so the host must use its prompt prefix.
+    readSessionStartupInstructionsSupport: () => false,
+  };
+  const base = createLifecycleParams({ policyAgentId: 'claude', runPermissionModePromptLoopFn: options => {
     beforePendingMaterialize = options.beforePendingMaterialize;
     return runPermissionModePromptLoop({ ...options, inputConsumer: consumer });
   } });
