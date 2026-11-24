@@ -1031,7 +1031,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
             : bindWorkflowActionInputV1(leaf.input, bindingContext, leaf.id, purpose);
           const workflow = input.context.source.kind === 'automation'
             ? input.context.source.definitionId : input.context.triggerWorkflowRef;
-          if (workflow !== undefined && sourceKey === '$root' && leaf.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID
+          if (sidecar.actionInput !== undefined && workflow !== undefined && sourceKey === '$root'
+            && leaf.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID
             && !Object.hasOwn(leaf.input, 'workflow') && !Object.hasOwn(leaf.input, 'target')) {
             sidecar.actionInput.workflow = workflow;
           }
