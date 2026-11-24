@@ -76,6 +76,8 @@ describe('switchConnectionToActiveServer', () => {
         for (const unsubscribe of subscriptions) unsubscribe();
         subscriptions.clear();
         await connection.disconnectActiveServerConnection();
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
         await homes.reset();
         browser?.restore();
         browser = undefined;
@@ -165,6 +167,57 @@ describe('switchConnectionToActiveServer', () => {
         expect(homes.requestsFor('/v1/scoped-probe')).toEqual([
             expect.objectContaining({ serverId: homeA.serverId, token: homeA.credentials?.token }),
         ]);
+    });
+
+    async function addHomeWithFailedAdmission(name: string) {
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const serverUrl = `https://${name}.example.test`;
+        const accountId = `account-${name}`;
+        const credentials = { token: createAccountTokenForTests(accountId), secret: encodeBase64(new Uint8Array(32).fill(7)) };
+        const serverId = await homes.addHome({ name, serverUrl, accountId, credentials, active: false });
+        homes.answer(serverId, '/v1/account/encryption/currentness', { dispatchThenFail: true });
+        homes.answer(serverId, '/v1/auth/ping', { dispatchThenFail: true });
+        return { serverId, serverUrl, accountId, credentials };
+    }
+
+    it('keeps failed cold-restore recovery credentials with their own Home after a switch', async () => {
+        const homeA = await addHomeWithFailedAdmission('cold-restore-original');
+        const homeB = await addHomeWithFailedAdmission('cold-restore-selected');
+        const readStarted = createDeferred<void>();
+        const finishRead = createDeferred<void>();
+        releases.add(() => finishRead.resolve());
+        homes.answer(homeA.serverId, '/v1/account/encryption/currentness', {
+            select: async () => {
+                readStarted.resolve();
+                await finishRead.promise;
+                return { dispatchThenFail: true };
+            },
+        });
+
+        await selectHome(homeA);
+        const restore = connection.restoreConnectionToActiveServer(homeA.credentials);
+        await readStarted.promise;
+        await selectHome(homeB);
+        const apply = connection.switchConnectionToActiveServer();
+        finishRead.resolve();
+        await Promise.all([expect(restore).rejects.toThrow(), expect(apply).rejects.toThrow('Failed to fetch')]);
+
+        // B's own failed apply still starts recovery with B's credentials.
+        await vi.waitFor(() => expect(homes.requestsFor('/v1/auth/ping')).toContainEqual(
+            expect.objectContaining({ serverUrl: homeB.serverUrl, token: homeB.credentials.token }),
+        ));
+        expect(homes.requests.filter(request => request.serverUrl === homeB.serverUrl
+            && request.token === homeA.credentials.token)).toEqual([]);
+    });
+
+    it('starts recovery once for the same Home when cold restore fails without a switch', async () => {
+        const home = await addHomeWithFailedAdmission('cold-restore-current');
+
+        await expect(restoreHome(home)).rejects.toThrow('Failed to fetch');
+
+        await vi.waitFor(() => expect(homes.requestsFor('/v1/auth/ping')).toEqual([
+            expect.objectContaining({ serverUrl: home.serverUrl, token: home.credentials.token }),
+        ]));
     });
 
     it('sends no recovery bearer after a fail-closed carrier and leaves the visible Retry to re-admit once', async () => {

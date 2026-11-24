@@ -550,7 +550,9 @@ export function restoreConnectionToActiveServer(credentials: AuthCredentials): P
     notifyColdRestoreListeners();
     void transport.then(clearColdRestore, () => {
         clearColdRestore();
-        recoverFailedApplyWhenHomeAnswers(getActiveServerSnapshot(), credentials);
+        const recoveryTarget = capturePreparedSyncTarget(snapshot);
+        if (!recoveryTarget) return;
+        recoverFailedApplyWhenHomeAnswers(recoveryTarget, credentials);
     });
     return transport;
 }
