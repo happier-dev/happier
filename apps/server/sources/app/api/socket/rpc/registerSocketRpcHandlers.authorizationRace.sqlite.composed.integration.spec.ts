@@ -180,6 +180,8 @@ describe("Session RPC final access admission on SQLite", () => {
 
     it.each([
         RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
+        // L12 READY218: a SOURCE daemon's raw target bootstrap on another person's Machine.
+        RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
         ...Object.values(SESSION_RPC_METHODS).filter(method =>
             resolveSocketRpcSessionAuthorization(method)?.machineScope === true
             && resolveMachineRpcRoutePolicy(method).sharedMachineAccess === 'custodian_only',
@@ -206,8 +208,10 @@ describe("Session RPC final access admission on SQLite", () => {
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         // Keep the ordinary admission's detailed cause contract. Server-origin
         // Run methods may instead be refused before ordinary Machine admission.
-        if (rpcMethod === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE) {
-            expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+        if (rpcMethod === RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE
+            || rpcMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE) {
+            // Refused before forwarding: the caller can settle it as a pre-effect typed refusal.
+            expect(callback).toHaveBeenCalledWith(expect.objectContaining({ effectAttempted: false,
                 failureCause: expect.objectContaining({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }),
             }));
         }

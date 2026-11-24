@@ -741,7 +741,8 @@ function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: st
         ...(reason || phase ? { failureCause: { phase: phase ?? 'rpc.admission.machine', errorClass: 'Error' as const,
             errorCode: reason ?? RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403,
             ...(nativeErrorReason ? { nativeErrorReason } : {}) } } : {}),
-        ...(phase ? { effectAttempted: false as const } : {}),
+        // A typed admission refusal is never forwarded, so the receiver did nothing.
+        ...(reason || phase ? { effectAttempted: false as const } : {}),
     };
 }
 

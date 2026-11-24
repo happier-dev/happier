@@ -18,6 +18,7 @@ import type { ProjectAccountSnapshotMutationResult } from '@/workspaces/projectA
 
 import {
   createWorkspaceSyncRelationshipOwner,
+  WorkspaceSyncPreparationRefusal,
   type ProjectAccountSnapshotMutation,
   type WorkspaceSyncRelationshipOwnerOptions,
 } from './workspaceSyncRelationshipOwner';
@@ -757,6 +758,34 @@ describe('WorkspaceSyncRelationshipOwner', () => {
 
     const retry = await indeterminate.owner.prepareCreate(createInput);
     expect(retry.relationship.relationshipId).toBe('relationship_1');
+  });
+
+  // L12 READY218 (op 646eedbb): Home refused the target bootstrap before it ran, then refused its release
+  // the same way. Both carry Home's own effectAttempted:false; the creation settles as that typed refusal.
+  it('settles a target refused before its first effect as a typed refusal, but keeps a later refusal pending', async () => {
+    const homeRefusal = () => createRpcCallError({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN', effectAttempted: false,
+      failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 } });
+    const refused = createHarness();
+    refused.ensureRelationship.mockRejectedValueOnce(homeRefusal());
+    refused.terminateRelationshipRuntime.mockRejectedValueOnce(homeRefusal());
+    const failure = await refused.owner.prepareCreate(createInput).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WorkspaceSyncPreparationRefusal);
+    expect(failure).toMatchObject({ code: 'RPC_FORBIDDEN', cause: { failureCause: { phase: 'rpc.admission.machine', errorCode: 'custodian_only' } } });
+    expect(refused.read().relationships).toEqual([]);
+
+    // A refusal after the runtime was ensured may leave a prepared target: its refused release stays pending.
+    const later = createHarness();
+    later.flushRelationship.mockRejectedValueOnce(homeRefusal());
+    later.terminateRelationshipRuntime.mockRejectedValueOnce(homeRefusal());
+    const pending = await later.owner.prepareCreate(createInput).catch((error: unknown) => error);
+    expect(pending).toBeInstanceOf(AggregateError);
+    expect(pending).not.toBeInstanceOf(WorkspaceSyncPreparationRefusal);
+
+    // A release that failed after it ran is never treated as harmless.
+    const released = createHarness();
+    released.ensureRelationship.mockRejectedValueOnce(homeRefusal());
+    released.terminateRelationshipRuntime.mockRejectedValueOnce(new Error('release lost'));
+    expect(await released.owner.prepareCreate(createInput).catch((error: unknown) => error)).toBeInstanceOf(AggregateError);
   });
 
   it('rejects malformed relationship settings without rewriting them as an empty desired set', async () => {

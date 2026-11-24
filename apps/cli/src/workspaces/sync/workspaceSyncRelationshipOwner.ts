@@ -119,6 +119,11 @@ function ownerError(code: string, message: string): Error & { code: string } {
   return Object.assign(new Error(message), { code });
 }
 
+/** Home or the receiver refused this step before it ran, by the step's own typed `effectAttempted: false`. */
+function isRefusedBeforeEffect(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'effectAttempted' in error && error.effectAttempted === false);
+}
+
 function withCleanupErrors(primary: unknown, cleanupErrors: readonly unknown[]): unknown {
   if (!cleanupErrors.length) return primary;
   const failure = new AggregateError([primary, ...cleanupErrors], primary instanceof Error ? primary.message
@@ -588,12 +593,14 @@ export function createWorkspaceSyncRelationshipOwner(
         await options.waitForProjectReconciliation(rollbackVersion);
       };
 
-      const cleanupFailedCreation = async (definition: WorkspaceSyncRelationshipV1): Promise<unknown[]> => {
+      const cleanupFailedCreation = async (definition: WorkspaceSyncRelationshipV1, ensureRefusedBeforeEffect = false): Promise<unknown[]> => {
         const cleanupErrors: unknown[] = [];
         try {
           await options.terminateRelationshipRuntime(definition);
         } catch (cleanupError) {
-          cleanupErrors.push(cleanupError);
+          // Ensure prepares the target first: refused before that effect, there is
+          // nothing to release, so a release also refused before it ran is not pending.
+          if (!ensureRefusedBeforeEffect || !isRefusedBeforeEffect(cleanupError)) cleanupErrors.push(cleanupError);
         }
         // Restore staged intent even when runtime termination fails, preserving
         // cleanup failures alongside the original preparation or commit cause.
@@ -616,6 +623,7 @@ export function createWorkspaceSyncRelationshipOwner(
         throw error;
       }
       let status: WorkspaceSyncStatusV1;
+      let ensureRefusedBeforeEffect = false;
       try {
         status = await options.ensureRelationship(
           runtimeRelationship,
@@ -633,11 +641,14 @@ export function createWorkspaceSyncRelationshipOwner(
                   targetReplacementApprovalReceiptId: input.targetReplacementApprovalReceiptId,
                 } : {}),
               },
-        );
+        ).catch((error: unknown) => {
+          ensureRefusedBeforeEffect = isRefusedBeforeEffect(error);
+          throw error;
+        });
         status = await options.flushRelationship(relationship.relationshipId, input.signal);
       } catch (error) {
         if (runtimeOwnedByTransaction && !isIndeterminate(error)) {
-          const cleanupErrors = await cleanupFailedCreation(relationship);
+          const cleanupErrors = await cleanupFailedCreation(relationship, ensureRefusedBeforeEffect);
           const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
             ? error.code : undefined);
           if (cleanupErrors.length) {
