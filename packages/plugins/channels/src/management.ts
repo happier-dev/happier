@@ -2497,10 +2497,8 @@ export async function updateConversationConnectionForInvocation(
 }
 
 /**
- * A failed provider poll is retried against the current saved connection.
- * This clears no other lifecycle field. Automatic
- * backoff may replace a blocked failure while its human approval is pending;
- * that bookkeeping does not invalidate consent for the same connection.
+ * Make the current failure due for the existing supervisor. Successful
+ * receive settlement clears its evidence after the work actually completes.
  */
 export async function retryConversationConnectionPollForInvocation(
   input: JsonValue,
@@ -2519,15 +2517,18 @@ export async function retryConversationConnectionPollForInvocation(
     );
   }
   const current = readConversationConnectionUpdateRow({ row, connectionId: request.connectionId });
-  if (current.lifecycle.pollFailure === null) {
+  const failure = current.lifecycle.pollFailure;
+  const retryNotBeforeMs = 0;
+  if (failure === null || (failure.phase === 'retryDue' && failure.retryNotBeforeMs === retryNotBeforeMs)) {
     return { kind: 'retryScheduled', connectionId: request.connectionId, revision: current.configurationRevision, authorityEpoch: current.lifecycle.authorityEpoch };
   }
+  const pollFailure = { ...failure, phase: 'retryDue' as const, retryNotBeforeMs };
   const value = withConversationConnectionLifecycle({
     row,
     current,
     lifecycle: {
       ...current.lifecycle,
-      pollFailure: null,
+      pollFailure,
     },
   });
   let persistedRevision: number | undefined;
@@ -2564,7 +2565,7 @@ export async function retryConversationConnectionPollForInvocation(
     const settled = readConversationConnectionUpdateRow({ row: reread, connectionId: request.connectionId });
     if (
       settled.lifecycle.authorityEpoch === current.lifecycle.authorityEpoch
-      && settled.lifecycle.pollFailure === null
+      && (settled.lifecycle.pollFailure === null || pluginJsonValuesEqual(settled.lifecycle.pollFailure, pollFailure))
     ) {
       return {
         kind: 'retryScheduled',
@@ -2576,7 +2577,7 @@ export async function retryConversationConnectionPollForInvocation(
   }
   throw pluginError(
     'channels_connection_poll_retry_result_invalid',
-    'The connection poll retry did not return or retain its cleared row.',
+    'The connection poll retry did not return or retain its scheduled retry.',
     true,
   );
 }

@@ -680,7 +680,7 @@ describe('Channels pairing management writer', () => {
     expect(retry).toEqual(expect.any(Function));
     if (typeof retry !== 'function') return;
 
-    const initial = connectionRow();
+    const initial = checkpointedPullConnectionRow();
     const collection = createCollection([{
       ...initial,
       revision: initial.revision + 1,
@@ -712,7 +712,8 @@ describe('Channels pairing management writer', () => {
     expect(collection.batches).toHaveLength(1);
     expect(collection.rows.get('connection-1')).toMatchObject({
       revision: 6,
-      value: { payload: { pollFailure: null } },
+      value: { payload: { pollFailure: { phase: 'retryDue', retryNotBeforeMs: 0, attemptCount: 2,
+        evidence: { kind: 'provider', reason: 'credentialInvalid' } } } },
     });
     await expect(retry({
       connectionId: 'connection-1',
@@ -731,7 +732,7 @@ describe('Channels pairing management writer', () => {
     expect(retry).toEqual(expect.any(Function));
     if (typeof retry !== 'function') return;
 
-    const initial = connectionRow();
+    const initial = checkpointedPullConnectionRow();
     const collection = createCollection([{
       ...initial,
       value: {
@@ -754,7 +755,9 @@ describe('Channels pairing management writer', () => {
     }, context)).resolves.toMatchObject({ kind: 'retryScheduled', authorityEpoch: 1 });
 
     expect(collection.batches).toHaveLength(1);
-    expect(collection.rows.get('connection-1')?.value.payload.pollFailure).toBeNull();
+    expect(collection.rows.get('connection-1')?.value.payload.pollFailure).toMatchObject({
+      phase: 'retryDue', evidence: { kind: 'provider', reason: 'permissionMissing' },
+    });
   });
 
   it('rejects a pairing target whose /new principal is outside the pairing binding allowlist without consuming its proposal', async () => {

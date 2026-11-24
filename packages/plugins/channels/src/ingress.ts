@@ -6295,16 +6295,25 @@ async function routeCheckpointedPollBatch(input: Readonly<{
     members: pullRequestMembers, routingIdentityKey: input.routingIdentityKey });
   const fixAttemptLimit = leaders.some(member => member.obligation.value.payload.target?.kind === 'session')
     ? await readSessionPullRequestFixAttemptLimit(input.context) : undefined;
+  let conflict: IngressLifecycleConflict | undefined;
   for (const member of leaders) {
-    const dispatched = await dispatchIngressObligation({ context: input.context,
-      source: { ...input.source, ...(fixAttemptLimit === undefined ? {} : { pullRequestFixAttemptLimit: fixAttemptLimit }) },
-      entryPoint: 'pullRequestBatch',
-      routingIdentityKey: input.routingIdentityKey,
-      connectionId: input.connectionId, bindingId: member.obligation.value['binding-id'],
-      obligation: member.obligation, ingress: member.ingress, nativePullRequestUpdate: member.nativePullRequestUpdate,
-      admittedAuthority: member.dispatchAdmission?.authority });
-    if (dispatched === 'unsettled' || dispatched === 'socketCustodyDeferred') outcome = 'unsettled';
+    try {
+      const dispatched = await dispatchIngressObligation({ context: input.context,
+        source: { ...input.source, ...(fixAttemptLimit === undefined ? {} : { pullRequestFixAttemptLimit: fixAttemptLimit }) },
+        entryPoint: 'pullRequestBatch',
+        routingIdentityKey: input.routingIdentityKey,
+        connectionId: input.connectionId, bindingId: member.obligation.value['binding-id'],
+        obligation: member.obligation, ingress: member.ingress, nativePullRequestUpdate: member.nativePullRequestUpdate,
+        admittedAuthority: member.dispatchAdmission?.authority });
+      if (dispatched === 'unsettled' || dispatched === 'socketCustodyDeferred') outcome = 'unsettled';
+    } catch (error) {
+      if (!(error instanceof IngressLifecycleConflict)) throw error;
+      // The losing destination still holds the shared checkpoint. Other
+      // destinations have their own custody and can finish on this page.
+      conflict ??= error;
+    }
   }
+  if (conflict !== undefined) throw conflict;
   return outcome === 'unsettled'
     ? { kind: 'unsettled' }
     : { kind: 'checkpointSafe' };

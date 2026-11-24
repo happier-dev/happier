@@ -7,6 +7,7 @@ import { arePluginMachineExecutionOriginsEqual, definePlugin, PluginError } from
 import { arePluginMachineExecutionRoutingsEqual, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1, type PluginMachineExecutionRoutingV1 } from '@happier-dev/plugin-sdk/actions';
 import type { SessionSendRequest, SessionSpawnNewInputV2, SessionSummary } from '@happier-dev/plugin-sdk/sessions';
 import { getActionSpec, parsePluginHostActionInvocation } from '@happier-dev/plugin-sdk/actions';
+import { AutomationConversationAdmitInputV1Schema } from '@happier-dev/plugin-sdk/automations';
 import { createScmCapabilities } from '@happier-dev/plugin-sdk/scm';
 import { GITHUB_CHANNEL_PULL_REQUESTS } from '../../scm-github/src/githubChannelContribution.js';
 import type { BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
@@ -10721,6 +10722,112 @@ describe('Conversation checkpointed-poll ingress', () => {
     expect(harness.execute.mock.calls.filter(([action]) => action === 'session.archive')).toHaveLength(1);
     expect(harness.send).not.toHaveBeenCalled();
   });
+
+  it.each(['automatic', 'manual'] as const)(
+    'keeps a sibling PR ingress conflict visible through %s recovery and admits the writer exactly once', async recovery => {
+      vi.useFakeTimers();
+      vi.setSystemTime(10_000);
+      try {
+        const endpoint = (number: number) => ({
+          kind: 'githubPullRequest' as const, audience: 'shared' as const,
+          id: `github:repo:77:issue:${number}`, parentId: '77',
+          pullRequest: { repository: 'acme/widgets', number },
+        });
+        const comment = (number: number, principalId: string) => {
+          const input = observation({ occurrenceId: `pr-comment-${number}`, messageId: `comment-${number}`,
+            messageRevision: '1', occurredAt: 10_000, messageText: 'Please review this change.' });
+          const original = fullTextIngress(input);
+          return { ...input.entry, observation: { kind: 'fullText' as const, observation: {
+            ...original, endpoint: endpoint(number), scopedTriggerKind: 'prComment' as const,
+            actor: { ...original.actor, principalId, repositoryWriteAccess: true },
+            pullRequestUpdate: { head: { sha: 'head-1', ref: 'fix/widgets' }, event: {
+              kind: 'comment' as const, id: original.message.id, revision: '1', occurredAt: original.occurredAt,
+              author: { kind: 'person' as const, principalId }, body: original.message.text,
+            } },
+          } } };
+        };
+        const sibling = comment(5, 'sibling-writer');
+        const writer = comment(4, 'writer');
+        let observations: readonly JsonValue[] = [];
+        let replaceClaim = false;
+        let siblingRecovered = false;
+        const writerRuns: string[] = [];
+        const harness = createIngressHarness({
+          getPollResult: () => observations.length === 0
+            ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'before-comments' } }
+            : { kind: 'batch', observations, checkpointAfterBatch: { cursor: 'after-comments' } },
+          execute: async (action, input): Promise<JsonValue> => {
+            if (action !== 'automation.conversation.admit') throw new Error(`Unexpected Action ${action}`);
+            const admission = AutomationConversationAdmitInputV1Schema.parse(input);
+            if (admission.bindingId === 'binding-sibling') return siblingRecovered
+              ? { kind: 'refused', reason: 'scopedTriggerIdentityMismatch', checkpointSafe: true }
+              : { kind: 'blocked', reason: 'temporarilyUnavailable', checkpointSafe: false };
+            writerRuns.push(admission.occurrenceId);
+            return { kind: 'admitted', runId: 'writer-run', checkpointSafe: true };
+          },
+          beforeBatch: ({ rows, operations }) => {
+            for (const operation of operations) {
+              if (!replaceClaim || operation.kind !== 'put' || operation.value['binding-id'] !== 'binding-sibling'
+                || !isIngressObligationPhase(operation, 'attempting')) continue;
+              // The Collection boundary exposes the competing worker's newer retry revision.
+              const current = rows.get(String(operation.value.id))!;
+              const payload = record(current.value.payload);
+              const dueAt = Date.now() + 2_000;
+              rows.set(current.rowId, stateRow({ ...current.value, 'due-at': dueAt, payload: { ...payload,
+                lifecycle: { ...record(payload.lifecycle), dueAt },
+              } }, current.revision + 1));
+              replaceClaim = false;
+            }
+          },
+        });
+        setAutomationBindingWithoutFinalResult(harness.rows);
+        const binding = harness.rows.get('binding-1')!;
+        const payload = record(binding.value.payload);
+        for (const [id, number] of [['binding-sibling', 5], ['binding-1', 4]] as const) {
+          harness.rows.set(id, stateRow({ ...binding.value, id, 'binding-id': id, payload: {
+            ...payload, endpoint: endpoint(number), target: { ...record(payload.target), scopedTrigger: {
+              sessionId: 'session-1', triggerId: `trigger-${number}`, triggerRevision: 1,
+              triggerKind: 'prComment', principalPolicy: 'repositoryWriters', pullRequest: endpoint(number).pullRequest,
+            } },
+          } }, binding.revision));
+        }
+        const poll = () => runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context);
+        await expect(poll()).resolves.toMatchObject({ kind: 'committed' });
+        const baseline = currentCheckpoint(harness.rows);
+        observations = [sibling];
+        await expect(poll()).resolves.toMatchObject({ kind: 'retry' });
+        vi.setSystemTime(11_000);
+        replaceClaim = true;
+        observations = [sibling, writer];
+        await expect(poll()).resolves.toMatchObject({ kind: 'retry' });
+        expect(writerRuns).toHaveLength(1);
+        const failure = () => record(harness.rows.get('connection-1')?.value.payload).pollFailure;
+        const conflict = { kind: 'action', code: 'channels_ingress_lifecycle_conflict' };
+        expect(failure()).toMatchObject({ phase: 'retryDue', evidence: conflict });
+        const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: CHANNELS_PLUGIN,
+          services: harness.context.services });
+        try {
+          const retry = () => kit.invokeAction('connection/poll-retry-v1', { connectionId: 'connection-1' }, { surface: 'agent' });
+          if (recovery === 'manual') {
+            await expect(retry()).resolves.toMatchObject({ kind: 'retryScheduled' });
+            await expect(poll()).resolves.toMatchObject({ kind: 'retry' });
+            expect(failure()).toMatchObject({ phase: 'retryDue', retryNotBeforeMs: 0, evidence: conflict });
+          }
+          expect(currentCheckpoint(harness.rows)).toEqual(baseline);
+
+          siblingRecovered = true;
+          vi.setSystemTime(13_000);
+          await runConversationIngressDueWorkForInvocation({ now: Date.now() }, harness.context);
+          if (recovery === 'manual') await expect(retry()).resolves.toMatchObject({ kind: 'retryScheduled' });
+          await expect(poll()).resolves.toMatchObject({ kind: 'committed' });
+          await expect(poll()).resolves.toMatchObject({ kind: 'committed' });
+          expect(failure()).toBeNull();
+          expect(currentCheckpoint(harness.rows)?.value.payload).toMatchObject({ opaqueToken: { cursor: 'after-comments' } });
+          expect(writerRuns).toHaveLength(1);
+        } finally { await kit.dispose(); }
+      } finally { vi.useRealTimers(); }
+    },
+  );
 
   it('keeps polling past retained message attention without clearing it', async () => {
     let providerCalls = 0;

@@ -4185,7 +4185,7 @@ describe('transferConversationConnectionForInvocation desired target recovery', 
       connectionId: fixture.input.connectionId, expectedRevision: 5, authorityEpoch: 5,
     }, fixture.context)).resolves.toMatchObject({ kind: 'retryScheduled', authorityEpoch: 5 });
     expect(fixture.collection.rows.get(fixture.input.connectionId)?.value).toMatchObject({
-      payload: { pollFailure: null, authorityEpoch: 5,
+      payload: { pollFailure: { phase: 'retryDue', retryNotBeforeMs: 0, evidence: { kind: 'action', code: 'endpoint_unavailable' } }, authorityEpoch: 5,
         transportOrigin: { machineId: REPLACEMENT_MATERIALIZATION.machineId } },
     });
   });

@@ -6389,6 +6389,9 @@ existing notice; the notice alone does not require a new baseline.
 Channels reads the current binding inventory once when routing a received batch,
 after the provider wait. The request retains its captured provider inputs, and the
 checkpoint advances only after routing settles under the connection's authority.
+A PR binding's ingress revision conflict holds the checkpoint while independent
+destinations in the batch can still settle. The connection Retry Action makes
+the existing failure due. Its evidence stays visible until receive settlement.
 The notice states that earlier items may have been missed and offers dismissal
 only. Providers report native continuity facts and never own a second checkpoint
 or gap policy.
