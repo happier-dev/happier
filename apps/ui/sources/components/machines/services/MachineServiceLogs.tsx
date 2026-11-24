@@ -2,7 +2,7 @@ import * as React from 'react';
 import { machineServiceLogReadFailureReason } from './machineServicesPresentation';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { AnsiText } from '@happier-dev/plugin-ui';
+import { LogLine } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS, type FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import type {
   MachineServiceRowV1,
@@ -348,7 +348,7 @@ export function NativeLogLines(
   const initialScrollIndex = React.useRef(following && lines.length > 0 ? lines.length - 1 : undefined).current;
   const tolerance = theme.space.s8;
   const renderItem = React.useCallback(({ item }: { item: ForgeCiLogLineV1 }) => (
-    <LogLine line={item} digits={digits} ranges={getLineRanges(item.id)} revealed={revealedLine === item.number} />
+    <NativeLogLine line={item} digits={digits} ranges={getLineRanges(item.id)} revealed={revealedLine === item.number} />
   ), [digits, getLineRanges, revealedLine]);
   // Where the reader is is the viewport's fact; whether lines are unseen is the viewer model's.
   const onScroll = React.useCallback((event: Readonly<{ nativeEvent: Readonly<{
@@ -392,7 +392,7 @@ export function NativeLogLines(
 const logLineKey = (line: ForgeCiLogLineV1) => line.id;
 
 /** One row per admitted line; an unchanged line keeps its row through a followed page. */
-const LogLine = React.memo(function LogLine(
+const NativeLogLine = React.memo(function NativeLogLine(
   props: Readonly<{
     line: ForgeCiLogLineV1;
     digits: number;
@@ -402,20 +402,15 @@ const LogLine = React.memo(function LogLine(
 ) {
   const { theme } = useUnistyles();
   return (
-    <View style={[styles.line, props.revealed ? styles.revealed : null]}>
-      <Text
-        style={[styles.number, { minWidth: props.digits * theme.space.s8 }]}
-      >
-        {String(props.line.number)}
-      </Text>
-      <View style={styles.text}>
-        <AnsiText
-          tokens={props.line.tokens}
-          plainText={props.line.plainText}
-          ranges={props.ranges}
-        />
-      </View>
-    </View>
+    <LogLine
+      style={[styles.line, props.revealed ? styles.revealed : null]}
+      prefix={
+        <Text style={[styles.number, { minWidth: props.digits * theme.space.s8 }]}>
+          {String(props.line.number)}
+        </Text>
+      }
+      message={{ tokens: props.line.tokens, plainText: props.line.plainText, ranges: props.ranges }}
+    />
   );
 });
 
@@ -510,8 +505,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.s8,
   },
   line: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
     gap: theme.space.s12,
     paddingHorizontal: theme.space.s12,
   },
@@ -524,10 +517,6 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.tabular(),
     color: theme.colors.text.tertiary,
     textAlign: 'right',
-  },
-  text: {
-    flex: 1,
-    minWidth: 0,
   },
   note: {
     ...Typography.variant('meta'),

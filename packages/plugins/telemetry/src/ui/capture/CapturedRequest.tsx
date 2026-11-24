@@ -7,11 +7,10 @@
 
 import * as React from 'react';
 import {
-  AnsiText,
   Icon,
   Item,
   ItemGroup,
-  Row,
+  LogLine,
   Stack,
   Text,
   usePluginTheme,
@@ -351,25 +350,24 @@ function CapturedLogLine({
   // The clock, level and service are the line's fixed lead; the message is its own column, so a long one wraps
   // under its own first word rather than back under the clock.
   const line = (
-    <Row gap="none" align="flex-start">
-      <Stack gap="none" testID={testID ? `${testID}.prefix` : undefined}>
-        <Text variant="code" selectable={!truncated}>
-          <Text variant="code" tone="secondary" value={`${clock}  `} />
-          <Text variant="code" tone={tone} value={severity} />
-          {service === null ? null : <Text variant="code" tone="secondary" value={`  ${service}`} />}
-          <Text variant="code" value="  " />
-        </Text>
-      </Stack>
-      {message === null ? null : (
-        <Stack gap="none" grow testID={testID ? `${testID}.message` : undefined}>
-          <AnsiText
-            selectable={!truncated}
-            tone={body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral'}
-            plainText={message}
-          />
+    <LogLine
+      prefix={
+        <Stack gap="none" testID={testID ? `${testID}.prefix` : undefined}>
+          <Text variant="code" selectable={!truncated}>
+            <Text variant="code" tone="secondary" value={`${clock}  `} />
+            <Text variant="code" tone={tone} value={severity} />
+            {service === null ? null : <Text variant="code" tone="secondary" value={`  ${service}`} />}
+            <Text variant="code" value="  " />
+          </Text>
         </Stack>
-      )}
-    </Row>
+      }
+      message={message === null ? undefined : {
+        selectable: !truncated,
+        tone: body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral',
+        plainText: message,
+      }}
+      messageTestID={testID ? `${testID}.message` : undefined}
+    />
   );
   return (
     <Stack gap="none" testID={testID}>

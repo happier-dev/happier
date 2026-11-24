@@ -348,6 +348,30 @@ and implement its referenced Action. Native Agent transcript search instead
 uses the External Sessions source's `contentSearch` declaration and existing
 transcript readers; it does not create a plugin-owned index.
 
+### Log lines (0.3 development)
+
+Use `LogLine` from `@happier-dev/plugin-ui` to display a log message beside
+source metadata. Long messages wrap in their own column. Pass structured
+messages as `plainText` to display them literally. For native terminal output,
+pass the log index's ANSI tokens and plain text, with any Find ranges expressed
+as half-open UTF-16 offsets into that line's plain text.
+
+```tsx
+import { LogLine, Text } from '@happier-dev/plugin-ui';
+
+function AppLog({ service, body }: { service: string; body: string }) {
+  return (
+    <LogLine
+      prefix={<Text variant="meta" value={service} />}
+      message={{ plainText: body }}
+    />
+  );
+}
+```
+
+Your surface supplies admitted lines, scroll or follow behavior, and any
+on-demand body reads.
+
 ### Prompt-picker rows and preview (0.3 development)
 
 `HappierPromptPickerRow`, `HappierPromptPickerMetaLine` and

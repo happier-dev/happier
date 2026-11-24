@@ -113,6 +113,7 @@ export { PropertyList, type PropertyChoice, type PropertyChoiceDirectory, type P
 export { RelationList, type RelationListEntry, type RelationListProps } from './RelationList.js';
 export { CheckStatusGlyph, type CheckStatusGlyphProps, type CheckStatusKind } from './CheckStatusGlyph.js';
 export { AnsiText, type AnsiTextProps } from './AnsiText.js';
+export { LogLine, type LogLineProps } from './LogLine.js';
 export { PaneHeaderContent, type PaneHeaderContentProps, type PaneHeaderContentLineSegment } from './PaneHeaderContent.js';
 export {
   type PluginUiFocusTarget,

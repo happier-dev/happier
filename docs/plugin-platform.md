@@ -1,6 +1,12 @@
 # Plugin platform and SDK ownership
 ### Database capture development source
 
+The public Plugin UI `LogLine` owns row presentation for native service
+output and captured OTLP logs. The native viewer supplies admitted ANSI
+tokens, line numbers and Find ranges. The capture adapter supplies literal
+messages and structured source facts, with full bodies still read on demand.
+Each view retains its existing Action and Resource acquisition path.
+
 The unreleased `packages/plugins/telemetry` implementation composes one
 `store/capture.ts` persistence owner and ingestion pipeline through `runtime.ts`
 for PostgreSQL wire observations and OTLP. The local Machine role participates
