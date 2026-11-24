@@ -17,7 +17,7 @@ import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/prov
 import { configuration } from '@/configuration';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { resolveCliFeatureDecision, type CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
 import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
@@ -127,14 +127,15 @@ export function createNativeAgentInputFilesService(params: Readonly<{
 
 export function createNativeAgentFeatureService(
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null,
+    resolveServerFeaturesSnapshot: (() => CliServerFeaturesSnapshot | undefined) | undefined = runtimeRegistry?.resolveServerFeaturesSnapshot,
 ): AgentSessionHostServices['features'] {
     return Object.freeze({
         // Decided at every read through the canonical CLI feature-decision owner.
         // An unknown id is permanently unsupported; known ids use the invoking
-        // Session's current environment and the registry's server policy.
+        // Session's current environment and its Home's server policy.
         isEnabled: (featureId: string): boolean => {
             if (!isFeatureId(featureId)) return false;
-            const serverSnapshot = runtimeRegistry?.resolveServerFeaturesSnapshot?.();
+            const serverSnapshot = resolveServerFeaturesSnapshot?.();
             return resolveCliFeatureDecision({
                 featureId,
                 env: sessionProcessEnvironment(),
@@ -422,7 +423,7 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
     backend: EngineResolutionBackend;
     agent: EngineResolutionAgent;
     hostSession: Readonly<{
-        session: Pick<ApiSessionClient, 'getMetadataSnapshot'>;
+        session: Pick<ApiSessionClient, 'getMetadataSnapshot'> & Partial<Pick<ApiSessionClient, 'getServerFeaturesSnapshot'>>;
         machineId: string;
         accountSettings?: AccountSettings | null;
         resolveAccountSettingsSnapshot?: (input?: Readonly<{ mcpServerCatalog?: boolean; savedSecretReferences?: readonly import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationReferenceV1[]; signal?: AbortSignal }>) => Promise<ActiveAccountSettingsSnapshot | null>;
@@ -487,7 +488,10 @@ export function createNativeAgentSessionHostServiceOwners(params: Readonly<{
         fileFollowPathGrants,
         memberFilesystem: params.memberTranscriptFilesystem,
     });
-    const features = createNativeAgentFeatureService(params.runtimeRegistry);
+    const features = createNativeAgentFeatureService(params.runtimeRegistry,
+        params.hostSession.session.getServerFeaturesSnapshot
+            ? () => params.hostSession.session.getServerFeaturesSnapshot!()
+            : undefined);
     const happierTools = Object.freeze({
         async readPluginToolCatalog(signal?: AbortSignal): Promise<readonly ProjectedPluginToolCatalogEntry[]> {
             signal?.throwIfAborted();
