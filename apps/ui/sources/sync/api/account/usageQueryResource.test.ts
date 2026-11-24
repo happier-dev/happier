@@ -4462,6 +4462,146 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); clock.mockRestore(); }
   });
 
+  it.each([
+    'idle', 'unchanged', 'changed', 'resolve-503', 'record-503', 'slow', 'feed-after-read',
+    'primary-reconnect', 'secondary-reconnect', 'snapshot-recovery', 'explicit-refresh',
+  ] as const)('counts mounted allowance requests over ten minutes (%s)', async scenario => {
+    const start = Math.floor(Date.now() / 60_000) * 60_000;
+    const minute = 60_000;
+    const rows = Array.from({ length: 15 }, (_, index) => {
+      const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `quota-count-${index}` };
+      const source = { bindingKind: 'account' as const, ref };
+      const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
+        v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'codex',
+        accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: start, fetchedAtMs: start,
+        staleAfterMs: minute, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+        meters: [{ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
+          unit: 'requests', status: 'ok', resetsAt: start + 2 * minute, details: {} }],
+      });
+      return { source, snapshot, resolves: 0, records: 0 };
+    });
+    const rowsByAccountId = new Map(rows.map(row => [row.source.ref.accountId, row]));
+    const rowsByRecordId = new Map<string, typeof rows[number]>(rows.map(row => [row.snapshot.recordId, row]));
+    let publish: (selected: typeof rows) => void = () => {};
+    const captured = await context(async request => {
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
+        const source = JSON.parse(request.url.searchParams.get('source')!);
+        const row = rowsByAccountId.get(source.ref.accountId)!;
+        row.resolves++;
+        if (scenario === 'slow') await new Promise<void>(resolve => setTimeout(resolve, 5_000));
+        if (scenario === 'resolve-503') return Response.json({ error: 'storage_unavailable' }, { status: 503 });
+        return Response.json({ source: row.source, recordId: row.snapshot.recordId,
+          providerAccountId: row.source.ref.accountId, fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: minute });
+      }
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
+        const row = rowsByRecordId.get(request.url.searchParams.get('recordId')!)!;
+        row.records++;
+        if (scenario === 'slow') await new Promise<void>(resolve => setTimeout(resolve, 5_000));
+        if (scenario === 'record-503') return Response.json({ error: 'storage_unavailable' }, { status: 503 });
+        // Counterfactual transport: GET is read-only on the real server. Echo
+        // just one key, with delay to measure repeated work over a finite span.
+        if (scenario === 'feed-after-read' && row === rows[0]) setTimeout(() => publish([row]), 5_000);
+        return Response.json({ content: { t: 'plain', v: row.snapshot },
+          metadata: { fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: minute, status: 'ok' }, sources: [row.source] });
+      }
+      return undefined;
+    }, { connectedAccountsV4: rows.map(({ source: { ref } }) => ({
+      ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [],
+    })) });
+    publish = selected => {
+      const recordIds = selected.map(row => row.snapshot.recordId);
+      // The real Account-change ingress receives the committed record keys.
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, recordIds.map(id => `provider-account-usage-record:${id}`),
+        { changeKinds: ['account'], providerAccountUsageRecordIds: recordIds, feedPageConsumed: true,
+          usageQueryAffects: true, usageAccountingAffects: false });
+    };
+    const query = normalizeUsageQuery({ includeQuotaHistory: false, includeAccounting: false, includeCoach: false,
+      includeSessionEvidence: false, includeWorkEvidence: false });
+    const store = getUsageQueryResourceStore(captured);
+    const entries = (['sessions', 'tokens', 'cost'] as const).map(metric =>
+      store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [{ ...query, metric }] }) }));
+    vi.useFakeTimers();
+    vi.setSystemTime(start);
+    const releases = entries.map(entry => entry.subscribe(() => {}, true));
+    try {
+      const readCounts = () => rows.map(({ resolves, records }) => [resolves, records]);
+      const advance = async (ms: number) => {
+        await vi.advanceTimersByTimeAsync(ms);
+        await flushHookEffects({ cycles: 70 });
+        await vi.advanceTimersByTimeAsync(0);
+      };
+      await advance(20_000);
+      const cold = readCounts();
+      const { serverId } = captured.accountLifetime.scope;
+      if (scenario === 'primary-reconnect') {
+        const { expireServerFeaturesSnapshotForReconnect } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        expireServerFeaturesSnapshotForReconnect({ serverId });
+        publishHomeAccountChange(serverId, undefined, { source: 'connected', changesCatchUp: true });
+      } else if (scenario === 'secondary-reconnect') {
+        publishHomeAccountChange(serverId, undefined, { source: 'connected' });
+      } else if (scenario === 'snapshot-recovery') {
+        publishHomeAccountChange(serverId, undefined, { source: 'snapshot' });
+      } else if (scenario === 'explicit-refresh') {
+        await entries[0]!.refresh();
+      }
+      await advance(40_000);
+      const feedScenarios = ['unchanged', 'changed', 'resolve-503', 'record-503', 'slow'];
+      const hasPublication = feedScenarios.includes(scenario);
+      const afterFirstMinute = readCounts();
+      const recordsPerResolve = scenario === 'resolve-503' ? 0 : 1;
+      const explicitWake = scenario === 'snapshot-recovery' || scenario === 'explicit-refresh';
+      if (scenario !== 'feed-after-read') {
+        expect(cold, 'one acquisition across all three mounted consumers')
+          .toEqual(rows.map(() => [1, recordsPerResolve]));
+        const attempts = explicitWake ? 2 : 1;
+        expect(afterFirstMinute, 'only demand for a replacement reading causes another attempt')
+          .toEqual(rows.map(() => [attempts, attempts * recordsPerResolve]));
+      }
+      for (let tick = 1; tick < 10; tick++) {
+        if (hasPublication) {
+          for (const row of rows) {
+            const time = start + tick * minute;
+            row.snapshot = { ...row.snapshot, fetchedAtMs: time, observedAtMs: time,
+              meters: scenario === 'changed' ? row.snapshot.meters.map(meter => ({
+                ...meter, used: 10 + tick, remaining: 90 - tick, utilizationPct: 10 + tick,
+              })) : row.snapshot.meters };
+          }
+          publish(rows);
+        }
+        await advance(minute);
+      }
+      const counts = readCounts();
+      const summarize = (values: number[][]) => [...new Set(values.map(value => value.join('/')))];
+      console.info('quota-cadence', scenario, JSON.stringify({
+        cold: summarize(cold), minuteOne: summarize(afterFirstMinute), tenMinutes: summarize(counts),
+      }));
+      if (scenario === 'feed-after-read') {
+        expect(counts.slice(1)).toEqual(rows.slice(1).map(() => [1, 1]));
+        expect(counts[0]![0]).toBeGreaterThan(2);
+        expect(counts[0]![1]).toBeGreaterThan(2);
+      } else {
+        const attempts = hasPublication ? 10 : explicitWake ? 2 : 1;
+        expect(counts).toEqual(rows.map(() => [attempts, attempts * recordsPerResolve]));
+      }
+      if (scenario === 'unchanged' || scenario === 'changed' || scenario === 'slow') {
+        for (const entry of entries) {
+          expect(entry.getSnapshot().pending).toBe('idle');
+          const quota = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota!;
+          const projected = new Map(quota.map(row => [row.current?.recordId, row.current]));
+          for (const { snapshot } of rows) {
+            expect(projected.get(snapshot.recordId)?.fetchedAtMs).toBe(snapshot.fetchedAtMs);
+            expect(projected.get(snapshot.recordId)?.meters[0]?.used).toBe(snapshot.meters[0]?.used);
+          }
+        }
+      }
+    } finally {
+      releases.forEach(release => release());
+      vi.useRealTimers();
+    }
+  });
+
   it('reads only the changed allowance record and keeps unscoped recovery full', async () => {
     const now = Date.now();
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
