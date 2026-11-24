@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +49,7 @@ import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { UsagePeriodSummaryWidget } from './widgets/UsagePeriodSummaryWidget';
 import { UsageCoachWidget } from './widgets/UsageCoachWidget';
 import { UsageWidgetPage } from './UsageWidgetPage';
-import { buildUsageRouteParams, resolveUsagePageInitialFilters } from './usageRouteParams';
+import { buildUsageRouteParams, resolveUsagePageInitialFilters, type UsageRouteWritableParams } from './usageRouteParams';
 import { describeUsageWidgetSlotValue, type UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SESSION_WIDGET_PRESET_ID, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
 import * as usageAnalytics from '@/sync/api/account/usageAnalytics';
@@ -58,7 +59,7 @@ import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
 import { UsageFilterBar } from './UsageFilterBar';
 import { usageWidgetAcceptsMetric } from './usageWidgetActions';
 import { UsageProjectLedgerWidget } from './widgets/UsageProjectLedgerWidget';
-import { HappierDataMetric, HappierDataRows } from '@happier-dev/plugin-ui/presentation';
+import { HappierDataMetric, HappierDataRows, UsagePeriodSummaryBody } from '@happier-dev/plugin-ui/presentation';
 import * as pluginResource from '@happier-dev/plugin-ui/advanced';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
@@ -924,6 +925,123 @@ describe('mounted Usage page scope commands', () => {
             && (typeof read.dateRange?.startMs === 'number') === Boolean(period))).toBe(true);
     });
 
+    it.each([
+        { page: 'Session', metric: 'cost', stored: undefined, expected: 'cost', phone: false },
+        { page: 'Session', metric: 'cost', stored: 'tokens', expected: 'cost', phone: true },
+        { page: 'Session', metric: undefined, stored: 'cost', expected: 'cost', phone: false },
+        { page: 'Account', metric: 'cost', stored: undefined, expected: 'cost', phone: false },
+        { page: 'Account', metric: 'cost', stored: 'tokens', expected: 'cost', phone: false },
+        { page: 'Account', metric: 'invalid', stored: 'cost', expected: 'cost', phone: false },
+    ] as const)('applies the visit lens to $page (link $metric, saved $stored)', async ({ page, metric, stored, expected, phone }) => {
+        if (phone) vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
+        const sessionId = page === 'Session' ? 'route-metric-session' : undefined;
+        const layoutId = sessionId ? USAGE_SESSION_WIDGET_PRESET_ID : 'overview';
+        const params = { layoutId, ...(sessionId ? { id: sessionId } : {}), ...(metric ? { metric } : {}) };
+        currentRoute.segments = sessionId ? ['(app)', 'session', '[id]', 'usage'] : ['(app)', 'settings', 'usage'];
+        currentRoute.params = params;
+        const contribution = { ...usageQaAccountingFixture().contributions![0]!,
+            sessionId: sessionId ?? 'account-metric-session', turnId: 'first-turn',
+            observedAtMs: Date.now() - 1000, tokens: totals.tokens, cost: totals.cost, eventCount: 1 };
+        const response = { ...accounting, contributions: [contribution] };
+        const artifactPath = 'https://usage-route-metric.test';
+        let artifact: ReturnType<typeof createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>> | undefined;
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: artifactPath, accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(response);
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+                    const requests = input.requests.map(demand => ({ query: demand.query,
+                        sessionIds: demand.sessionIds ?? [contribution.sessionId] }));
+                    return Response.json({ requests, results: [...new Set(requests.flatMap(demand => demand.sessionIds))].map(id => ({
+                        sessionId: id,
+                        detail: { status: 200, body: { session: createPlainSessionWithDisplayRecordFixture({ id, seq: 1 }) } },
+                        turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: Date.now(), turns: [] } },
+                        messageEvidence: { acceptedInputs: [] }, messagesComplete: true,
+                    })) });
+                }
+                if (artifact && request.path.startsWith('/v1/artifacts'))
+                    return artifact.request(request.url, { method: request.method, body: JSON.stringify(request.body) });
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        publishAppliedActiveServerRuntimeAvailability(true);
+        if (stored) {
+            const surface: WidgetSurfaceRefV1 = { serverId: server.id, accountId: 'account-a',
+                owner: { kind: 'corePage', pageId: 'usage', area: sessionId ? 'session' : 'main', layoutId } };
+            const layout = WidgetAreaLayoutV1Schema.parse({ v: 1, surface, items: [
+                { kind: 'widget', instance: { v: 1, id: 'saved-metric',
+                    definition: { kind: 'builtin', id: sessionId ? 'usage_session_value' : 'usage_period_summary' },
+                    bindings: {
+                        session: { kind: 'context', slot: 'session' },
+                        period: { kind: 'context', slot: 'period' },
+                        costBasis: { kind: 'context', slot: 'costBasis' },
+                        metric: { kind: 'value', value: stored },
+                    },
+                } },
+            ] });
+            artifact = createLayoutArtifactHttpBoundary('account-a', { artifactId: buildWidgetSurfaceArtifactIdV1(surface),
+                kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, defaultLayout: layout, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value),
+                buildHeader: buildWidgetSurfaceArtifactHeaderV1 });
+            artifact.seed(layout);
+        }
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        let reflectedParams: UsageRouteWritableParams | undefined;
+        function Visit({ initialParams }: Readonly<{ initialParams: Parameters<typeof resolveUsagePageInitialFilters>[0] }>) {
+            const [routeParams, setRouteParams] = React.useState(initialParams);
+            const onFiltersChange = React.useCallback((filters: Parameters<typeof buildUsageRouteParams>[0]) => {
+                const { layoutId: _layout, ...owned } = buildUsageRouteParams(filters);
+                setRouteParams(previous => ({ ...previous, ...owned }));
+                reflectedParams = { layoutId, ...owned };
+            }, []);
+            return <UsageWidgetPage sessionId={sessionId} initialFilters={resolveUsagePageInitialFilters(routeParams)} onFiltersChange={onFiltersChange} />;
+        }
+        const visit = (initialParams: Parameters<typeof resolveUsagePageInitialFilters>[0], key: string) =>
+            <InjectedAuthProvider credentials={credentials}>
+                <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                    <Visit key={key} initialParams={initialParams} />
+                </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+            </InjectedAuthProvider>;
+        let screen = await renderMeasuredPage(visit(params, 'open'));
+        const readLens = () => screen.findAllByType(SegmentedTabBar)
+            .find(bar => bar.props.testIDPrefix === 'usage-filters.metric')?.props.activeTabId;
+        const turnRows = () => screen.findAllByType(HappierDataRows).find(rows => rows.props.testID?.endsWith('.turns'));
+        const sessionRows = (lens: 'cost' | 'tokens') => {
+            expect(readLens()).toBe(lens);
+            expect(turnRows()?.props.columns[1]?.label).toBe(t(lens === 'cost' ? 'usage.cost' : 'usage.tokens'));
+            expect(turnRows()?.props.rows[0]?.[1]).toBe(lens === 'cost' ? 1 : 15);
+        };
+        if (sessionId) {
+            await waitForHomeGovernance(() => expect(turnRows()?.props.rows).toHaveLength(1));
+            expect.soft(readLens()).toBe(expected);
+            expect.soft(turnRows()?.props.columns[1]?.label).toBe(t(expected === 'cost' ? 'usage.cost' : 'usage.tokens'));
+            expect.soft(turnRows()?.props.rows[0]?.[1]).toBe(expected === 'cost' ? 1 : 15);
+            if (phone && readLens() === expected) {
+                await screen.pressByTestIdAsync('usage-filters.metric:tokens');
+                await waitForHomeGovernance(() => sessionRows('tokens'));
+                expect(reflectedParams?.metric).toBe('tokens');
+                await screen.pressByTestIdAsync('usage-filters.metric:cost');
+                await waitForHomeGovernance(() => sessionRows('cost'));
+                expect(reflectedParams?.metric).toBe('cost');
+                expect(artifact?.writes).toEqual([]);
+                await screen.unmount();
+                screen = await renderMeasuredPage(visit({ ...params, ...reflectedParams }, 'reload'));
+                await waitForHomeGovernance(() => sessionRows('cost'));
+            }
+        } else {
+            const summary = () => screen.findAllByType(UsagePeriodSummaryBody)[0];
+            await waitForHomeGovernance(() => expect(summary()?.props.hero).toBeDefined());
+            expect.soft(readLens()).toBe(expected);
+            expect.soft(summary()?.props.hero.label).toBe(t(expected === 'cost' ? 'usage.cost' : 'usage.tokens'));
+            expect.soft(summary()?.props.hero.value).toBe(expected === 'cost' ? 1 : 15);
+        }
+        expect(artifact?.writes ?? []).toEqual([]);
+    });
+
     it('says once, under the page chrome, that the Home cannot be reached while bodies have nothing to show', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-unreachable.test', accountId: 'account-a' }],
             route: request => {
@@ -1333,7 +1451,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-retention" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);
@@ -1400,7 +1518,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-inflight-filter" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);
@@ -1503,7 +1621,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-delayed-publication" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);

@@ -11,6 +11,7 @@ import {
   getUsageQueryBatchKey,
   normalizeUsageQuery,
   normalizeUsageQueryBatchInput,
+  type UsageAccountingMetric,
   type UsageQuery,
 } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -38,7 +39,8 @@ import {
 } from '../useUsageWidgetResource';
 
 type Registration = Readonly<{ query: UsageQuery; key: string }>;
-type BoundRegistration = Registration & Readonly<{ clauses: UsageWidgetQueryOverrides; projectSlice?: UsageWidgetSliceProjection }>;
+type UsageWidgetBatchClauses = UsageWidgetQueryOverrides & Readonly<{ metric?: UsageAccountingMetric }>;
+type BoundRegistration = Registration & Readonly<{ clauses: UsageWidgetBatchClauses; projectSlice?: UsageWidgetSliceProjection }>;
 type UsageQueryWidgetId = Exclude<UsageBuiltinWidgetIdV1, 'usage_sources'>;
 // Each body declares the facts it renders. Unlisted accounting output sections
 // remain undemanded; style-specific consumers refine this at resolveQuery.
@@ -87,7 +89,7 @@ export function isUsageQueryWidget(id: string): id is UsageQueryWidgetId {
 }
 
 type UsageWidgetBatch = Readonly<{
-  clauses: UsageWidgetQueryOverrides;
+  clauses: UsageWidgetBatchClauses;
   register(id: string, registration: BoundRegistration): () => void;
   resource: UsageWidgetResource;
   inventoryQuery: UsageQuery | undefined;
@@ -136,7 +138,7 @@ export function buildUsageWidgetQueryPlan(
 /** Mounted by a page that shows several Usage widgets: their distinct requests travel in one `usage.query`. */
 export function UsageWidgetBatchProvider(
   props: Readonly<{
-    clauses: UsageWidgetQueryOverrides;
+    clauses: UsageWidgetBatchClauses;
     /** Only an admitted layout may demand reads from its registered bodies. */
     enabled?: boolean;
     callerContext?: ActionExecutorContext;
@@ -297,7 +299,7 @@ const projectIntervalCalendarFacts: UsageWidgetSliceProjection = (slice, previou
 };
 
 export function resolveUsageWidgetQuery(
-  clauses: UsageWidgetQueryOverrides,
+  clauses: UsageWidgetBatchClauses,
   input: Readonly<Record<string, JsonValue>>,
   widgetId: UsageQueryWidgetId,
   includeQuotaExactHistory: boolean,
@@ -316,6 +318,8 @@ export function resolveUsageWidgetQuery(
     // Defaults may not resurrect an own input the platform has made non-applicable for this Style.
     // Scope pins still belong to the binder and are never pruned or re-defaulted here.
     for (const field of descriptor.inputs!.fields) if (field.contextMode === 'own' && !effective.has(field.path)) delete resolvedInput[field.path];
+    const { metric, ...queryClauses } = clauses;
+    if (metric !== undefined && effective.has('metric')) resolvedInput.metric = metric;
     const { style, colourBy: _colourBy, day: _day, ...queryInput } = resolvedInput;
     // Activity consumers need both calendar and weekday/hour facts, irrespective of partial route read clauses.
     // Direct usage.query callers retain their explicit includeActivity/activityResolution semantics.
@@ -326,7 +330,7 @@ export function resolveUsageWidgetQuery(
     const autopsy = singleSession && (widgetId === 'usage_session_value'
       || widgetId === 'usage_recap' && style !== 'personalRecords');
     const rhythmMetric = queryInput.metric ?? 'tokens';
-    const query = normalizeUsageQuery({ ...clauses, ...queryInput, includeAccounting: true,
+    const query = normalizeUsageQuery({ ...queryClauses, ...queryInput, includeAccounting: true,
       // Bodies own their evidence demand; page clauses cannot force raw rows
       // into a summary body or turn a detailed Work body into a summary.
       includeContributions: false, workProjection: 'detail',

@@ -10,9 +10,14 @@ import { UsageWidgetPageScopeSchema } from './usageRouteParams';
 import { formatUsageCalendarPeriod } from '@/sync/domains/usage/usageCalendarPresentation';
 
 export type UsageWidgetPageScope = Pick<UsageQuery, 'period' | 'agents' | 'machines' | 'projects' | 'sources' | 'session' | 'costBasis'>;
-/** `period` is present only when the route carried one; the page's default is `resolveUsagePageDefaultPeriod`. */
-export type UsageWidgetPageInitialFilters = Omit<UsageFilterState, 'period'> & Readonly<{ period?: UsagePeriod; scope?: UsageWidgetPageScope; layoutId?: string;
-    queryOverrides?: UsageWidgetQueryOverrides }>;
+/** Period and metric carry explicit visit choices. The page supplies defaults when they are absent. */
+export type UsageWidgetPageInitialFilters = Omit<UsageFilterState, 'period' | 'metric'> & Readonly<{
+    period?: UsagePeriod;
+    metric?: UsageFilterState['metric'];
+    scope?: UsageWidgetPageScope;
+    layoutId?: string;
+    queryOverrides?: UsageWidgetQueryOverrides;
+}>;
 
 /** The one default period: the account page opens on the last 7 days, a Session's own page on the whole Session. */
 export function resolveUsagePageDefaultPeriod(sessionId?: string): UsagePeriod {

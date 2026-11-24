@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { WidgetBindingResolutionInputV1 } from '@happier-dev/protocol/widgets';
 import { useCorePageWidgetAreaBinding } from '@/components/widgets/area/useCorePageWidgetAreaBinding';
 import type { UsagePeriod } from '@/sync/api/account/usagePeriods';
@@ -16,7 +15,6 @@ export function useUsageWidgetAreaBinding(input: Readonly<{
     /** The page's period by name; the provided context carries only its resolved start. */
     period: UsagePeriod;
     names: Readonly<Record<UsageWidgetPresetId, string>>;
-    initialMetric?: UsageQuery['metric'];
     initialLayoutId?: string | null;
     onLayoutChange?: (layoutId: string) => void;
 }>): { -readonly [K in keyof ReturnType<typeof useCorePageWidgetAreaBinding>]: ReturnType<typeof useCorePageWidgetAreaBinding>[K] } & {
@@ -25,7 +23,7 @@ export function useUsageWidgetAreaBinding(input: Readonly<{
     // One Session has its own area and single view: the Account's named views say nothing about it.
     const session = input.sessionId !== undefined;
     const presets = React.useMemo(() => session ? createUsageSessionWidgetPresets(t('usage.sessionUsage'))
-        : createUsageWidgetPresets(input.names, { initialMetric: input.initialMetric }), [session, input.names, input.initialMetric]);
+        : createUsageWidgetPresets(input.names), [session, input.names]);
     const context = React.useMemo(() => usageWidgetSurfaceContext(input.providedContext, input.period, input.sessionId), [input.providedContext, input.period, input.sessionId]);
     const binding = useCorePageWidgetAreaBinding({ serverId: input.serverId, pageId: 'usage', area: session ? USAGE_SESSION_WIDGET_AREA : 'main', presets, context,
         initialLayoutId: session ? null : input.initialLayoutId, onSelectLayout: session ? undefined : input.onLayoutChange });

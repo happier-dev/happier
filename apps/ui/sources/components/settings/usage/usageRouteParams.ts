@@ -3,12 +3,9 @@ import { omit, pick } from 'zod/mini';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
-import type {
-    UsageDimension,
-    UsageMetric,
-} from '@/sync/api/account/usageAnalytics';
+import type { UsageDimension } from '@/sync/api/account/usageAnalytics';
 import { isUsagePeriod } from '@/sync/api/account/usagePeriods';
-import { UsageQuerySchema } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAccountingMetricSchema, UsageQuerySchema } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageWidgetPageInitialFilters, UsageWidgetPageScope, UsageWidgetQueryOverrides } from './usageWidgetPageContext';
 
 /** The route and page both project the same canonical input fields. */
@@ -27,7 +24,6 @@ export type UsageRouteWritableParams = Readonly<Record<
     string | undefined
 >>;
 
-const VALID_METRICS = new Set<UsageMetric>(['tokens', 'cost']);
 const VALID_DIMENSIONS = new Set<UsageDimension>([
     'agent',
     'model',
@@ -53,7 +49,7 @@ export function resolveUsagePageInitialFilters(
     params: UsageRouteSearchParams,
 ): UsageWidgetPageInitialFilters {
     const periodValue = readSingleParam(params.period);
-    const metricValue = readSingleParam(params.metric);
+    const metric = UsageAccountingMetricSchema.safeParse(readSingleParam(params.metric));
     const costModeValue = readSingleParam(params.costMode);
     const focusDimensionValue = readSingleParam(params.focusDimension);
     const focusKey = readSingleParam(params.focusKey);
@@ -75,9 +71,6 @@ export function resolveUsagePageInitialFilters(
 
     // A route without a period leaves it to the page's one default (`resolveUsagePageDefaultPeriod`).
     const period = isUsagePeriod(periodValue) ? periodValue : undefined;
-    const metric = VALID_METRICS.has(metricValue as UsageMetric)
-        ? (metricValue as UsageMetric)
-        : 'tokens';
     const parsedCostMode = UsageQuerySchema.shape.costBasis.safeParse(costModeValue ?? undefined);
     const costMode = parsedCostMode.success ? parsedCostMode.data : UsageQuerySchema.shape.costBasis.parse(undefined);
 
@@ -93,7 +86,7 @@ export function resolveUsagePageInitialFilters(
 
     return {
         ...(period === undefined ? {} : { period }),
-        metric,
+        ...(metric.success ? { metric: metric.data } : {}),
         costMode,
         focus,
         ...(scope === null ? {} : { scope }),

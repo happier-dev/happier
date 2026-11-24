@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { UsageQuerySchema, getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageQuerySchema, getUsageQueryKey, type UsageAccountingMetric, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useOptionalCurrentUiContextReader, usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import type { CurrentUiContextMountedEnrichment, CurrentUiContextMountedCommand } from '@/components/appShell/currentUiContext/currentUiContextModel';
@@ -29,7 +29,7 @@ export type UsageWidgetPageContextState = Readonly<{
     scope: UsageWidgetPageScope;
     providedContext: ReturnType<typeof readUsageWidgetPageContext>;
     queryOverrides: UsageWidgetQueryOverrides;
-    initialMetric: UsageQuery['metric'];
+    visitMetric: UsageAccountingMetric | undefined;
     /** Route intent only; the area binding remains the selected-layout owner. */
     initialLayoutId: string | null;
     period: UsagePeriod;
@@ -38,6 +38,7 @@ export type UsageWidgetPageContextState = Readonly<{
     isCurrent: boolean;
     setScope(patch: Partial<UsageWidgetPageScope>, callerContext?: ActionExecutorContext): boolean;
     setPeriod(period: UsagePeriod, callerContext?: ActionExecutorContext): boolean;
+    setVisitMetric(metric: UsageAccountingMetric): void;
 }>;
 
 /** One page filter state; widgets keep presentation inputs and area owns layout selection. */
@@ -99,19 +100,30 @@ export function useUsageWidgetPageContext(input: UsageWidgetPageContextInput): U
         });
         return true;
     }, [canChange, input.authority, input.nowMs, input.sessionId, initialKey]);
+    // An explicit link owns this visit's lens. With no lens in the link, placements own theirs.
+    const visitMetric = input.initialFilters?.metric === undefined ? undefined : state.query.metric;
+    const setVisitMetric = React.useCallback((metric: UsageAccountingMetric) => {
+        if (!canChange()) return;
+        setState(current => {
+            if (!canChange() || current.authority !== input.authority || current.retired
+                || current.sessionId !== input.sessionId || current.initialKey !== initialKey || current.query.metric === metric)
+                return current;
+            return { ...current, query: { ...current.query, metric }, callerContext: undefined, edited: true };
+        });
+    }, [canChange, input.authority, input.sessionId, initialKey]);
     const scope = React.useMemo(() => readUsageWidgetPageScope(state.query), [state.query]);
     const providedContext = React.useMemo(() => isCurrent ? readUsageWidgetPageContext(scope) : {}, [isCurrent, scope]);
     const queryOverrides = React.useMemo<UsageWidgetQueryOverrides>(() => readUsageWidgetQueryOverrides(state.query), [state.query]);
     const onFiltersChange = React.useRef(input.onFiltersChange);
     React.useLayoutEffect(() => { onFiltersChange.current = input.onFiltersChange; }, [input.onFiltersChange]);
     React.useEffect(() => {
-        if (isCurrent && state.edited) onFiltersChange.current?.({ period: state.period, metric: state.query.metric,
+        if (isCurrent && state.edited) onFiltersChange.current?.({ period: state.period, metric: visitMetric,
             costMode: scope.costBasis, focus: null, scope, queryOverrides });
-    }, [isCurrent, state.edited, state.period, state.query.metric, scope, queryOverrides]);
+    }, [isCurrent, state.edited, state.period, visitMetric, scope, queryOverrides]);
 
-    return { scope, providedContext, queryOverrides, initialMetric: state.query.metric,
+    return { scope, providedContext, queryOverrides, visitMetric,
         initialLayoutId: input.initialFilters?.layoutId ?? null, period: state.period,
-        callerContext: state.callerContext, callerQuery: state.callerContext ? state.query : undefined, isCurrent, setScope, setPeriod };
+        callerContext: state.callerContext, callerQuery: state.callerContext ? state.query : undefined, isCurrent, setScope, setPeriod, setVisitMetric };
 }
 
 export type UsageWidgetPagePublicationInput = Readonly<{

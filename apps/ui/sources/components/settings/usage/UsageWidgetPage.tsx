@@ -151,7 +151,6 @@ export function UsageWidgetPage(
     sessionId: props.sessionId,
     period: page.period,
     names,
-    initialMetric: page.initialMetric,
     initialLayoutId: page.initialLayoutId,
     onLayoutChange: props.onLayoutChange,
   });
@@ -245,7 +244,11 @@ function UsagePageDocument(props: UsagePageDocumentProps) {
   // The pending context still renders the admitted layout. Its cached batch must
   // not consume the new selection's caller before that context is admitted.
   const callerContext = admittedContext === props.context ? props.page.callerContext : undefined;
-  return <UsageWidgetBatchProvider enabled={layout.state.status === 'ready'} clauses={admittedContext?.queryOverrides ?? props.context.queryOverrides} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={callerContext} callerQuery={callerContext ? props.page.callerQuery : undefined}
+  const queryOverrides = admittedContext?.queryOverrides ?? props.context.queryOverrides;
+  const { visitMetric } = props.page;
+  const clauses = React.useMemo(() => visitMetric === undefined ? queryOverrides : { ...queryOverrides, metric: visitMetric },
+    [queryOverrides, visitMetric]);
+  return <UsageWidgetBatchProvider enabled={layout.state.status === 'ready'} clauses={clauses} inventoryQuery={inventoryQuery} inventoryOnly={inventoryOnly} callerContext={callerContext} callerQuery={callerContext ? props.page.callerQuery : undefined}
     queryWidgetIds={queryWidgetIds}>
     <UsagePageDocumentContent {...props} layout={layout} />
   </UsageWidgetBatchProvider>;
@@ -294,7 +297,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     [tabs],
   );
 
-  // The displayed widgets' own metric: the lab's Tokens/Cost writes each one's input, never a page slot.
+  // With no visit lens, the toolbar shows and edits the displayed placements' metrics.
   const ready = layout.state.status === 'ready' ? layout.state : null;
   const usageWidgets = React.useMemo(
     () =>
@@ -317,7 +320,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   const pendingForDocument = pendingMetric?.lifetime.surface === metricLifetime.surface ? pendingMetric : null;
   const visiblePendingMetric = pendingForDocument && (!pendingForDocument.writing || pendingForDocument.lifetime === metricLifetime)
     ? pendingForDocument : null;
-  const metric = visiblePendingMetric?.metric ?? widgetMetric;
+  const metric = page.visitMetric ?? visiblePendingMetric?.metric ?? widgetMetric;
   React.useEffect(() => {
     // Acknowledgement ends write activity; the admitted publication ends selection handoff.
     if (pendingMetric && (!pendingForDocument || (!pendingMetric.writing && ready?.isCurrent() && widgetMetric === pendingMetric.metric)))
@@ -336,7 +339,12 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
   }, [metricLifetime, props.authority]);
   const onMetricChange = React.useCallback(
     (next: 'tokens' | 'cost') => {
-      if (!ready || metricLifetime.running || metricLifetime.controller.signal.aborted) return;
+      if (!ready) return;
+      if (page.visitMetric !== undefined) {
+        page.setVisitMetric(next);
+        return;
+      }
+      if (metricLifetime.running || metricLifetime.controller.signal.aborted) return;
       metricLifetime.running = true;
       setPendingMetric({ lifetime: metricLifetime, metric: next, writing: true });
       let acknowledged = false;
@@ -366,7 +374,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           : current);
       });
     },
-    [metricApproval.requestApproval, metricLifetime, props.port, ready, usageWidgets],
+    [metricApproval.requestApproval, metricLifetime, page.setVisitMetric, page.visitMetric, props.port, ready, usageWidgets],
   );
   // Cost bases are named by the displayed accounting reads; until they answer (or fail) the toolbar holds the chip's
   // room. The choices' owner decides both, so the row never drops before its choices arrive (Plans at 1440: −40, +40).
@@ -448,8 +456,9 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     }),
     [],
   );
-  const metricPending = layoutLoading || visiblePendingMetric?.writing === true;
-  const changeMetric = layoutLoading || (usageWidgets.length && ready?.canEdit) ? onMetricChange : null;
+  const metricPending = layoutLoading || (page.visitMetric === undefined && visiblePendingMetric?.writing === true);
+  const changeMetric = layoutLoading || (usageWidgets.length > 0 && (page.visitMetric !== undefined || ready?.canEdit))
+    ? onMetricChange : null;
   const metricOptions = React.useMemo(() => usageTokensCostMetricOptions(), []);
   const openScopeFilter = React.useRef<((field: UsageWidgetPageFilter['field']) => void) | null>(null);
   const canChangeScope = facts.failure?.scopeRefusal?.canChangePageScope && !page.scope.session;
