@@ -37,15 +37,16 @@ describe('invalidatePersistentVoiceTranscript', () => {
     // Forget is transcript lifecycle state, never an Account-preference mutation.
     expect(account.writes).toHaveLength(initialWrites);
     const { readPersistentVoiceTranscriptEpoch, VOICE_TRANSCRIPT_MEMORY_KEY } = await import('./voiceTranscriptMemory');
-    const rowRequests = account.kv.readRequests().filter(request => request.path.endsWith(encodeURIComponent(VOICE_TRANSCRIPT_MEMORY_KEY))).length;
+    const rowRequests = account.kv.readRequests().filter(request => request.path === '/v1/kv/bulk').length;
     // Initialization on every carrier consumes the same acknowledged boundary.
     expect(await readPersistentVoiceTranscriptEpoch()).toBe(3);
     expect(await readPersistentVoiceTranscriptEpoch()).toBe(3);
-    expect(account.kv.readRequests().filter(request => request.path.endsWith(encodeURIComponent(VOICE_TRANSCRIPT_MEMORY_KEY)))).toHaveLength(rowRequests + 2);
+    expect(account.kv.readRequests().filter(request => request.path === '/v1/kv/bulk')).toHaveLength(rowRequests + 2);
     expect(await invalidatePersistentVoiceTranscript(account.scope)).toBe(4);
     expect(account.writes).toHaveLength(initialWrites);
     expect(account.persistedRawSettings).toEqual(initialRawSettings);
-    expect(account.kv.readRequests().filter(request => request.method === 'POST')).toHaveLength(2);
+    expect(account.kv.readRequests().filter(request => request.method === 'POST' && request.path === '/v1/kv')).toHaveLength(2);
+    expect(account.kv.read(VOICE_TRANSCRIPT_MEMORY_KEY)?.version).toBe(1);
 
     // An obsolete captured Account must not change the currently mounted one.
     const before = account.settings;
@@ -65,7 +66,7 @@ describe('invalidatePersistentVoiceTranscript', () => {
     const { invalidatePersistentVoiceTranscript } = await import('./invalidatePersistentVoiceTranscript');
     expect(await invalidatePersistentVoiceTranscript(account.scope)).toBeNull();
     expect(account.writes).toEqual([]);
-    expect(account.kv.readRequests().filter(request => request.path.includes('voice'))).toEqual([]);
+    expect(account.kv.readRequests()).toEqual([]);
   });
 
   it('reconciles concurrent Forget intents through the existing row CAS', async () => {
@@ -96,7 +97,7 @@ describe('invalidatePersistentVoiceTranscript', () => {
     }] }) });
     const { invalidatePersistentVoiceTranscript } = await import('./invalidatePersistentVoiceTranscript');
     await expect(invalidatePersistentVoiceTranscript(account.scope)).rejects.toThrow();
-    expect(account.kv.readRequests().filter(request => request.method === 'POST')).toHaveLength(1);
+    expect(account.kv.readRequests().filter(request => request.method === 'POST' && request.path === '/v1/kv')).toHaveLength(1);
     expect(account.writes).toHaveLength(0);
   });
 });

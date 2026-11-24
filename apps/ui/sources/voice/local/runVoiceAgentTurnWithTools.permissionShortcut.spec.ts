@@ -469,7 +469,7 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
 
     const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
     const tools = createVoiceToolHandlers({ currentSessionAddress: currentToolSessionAddress, resolveSessionId: () => 's1' });
-    const proposal = JSON.parse(await tools.answerUserActionRequest({ decision: 'reject', currentSessionOnly: true }, {
+    const proposal = JSON.parse(await tools.answerUserActionRequest({ decision: 'reject', sessionId: 's1', requestId: 'req_question' }, {
       serverId: currentToolSessionAddress.serverId, effectId: 'question-answer-proposal',
     }));
     expect(proposal, JSON.stringify(proposal)).toMatchObject({ ok: true, kind: 'approval_request_created', artifactId: expect.any(String) });

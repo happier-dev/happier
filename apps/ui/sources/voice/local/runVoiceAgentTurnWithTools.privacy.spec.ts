@@ -71,12 +71,15 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
         uiConnectedService: 'private', flavorAliases: ['private-alias'] } },
     ], { shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true, shareDeviceInventory: true });
     const parsed = parseFollowUpJson(prompt);
-    expect(parsed.toolResults[0]?.result).toMatchObject({ items, hasMore: true, nextCursor: 'catalog-page-2', totalCount: 24 });
+    expect(parsed.toolResults[0]?.result).toMatchObject({
+      items: items.map(({ label }) => ({ label })), hasMore: true, totalCount: 24,
+    });
+    expect(parsed.toolResults[0]?.result).not.toHaveProperty('nextCursor');
     expect(parsed.toolResults[1]?.result).toMatchObject({ items: expect.any(Array), hasMore: false });
     expect((parsed.toolResults[1]?.result as { items: unknown[] }).items).toHaveLength(12);
     expect(parsed.toolResults[2]?.result).toEqual({ items: Array.from({ length: 12 }, () => longText) });
   });
-  it('preserves exact Provider connection identity in compact model-list follow-up results', () => {
+  it('keeps Provider connection identity out of model-list follow-up results', () => {
     const prompt = buildToolResultsFollowUpPrompt([{
       t: 'listAgentModels',
       args: { agentId: 'claude', machineId: 'm1' },
@@ -98,12 +101,10 @@ describe('runVoiceAgentTurnWithTools follow-up prompt privacy', () => {
     });
 
     const parsed = parseFollowUpJson(prompt);
-    expect((parsed.toolResults[0] as any).result.items).toEqual([{
-      modelId: 'provider-model',
-      label: 'Provider model',
-      providerConnectionId: 'pc_work',
-      providerName: 'Gateway · Work',
-    }]);
+    expect(parsed.toolResults[0]?.result).toMatchObject({
+      items: [{ label: 'Provider model' }], source: 'preflight', supportsFreeform: true,
+    });
+    expect(prompt).not.toMatch(/provider-model|pc_work|Gateway · Work/);
   });
 
   it('redacts file-path-like data in raw tool results when shareFilePaths is false', () => {
