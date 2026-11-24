@@ -146,7 +146,7 @@ import {
 import { accountWakeNeedsHostChangesRead, registerAccountWakeConsumer, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
 import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
-import { redactAgentStateTranscriptSecrets, registerSessionTranscriptSecret } from './client/transport/transcriptSecretRedaction';
+import { registerSessionTranscriptSecret } from './client/transport/transcriptSecretRedaction';
 import { createSessionClientUpdateRuntime } from './client/transport/createSessionClientUpdateRuntime';
 import {
     createRuntimeSessionClientDurableMutationOutbox,
@@ -4401,11 +4401,11 @@ export class ApiSessionClient extends EventEmitter {
                     onOwnerSnapshotContextChanged: (refreshed) => { Object.assign(admission, refreshed); },
                     mutation: {
                         kind: 'agentState',
-                        // Redact Agent-authored content at the commit while retaining the request's routing data.
-                        update: bindToHostedSessionScope((state: AgentState) => {
+                        // Agent-authored request content is redacted once, where the request store builds its entry.
+                        update: (state: AgentState) => {
                             const next = handler(state);
-                            return redactAgentStateTranscriptSecrets(this.agentStateRequestStore?.applyAppliedCompletions(next) ?? next);
-                        }),
+                            return this.agentStateRequestStore?.applyAppliedCompletions(next) ?? next;
+                        },
                     },
                 }));
             });

@@ -8,6 +8,7 @@ import type { PermissionRequestPushSender } from '@/settings/notifications/permi
 import { logger } from '@/ui/logger';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import { AgentStateRequestStore, isSameAgentStateRequestOccurrence, type PermissionResponseClaim } from './agentStateRequestStore';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { PermissionRequestCoordinator } from './permissionRequestCoordinator';
 import { AgentStateSchema } from '@happier-dev/session-core';
 import { listPendingRequests } from '@happier-dev/session-core/pending';
@@ -123,6 +124,33 @@ describe('AgentStateRequestStore', () => {
             expect(listPendingRequests(recipientFacts, reducer(liveReducer, records.slice(1)).messages)).toEqual([]);
             expect(listPendingRequests(recipientFacts, reducer(createReducer(), records).messages)).toEqual([]);
         } finally { store.dispose(); }
+    });
+
+    it('stores a request with only its Agent-authored content redacted and matches it to the raw occurrence', async () => {
+        // A registered value that is also an MCP server name, a source and an id fragment.
+        const unregister = registerTranscriptSecret('postgres');
+        let state: AgentState = { requests: {}, completedRequests: {} };
+        const store = new AgentStateRequestStore({ logPrefix: '[Content-only redaction]', target: {
+            scopeId: 'content-only', readState: () => state, updateState: updater => { state = updater(state); },
+        } });
+        const nativeChoices = { requirementId: 'postgres-requirement', source: 'postgres', choices: [
+            { id: 'allow_once', label: 'Allow postgres once', decision: 'approved', scope: 'once',
+                rulePreview: 'mcp__postgres__query', response: { approved: true } },
+        ] } as const;
+        const raw = { requestId: 'postgres-request', toolName: 'mcp__postgres__query',
+            toolInput: { sql: 'select 1', password: 'postgres' }, createdAt: 1, turnId: 'postgres-turn', nativeChoices,
+            questionV1: { mode: 'continue', assumption: 'use the postgres role', lasting: false } } as const;
+        try {
+            await store.publishRequestAndWait(raw);
+            const stored = state.requests?.['postgres-request'];
+            expect(stored).toMatchObject({ tool: 'mcp__postgres__query', turnId: 'postgres-turn',
+                arguments: { sql: 'select 1', password: TRANSCRIPT_SECRET_REDACTED },
+                nativeChoices: { requirementId: 'postgres-requirement', source: 'postgres', choices: [{
+                    id: 'allow_once', label: `Allow ${TRANSCRIPT_SECRET_REDACTED} once`,
+                    rulePreview: `mcp__${TRANSCRIPT_SECRET_REDACTED}__query` }] },
+                questionV1: { assumption: `use the ${TRANSCRIPT_SECRET_REDACTED} role` } });
+            expect(isSameAgentStateRequestOccurrence(stored, { ...raw, tool: raw.toolName, arguments: raw.toolInput })).toBe(true);
+        } finally { store.dispose(); unregister(); }
     });
 
     it.each(['complete', 'record'] as const)('removes cleared response targets before strict JSON persistence (%s)', async method => {

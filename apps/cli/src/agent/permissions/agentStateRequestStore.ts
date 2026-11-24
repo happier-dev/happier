@@ -889,6 +889,7 @@ export class AgentStateRequestStore {
         entryTemplate.createdAt = params.createdAt;
         if (typeof params.source === 'string') entryTemplate.source = params.source;
         applyAgentStateRequestMetadata(entryTemplate, params);
+        redactAgentStateRequestContent(entryTemplate);
         const followEvent = readRequestFollowEvent(entryTemplate);
         const evidence = !params.sidechainId && !readRunScopedExecutionPermissionRequestIdentity(params.requestId)
             && followEvent ? this.session?.captureSessionFollowRuleEvidence?.(followEvent) : null;
@@ -1851,6 +1852,24 @@ export function isSameAgentStateRequestArguments(left: unknown, right: unknown):
     return deepEqual(redactTranscriptSecrets(left), redactTranscriptSecrets(right));
 }
 
+/**
+ * The one stored form of a request: its Agent-authored content (tool input, offer and question
+ * prose) passes the transcript redactor, while tool names, ids, keys and routing stay exact.
+ * Both stored and local occurrences take this form before they are compared.
+ */
+function redactAgentStateRequestContent(entry: Record<string, unknown>): void {
+    if (entry.arguments !== undefined) entry.arguments = redactTranscriptSecrets(entry.arguments);
+    if (entry.nativeChoices) entry.nativeChoices = redactAgentStatePermissionChoiceOffer(entry.nativeChoices);
+    const question = entry.questionV1 as SessionQuestionContextV1 | undefined;
+    if (question) {
+        entry.questionV1 = {
+            ...question,
+            ...(question.assumption !== undefined ? { assumption: redactTranscriptSecrets(question.assumption) } : {}),
+            ...(question.reason !== undefined ? { reason: redactTranscriptSecrets(question.reason) } : {}),
+        } satisfies SessionQuestionContextV1;
+    }
+}
+
 /** Compare occurrence custody across pending and completed request projections. */
 export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown): boolean {
     const first = clonePlainObjectToNullProto(left);
@@ -1858,14 +1877,16 @@ export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown)
     if (!first || !second) return false;
     const identity = (record: Record<string, unknown>) => {
         // Retirement lifetime does not mint a new occurrence; older stored rows omit it.
-        const { currentHandler: _currentHandler, lifetime: _lifetime, nativeChoices, ...metadata } = readAgentStateRequestMetadata(record);
-        return {
-            tool: record.tool, arguments: redactTranscriptSecrets(record.arguments), createdAt: record.createdAt,
+        const { currentHandler: _currentHandler, lifetime: _lifetime, ...metadata } = readAgentStateRequestMetadata(record);
+        // A local occurrence keeps raw input; both sides take the stored form before comparison.
+        const stored: Record<string, unknown> = {
+            tool: record.tool, arguments: record.arguments, createdAt: record.createdAt,
             kind: typeof record.kind === 'string' ? record.kind
                 : resolveAgentRequestKind(typeof record.tool === 'string' ? record.tool : ''),
-            nativeChoices: redactAgentStatePermissionChoiceOffer(nativeChoices),
             ...metadata,
         };
+        redactAgentStateRequestContent(stored);
+        return stored;
     };
     // Completion timestamps, decisions and delivery markers are not occurrence
     // identity. Native-effect application retains its stronger pendingIdentity fence.

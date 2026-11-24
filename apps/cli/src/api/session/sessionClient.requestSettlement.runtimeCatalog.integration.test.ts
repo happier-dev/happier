@@ -539,6 +539,58 @@ describe('ApiSessionClient exact request settlement recovery', () => {
     } finally { store.dispose(); unregister(); }
   });
 
+  it('stores an MCP approval with only its content redacted when a registered value names its server', async () => {
+    // A stock docker-compose password that is also the MCP server name: identifiers stay exact.
+    const unregister = registerTranscriptSecret('postgres');
+    const session = createOwnerSession({ id: 'mcp-approval-redaction', agentState: {} });
+    const row = createOwnerRow(session);
+    serveSession(row);
+    const client = createClient(session, [createSocket()]);
+    const permissions = new ProviderEnforcedPermissionHandler(client, {
+      logPrefix: '[McpApprovalRedaction]', getWorkspaceWrites: () => 'allow',
+    });
+    const requestId = 'mcp-postgres-approval';
+    const turnId = 'mcp-turn-1';
+    const tool = 'mcp__postgres__query';
+    const nativeChoices = { requirementId: 'postgres-requirement', source: 'postgres', choices: [
+      { id: 'allow_once', label: 'Allow postgres once', decision: 'approved', scope: 'once', response: { approved: true } },
+      { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false } },
+    ] } as const;
+    try {
+      const pending = permissions.handleToolCall(requestId, tool, { sql: 'select 1', password: 'postgres' }, {
+        turnId, nativeChoices, source: NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      });
+      void pending.catch(() => undefined);
+      await Promise.race([
+        vi.waitFor(() => expect(JSON.parse(row.agentState ?? '{}').requests?.[requestId]).toBeDefined()),
+        pending.then(result => { throw new Error(`MCP approval settled before publication: ${result.decision}`); }),
+      ]);
+      expect(JSON.parse(row.agentState ?? '{}').requests[requestId]).toMatchObject({
+        tool, turnId, source: NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE,
+        arguments: { sql: 'select 1', password: TRANSCRIPT_SECRET_REDACTED },
+        nativeChoices: { requirementId: 'postgres-requirement', source: 'postgres', choices: [
+          { ...nativeChoices.choices[0], label: `Allow ${TRANSCRIPT_SECRET_REDACTED} once` },
+          nativeChoices.choices[1],
+        ] },
+      });
+      await expect(client.rpcHandlerManager.handleRequest({
+        method: `${session.id}:session.permission.respond`,
+        params: { id: requestId, turnId, nativeChoice: { requirementId: 'postgres-requirement', choiceId: 'allow_once' } },
+        callerAuthority: 'present_user',
+        authorization: { kind: 'session.permission.respond', sessionId: session.id,
+          actor: { kind: 'accountUser', accountId: 'owner', relationship: 'owner' } },
+      }, undefined, 'authenticated_home_socket')).resolves.toBeUndefined();
+      await expect(pending).resolves.toMatchObject({ decision: 'approved' });
+      const saved = JSON.parse(row.agentState ?? '{}');
+      expect(saved.requests[requestId]).toBeUndefined();
+      expect(saved.completedRequests[requestId]).toMatchObject({ status: 'approved', tool, turnId });
+    } finally {
+      await permissions.abortPendingRequestsAndFlush('test cleanup');
+      unregister();
+    }
+  });
+
   it.each(['approved', 'denied'] as const)('settles a native approval as %s when a registered value overlaps its control data', async decision => {
     const unregister = registerTranscriptSecret('native');
     const session = createOwnerSession({ id: 'native-approval-redaction', agentState: {} });

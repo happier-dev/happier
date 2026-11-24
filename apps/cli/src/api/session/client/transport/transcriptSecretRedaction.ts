@@ -22,7 +22,7 @@
  * Session's content is masked with.
  */
 import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import type { AgentState } from '@/api/types';
+import { NativePermissionChoicesV1Schema, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 const processSecrets = new Map<string, number>();
 
@@ -93,71 +93,6 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
     return mapRecord(value, (key, entry) => [key, redactValue(entry, secrets)]);
 }
 
-function redactFields(
-    value: unknown,
-    secrets: readonly string[],
-    project: (key: string, entry: unknown) => unknown,
-): unknown {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return redactValue(value, secrets);
-    return mapRecord(value, (key, entry) => [key, project(key, entry)]);
-}
-
-function redactChoiceOffer(value: unknown, secrets: readonly string[]): unknown {
-    return redactFields(value, secrets, (key, entry) => {
-        if (key === 'requirementId' || key === 'source') return entry;
-        if (key === 'origin') {
-            return redactFields(entry, secrets, (field, part) => field === 'sessionId' || field === 'subagentId'
-                ? part : redactValue(part, secrets));
-        }
-        if (key === 'choices' && Array.isArray(entry)) {
-            return mapArray(entry, choice => redactFields(choice, secrets, (field, part) => {
-                if (field === 'id' || field === 'scope' || field === 'decision') return part;
-                if (field === 'response') {
-                    return redactFields(part, secrets, (name, content) => name === 'decision' || name === 'mode'
-                        ? content : redactValue(content, secrets));
-                }
-                if (field === 'followUp') {
-                    return redactFields(part, secrets, (name, content) => name === 'actionId'
-                        ? content : redactValue(content, secrets));
-                }
-                return redactValue(part, secrets);
-            }));
-        }
-        return redactValue(entry, secrets);
-    });
-}
-
-function redactChoiceAnswer(value: unknown, secrets: readonly string[]): unknown {
-    return redactFields(value, secrets, (key, entry) => key === 'requirementId' || key === 'choiceId'
-        ? entry : redactValue(entry, secrets));
-}
-
-function redactRequest(value: unknown, secrets: readonly string[]): unknown {
-    return redactFields(value, secrets, (key, entry) => {
-        switch (key) {
-            case 'turnId':
-            case 'source':
-            case 'kind':
-            case 'lifetime':
-            case 'status':
-            case 'decision':
-            case 'mode':
-                return entry;
-            case 'nativeChoices':
-                return redactChoiceOffer(entry, secrets);
-            case 'nativeChoice':
-                return redactChoiceAnswer(entry, secrets);
-            case 'permissionResponseClaimV1':
-                return redactFields(entry, secrets, (field, part) => {
-                    if (field === 'turnId' || field === 'origin' || field === 'decision' || field === 'scope') return part;
-                    return field === 'nativeChoice' ? redactChoiceAnswer(part, secrets) : redactValue(part, secrets);
-                });
-            default:
-                return redactValue(entry, secrets);
-        }
-    });
-}
-
 function readActiveSecrets(): readonly string[] | undefined {
     const scoped = readHostedSessionScope()?.transcriptSecrets;
     if (processSecrets.size === 0 && !scoped?.size) return undefined;
@@ -165,20 +100,30 @@ function readActiveSecrets(): readonly string[] | undefined {
         .sort((left, right) => right.length - left.length);
 }
 
-/** Keep the Session's routing fields and request IDs intact while redacting their content. */
-export function redactAgentStateTranscriptSecrets(state: AgentState): AgentState {
-    const secrets = readActiveSecrets();
-    if (!secrets) return state;
-    return redactFields(state, secrets, (key, entry) => key === 'requests' || key === 'completedRequests'
-        ? redactFields(entry, secrets, (_, request) => redactRequest(request, secrets))
-        : redactValue(entry, secrets)) as AgentState;
-}
-
-/** The request store compares the live and persisted offer using the writer's projection. */
+/**
+ * A native choice offer's Agent-authored prose (choice labels, rule previews, response reasons and
+ * the subagent label) is content; requirement and choice ids, decisions, scopes, responses and
+ * follow-up Actions stay exact. An offer that does not parse is masked whole: it can over-mask,
+ * never leak. Shared by the request store and the message writer.
+ */
 export function redactAgentStatePermissionChoiceOffer(value: unknown): unknown {
     if (value == null) return value;
     const secrets = readActiveSecrets();
-    return secrets ? redactChoiceOffer(value, secrets) : value;
+    if (!secrets) return value;
+    const offer = NativePermissionChoicesV1Schema.safeParse(value);
+    if (!offer.success) return redactValue(value, secrets);
+    const prose = (text: string) => redactString(text, secrets);
+    const { origin, choices } = offer.data;
+    return {
+        ...offer.data,
+        ...(origin?.subagentLabel !== undefined ? { origin: { ...origin, subagentLabel: prose(origin.subagentLabel) } } : {}),
+        choices: choices.map(choice => ({
+            ...choice,
+            label: prose(choice.label),
+            ...(choice.rulePreview !== undefined ? { rulePreview: prose(choice.rulePreview) } : {}),
+            ...(choice.response.reason !== undefined ? { response: { ...choice.response, reason: prose(choice.response.reason) } } : {}),
+        })),
+    } satisfies NativePermissionChoicesV1;
 }
 
 /**
