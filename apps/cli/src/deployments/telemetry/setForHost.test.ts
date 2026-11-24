@@ -17,6 +17,7 @@ function run(
     encryptionMode: 'plain' | 'e2ee';
     metadataKey?: Uint8Array;
   }>,
+  extraBindings: readonly ReturnType<typeof createDeploymentVariableBindingV1>[] = [],
 ) {
   const detail = createDeploymentEnvironmentDetailV1();
   detail.environment.telemetryMachineId = 'collector';
@@ -36,6 +37,7 @@ function run(
         managedBy: 'telemetry',
         valueFormat: 'otelAuthorizationHeader',
       },
+      ...extraBindings,
     ],
   });
   const invoked: unknown[] = [];
@@ -131,4 +133,14 @@ describe('telemetry collector pin source', () => {
       expect.objectContaining({ telemetryCollector: pinOf(rowKey) }),
     ]);
   });
+});
+
+it('keeps a deliberate Environment sampler while updating the collector bindings', async () => {
+  const sampler = createDeploymentVariableBindingV1({
+    phase: 'runtime', name: 'OTEL_TRACES_SAMPLER',
+    source: { kind: 'value', value: 'parentbased_traceidratio' },
+  });
+  const { result, invoked } = run({ encryptionMode: 'plain' }, [{ ...sampler, managedBy: 'telemetry' }]);
+  await expect(result).resolves.toMatchObject({ ok: true });
+  expect(invoked).toEqual([expect.objectContaining({ remove: [] })]);
 });

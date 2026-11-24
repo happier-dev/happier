@@ -84,7 +84,8 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 return refuse('telemetry_deletion_confirmation_required', { machineId: previousMachineId });
             }
             const owned = current.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'variable' }> =>
-                binding.purpose === 'variable' && binding.managedBy === 'telemetry');
+                binding.purpose === 'variable' && binding.managedBy === 'telemetry'
+                && TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.some(name => name === binding.name));
             const remove = owned.map(binding => ({ purpose: 'variable' as const, name: binding.name, phase: binding.phase }));
             if (machineId === null && previousMachineId === null && owned.length === 0 && !capabilitiesChanged && !pinChanged) return success(input.expectedRevision);
             const set: EnvironmentSecretBindingInputV1[] = [];
