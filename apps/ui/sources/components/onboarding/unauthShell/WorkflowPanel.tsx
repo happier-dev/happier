@@ -31,7 +31,7 @@ const MOBILE_ROW_WORDMARK_CLEARANCE_PX = 24;
 /** A phone's Back row (lab phone steps): the round Back well a little in from the corner, the column below it. */
 const MOBILE_BACK_ROW_TOP_PX = 12;
 const MOBILE_BACK_ROW_CLEARANCE_PX = 8;
-const MOBILE_BACK_ROW_HEIGHT_PX = MOBILE_BACK_ROW_TOP_PX + STEP_ROW_BUTTON_PX + MOBILE_BACK_ROW_CLEARANCE_PX;
+const MOBILE_WORDMARK_ROW_BOTTOM_PX = MOBILE_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX;
 
 /**
  * Matches the legacy WizardCardLayout card-width hint (`size: 'md'`, `width: 500`).
@@ -135,12 +135,13 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const readWebChrome = React.useCallback((scope?: 'shell') => {
         const root = pane.current;
         if (typeof HTMLElement === 'undefined' || !(root instanceof HTMLElement)) return [];
-        // A computer keeps the wordmark across steps; the opening still builds it.
-        const welcomeWordmark = isMobile || scope === 'shell' ? ', [data-testid="welcome-mobile-wordmark"]' : '';
+        // The opening builds the wordmark. A step move only copies a compact mark that can disappear.
+        const welcomeWordmark = scope === 'shell' || (isMobile && !props.showMobileWordmark)
+            ? ', [data-testid="welcome-mobile-wordmark"]' : '';
         return Array.from(root.querySelectorAll<HTMLElement>(
             `[data-testid="unauth-shell-corner"], [data-testid="unauth-shell-welcome-footer"]${welcomeWordmark}`,
         ));
-    }, [isMobile]);
+    }, [isMobile, props.showMobileWordmark]);
     const cardDimensions = useModalCardDimensions({ size: 'md', width: WORKFLOW_CARD_WIDTH_HINT });
     const layoutMaxWidth = useLayoutMaxWidth();
     // The pane is capped at exactly the wizard card width (~500px) including
@@ -165,18 +166,17 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // footer always remain reachable instead of overlapping.
     // The wordmark stands top-left on every welcome step and wherever a step asks for it (direction A).
     const showMobileWordmark = !isMobile || props.isWelcomeStep || props.showMobileWordmark === true;
-    // A later step that keeps the wordmark (a Team entry) centres it in the Back row, clear of Back and the heading.
-    const wordmarkInBackRow = isMobile && showMobileWordmark && !props.isWelcomeStep && cornerBack;
     const mobileBackRow = isMobile && props.onBack != null && !isFullBleed && cornerBack;
+    const mobileBackTop = showMobileWordmark ? MOBILE_WORDMARK_ROW_BOTTOM_PX : MOBILE_BACK_ROW_TOP_PX;
     const contentPaddingStyle: ViewStyle = isMobile
         ? isFullBleed
             ? styles.contentMobileFullBleedPadding
             : {
                 // A welcome column taller than a short phone scrolls from below the corner wordmark,
                 // never under it.
-                paddingTop: (showMobileWordmark && !wordmarkInBackRow
-                    ? MOBILE_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX
-                    : mobileBackRow || wordmarkInBackRow ? MOBILE_BACK_ROW_HEIGHT_PX : WORKFLOW_MOBILE_TOP_PADDING)
+                paddingTop: (mobileBackRow
+                    ? mobileBackTop + STEP_ROW_BUTTON_PX + MOBILE_BACK_ROW_CLEARANCE_PX
+                    : showMobileWordmark ? MOBILE_WORDMARK_ROW_BOTTOM_PX : WORKFLOW_MOBILE_TOP_PADDING)
                     + safeAreaInsets.top,
                 paddingRight: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.right,
                 paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
@@ -184,7 +184,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             }
         : props.isWelcomeStep ? styles.contentDesktopPadding : styles.contentDesktopStepPadding;
     const headerBottom = isMobile
-        ? MOBILE_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX + safeAreaInsets.top
+        ? MOBILE_WORDMARK_ROW_BOTTOM_PX + safeAreaInsets.top
         : DESKTOP_WORDMARK_TOP_PX + DESKTOP_WORDMARK_HEIGHT_PX;
     const [headerClearance, setHeaderClearance] = React.useState(0);
     const [welcomeScrollHeight, setWelcomeScrollHeight] = React.useState(0);
@@ -219,18 +219,10 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     testID="welcome-mobile-wordmark"
                     style={[
                         styles.mobileWordmark,
-                        wordmarkInBackRow
-                            ? {
-                                top: MOBILE_BACK_ROW_TOP_PX + (STEP_ROW_BUTTON_PX - WORDMARK_HEIGHT_PX) / 2
-                                    + safeAreaInsets.top,
-                                left: safeAreaInsets.left,
-                                right: safeAreaInsets.right,
-                                alignItems: 'center',
-                            }
-                            : isMobile ? {
-                                top: MOBILE_WORDMARK_TOP_PX + safeAreaInsets.top,
-                                left: MOBILE_WORDMARK_INSET_PX + safeAreaInsets.left,
-                            } : styles.desktopWordmark,
+                        isMobile ? {
+                            top: MOBILE_WORDMARK_TOP_PX + safeAreaInsets.top,
+                            left: MOBILE_WORDMARK_INSET_PX + safeAreaInsets.left,
+                        } : styles.desktopWordmark,
                     ]}
                     pointerEvents="box-none"
                 >
@@ -257,7 +249,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         styles.backRowFloating,
                         isMobile
                             ? {
-                                top: MOBILE_BACK_ROW_TOP_PX + safeAreaInsets.top,
+                                top: mobileBackTop + safeAreaInsets.top,
                                 left: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left,
                             }
                             : styles.backRowDesktop,

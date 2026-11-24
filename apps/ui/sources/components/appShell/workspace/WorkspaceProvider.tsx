@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
 import { useLaunchCurtainHold, useLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -178,9 +179,11 @@ export function WorkspaceProvider(props: Readonly<{
     const ownsRoute = ownsHref(routeHref);
     // Read the same canonical address as the retained host. A body at the old address cannot release the new one.
     const launchHref = routeDestination && props.waitForLaunchBody ? hrefForDestinationRef(props.catalog, routeDestination) : null;
-    const launchPathname = launchHref?.split(/[?#]/, 1)[0];
+    // The phone's dedicated Home is presented by Expo, outside the retained workspace catalog.
+    const standaloneHome = routeHref.split(/[?#]/, 1)[0] === PHONE_HOME_ROUTE;
+    const launchPathname = standaloneHome ? PHONE_HOME_ROUTE : launchHref?.split(/[?#]/, 1)[0];
     const launchBodyMounted = useLaunchDestinationBodyMounted(launchPathname === '/' ? undefined : launchPathname);
-    useLaunchCurtainHold(props.waitForLaunchBody === true && ownsRoute && !launchBodyMounted);
+    useLaunchCurtainHold(props.waitForLaunchBody === true && (ownsRoute || standaloneHome) && !launchBodyMounted);
     const hostsMobileWeb = phone && Platform.OS === 'web' && (ownsRoute || newSessionOverlay);
     const hostsRoute = props.enabled || hostsMobileWeb || (entry && ownsRoute);
     const phoneTransport = phone && !hostsMobileWeb;

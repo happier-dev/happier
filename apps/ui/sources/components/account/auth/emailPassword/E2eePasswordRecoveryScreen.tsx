@@ -14,8 +14,6 @@ import { usePortableHomeLinkTarget } from '@/components/teams/join/teamJoinTarge
 import { Text } from '@/components/ui/text/Text';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { StepForm, stepFieldLabelStyle } from '@/components/onboarding/unauthShell/StepFormParts';
-import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
-import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
@@ -74,23 +72,17 @@ function clearRecoveryContext(ref: React.MutableRefObject<RecoveryContext | null
  * owner replace the wrapper around that same secret.
  */
 export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecoveryScreen(
-    props: Readonly<{ homeTarget: string | null }>,
+    props: Readonly<{ homeTarget: string | null; returnToWelcome?: () => void }>,
 ) {
     const auth = useAuth();
     const router = useRouter();
     const leaveRecovery = () => {
         if (router.canGoBack()) {
             router.back();
-        } else if (auth.isAuthenticated) {
-            router.replace('/');
+        } else if (!auth.isAuthenticated && props.returnToWelcome) {
+            props.returnToWelcome();
         } else {
-            runStepMove({
-                layer: FIRST_RUN_WORKFLOW_LAYER,
-                kind: 'back',
-                toWelcome: true,
-                preserveShell: true,
-                commit: () => router.replace('/'),
-            });
+            router.replace('/');
         }
     };
     // Acquiring the Home a recovery link names — observing it and proving its
@@ -276,6 +268,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
     }, [auth, busy, destination, draft, targetState]);
 
     const problemMessage = problem ? resolveEmailPasswordProblemMessage(problem) : null;
+    const embedded = props.returnToWelcome !== undefined;
 
     // The password is already replaced and the credential persisted. Only
     // reaching that Home is left, so a device that cannot get there keeps the
@@ -283,6 +276,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
     if (destination.state.kind !== 'idle') {
         const destinationState = destination.state;
         return <AuthRouteStepFrame
+            embedded={embedded}
             testID="e2ee-password-recovery"
             progress={{ index: 1, count: 2 }}
             title={t('settingsAccount.nativePassword.resetTitle')}
@@ -308,6 +302,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
         // The Home has not answered yet: a door-width notice (with Try again once it failed) above the next step,
         // which waits until the Home is ready (lab direction A "Recover · Home unavailable").
         return <AuthRouteStepFrame
+            embedded={embedded}
             testID="e2ee-password-recovery"
             progress={{ index: 0, count: 2 }}
             onBack={leaveRecovery}
@@ -332,6 +327,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
 
     if (phase === 'key') {
         return <AuthRouteStepFrame
+            embedded={embedded}
             testID="e2ee-password-recovery"
             progress={{ index: 0, count: 2 }}
             onBack={leaveRecovery}
@@ -347,6 +343,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
     }
 
     return <AuthRouteStepFrame
+        embedded={embedded}
         testID="e2ee-password-recovery"
         progress={{ index: 1, count: 2 }}
         title={t('settingsAccount.nativePassword.resetTitle')}

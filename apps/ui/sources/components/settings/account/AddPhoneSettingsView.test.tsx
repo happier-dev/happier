@@ -8,7 +8,7 @@ import { type HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/acco
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -18,8 +18,7 @@ import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccount
 import { installAccountCommonModuleMocks } from '../../account/accountTestHelpers';
 
 const modalMocks = vi.hoisted(() => ({ alertAsync: vi.fn(async () => {}) }));
-const clipboardMocks = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_value: string) => {}) }));
-vi.mock('expo-clipboard', () => clipboardMocks);
+const writeClipboard = vi.fn(async (_value: string) => {});
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@shopify/react-native-skia', async () =>
@@ -238,7 +237,7 @@ describe('AddPhoneSettingsView', () => {
         await homes.reset();
         localStorage?.restore();
         localStorage = null;
-        clipboardMocks.setStringAsync.mockClear();
+        writeClipboard.mockClear();
         modalMocks.alertAsync.mockClear();
     });
 
@@ -329,6 +328,7 @@ describe('AddPhoneSettingsView', () => {
     });
 
     it('keeps the pairing link behind disclosure and copies it without exposing the secret in a success modal', async () => {
+        installBrowserClipboardBoundary(writeClipboard);
         const screen = await renderPhone();
         expect(screen.findAllByTestId('add-phone-pairing-link').length).toBe(0);
         expect(screen.findByTestId('add-phone-pairing-link-details')?.props.accessibilityState).toMatchObject({ expanded: false });
@@ -336,9 +336,12 @@ describe('AddPhoneSettingsView', () => {
         expect(screen.findByTestId('add-phone-pairing-link') !== null).toBe(true);
         expect(screen.findByTestId('add-phone-pairing-link-details')?.props.accessibilityState).toMatchObject({ expanded: true });
         expect(screen.getTextContent().includes('connect.pairingLinkSecurityWarning')).toBe(true);
+        const field = screen.findByTestId('add-phone-pairing-link-value');
+        expect(field?.props.editable).toBe(false);
+        expect(field?.props.multiline).not.toBe(true);
         await screen.pressByTestIdAsync('add-phone-pairing-link-copy');
-        expect(clipboardMocks.setStringAsync.mock.calls.length).toBe(1);
-        expect(parseHomeQrInviteDeepLink(String(clipboardMocks.setStringAsync.mock.calls[0]?.[0]))?.invite.v === 2).toBe(true);
+        expect(writeClipboard).toHaveBeenCalledExactlyOnceWith(field?.props.value);
+        expect(parseHomeQrInviteDeepLink(String(writeClipboard.mock.calls[0]?.[0]))?.invite.v === 2).toBe(true);
         expect(modalMocks.alertAsync).not.toHaveBeenCalledWith('common.success', 'common.copied');
         expect(screen.findByTestId('add-phone-pairing-link-copy-feedback') !== null).toBe(true);
     });
@@ -406,6 +409,7 @@ describe('AddPhoneSettingsView', () => {
     });
 
     it('omits only the QR image and keeps the exact link behind disclosure when the invite exceeds QR capacity', async () => {
+        installBrowserClipboardBoundary(writeClipboard);
         const serverUrl = `https://large-add-phone-${fixtureSequence + 1}.example.test`;
         const descriptor: HomeConnectionDescriptorV1 = { v: 1, homeServerIdentityId: `srv_large_add_phone_${fixtureSequence + 1}`,
             canonicalServerUrl: serverUrl, revision: 1, endpoints: [
@@ -425,8 +429,8 @@ describe('AddPhoneSettingsView', () => {
         await screen.pressByTestIdAsync('add-phone-pairing-link-details');
         expect(screen.getTextContent().includes('connect.pairingLinkSecurityWarning')).toBe(true);
         await screen.pressByTestIdAsync('add-phone-pairing-link-copy');
-        expect(clipboardMocks.setStringAsync.mock.calls.length).toBe(1);
-        const parsed = parseHomeQrInviteDeepLink(String(clipboardMocks.setStringAsync.mock.calls[0]?.[0]));
+        expect(writeClipboard).toHaveBeenCalledOnce();
+        const parsed = parseHomeQrInviteDeepLink(String(writeClipboard.mock.calls[0]?.[0]));
         expect(isDeepStrictEqual(parsed?.invite.home, descriptor)).toBe(true);
         await screen.pressByTestIdAsync('add-phone-cancel');
         expectCancellation();

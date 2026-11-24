@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { Router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
-import { focusTerminalConnectTarget, prepareTerminalConnect, resolveTerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
+import { focusTerminalConnectTarget, prepareTerminalConnect, resolveTerminalConnectLinkState, type TerminalConnectHomeFailure } from '@/auth/terminal/terminalConnectContinuation';
 import { useConnectTerminal, type TerminalConnectSuccess } from './useConnectTerminal';
 import { buildTerminalConnectAuthRedirectHref, type ParsedTerminalConnectUrl, type TerminalConnectPreAuthTargetDecision } from '@/utils/path/terminalConnectUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -20,6 +20,7 @@ export function useTerminalConnectContinuation(options: Readonly<{
     const auth = useAuth();
     const { request, replace, allowLoopbackServerOverride, onCaptured } = options;
     const [preAuthTarget, setPreAuthTarget] = React.useState<TerminalConnectPreAuthTargetDecision | null>(null);
+    const [failedHome, setFailedHome] = React.useState<{ request: ParsedTerminalConnectUrl; failure: TerminalConnectHomeFailure } | null>(null);
     const [preparedSignIn, setPreparedSignIn] = React.useState<{ request: ParsedTerminalConnectUrl; serverUrl: string } | null>(null);
     const linkState = resolveTerminalConnectLinkState(request);
     const requiresUpdate = linkState === 'update_required';
@@ -48,7 +49,12 @@ export function useTerminalConnectContinuation(options: Readonly<{
             onCaptured?.();
             setPreAuthTarget(target);
             if (auth.isAuthenticated || !target?.canNavigateToAuth) return;
-            const serverUrl = await focusTerminalConnectTarget({ request, serverUrl: target.pendingServerUrl, refreshAuth: auth.refreshFromActiveServer });
+            const serverUrl = await focusTerminalConnectTarget({
+                request, serverUrl: target.pendingServerUrl, refreshAuth: auth.refreshFromActiveServer,
+                onHomeFailure: (failure) => {
+                    if (!cancelled) setFailedHome({ request, failure });
+                },
+            });
             if (!cancelled && serverUrl) {
                 onCaptured?.();
                 setPreparedSignIn({ request, serverUrl });
@@ -67,5 +73,6 @@ export function useTerminalConnectContinuation(options: Readonly<{
         }
         : undefined;
 
-    return { ...approval, approve, reject, preAuthTarget, signInAction, requiresUpdate, linkState, connected };
+    const homeFailure = failedHome?.request === request ? failedHome.failure : null;
+    return { ...approval, approve, reject, preAuthTarget, homeFailure, signInAction, requiresUpdate, linkState, connected };
 }

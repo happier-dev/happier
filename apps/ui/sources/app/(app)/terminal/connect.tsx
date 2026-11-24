@@ -25,7 +25,7 @@ export default function TerminalConnectScreen() {
     const onReject = React.useCallback(() => {
         safeRouterBack({ router, fallbackHref: '/' });
     }, [router]);
-    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, signInAction, linkState, connected } = useTerminalConnectContinuation({
+    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, homeFailure, signInAction, linkState, connected } = useTerminalConnectContinuation({
         request, replace: router.replace, onReject, allowLoopbackServerOverride: true, onCaptured: scrubIfResumable,
     });
     const publicKey = linkState === 'ready' ? request?.publicKeyB64Url ?? null : null;
@@ -61,18 +61,17 @@ export default function TerminalConnectScreen() {
     }
 
     if (!auth.isAuthenticated && publicKey) {
-        if (preAuthTarget?.canNavigateToAuth === false) {
+        if (homeFailure || preAuthTarget?.canNavigateToAuth === false) {
             return (
                 <TerminalConnectSurface
                     testID="terminal-connect-surface"
-                    state={{
-                        kind: 'message',
-                        title: t('welcome.serverUnavailableTitle'),
-                        description: t('welcome.serverUnavailableBody', {
-                            serverUrl: homeConnectionDescriptor?.canonicalServerUrl ?? serverUrlFromHash ?? '',
-                        }),
-                        tone: 'critical',
-                    }}
+                    state={terminalLinkProblemMessage({
+                        linkState: 'unavailable',
+                        signedIn: false,
+                        navigate: router.replace,
+                        homeFailure,
+                        serverUrl: preAuthTarget?.pendingServerUrl,
+                    })}
                 />
             );
         }

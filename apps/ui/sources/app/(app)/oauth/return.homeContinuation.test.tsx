@@ -401,7 +401,7 @@ it.each(['oauth', 'mtls-claim', 'mtls-redirect', 'mtls-web'] as const)('presents
         : provider === 'mtls' ? <MtlsCallbackScreen /> : <OAuthProviderReturn />}</AuthProvider>);
     if (flow === 'mtls-web') {
         const target = { kind: 'descriptor', authority: 'current_connection', descriptor: fixture.home.connectionDescriptor } as const;
-        await executeHomeAuthentication({
+        const outcome = await executeHomeAuthentication({
             request: {
                 method: { id: 'mtls', enabledActions: [{ id: 'login', mode: 'keyless' }] },
                 action: { id: 'login', mode: 'keyless' }, execution: { kind: 'mtls' },
@@ -410,13 +410,15 @@ it.each(['oauth', 'mtls-claim', 'mtls-redirect', 'mtls-web'] as const)('presents
             loginWithCredentials: async () => { throw new Error('Failed proof cannot commit credentials'); },
             returnTo: '/setup/wizard',
         });
-    }
-    const reason = t('errors.accountDisabled', { home: homeB.serverUrl });
-    if (flow === 'oauth') {
-        await vi.waitFor(() => expect(screen?.getTextContent()).toContain(reason));
+        expect(outcome).toEqual({
+            kind: 'certificate_failed', reason: 'request_failed',
+            message: t('errors.accountDisabled', { home: homeB.serverUrl }),
+        });
     } else {
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), reason));
+        const reason = t('errors.accountDisabled', { home: homeB.serverUrl });
+        await vi.waitFor(() => expect(screen?.getTextContent()).toContain(reason));
     }
+    if (provider === 'mtls') expect(Modal.alert).not.toHaveBeenCalled();
     expect(getActiveServerId()).toBe(activeHomeA);
     expect(await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: 'srv_home_b' })).toBeNull();
     expect(getCurrentAuth()?.credentials).toBeNull();

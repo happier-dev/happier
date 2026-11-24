@@ -15,8 +15,9 @@ import { ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1 } from '@happier-dev/protocol/acti
 import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
 import { authQRWait } from '@/auth/flows/qrWait';
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
-import { openTerminalConnectApproval } from '@/auth/terminal/terminalConnectContinuation';
+import { openTerminalConnectApproval, type TerminalConnectHomeFailure } from '@/auth/terminal/terminalConnectContinuation';
 import { useAuth } from '@/auth/context/AuthContext';
+import { homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
 import { t, type TranslationKeyNoParams } from '@/text';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { pairingConsume, pairingRequest, pairingStart, type PairingRequestResult } from '@/sync/api/account/apiPairingAuth';
@@ -314,6 +315,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const [enrollmentResult, setEnrollmentResult] = React.useState<HomeEnrollmentScannerResult | null>(props.initialResult ?? null);
     // A pasted terminal link that expired is a link, not a QR: its message says so.
     const [expiredTerminalLink, setExpiredTerminalLink] = React.useState(false);
+    const [terminalHomeFailure, setTerminalHomeFailure] = React.useState<TerminalConnectHomeFailure | null>(null);
     // How the code being processed arrived; an expired one is replaced by the same route.
     const [inviteOrigin, setInviteOrigin] = React.useState<'scanned' | 'link'>('scanned');
     const [activeInvite, setActiveInvite] = React.useState<HomeQrInviteV2 | null>(null);
@@ -377,6 +379,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         retainedAdoptionRef.current = null;
         setEnrollmentResult(null);
         setExpiredTerminalLink(false);
+        setTerminalHomeFailure(null);
         setActiveInvite(null);
         setPhase('idle');
     }, []);
@@ -1060,6 +1063,10 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     navigate: router.push,
                     refreshAuth: auth.refreshFromActiveServer,
                     isAuthenticated: auth.isAuthenticated,
+                    onHomeFailure: (failure) => {
+                        setTerminalHomeFailure(failure);
+                        setEnrollmentResult('retryable_error');
+                    },
                 });
                 if (result === 'expired') {
                     setExpiredTerminalLink(true);
@@ -1166,7 +1173,8 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     : { testID: 'restore-enrollment-done', title: t('common.done'), onPress: handleBack };
     const statusText = expiredTerminalLink && enrollmentResult === 'expired'
         ? t('modals.authRequestExpiredDescription')
-        : t(enrollmentPresentation.primaryTranslationKey);
+        : (terminalHomeFailure && homeConnectFailureMessage(terminalHomeFailure))
+            || t(enrollmentPresentation.primaryTranslationKey);
     // The card holds progress or the Home being joined; with neither (a link that never named a
     // Home) there is nothing to frame, so no empty capsule is drawn.
     const showStatusCard = enrollmentPresentation.activity
@@ -1422,7 +1430,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             <View style={styles.resultStep}>
                 <StepProblemHeading
                     iconName={resultHeading.iconName}
-                    title={t(resultHeading.titleKey)}
+                    title={terminalHomeFailure ? t('welcome.serverUnavailableTitle') : t(resultHeading.titleKey)}
                     subtitle={statusText}
                     subtitleTestID="restore-enrollment-result"
                     context={enrollmentPresentation.contextualFacts !== 'none' && activeInvite

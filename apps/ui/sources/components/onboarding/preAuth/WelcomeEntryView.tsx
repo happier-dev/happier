@@ -76,20 +76,15 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     // The notice always stands above the doors. Lift the heading when there is clearance, or
     // give the notice room in the scrollable column when the header cannot move.
     const anchoredNotices = model.heading != null || model.policy != null;
-    const [noticeLayout, setNoticeLayout] = React.useState({ height: 0, visible: false });
-    const reportNoticeLayout = React.useCallback((height: number, visible: boolean) => {
-        setNoticeLayout(previous => {
-            // Once a notice has occupied this slot, clearing its content should not move the doors.
-            const reservedHeight = visible ? height : previous.height;
-            return previous.height === reservedHeight && previous.visible === visible
-                ? previous : { height: reservedHeight, visible };
-        });
+    const [noticeHeight, setNoticeHeight] = React.useState(0);
+    const reportNoticeLayout = React.useCallback((height: number) => {
+        // Resolving a check or replacing its notice must keep the occupied space.
+        setNoticeHeight(previous => Math.max(previous, height));
     }, []);
-    const noticeHeight = noticeLayout.height;
     const headerClearance = React.useContext(ShellHeaderClearanceContext);
     const setOverflow = React.useContext(ShellWelcomeOverflowContext);
     const above = anchoredNotices && noticeHeight <= headerClearance;
-    const lift = above && noticeLayout.visible ? noticeHeight : 0;
+    const lift = above ? noticeHeight : 0;
     React.useLayoutEffect(() => {
         setOverflow?.(anchoredNotices && !above ? noticeHeight : 0);
     }, [above, anchoredNotices, noticeHeight, setOverflow]);
@@ -124,8 +119,8 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
                     <WelcomeNotices notices={model.notices} onAction={noticeAction}
-                        above={above} reservedHeight={anchoredNotices ? noticeHeight : 0}
-                        onMeasure={anchoredNotices ? reportNoticeLayout : undefined} />
+                        above={above} reservedHeight={noticeHeight}
+                        onMeasure={reportNoticeLayout} />
                     <View style={styles.ways}>
                         <View testID="welcome-doors" style={styles.doors}>
                             {model.primaryDoorPending ? <PendingPrimaryDoor /> : null}
@@ -183,8 +178,8 @@ function WelcomeNotices({ notices, onAction, above, reservedHeight, onMeasure }:
     onAction?: (testID: string) => void;
     above?: boolean;
     reservedHeight: number;
-    /** Reports the notice's natural height, including the gap above the doors. */
-    onMeasure?: (height: number, visible: boolean) => void;
+    /** Reports the measured slot, including the gap above the doors. */
+    onMeasure?: (height: number) => void;
 }>) {
     const firstRun = useFirstRunWorkflowMotion();
     const animate = firstRun && onAction != null;
@@ -197,7 +192,7 @@ function WelcomeNotices({ notices, onAction, above, reservedHeight, onMeasure }:
     const visible = animate ? shown.notices : notices;
     const box = React.useRef<View>(null);
     const empty = visible.length === 0;
-    const report = React.useCallback((height: number) => onMeasure?.(height, !empty), [empty, onMeasure]);
+    const report = React.useCallback((height: number) => onMeasure?.(height), [onMeasure]);
     React.useLayoutEffect(() => {
         // Web measures before paint, so the lines above never overlap a newly arrived notice for a frame.
         const node = box.current as unknown as { getBoundingClientRect?: () => { height: number } } | null;
@@ -215,7 +210,7 @@ function WelcomeNotices({ notices, onAction, above, reservedHeight, onMeasure }:
             style={[
                 empty && reservedHeight === 0 ? stylesheet.emptyNoticeSlot
                     : above ? stylesheet.noticeAboveDoors : stylesheet.noticeInColumn,
-                empty && reservedHeight > 0 ? { minHeight: reservedHeight } : null,
+                reservedHeight > 0 ? { minHeight: reservedHeight } : null,
             ]}>
             {layerElement}
         </View>

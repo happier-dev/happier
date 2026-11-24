@@ -52,14 +52,17 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     }, []);
     // The scene holds its last frame until the Welcome's own planet has painted under it (the desktop swap's rule).
     const welcomePainted = useRef(false);
+    const [destinationPainted, setDestinationPainted] = useState(false);
     const buildSettled = useRef(false);
     const welcomePaint = useMemo(() => ({
         onPainted: () => {
             welcomePainted.current = true;
+            setDestinationPainted(true);
             if (activePlay.current && buildSettled.current) settle();
         },
         planet: scene ? { create: scene.createOpeningPlanet, durationS: scene.openingSceneSeconds } : undefined,
     }), [scene, settle]);
+    const stillPaint = useMemo(() => ({ onPainted: welcomePaint.onPainted }), [welcomePaint]);
     const fadeToRest = useCallback(() => {
         activePlay.current = false;
         opacity.setValue(0.65);
@@ -174,7 +177,8 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     const contentLayout = useMemo(() => phase === 'preparing'
         ? { target: layoutTarget, onLayout: onFirstLayout } : null, [layoutTarget, onFirstLayout, phase]);
     // A cold start's Loading planet stays until the opening's first frame (or its Still) is up.
-    useLaunchCurtainHold(decision === 'in-app' && phase === 'preparing');
+    const waitsForPaint = decision !== 'overlay-eligible' && !destinationPainted;
+    useLaunchCurtainHold((decision !== 'overlay-eligible' && phase === 'preparing') || (waitsForPaint && !playing));
     const Scene = scene?.FirstOpenScene;
     const holdingDestination = decision === 'in-app' && phase === 'preparing';
     return (
@@ -186,7 +190,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
                 importantForAccessibility={holdingDestination ? 'no-hide-descendants' : undefined}>
                 <FirstOpenContentLayout.Provider value={contentLayout}>
                     <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>
-                        <FirstOpenOwnsWelcomePaint.Provider value={playing ? welcomePaint : null}>
+                        <FirstOpenOwnsWelcomePaint.Provider value={playing ? welcomePaint : waitsForPaint ? stillPaint : null}>
                             <FirstOpenWelcomeModelContext.Provider value={waitingForReplica ? publishWelcome : null}>
                                 {children}
                             </FirstOpenWelcomeModelContext.Provider>

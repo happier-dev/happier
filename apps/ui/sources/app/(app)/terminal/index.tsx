@@ -24,7 +24,7 @@ export default function TerminalScreen() {
     const serverUrl = parsed?.serverUrl ?? parsed?.homeConnectionDescriptor?.canonicalServerUrl ?? null;
     const onSuccess = React.useCallback(() => { resolvePostAuthLanding({ replace: router.replace }); }, [router]);
     const onReject = React.useCallback(() => { safeRouterBack({ router, fallbackHref: '/' }); }, [router]);
-    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, signInAction, linkState, connected } = useTerminalConnectContinuation({
+    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, homeFailure, signInAction, linkState, connected } = useTerminalConnectContinuation({
         request: parsed, replace: router.replace, onReject,
     });
     const publicKey = linkState === 'ready' ? parsed?.publicKeyB64Url ?? null : null;
@@ -46,18 +46,17 @@ export default function TerminalScreen() {
     if (linkState === 'update_required') return linkProblem;
 
     if (!auth.isAuthenticated && publicKey) {
-        if (preAuthTarget?.canNavigateToAuth === false) {
+        if (homeFailure || preAuthTarget?.canNavigateToAuth === false) {
             return (
                 <TerminalConnectSurface
                     testID="terminal-connect-surface"
-                    state={{
-                        kind: 'message',
-                        title: t('welcome.serverUnavailableTitle'),
-                        description: t('welcome.serverUnavailableBody', {
-                            serverUrl: preAuthTarget.pendingServerUrl,
-                        }),
-                        tone: 'critical',
-                    }}
+                    state={terminalLinkProblemMessage({
+                        linkState: 'unavailable',
+                        signedIn: false,
+                        navigate: router.replace,
+                        homeFailure,
+                        serverUrl: preAuthTarget?.pendingServerUrl,
+                    })}
                 />
             );
         }

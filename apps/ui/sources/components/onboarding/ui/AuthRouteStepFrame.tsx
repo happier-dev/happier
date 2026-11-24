@@ -10,7 +10,7 @@ import { t } from '@/text';
 import { UnauthenticatedRouteShell } from '../unauthShell/UnauthenticatedRouteShell';
 import { UnauthenticatedStep } from '../unauthShell/UnauthenticatedStep';
 import { StepQuietAction } from '../unauthShell/StepFormParts';
-import { StepBackContext, StepPrimaryButton, useStepBackSlot } from '../unauthShell/stepBack';
+import { StepBackContext, StepPrimaryButton, useStepBackOverride, useStepBackSlot } from '../unauthShell/stepBack';
 import { WizardModalShell } from './WizardModalShell';
 
 export type AuthRouteStepAction = Readonly<{
@@ -63,6 +63,8 @@ export function UnauthenticatedRouteStep(props: Omit<RouteStepProps, 'title'> & 
      * the planet, its mark over the heading, Back drawn as the "Back to Happier" pill).
      */
     status?: boolean;
+    /** Place the step inside the owning workflow instead of mounting a route shell. */
+    embedded?: boolean;
     /** A status step's own way out ("Back to Happier" to the root); defaults to the shell's Back under that label. */
     leave?: Readonly<{ onPress: () => void; testID?: string }>;
 }>) {
@@ -119,19 +121,26 @@ export function UnauthenticatedRouteStep(props: Omit<RouteStepProps, 'title'> & 
             {props.children}
         </UnauthenticatedStep>
     );
+    const body = props.status ? (
+        <View accessibilityRole="text" accessibilityLiveRegion="polite" aria-live="polite" role="status">
+            {step}
+        </View>
+    ) : step;
+    if (props.embedded) return <EmbeddedRouteStep onBack={props.onBack}>{body}</EmbeddedRouteStep>;
     return (
         <UnauthenticatedRouteShell
             testID={props.shellTestID ?? `unauth-shell-${props.testID}`}
             stepId={props.stepId ?? props.testID}
             onBack={props.backDisabled ? undefined : props.onBack}
         >
-            {props.status ? (
-                <View accessibilityRole="text" accessibilityLiveRegion="polite" aria-live="polite" role="status">
-                    {step}
-                </View>
-            ) : step}
+            {body}
         </UnauthenticatedRouteShell>
     );
+}
+
+function EmbeddedRouteStep(props: Readonly<{ onBack?: () => void; children: React.ReactNode }>) {
+    useStepBackOverride(props.onBack);
+    return <>{props.children}</>;
 }
 
 /**
@@ -142,6 +151,7 @@ export function UnauthenticatedRouteStep(props: Omit<RouteStepProps, 'title'> & 
  * wizard card it has always had.
  */
 type AuthRouteStepFrameProps = RouteStepProps & Readonly<{
+    embedded?: boolean;
     /** Back from a standalone restore route to another first-run screen. */
     routeBack?: boolean;
     /** The signed-out frame's current step when the route hosts more than one. */
@@ -171,6 +181,7 @@ export function AuthRouteStepFrame(props: AuthRouteStepFrameProps) {
         return (
             <UnauthenticatedRouteStep
                 testID={props.testID}
+                embedded={props.embedded}
                 stepId={props.stepId}
                 title={props.bodyOwnsHeading ? undefined : props.title}
                 subtitle={props.bodyOwnsHeading ? undefined : props.subtitle}

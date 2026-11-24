@@ -1,3 +1,4 @@
+import type { CertificateAuthenticationFailure } from '@/auth/flows/executeHomeAuthentication';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { router } from 'expo-router';
@@ -116,6 +117,7 @@ export type WelcomeAuthenticationActionContext = Readonly<{
     /** Opens the shared email/password controller as the next step of this workflow. */
     presentEmailPassword: (request: EmailPasswordAuthStepRequest) => void;
     presentOAuthBrowserWait: (wait: OAuthBrowserWait) => void;
+    presentCertificateOutcome?: (outcome: CertificateAuthenticationFailure) => void;
 }>;
 
 export type OnboardingWizardController = Readonly<{
@@ -204,6 +206,10 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const [relayAccessShareUrl, setRelayAccessShareUrl] = React.useState<string | null>(null);
     const [accountDirectoryKeyRequest, setAccountDirectoryKeyRequest] = React.useState<WelcomeAuthenticationMethod | null>(null);
     const [emailPasswordRequest, setEmailPasswordRequest] = React.useState<EmailPasswordAuthStepRequest | null>(null);
+    const [certificateProblem, setCertificateProblem] = React.useState<Readonly<{
+        request: WelcomeAuthenticationMethod;
+        outcome: CertificateAuthenticationFailure;
+    }> | null>(null);
     const [oauthBrowserWait, setOAuthBrowserWait] = React.useState<OAuthBrowserWait | null>(null);
     const [accountDirectoryContinuationIntent, setAccountDirectoryContinuationIntent] = React.useState<AccountContinuationIntent | null>(null);
     const [accountDirectoryHomeRecovery, setAccountDirectoryHomeRecovery] = React.useState<Readonly<{
@@ -373,6 +379,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const welcomeAuthenticationRef = React.useRef<{ controller: AbortController; stepId: WizardStepId } | null>(null);
     React.useEffect(() => {
         if (stepId !== 'auth_oauth_browser_wait') setOAuthBrowserWait(null);
+        if (stepId !== 'auth_certificate') setCertificateProblem(null);
         const current = welcomeAuthenticationRef.current;
         if (current && current.stepId !== stepId) {
             current.controller.abort();
@@ -396,6 +403,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             await action(request, {
                 signal: controller.signal,
                 ...(emailProvision ? { emailProvision } : {}),
+                presentCertificateOutcome: (outcome) => {
+                    if (welcomeAuthenticationRef.current !== active || controller.signal.aborted) return;
+                    setCertificateProblem({ request, outcome });
+                    if (active.stepId !== 'auth_certificate') {
+                        active.stepId = 'auth_certificate';
+                        dispatch({ type: 'wizard/goToStep', stepId: 'auth_certificate' });
+                    }
+                },
                 presentOAuthBrowserWait: (wait) => {
                     if (welcomeAuthenticationRef.current !== active || controller.signal.aborted) return;
                     active.stepId = 'auth_oauth_browser_wait';
@@ -852,7 +867,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     // way: a footer summary in the card, one quiet line in the welcome pane's header.
     const homeContext = React.useMemo((): OnboardingWizardHomeContext | null => {
         // These steps present their own Home or sign-in service context.
-        if (stepId === 'auth_email_password' || stepId === 'auth_oauth_browser_wait' || stepId === 'connect_home') return null;
+        if (stepId === 'auth_email_password' || stepId === 'auth_oauth_browser_wait' || stepId === 'auth_certificate' || stepId === 'connect_home') return null;
         if (stepId === 'relay_select') {
             const resolvedRelayUrl = selectedRelayFooterUrl || lastKnownSnapshotRelayUrlRef.current;
             if (!resolvedRelayUrl) return null;
@@ -1381,6 +1396,10 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         accountDirectoryHomeRecovery,
         emailPasswordRequest,
         oauthBrowserWait,
+        certificateOutcome: certificateProblem?.outcome,
+        onRetryCertificate: () => {
+            if (certificateProblem) void handleContinueWithHomeAuthentication(certificateProblem.request);
+        },
         onEmailPasswordClose: () => {
             setEmailPasswordRequest(null);
             dispatch({ type: 'wizard/back' });

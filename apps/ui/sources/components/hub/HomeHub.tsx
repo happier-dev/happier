@@ -445,14 +445,14 @@ function HomeNewRowTarget(props: Readonly<{
  * Home's machines is running, the getting-started guidance is the home instead; with no machine yet,
  * Home itself shows and its Machines and Capacity widgets carry the first steps (58d AF1).
  */
-export const HomeHub = React.memo(function HomeHub() {
+export const HomeHub = React.memo(function HomeHub({ launchPathname }: Readonly<{ launchPathname?: string }>) {
     const presented = useLayoutPresentationActive();
     // The destination owner already hides parked Home. Suspend its Effects and
     // subscriptions too, retaining the composer, customization and scroll state.
-    return <React.Activity mode={presented ? 'visible' : 'hidden'}><HomeHubContent /></React.Activity>;
+    return <React.Activity mode={presented ? 'visible' : 'hidden'}><HomeHubContent launchPathname={launchPathname} /></React.Activity>;
 });
 
-const HomeHubContent = React.memo(function HomeHubContent() {
+const HomeHubContent = React.memo(function HomeHubContent({ launchPathname }: Readonly<{ launchPathname?: string }>) {
     const [machineSetupOpen, setMachineSetupOpen] = React.useState(false);
     const observedGuidance = useSessionGettingStartedGuidanceBaseModel();
     const homeUnavailable = useActiveHomeUnavailable();
@@ -590,7 +590,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         if (hubShown && layout.hasSnapshot && showBelowHeroSections) setBelowHeroSectionsAdmitted(true);
     }, [hubShown, layout.hasSnapshot, showBelowHeroSections]);
     useLaunchCurtainHold(arrivalPresented && !homeUnavailable && !homeArrived);
-    useMarkLaunchDestinationBodyMounted(focused && presented);
+    useMarkLaunchDestinationBodyMounted(focused && presented && (homeCovered || homeUnavailable || homeArrived), launchPathname);
     const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn }),
         [homeLoading, homePlanetDrawn, momentTarget]);
     const loadingMoment = useHomeLoadingMoment({

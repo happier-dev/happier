@@ -780,8 +780,8 @@ function createStepMotionStage(
             };
             pending = next;
             syncPresentation();
-            // Keep the old planet and chrome painted while a replacement shell mounts beneath them.
-            const backdrop = Platform.OS === 'web' && (move.kind === 'home' || move.preserveShell) ? colors().page : undefined;
+            // The Home arrival replaces the shell, including its planet and chrome.
+            const backdrop = Platform.OS === 'web' && move.kind === 'home' ? colors().page : undefined;
             if (presentation && grammar !== 'fade') {
                 const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor, chrome, backdrop);
                 if (freeze instanceof Promise) {

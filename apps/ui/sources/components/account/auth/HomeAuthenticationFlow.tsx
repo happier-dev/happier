@@ -9,7 +9,7 @@ import type { NativeAccountAdmissionV1 } from '@happier-dev/protocol/auth/native
 import type { AccountDirectoryAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { HomeAuthenticationAction } from '@/auth/capabilities/authMethodCapabilities';
 import { useAuth } from '@/auth/context/AuthContext';
-import { executeHomeAuthentication, type ExecuteHomeAuthenticationOptions } from '@/auth/flows/executeHomeAuthentication';
+import { executeHomeAuthentication, type CertificateAuthenticationFailure, type ExecuteHomeAuthenticationOptions } from '@/auth/flows/executeHomeAuthentication';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { describeHomeAuthenticationAction } from '@/components/account/auth/homeAuthenticationActionPresentation';
@@ -19,6 +19,7 @@ import { EmailPasswordAuthPanel } from '@/components/account/auth/emailPassword/
 import { completeEmailPasswordAuthentication } from '@/components/account/auth/emailPassword/completeEmailPasswordAuthentication';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
 import { WelcomeActionCard, WelcomeWayButton } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { CertificateAuthenticationProblem } from './CertificateAuthenticationProblem';
 import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeDestinationNotice';
@@ -111,6 +112,10 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
     const [passwordRequest, setPasswordRequest] = React.useState<WelcomeAuthenticationMethod | null>(() => (
         chosenAction?.execution.kind === 'email_password' ? toRequest(chosenAction) : null
     ));
+    const [certificateFailure, setCertificateFailure] = React.useState<Readonly<{
+        action: HomeAuthenticationAction;
+        outcome: CertificateAuthenticationFailure;
+    }> | null>(null);
     const [browserWait, setBrowserWait] = React.useState<OAuthBrowserWait | null>(null);
     const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
     const inFlightRef = React.useRef(false);
@@ -129,6 +134,7 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
         setKeyRequest(null);
         setPasswordRequest(null);
         setBrowserWait(null);
+        setCertificateFailure(null);
     });
     const leave = () => { abortRef.current.abort(); props.onBack(); };
     const backFromBrowser = async () => {
@@ -139,7 +145,7 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
     };
     const backFromMethod = browserWait ? () => { void backFromBrowser(); } : backToMethods;
     const methodHasBack = movesMethods && resolvedTarget !== null && arrival.state.kind === 'idle'
-        && (keyRequest !== null || passwordRequest !== null || browserWait !== null);
+        && (keyRequest !== null || passwordRequest !== null || browserWait !== null || certificateFailure !== null);
     useEscapeLayer({
         enabled: methodHasBack,
         priority: ESCAPE_LAYER_PRIORITIES.pane,
@@ -177,7 +183,7 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             moveMethod('step', () => setPasswordRequest(request));
             return;
         }
-        await executeHomeAuthentication({
+        const outcome = await executeHomeAuthentication({
             request,
             loginWithCredentials: auth.loginWithCredentials,
             returnTo: props.returnTo,
@@ -188,11 +194,17 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             signal: cancellation.signal,
             onAuthenticated: props.onAuthenticated,
             onExternalAuthStarted: props.onExternalAuthStarted,
-            onBrowserHandoff: (handoff) => moveMethod('step', () => setBrowserWait({
-                ...handoff,
-                destination: { kind: 'home', label: props.teamAdmission ? undefined : props.homeLabel },
-            })),
+            onBrowserHandoff: (handoff) => moveMethod('step', () => {
+                setCertificateFailure(null);
+                setBrowserWait({
+                    ...handoff,
+                    destination: { kind: 'home', label: props.teamAdmission ? undefined : props.homeLabel },
+                });
+            }),
         });
+        if (outcome.kind === 'certificate_failed' && !cancellation.signal.aborted) {
+            moveMethod('step', () => setCertificateFailure({ action: homeAction, outcome }));
+        }
     };
     // A chosen one-tap action is already the person's decision, so it runs on arrival through
     // the same admission as its card. The card stays as the retry if the run does not finish.
@@ -211,6 +223,16 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             <WelcomeActionCard testID="home-auth-destination-back" title={t('common.back')} iconName="arrow-left" escape
                 onPress={() => { abortRef.current.abort(); props.onBack(); }} />
         </WelcomeActionList>, 'home-auth-destination-back');
+    }
+
+    if (certificateFailure) {
+        const { action, outcome } = certificateFailure;
+        return showMethod('certificate-outcome', <CertificateAuthenticationProblem
+            outcome={outcome}
+            onRetry={() => { void admission.run(homeActionTestId(action), () => runHomeAction(action)); }}
+            retryDisabled={pendingActionId !== null}
+            onBack={chosenAction ? undefined : backToMethods}
+        />, 'home-auth-certificate-back');
     }
 
     if (browserWait) {

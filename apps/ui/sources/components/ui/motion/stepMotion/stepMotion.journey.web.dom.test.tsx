@@ -613,7 +613,7 @@ it('moves between retained standalone routes and restores the opener through the
     }
 });
 
-it('keeps the cold recovery shell painted while Back replaces it with Welcome', async () => {
+it('keeps the shared planet outside the recovery step’s Back transition', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     setReducedMotionPreferenceOverride(false);
@@ -624,40 +624,32 @@ it('keeps the cold recovery shell painted while Back replaces it with Welcome', 
     const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
     const container = document.body.appendChild(document.createElement('div'));
     const root = createRoot(container);
-    let replace = () => {};
-    function Recovery() {
+    function Journey() {
+        const [atWelcome, setAtWelcome] = React.useState(false);
         const atmosphere = React.useRef<HTMLDivElement>(null);
         const readAtmosphere = React.useCallback(() => atmosphere.current ?? undefined, []);
         return <>
             <div ref={atmosphere} aria-hidden>Recovery planet</div>
-            <StepMotionLayer layerKey="workflow" stepKey="recovery" webAtmosphere={readAtmosphere}>
-                <h1>Password recovery</h1>
-                <button onClick={() => runStepMove({
-                    layer: 'workflow', kind: 'back', toWelcome: true, preserveShell: true, commit: replace,
-                })}>Back</button>
+            <StepMotionLayer layerKey="workflow" stepKey={atWelcome ? 'welcome' : 'recovery'} webAtmosphere={readAtmosphere}>
+                {atWelcome ? <h1>Welcome</h1> : <>
+                    <h1>Password recovery</h1>
+                    <button onClick={() => runStepMove({
+                        layer: 'workflow', kind: 'back', toWelcome: true, commit: () => setAtWelcome(true),
+                    })}>Back</button>
+                </>}
             </StepMotionLayer>
         </>;
-    }
-    function Journey() {
-        const [route, setRoute] = React.useState<'recovery' | 'loading' | 'welcome'>('recovery');
-        replace = () => setRoute('loading');
-        return route === 'recovery' ? <Recovery /> : route === 'loading'
-            ? <button onClick={() => setRoute('welcome')}>Load Welcome</button>
-            : <StepMotionLayer layerKey="workflow" stepKey="welcome"><h1>Welcome</h1></StepMotionLayer>;
     }
     try {
         await act(async () => root.render(<StepMotionStage><Journey /></StepMotionStage>));
         await act(async () => { await vi.dynamicImportSettled(); });
+        const planet = container.firstElementChild;
         await act(async () => container.querySelector('button')!.click());
-        expect(container.textContent).toBe('Load Welcome');
-        const frozen = [...document.querySelectorAll<HTMLElement>('body > [aria-hidden="true"]')].find(node => node.inert);
-        expect(frozen?.textContent ?? '').toContain('Recovery planet');
-        expect(frozen?.textContent ?? '').toContain('Password recovery');
-        await act(async () => container.querySelector('button')!.click());
+        expect(container.firstElementChild).toBe(planet);
         expect(document.activeElement).toBe(container.querySelector('h1'));
-        expect(container.textContent).toBe('Welcome');
+        expect(document.body.textContent?.match(/Recovery planet/g)).toHaveLength(1);
+        expect(container.querySelector('h1')?.textContent).toBe('Welcome');
         await act(async () => skipStepMotion());
-        expect(frozen?.isConnected).toBe(false);
     } finally {
         await act(async () => root.unmount());
         container.remove();

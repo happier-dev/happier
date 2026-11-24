@@ -28,6 +28,8 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { SignedOutRecoveryWorkflow } from '@/components/onboarding/preAuth/SignedOutRecoveryWorkflow';
+import { firstRouteParam } from '@/components/settings/teams/teamRouteParams';
 
 class HomeConnectRequiresDraft extends Error {}
 
@@ -109,7 +111,14 @@ export function RootLayoutRedirectGate({ children }: { children: React.ReactNode
             : <Redirect href={resolveWebServerEntrySignInRoute() as never} />;
     }
 
-    return <>{children}</>;
+    return <SignedOutRecoveryWorkflow
+        pathname={pathname}
+        signedIn={isAuthenticated}
+        homeTarget={firstRouteParam(globalSearchParams.target) || null}
+        navigation={router}
+    >
+        {children}
+    </SignedOutRecoveryWorkflow>;
 }
 
 /** Boot refuses unknown Home credentials; retain that refusal without mounting the protected route. */

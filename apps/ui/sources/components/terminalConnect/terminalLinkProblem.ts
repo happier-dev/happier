@@ -1,6 +1,7 @@
-import type { TerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
+import type { TerminalConnectHomeFailure, TerminalConnectLinkState } from '@/auth/terminal/terminalConnectContinuation';
 import type { Router } from 'expo-router';
 import { t } from '@/text';
+import { homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
 
 import type { TerminalConnectSurfaceState } from './TerminalConnectSurface';
 
@@ -14,7 +15,9 @@ const SCAN_TERMINAL_HREF = '/scan/terminal';
  * scanner (which also takes a pasted link). Both terminal routes present a dead link through this.
  */
 export function terminalLinkProblemMessage(params: Readonly<{
-    linkState: Exclude<TerminalConnectLinkState, 'ready'>;
+    linkState: Exclude<TerminalConnectLinkState, 'ready'> | 'unavailable';
+    homeFailure?: TerminalConnectHomeFailure | null;
+    serverUrl?: string;
     signedIn: boolean;
     navigate: Router['replace'];
 }>): TerminalConnectSurfaceState {
@@ -22,7 +25,13 @@ export function terminalLinkProblemMessage(params: Readonly<{
         ? { title: t('connect.updateRequiredTitle'), description: t('connect.legacyPairingUpdateRequiredBody') }
         : params.linkState === 'expired'
             ? { title: t('modals.authRequestExpired'), description: t('modals.authRequestExpiredDescription') }
-            : { title: t('terminal.invalidConnectionLink'), description: t('terminal.invalidConnectionLinkDescription') };
+            : params.linkState === 'unavailable'
+                ? {
+                    title: t('welcome.serverUnavailableTitle'),
+                    description: (params.homeFailure && homeConnectFailureMessage(params.homeFailure))
+                        || t('welcome.serverUnavailableBody', { serverUrl: params.serverUrl ?? '' }),
+                }
+                : { title: t('terminal.invalidConnectionLink'), description: t('terminal.invalidConnectionLinkDescription') };
     const href = params.signedIn ? SCAN_TERMINAL_HREF : RESTORE_LINK_ENTRY_HREF;
     return {
         kind: 'message',

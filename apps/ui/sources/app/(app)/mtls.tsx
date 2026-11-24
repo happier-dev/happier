@@ -16,6 +16,8 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountServiceReturn } from '@/auth/accountDirectory/accountDirectoryNavigation';
 import { acquireAccountServiceAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import {
     presentFirstKeyCredentialLifecycle,
 } from '@/components/account/presentFirstKeyCredentialLifecycle';
@@ -26,6 +28,7 @@ import { admitInternalRouteHref, tryAdmitInternalRouteHref } from '@/utils/path/
 export default function MtlsCallbackScreen() {
     const auth = useAuth();
     const params = useLocalSearchParams();
+    const [failure, setFailure] = React.useState<Readonly<{ message: string; returnTo: string }> | null>(null);
     const destinationRouter = useRouter();
     const replaceAdmitted = useEventCallback((href: Href) => destinationRouter.replaceAdmitted(href));
 
@@ -43,11 +46,12 @@ export default function MtlsCallbackScreen() {
                     if (!mounted) return;
                     if (!state.serverMismatch && pending?.provider === 'mtls' && pending.serverUrl
                         && await TokenStorage.isPendingExternalAuthContinuationCurrent(pending)) {
-                        await Modal.alert(t('common.error'), authenticationErrorMessage(
-                            createAuthenticationFailure(403, { error }), pending.serverUrl,
-                        ) ?? t('errors.operationFailed'));
                         if (!mounted) return;
-                        router.replace('/');
+                        setFailure({
+                            message: authenticationErrorMessage(createAuthenticationFailure(403, { error }), pending.serverUrl)
+                                ?? t('errors.operationFailed'),
+                            returnTo: '/',
+                        });
                         return;
                     }
                 }
@@ -147,10 +151,15 @@ export default function MtlsCallbackScreen() {
                     if (!res.ok || !json || typeof json.token !== 'string'
                         || (pending.teamContinuation && json.teamId !== pending.teamContinuation.teamId)) {
                         await TokenStorage.clearPendingExternalAuth(target);
-                        await Modal.alert(t('common.error'), authenticationErrorMessage(
-                            createAuthenticationFailure(res.status, json), serverUrl,
-                        ) ?? t('errors.operationFailed'));
-                        router.replace(admitInternalRouteHref(failureReturnTo));
+                        if (!mounted) return;
+                        const denial = createAuthenticationFailure(res.status, json);
+                        const message = authenticationErrorMessage(denial, serverUrl) ?? t('errors.operationFailed');
+                        if (denial.code) {
+                            setFailure({ message, returnTo: failureReturnTo });
+                        } else {
+                            await Modal.alert(t('common.error'), message);
+                            router.replace(admitInternalRouteHref(failureReturnTo));
+                        }
                         return;
                     }
 
@@ -241,6 +250,15 @@ export default function MtlsCallbackScreen() {
             controller.abort();
         };
     }, [auth, params.admissionReference, params.code, replaceAdmitted]);
+
+    if (failure) return <AuthRouteStepFrame
+        testID="mtls-callback-outcome"
+        title={t('welcome.signInWithCertificate')}
+        subtitle={failure.message}
+        onBack={() => router.replace(admitInternalRouteHref(failure.returnTo))}
+        mark={<StepMark iconName="shield-check" />}
+        status
+    />;
 
     return (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

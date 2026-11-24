@@ -73,6 +73,18 @@ describe('executeHomeAuthentication native mTLS', () => {
         boundary.openUrl.mockResolvedValue(undefined);
     });
 
+    it('returns the server’s typed missing-certificate outcome to the sign-in step', async () => {
+        const originalOs = Platform.OS;
+        Platform.OS = 'web';
+        try {
+            boundary.request.mockResolvedValueOnce(Response.json({ error: 'mtls-required' }, { status: 401 }));
+            const outcome = await executeHomeAuthentication({ request, loginWithCredentials: vi.fn(), returnTo: '/' });
+            expect(outcome).toEqual({ kind: 'certificate_failed', reason: 'certificate_required' });
+        } finally {
+            Platform.OS = originalOs;
+        }
+    });
+
     it('prepares Team mTLS, stores only opaque Team custody, and opens the safe server URL', async () => {
         const onExternalAuthStarted = vi.fn();
         const onAuthenticated = vi.fn();

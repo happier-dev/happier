@@ -76,7 +76,10 @@ function readDebugWebQueryParam(name: string): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps) {
+export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardingWizardEntry(props: PreAuthOnboardingWizardEntryProps & Readonly<{
+    recovery?: React.ReactNode;
+    onRecoveryBack?: () => void;
+}>) {
     const auth = useAuth();
     const router = useRouter();
     const { step } = useLocalSearchParams<{ step?: string | string[] }>();
@@ -175,6 +178,10 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
                 destination: { kind: 'home', label: authEntryOptions.homeLabel ?? undefined },
             }),
         });
+        if (outcome.kind === 'certificate_failed') {
+            context.presentCertificateOutcome?.(outcome);
+            return;
+        }
         // Every native email/password action owns a controller the generic
         // helper deliberately refuses to run. Welcome hosts the same shared
         // controller the auth-entry surface embeds, as its next workflow step.
@@ -297,18 +304,20 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             controller={controller}
         />
     );
-    const shellTestID = props.testID ?? resolveUnauthShellRouteTestId(controller.stepId);
+    const stepId = props.recovery ? 'e2ee-password-recovery' : controller.stepId;
+    const shellTestID = props.testID ?? (props.recovery ? 'unauth-shell-e2ee-password-recovery' : resolveUnauthShellRouteTestId(stepId));
     const renderClassicShell = (children: React.ReactNode) => (
         <UnauthenticatedSplitShell
-            stepId={controller.stepId}
-            isWelcomeStep={controller.stepId === 'welcome'}
-            onBack={controller.onBack ?? undefined}
-            footerAccessory={workflowFooterAccessory}
+            stepId={stepId}
+            isWelcomeStep={stepId === 'welcome'}
+            showMobileWordmark={!!props.recovery}
+            onBack={props.recovery ? props.onRecoveryBack : controller.onBack ?? undefined}
+            footerAccessory={props.recovery ? undefined : workflowFooterAccessory}
             testID={shellTestID}
         >
             {children}
         </UnauthenticatedSplitShell>
     );
 
-    return renderClassicShell(wizardFallback);
+    return renderClassicShell(props.recovery ?? wizardFallback);
 });

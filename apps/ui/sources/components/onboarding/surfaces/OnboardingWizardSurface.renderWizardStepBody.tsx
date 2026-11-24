@@ -33,6 +33,8 @@ import { WelcomeDecisionPanel } from '../preAuth/WelcomeDecisionPanel';
 import { HomeAddForm } from '@/components/homes/add/HomeAddForm';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
 import { EmailPasswordAuthStep, type EmailPasswordAuthStepRequest } from '@/components/account/auth/emailPassword/EmailPasswordAuthStep';
+import { CertificateAuthenticationProblem } from '@/components/account/auth/CertificateAuthenticationProblem';
+import type { CertificateAuthenticationFailure } from '@/auth/flows/executeHomeAuthentication';
 import { OAuthBrowserWaitStep, type OAuthBrowserWait } from '@/components/account/auth/OAuthBrowserWaitStep';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { AccountServiceSelectionForm, type AccountServiceSelectionFormProps } from '@/components/account/auth/AccountServiceSelectionForm';
@@ -87,6 +89,8 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     accountDirectoryKeyRequest: WelcomeAuthenticationMethod | null;
     emailPasswordRequest: EmailPasswordAuthStepRequest | null;
     oauthBrowserWait: OAuthBrowserWait | null;
+    certificateOutcome?: CertificateAuthenticationFailure;
+    onRetryCertificate: () => void;
     onEmailPasswordClose: () => void;
     accountDirectoryHomeRecovery: Readonly<{
         kind: 'home_auth' | 'continuation';
@@ -219,6 +223,13 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     if (params.stepId === 'auth_oauth_browser_wait') {
         return params.oauthBrowserWait ? <OAuthBrowserWaitStep wait={params.oauthBrowserWait} /> : null;
+    }
+
+    if (params.stepId === 'auth_certificate') {
+        return params.certificateOutcome ? <CertificateAuthenticationProblem
+            outcome={params.certificateOutcome}
+            onRetry={params.onRetryCertificate}
+        /> : null;
     }
 
     if (params.stepId === 'auth_email_password') {

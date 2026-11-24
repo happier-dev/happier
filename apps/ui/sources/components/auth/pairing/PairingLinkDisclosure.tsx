@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -43,8 +44,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     link: {
         marginTop: theme.space.s10,
-        color: theme.colors.text.secondary,
-        lineHeight: 18,
     },
     actions: {
         marginTop: theme.space.s12,
@@ -52,6 +51,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
     },
 }));
+
+const readOnly = () => {};
 
 export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(props: Readonly<{
     testIDPrefix: string;
@@ -83,35 +84,40 @@ export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(p
             {expanded ? <View testID={props.testIDPrefix} style={styles.body}>
                 <Text style={styles.warning}>{t('connect.pairingLinkSecurityWarning')}</Text>
                 {props.link ? (
-                    <Text testID={`${props.testIDPrefix}-value`} style={styles.link} selectable>
-                        {props.link}
-                    </Text>
+                    <>
+                        <View style={styles.link}>
+                            <FieldTextInput
+                                testID={`${props.testIDPrefix}-value`}
+                                accessibilityLabel={t('connect.showPairingLink')}
+                                value={props.link}
+                                onChangeText={readOnly}
+                                editable={false}
+                                monospace
+                                trailing={
+                                    <RoundButton
+                                        testID={`${props.testIDPrefix}-copy`}
+                                        size="small"
+                                        title={t('common.copy')}
+                                        display="inverted"
+                                        action={async () => {
+                                            const copied = await writeClipboard(props.link!);
+                                            if (!copied) {
+                                                await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
+                                                return;
+                                            }
+                                            copyFeedback.markCopied();
+                                        }}
+                                    />
+                                }
+                            />
+                        </View>
+                        <CopiedPill
+                            visible={copyFeedback.isCopied()}
+                            testID={`${props.testIDPrefix}-copy-feedback`}
+                        />
+                    </>
                 ) : null}
-                <View style={styles.actions}>
-                    {props.link ? (
-                        <>
-                            <RoundButton
-                                testID={`${props.testIDPrefix}-copy`}
-                                size="small"
-                                title={t('common.copy')}
-                                display="inverted"
-                                action={async () => {
-                                    const copied = await writeClipboard(props.link!);
-                                    if (!copied) {
-                                        await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
-                                        return;
-                                    }
-                                    copyFeedback.markCopied();
-                                }}
-                            />
-                            <CopiedPill
-                                visible={copyFeedback.isCopied()}
-                                testID={`${props.testIDPrefix}-copy-feedback`}
-                            />
-                        </>
-                    ) : null}
-                    {props.children}
-                </View>
+                {props.children ? <View style={styles.actions}>{props.children}</View> : null}
             </View> : null}
         </View>
     );

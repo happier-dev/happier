@@ -109,7 +109,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
 });
 
-it('does not redirect preauth terminal pairing to an unreachable unsaved Home', async () => {
+it('presents typed Home unavailability in the terminal step without redirecting or alerting', async () => {
     runtimeFetchSpy.mockClear();
     vi.stubGlobal('localStorage', createStorage());
     vi.stubGlobal('sessionStorage', createStorage());
@@ -130,8 +130,8 @@ it('does not redirect preauth terminal pairing to an unreachable unsaved Home', 
     const { Modal } = await import('@/modal');
     vi.mocked(Modal.alert).mockClear();
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><TerminalConnectScreen /></InjectedAuthProvider>);
-    // URL-only admission reports its settled failure by alert; descriptor failure uses the surface card.
-    await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', expect.any(String)));
+    await vi.waitFor(() => expect(screen.findByTestId('terminal-connect-surface-title')?.props.children).toBe('welcome.serverUnavailableTitle'));
+    expect(Modal.alert).not.toHaveBeenCalled();
 
     expect(runtimeFetchSpy).toHaveBeenCalledWith('https://unreachable.example.test/health', expect.any(Object));
     expect(replaceSpy).not.toHaveBeenCalled();

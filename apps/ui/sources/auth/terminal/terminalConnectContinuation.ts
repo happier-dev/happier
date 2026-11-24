@@ -7,12 +7,14 @@ import { normalizeServerUrl, setActiveServerAndSwitch } from '@/sync/domains/ser
 import { shouldSwitchToServerUrl } from '@/sync/domains/server/url/serverUrlOverridePolicy';
 import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/selection/serverSelectionScope';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
+import { connectHomeAtAddress, type ConnectHomeAtAddressResult } from '@/sync/ops/home/connectHomeAtAddress';
 import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { resolveTerminalConnectPreAuthTarget, type ParsedTerminalConnectUrl, type TerminalConnectPreAuthTargetDecision } from '@/utils/path/terminalConnectUrl';
 import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
+
+export type TerminalConnectHomeFailure = Exclude<ConnectHomeAtAddressResult, { kind: 'connected' | 'declined' }>;
 
 export type TerminalConnectLinkState = 'ready' | 'invalid' | 'expired' | 'update_required';
 
@@ -31,6 +33,7 @@ export async function openTerminalConnectApproval(request: ParsedTerminalConnect
     navigate: (href: ReturnType<typeof terminalConnectResumeHref> | '/scan/terminal') => void;
     refreshAuth: () => Promise<void>;
     isAuthenticated: boolean;
+    onHomeFailure?: (failure: TerminalConnectHomeFailure) => void;
 }>): Promise<TerminalConnectEntryResult> {
     const state = resolveTerminalConnectLinkState(request);
     if (state === 'expired') return state;
@@ -47,7 +50,9 @@ export async function openTerminalConnectApproval(request: ParsedTerminalConnect
     if (options.isAuthenticated && shouldSwitchToServerUrl({ targetServerUrl: target.pendingServerUrl, activeServerUrl: signedInServerUrl })) {
         if (!await confirmTerminalConnectHomeSwitch(target.pendingServerUrl, signedInServerUrl)) return 'declined';
     }
-    const serverUrl = await focusTerminalConnectTarget({ request, serverUrl: target.pendingServerUrl, refreshAuth: options.refreshAuth });
+    const serverUrl = await focusTerminalConnectTarget({
+        request, serverUrl: target.pendingServerUrl, refreshAuth: options.refreshAuth, onHomeFailure: options.onHomeFailure,
+    });
     if (serverUrl) options.navigate(terminalConnectResumeHref());
     return serverUrl ? 'opened' : 'declined';
 }
@@ -95,6 +100,7 @@ export async function focusTerminalConnectTarget(params: Readonly<{
     request: ParsedTerminalConnectUrl;
     serverUrl: string;
     refreshAuth: () => Promise<void>;
+    onHomeFailure?: (failure: TerminalConnectHomeFailure) => void;
 }>): Promise<string | null> {
     if (params.request.homeConnectionDescriptor) {
         // Matching addresses do not establish the link's identity or transport.
@@ -121,7 +127,11 @@ export async function focusTerminalConnectTarget(params: Readonly<{
             return null;
         }
         if (connected.kind !== 'connected') {
-            Modal.alert(t('common.error'), homeConnectFailureMessage(connected) ?? t('common.error'));
+            if (params.onHomeFailure) {
+                params.onHomeFailure(connected);
+            } else {
+                Modal.alert(t('welcome.serverUnavailableTitle'), homeConnectFailureMessage(connected) ?? t('errors.operationFailed'));
+            }
             return null;
         }
         profile = connected.profile;

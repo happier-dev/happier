@@ -218,7 +218,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
 
     const onAction = (index: number) => {
         const action = model.actions[index]?.action;
-        if (action) props.onLeaveRestore?.();
+        // The certificate step owns its own result. Let the mounted QR retain
+        // its waiting state until that new step takes over.
+        if (action && !(action.kind === 'authenticate' && action.request.execution.kind === 'mtls')) {
+            props.onLeaveRestore?.();
+        }
         switch (action?.kind) {
             case 'scan_or_paste_home': return props.onOpenRestore();
             case 'choose_home': return model.chooseHomeDestination === 'picker'

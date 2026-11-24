@@ -1453,9 +1453,11 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('welcome-provider-primary')).toBeTruthy();
     });
 
-    it('uses the mTLS primary action for managed certificate login states', async () => {
+    it('shows the typed certificate failure as a step and retries the same action', async () => {
         await focusHomeAtAddress('https://relay.example.test');
-        const onContinueWithHomeAuthentication = vi.fn();
+        const onContinueWithHomeAuthentication = vi.fn<NonNullable<import('./useOnboardingWizardController').OnboardingWizardSurfaceProps['onContinueWithHomeAuthentication']>>(
+            async (_request, context) => context.presentCertificateOutcome?.({ kind: 'certificate_failed', reason: 'certificate_required' }),
+        );
         const mtlsAction = {
             method: { id: 'mtls', enabledActions: [{ id: 'login', mode: 'keyless' }] },
             action: { id: 'login', mode: 'keyless' },
@@ -1493,6 +1495,12 @@ describe('OnboardingWizardSurface', () => {
                 signal: expect.objectContaining({ aborted: false }),
             }),
         );
+        expect(getOnboardingStepId(screen)).toBe('auth_certificate');
+        expect(screen.findByTestId('home-auth-certificate-outcome')).toBeTruthy();
+        await pressOnboarding(screen, 'home-auth-certificate-retry');
+        expect(onContinueWithHomeAuthentication).toHaveBeenCalledTimes(2);
+        await pressOnboarding(screen, 'onboarding-wizard-back');
+        expect(getOnboardingStepId(screen)).toBe('welcome');
     });
 
     it('keeps restore navigation available while auth capability loading is unresolved', async () => {

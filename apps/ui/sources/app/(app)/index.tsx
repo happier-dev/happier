@@ -10,6 +10,7 @@ import { WorkspacePhoneHomeArrivalContext, WorkspaceShellWillHostRoutesContext }
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
+import { HostedSignedOutRouteContext } from '@/components/onboarding/preAuth/SignedOutRecoveryWorkflow';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 import { isAuthenticatedRootDeepLinkRedirectAllowed } from '@/auth/routing/authenticatedRootDeepLinkRedirectAllowed';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -42,6 +43,7 @@ export function Home() {
     const router = useRouter();
     const focused = useIsFocused();
     const destinationInstance = useDestinationInstanceKey();
+    const signedOutHosted = React.useContext(HostedSignedOutRouteContext) === '/';
     const workspaceWillHostHome = React.useContext(WorkspaceShellWillHostRoutesContext);
     const phoneHomeArrival = React.useContext(WorkspacePhoneHomeArrivalContext);
     const params = useLocalSearchParams<{
@@ -155,6 +157,7 @@ export function Home() {
     }, [askHappierReady, firstRun, focused, homeVisible, isAuthenticated, keepBootstrapShell, params, pendingSetup,
         phoneHomeArrival, router, scope, serverId, startAskHappier]);
 
+    if (signedOutHosted) return null;
     if (firstRun) {
         return <PersonalHomeBootstrapContent><PreAuthOnboardingWizardEntry /></PersonalHomeBootstrapContent>;
     }

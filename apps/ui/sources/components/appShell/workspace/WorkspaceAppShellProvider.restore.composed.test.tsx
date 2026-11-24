@@ -16,7 +16,11 @@ installTokenStorageWebPlatformMocks();
 // bootstrap, declaration publication and workspace admission use production owners.
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/', segments: [] }).module);
+const navigation = vi.hoisted(() => ({ pathname: '/' }));
+vi.mock('expo-router', async () => ({
+    ...(await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/', segments: [] }).module,
+    usePathname: () => navigation.pathname,
+}));
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Markdown is outside this Account restoration journey'); },
 }));
@@ -43,7 +47,10 @@ const { sync } = await import('@/sync/sync');
 const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 afterAll(() => vi.unstubAllGlobals());
 
-it('keeps the 390 px launch planet through the lazy gap until Home is presented', async () => {
+it('keeps the 390 px launch planet through the lazy gap at /home until Home is presented', async () => {
+    navigation.pathname = '/home';
+    const previousHref = window.location.href;
+    window.history.replaceState(null, '', '/home');
     const { finishLaunchCurtain, holdLaunchCurtain, useMarkLaunchDestinationBodyMounted, useLaunchCurtainState } = await import('@/boot/launchCurtain');
     const { HomeHubLoading } = await import('@/components/hub/HomeHubLoading');
     const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
@@ -70,8 +77,12 @@ it('keeps the 390 px launch planet through the lazy gap until Home is presented'
         return React.createElement('Curtain', { state: useLaunchCurtainState() });
     }
     function PresentedHome() {
-        useMarkLaunchDestinationBodyMounted(true);
+        useMarkLaunchDestinationBodyMounted(true, '/home');
         return React.createElement('PresentedHome');
+    }
+    function BackgroundBody() {
+        useMarkLaunchDestinationBodyMounted(true);
+        return null;
     }
     const app = (body: React.ReactNode) => <AuthProvider initialCredentials={credentials}>
         <AppShellPluginUiProjectionProvider><WorkspaceAppShellProvider>{body}</WorkspaceAppShellProvider></AppShellPluginUiProjectionProvider>
@@ -91,7 +102,7 @@ it('keeps the 390 px launch planet through the lazy gap until Home is presented'
         await paint();
         expect(readCurtain()).toBe('up');
         // The Home route can commit before the retained foreground panel mounts.
-        await screen.update(app(React.createElement('HomeRoute')));
+        await screen.update(app(<BackgroundBody />));
         await paint();
         expect(readCurtain()).toBe('up');
         await screen.update(app(<PhoneTabNavRowProvider leading={null} trailing={null}>
@@ -106,6 +117,8 @@ it('keeps the 390 px launch planet through the lazy gap until Home is presented'
     } finally {
         await screen.unmount();
         finishLaunchCurtain();
+        window.history.replaceState(null, '', previousHref);
+        navigation.pathname = '/';
         dimensions.mockRestore();
         await (await restoration).dispose();
     }

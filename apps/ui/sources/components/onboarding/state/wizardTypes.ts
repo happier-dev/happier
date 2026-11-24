@@ -22,6 +22,7 @@ export type WizardStepId =
     | 'auth_lost_access'
     | 'auth_email_password'
     | 'auth_oauth_browser_wait'
+    | 'auth_certificate'
     | 'connect_home'
     | 'confirm_switch_relay';
 

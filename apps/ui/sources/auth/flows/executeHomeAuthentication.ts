@@ -190,7 +190,12 @@ function resolveNativeMtlsStartUrl(raw: string, exactServerUrl: string): string 
  * controller or fails closed, and can never reach the mTLS/OAuth tail by
  * fallthrough (L02-R28).
  */
+export type CertificateAuthenticationFailure =
+    | Readonly<{ kind: 'certificate_failed'; reason: 'certificate_required' | 'certificate_rejected' }>
+    | Readonly<{ kind: 'certificate_failed'; reason: 'request_failed'; message?: string }>;
+
 export type HomeAuthenticationExecutionOutcome =
+    | CertificateAuthenticationFailure
     | Readonly<{ kind: 'handled' }>
     | Readonly<{
         kind: 'no_effect';
@@ -221,11 +226,10 @@ export async function executeHomeAuthentication(
         await options.onExternalAuthStarted?.();
         return { kind: 'handled' };
     }
-    await runExecutableHomeAuthentication(options);
-    return { kind: 'handled' };
+    return await runExecutableHomeAuthentication(options) ?? { kind: 'handled' };
 }
 
-async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticationOptions): Promise<void> {
+async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticationOptions): Promise<CertificateAuthenticationFailure | void> {
     const request = options.request;
     if (request.authority.purpose !== 'home') return;
     const resolvedTarget = resolveHomeAuthenticationTarget(request.authority.target);
@@ -567,6 +571,13 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
                     : {}),
             }, { includeAuth: false });
             const payload = await response.json().catch(() => null);
+            if (options.signal?.aborted) return;
+            if (response.status === 401 && payload?.error === 'mtls-required') {
+                return { kind: 'certificate_failed', reason: 'certificate_required' };
+            }
+            if (response.status === 403 && payload?.error === 'not-eligible') {
+                return { kind: 'certificate_failed', reason: 'certificate_rejected' };
+            }
             if (!response.ok) throw createAuthenticationFailure(response.status, payload);
             if (!payload || typeof payload.token !== 'string') throw new Error('Invalid mTLS response');
             if (options.signal?.aborted) return;
@@ -580,9 +591,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
         }
     } catch (error) {
         if (options.signal?.aborted) return;
-        const message = authenticationErrorMessage(error, resolvedTarget.canonicalServerUrl, { isPersonalHome }) ?? (process.env.EXPO_PUBLIC_DEBUG
-            ? formatOperationFailedDebugMessage(t('errors.operationFailed'), error)
-            : t('errors.operationFailed'));
-        await Modal.alert(t('common.error'), message);
+        const message = authenticationErrorMessage(error, resolvedTarget.canonicalServerUrl, { isPersonalHome });
+        return { kind: 'certificate_failed', reason: 'request_failed', ...(message ? { message } : {}) };
     }
 }
