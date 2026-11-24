@@ -15,6 +15,9 @@ import {
   standardCleanup,
   waitForTestEvent,
 } from '@/dev/testkit';
+import { ApprovalTechnicalDetails } from '@/components/approvals/ActionApprovalFieldsCard';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { renderAccountScreen as renderScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -58,6 +61,7 @@ vi.mock('@/modal', async () => {
 });
 afterEach(standardCleanup);
 afterEach(async () => {
+  (await import('./inlineAddDraft')).forgetInlineAddDraftsForTest();
   // The modal presentation boundary outlives individual screen mounts.
   (await import('@/modal')).Modal.hideAll();
   machineProjectionReplies.clear();
@@ -180,7 +184,8 @@ async function renderTab(
 ) {
   const receipt = createDeploymentReceiptDetailV1();
   const controller = createDeploymentReadControllerV1({
-    scope: { ...scope, serverId: detail.environment.serverId },
+    scope: { ...scope, serverId: detail.environment.serverId,
+      accountId: typeof extra.accountId === 'string' ? extra.accountId : scope.accountId },
     transport: {
       listEnvironments: async () => ({
         ok: true,
@@ -364,7 +369,7 @@ describe('Environment → Domains', () => {
         const chooser = screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0];
         chooser?.props.onChange({ kind: 'account', account: credentialRef }, null);
       });
-      await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
       await act(async () => {
         for (const [field, value] of Object.entries({ accountId: 'cf-account',
           imageRef: 'cloudflare/cloudflared:2026.10', version: '2026.10' })) {
@@ -450,16 +455,17 @@ describe('Environment → Domains', () => {
       expect(screen.findByTestId(`${id}.ingress.imageRef`)).toBeNull();
       expect(screen.findByTestId(`${id}.ingress.version`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
-      expect(inspectPlatformTarget).toHaveBeenCalledExactlyOnceWith(
+      expect(inspectPlatformTarget).toHaveBeenNthCalledWith(1,
         'happier.deploy.cloudflare/actions/cloudflare-named/selections-read',
         { credentialRef, hostname: 'docs.happier.dev' }, { signal: expect.any(AbortSignal) });
+      expect(inspectPlatformTarget).toHaveBeenCalledTimes(count === 1 ? 2 : 1);
       expect(screen.findByTestId(`${id}.ingress.zoneId`)).toBeNull();
       if (count === 1) {
-        await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
+        await screen.pressByTestIdAsync(`${id}.advanced.header`);
         expect(screen.findByTestId(`${id}.ingress.accountId`)?.props.value).toBe(defaults.accountId);
         expect(screen.findByTestId(`${id}.ingress.imageRef`)?.props.value).toBe(defaults.connector.imageRef);
         expect(screen.findByTestId(`${id}.ingress.version`)?.props.value).toBe(defaults.connector.version);
-        await screen.pressByTestIdAsync(`${id}.ingress.advanced.header`);
+        await screen.pressByTestIdAsync(`${id}.advanced.header`);
       }
       if (count !== 1) {
         expect(screen.findByTestId(`${id}.ingress.read`)).toBeNull();
@@ -471,13 +477,61 @@ describe('Environment → Domains', () => {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const zonePicker = screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${id}.ingress.zone`)!;
         await act(async () => zonePicker.props.onSelect('zone-1'));
+        await screen.pressByTestIdAsync(`${id}.ingress.read`);
       }
-      await screen.pressByTestIdAsync(`${id}.ingress.read`);
+      expect(inspectPlatformTarget).toHaveBeenCalledTimes(2);
       expect(inspectPlatformTarget).toHaveBeenLastCalledWith(
         'happier.deploy.cloudflare/actions/cloudflare-named/selections-read', expect.objectContaining({ zoneId: `zone-${count === 2 ? 1 : 0}` }), { signal: expect.any(AbortSignal) });
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ content: expect.objectContaining({ ingress }) }));
     } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it.each(['empty', 'partial', 'denied'] as const)('keeps the Domains read state truthful while Add is open (%s)', async state => {
+    const id = 'project-deployments.environment.domains';
+    const { screen, controller, settle } = await renderTab('domains', createDeploymentEnvironmentDetailV1(), {
+      listDomains: async () => state === 'denied'
+        ? { ok: false, failure: { code: 'deployment_access_denied', retryable: false } }
+        : { ok: true, value: { items: [], nextCursor: null, coverage: state === 'partial' ? 'partial' : 'complete' } },
+    }, { domainActions: { addDomain: vi.fn(), verifyDomain: vi.fn(), removeDomain: vi.fn() } });
+    const readState = state === 'partial' ? 'error' : state;
+    try {
+      expect(await settle(`${id}.${readState}`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.add`);
+      expect(screen.findByTestId(`${id}.add.host`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.empty`)).toBeNull();
+      if (state !== 'empty') expect(screen.findByTestId(`${id}.${readState}`)).not.toBeNull();
+      if (state === 'partial') expect(screen.findAllByType(ApprovalTechnicalDetails)).toHaveLength(1);
+      if (state === 'denied') expect(screen.findAllByType(SurfaceStateCard)
+        .find(node => node.props.testID === `${id}.denied`)?.props.diagnosticCode).toBe('deployment_access_denied');
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('restores an Add draft on the same Account and keeps it out of another Account on the same Home', async () => {
+    const id = 'project-deployments.environment.domains';
+    const detail = createDeploymentEnvironmentDetailV1();
+    const actions = { addDomain: vi.fn(), verifyDomain: vi.fn(), removeDomain: vi.fn() };
+    const mount = (accountId: string) => renderTab('domains', detail, {
+      listDomains: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+    }, { accountId, domainActions: actions });
+    const original = await mount(scope.accountId);
+    try {
+      expect(await original.settle(`${id}.add`)).not.toBeNull();
+      await original.screen.pressByTestIdAsync(`${id}.add`);
+      await act(async () => original.screen.changeTextByTestId(`${id}.add.host`, 'draft.happier.dev'));
+    } finally { await original.screen.unmount(); original.controller.retire(); }
+
+    const other = await mount('another-account');
+    try {
+      expect(await other.settle(id)).not.toBeNull();
+      expect(other.screen.findByTestId(`${id}.add`)).not.toBeNull();
+      expect(other.screen.findByTestId(`${id}.add.host`)).toBeNull();
+    } finally { await other.screen.unmount(); other.controller.retire(); }
+
+    const reopened = await mount(scope.accountId);
+    try {
+      expect((await reopened.settle(`${id}.add.host`))?.props.value).toBe('draft.happier.dev');
+    } finally { await reopened.screen.unmount(); reopened.controller.retire(); }
   });
 
   it.each([true, false])('shows partial Domain coverage with retained rows=%s instead of absence', async populated => {
@@ -523,6 +577,7 @@ describe('Environment → Domains', () => {
       expect(await settle(`${id}.d1`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.add`);
       expect(await settle(`${id}.add.host`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.add.advanced.header`);
       await act(async () => {
         screen.changeTextByTestId(`${id}.add.host`, 'Docs.Happier.dev');
         screen.changeTextByTestId(`${id}.add.service`, 'web');
@@ -575,13 +630,17 @@ describe('Environment → Domains', () => {
       if (outcome === 'unavailable') {
         expect(screen.getTextContent()).toContain('Removing');
         expect(screen.findByTestId(`${id}.menu`)).toBeNull();
-        expect(screen.findByTestId('approvals.technical-details')).toBeNull();
+        expect(screen.find(node => node.props.testID === id && node.props.contentBesidePressable === true)
+          .findAllByType(ApprovalTechnicalDetails)).toHaveLength(0);
       } else {
         expect(screen.findByTestId(`${id}.menu`)).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('Removing');
-        const disclosure = screen.findAll(node => typeof node.props.onExpandedChange === 'function')[0]!;
-        await act(async () => disclosure.props.onExpandedChange(true));
-        expect(screen.getTextContent()).toContain('not_found');
+        const row = screen.find(node => node.props.testID === id && node.props.contentBesidePressable === true);
+        const details = row.findAllByType(ApprovalTechnicalDetails);
+        expect(details).toHaveLength(1);
+        expect(details[0]!.props.lines.map(line => line.value)).toEqual(expect.arrayContaining(
+          ['not_found'],
+        ));
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const menu = screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel === item.content.hostname)!;
         expect(menu.props.items.map((entry: { id: string }) => entry.id)).toEqual(['remove']);
@@ -635,11 +694,12 @@ describe('Environment → Domains', () => {
       const menu = screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel === item.content.hostname)!;
       expect(menu.props.items.map((entry: { id: string }) => entry.id)).toEqual(['remove']);
       if (state === 'failed') {
-        const disclosure = screen.findAll(node => typeof node.props.onExpandedChange === 'function')[0]!;
-        await act(async () => disclosure.props.onExpandedChange(true));
-        expect(screen.getTextContent()).toContain('required_fact_unavailable');
-        expect(screen.getTextContent()).toContain('publicCaddyListener');
-        expect(screen.getTextContent()).toContain('Restore the public listener, then retry Remove.');
+        const row = screen.find(node => node.props.testID === id && node.props.contentBesidePressable === true);
+        const details = row.findAllByType(ApprovalTechnicalDetails);
+        expect(details).toHaveLength(1);
+        expect(details[0]!.props.lines.map(line => line.value)).toEqual(expect.arrayContaining(
+          ['required_fact_unavailable', 'publicCaddyListener', 'Restore the public listener, then retry Remove.'],
+        ));
       }
       await act(async () => menu.props.onSelect('remove'));
       expect(removeDomain).toHaveBeenCalledExactlyOnceWith({ environmentId: detail.environment.id, domainId: 'd1',
@@ -666,14 +726,15 @@ describe('Environment → Domains', () => {
         domain: { ...item.domain, operationAddress: address } }], nextCursor: null } }),
     }, { domainActions: { addDomain: vi.fn(), verifyDomain: vi.fn(), removeDomain: vi.fn() } });
     try {
-      expect(await settle('project-deployments.environment.domains.d1')).not.toBeNull();
+      const id = 'project-deployments.environment.domains.d1';
+      expect(await settle(id)).not.toBeNull();
       expect(screen.getTextContent()).toContain('Failed');
-      expect(screen.findAllHostsByTestId('approvals.technical-details')).toHaveLength(1);
-      const disclosure = screen.findAll(node => typeof node.props.onExpandedChange === 'function')[0]!;
-      await act(async () => disclosure.props.onExpandedChange(true));
-      expect(screen.getTextContent()).toContain('required_fact_unavailable');
-      expect(screen.getTextContent()).toContain('publicCaddyListener');
-      expect(screen.getTextContent()).toContain('Restore the public listener, then retry Add.');
+      const row = screen.find(node => node.props.testID === id && node.props.contentBesidePressable === true);
+      const details = row.findAllByType(ApprovalTechnicalDetails);
+      expect(details).toHaveLength(1);
+      expect(details[0]!.props.lines.map(line => line.value)).toEqual(expect.arrayContaining(
+        ['required_fact_unavailable', 'publicCaddyListener', 'Restore the public listener, then retry Add.'],
+      ));
       expect(screen.findByTestId('project-deployments.environment.domains.d1.adopt')).toBeNull();
       const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
       const menu = screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel === item.content.hostname)!;
@@ -1325,7 +1386,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
   });
 
   it('opens the health-check trigger editor for this Environment on its controller without creating a trigger', async () => {
-    const { TriggerPopover } = await import('@/components/workflows/triggers/TriggerPopover');
+    const { PluginEventAutomationEditor } = await import('@/components/automations/editor/PluginEventAutomationEditor');
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Checks', serverUrl: 'https://checks.test',
       serverIdentityId: 'srv_checks', accountId: 'account-owner', currentAccount: true });
@@ -1337,17 +1398,13 @@ describe('Environment → Settings: checks, backups, previews', () => {
     try {
       expect(await settle(`${id}.add`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.add`);
-      const editor = screen.findByType(TriggerPopover);
-      expect(editor.props).toMatchObject({ serverId: account.accountLifetime.scope.serverId, machineId: detail.environment.controllerMachineId,
-        initialWhen: { kind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'health-check-failed' } },
-        initialEventSeed: { monitoringMachineId: detail.environment.controllerMachineId,
-          setupInput: { v: 1, subject: { kind: 'environment', environmentId: detail.environment.id } } } });
-      expect(await settle('automation-plugin-event-cancel')).not.toBeNull();
+      expect(await settle(`${id}.setup`)).not.toBeNull();
+      expect(screen.findByType(PluginEventAutomationEditor).props).toMatchObject({
+        serverId: account.accountLifetime.scope.serverId, authoringMachineId: detail.environment.controllerMachineId,
+        newSourceSetup: { seed: { monitoringMachineId: detail.environment.controllerMachineId,
+          setupInput: { v: 1, subject: { kind: 'environment', environmentId: detail.environment.id } } } },
+      });
       expect(homes.requestsFor('/v1/actions/workflow.trigger.add')).toEqual([]);
-      await screen.pressByTestIdAsync('automation-plugin-event-cancel');
-      expect(await settle(`${editor.props.testID}-cancel`)).not.toBeNull();
-      await screen.pressByTestIdAsync(`${editor.props.testID}-cancel`);
-      expect(screen.findAllByType(TriggerPopover)).toEqual([]);
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
@@ -2143,8 +2200,27 @@ describe('Environment → Settings: checks, backups, previews', () => {
 
   it('sets up backups from the Environment controller even when the Account-selected old origin has no destinations', async () => {
     await homes.reset();
-    const serverId = await homes.addHome({ name: 'Backup setup', serverUrl: 'https://backup-setup.test',
-      serverIdentityId: 'srv_backup_setup', accountId: 'account-owner', currentAccount: true });
+    await initializeRealAppRuntimeForTests();
+    installHomeGovernanceBoundaries(homes);
+    const { restoreServerAccountForTest, configureConnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const serverUrl = 'https://backup-setup.test';
+    const serverIdentityId = `srv_${'6'.repeat(32)}`;
+    const accountId = 'account-owner';
+    const serverId = await homes.addHome({ name: 'Backup setup', serverUrl, serverIdentityId, accountId, currentAccount: true });
+    const { installSavedSecretCatalogHttpBoundary } = await import('@/dev/testkit/harness/savedSecretEditorHttpHarness');
+    const { SavedSecretCatalogEntryV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
+    const credentialRoles = ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const;
+    installSavedSecretCatalogHttpBoundary({ home: homes, serverId, resources: credentialRoles.map(role => ({
+      resourceId: role, encryptionMode: 'plain', recipientEnvelope: null,
+      storedContent: { t: 'plain', v: { v: 1, name: role, kind: 'apiKey', value: 'fixture-value' } },
+      entry: SavedSecretCatalogEntryV1Schema.parse({ ref: formatSharedSavedSecretRefV1(role), source: 'shared_resource',
+        relationship: 'owner', name: role, kind: 'apiKey', revision: 1, materialStatus: 'ready',
+        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } }),
+    })) });
+    const connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId,
+      credentials: { token: createAccountTokenForTests(accountId, { currentAccount: true }) },
+      configureSocket: configureConnectedServerSocketBoundary, request: homes.request });
     const account = await captureLazyActionAccountContext(serverId);
     const detail = withDatabase(createDeploymentEnvironmentDetailV1());
     const { createDeploymentActions } = await import('./deploymentActions');
@@ -2171,8 +2247,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
         const parsed = DeploymentBackupConfigureInputV1Schema.parse(input);
         configureInputs.push(parsed);
         expect(parsed.intent).toBe('save');
-        return { kind: 'needsBinding', configuration: DeploymentBackupConfigurationV1Schema.parse(
-          Reflect.get(parsed, 'configuration')), missingRoles: ['repositoryPassword', 'accessKeyId', 'secretAccessKey'] };
+        return { kind: 'configured', environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+          configuration: DeploymentBackupConfigurationV1Schema.parse(Reflect.get(parsed, 'configuration')) };
       },
     });
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
@@ -2245,6 +2321,20 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.findAllByType(RoundButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
       expect(configureInputs).toEqual([]);
       await act(async () => { field('attempts').props.onChange(3); });
+      expect(screen.findByTestId(`${id}.incomplete`)).not.toBeNull();
+      expect(screen.findAllByType(RoundButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(true);
+      expect(configureInputs).toEqual([]);
+      for (const role of credentialRoles) {
+        await screen.pressByTestIdAsync(`${id}.role.${role}.choose`);
+        const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
+        await act(async () => refreshSavedSecretCatalog(account.accountLifetime.scope, { includeMaterial: false }));
+        await measureMountedCollections(screen);
+        const choice = `saved-secret-picker:saved:${formatSharedSavedSecretRefV1(role)}`;
+        expect(await settle(choice)).not.toBeNull();
+        await screen.pressByTestIdAsync(choice);
+        expect(configureInputs).toEqual([]);
+      }
+      expect(screen.findAllByType(RoundButton).find(node => node.props.testID === `${id}.save`)?.props.disabled).toBe(false);
       await screen.pressByTestIdAsync(`${id}.save`);
       await vi.waitFor(() => expect(configureInputs).toHaveLength(1));
       expect(configureInputs[0]).toMatchObject({ intent: 'save', environmentId: detail.environment.id,
@@ -2260,10 +2350,12 @@ describe('Environment → Settings: checks, backups, previews', () => {
           ownership: { environmentId: detail.environment.id, prefix: '' },
           retention: { kind: 'keep', daily: 7, weekly: 4 },
         } });
-      // Required roles describe the candidate; no saved secret has been selected for any role yet.
-      expect(configureInputs[0]).toMatchObject({ backupBindings: [] });
-      expect(await settle(`${id}.needsBinding`)).not.toBeNull();
-    } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+      expect(configureInputs[0]).toMatchObject({ backupBindings: credentialRoles.map(role => ({
+        purpose: 'backupDestination', configKey: 'destination', role,
+        source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(role), resourceRevision: 1 },
+      })) });
+      expect(screen.findByTestId(`${id}.needsBinding`)).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); await connection.dispose(); await homes.reset(); }
   });
 
   it('keeps backup configuration unsaveable when the controller offers no database sources', async () => {
@@ -2720,11 +2812,20 @@ it('Variables presents only this Environment’s pending ref-only secret request
   await initializeRealAppRuntimeForTests();
   installHomeGovernanceBoundaries(homes);
   const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
-  const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+  const { buildApprovalRequestArtifactHeaderV1, deriveDeploymentEnvironmentApprovalSubjectKeyV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
   const { storage } = await import('@/sync/domains/state/storage');
-  const home = await homes.addHome({ name: 'Environment approval', serverUrl: 'https://environment-approval.test',
-    accountId: 'account-owner', currentAccount: true });
+  const { approvalArtifactSubjectIndexedKindV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactKindV1');
+  const { restoreServerAccountForTest, configureConnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+  const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+  const serverUrl = 'https://environment-approval.test';
+  const serverIdentityId = `srv_${'7'.repeat(32)}`;
+  const home = await homes.addHome({ name: 'Environment approval', serverUrl, serverIdentityId,
+    accountId: scope.accountId, currentAccount: true });
+  const connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId: scope.accountId,
+    credentials: { token: createAccountTokenForTests(scope.accountId, { currentAccount: true }) },
+    configureSocket: configureConnectedServerSocketBoundary, request: homes.request });
   const account = await captureLazyActionAccountContext(home);
+  const accountScope = account.accountLifetime.scope;
   const detail = createDeploymentEnvironmentDetailV1();
   const request = (environmentId: string) => ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
     actionId: 'deployments.bindings.set', summary: 'Choose deployment credential', requestedSurface: 'agent',
@@ -2740,20 +2841,53 @@ it('Variables presents only this Environment’s pending ref-only secret request
   const selected = row('selected-secret', request(detail.environment.id));
   const other = row('other-secret', request('another-environment'));
   const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
-  for (const artifact of [selected, other]) homes.artifacts(home).replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'account-owner'));
-  await act(async () => { storage.setState({ isDataReady: true, profileScope: { serverId: home, accountId: 'account-owner' } });
-    storage.getState().applyArtifacts([selected, other]); });
-  expect(storage.getState().artifactInboxOrder).toHaveLength(2);
+  const artifacts = homes.artifacts(home);
+  for (const artifact of [selected, other]) artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, accountScope.accountId));
+  const indexedKind = approvalArtifactSubjectIndexedKindV1(deriveDeploymentEnvironmentApprovalSubjectKeyV1({
+    environmentId: detail.environment.id,
+  }));
+  const indexedReads: URL[] = [];
+  const bodyReads: string[][] = [];
+  homes.answer(home, 'GET /v1/artifacts', { select: async (_input, request) => {
+    const url = new URL(request.url);
+    if (JSON.parse(url.searchParams.get('kinds') ?? '[]').includes(indexedKind)) indexedReads.push(url);
+    const response = await artifacts.handle(url.pathname + url.search, { method: 'GET' });
+    if (!response) throw new Error('Expected Artifact list boundary');
+    return { body: await response.json() };
+  } });
+  homes.answer(home, 'POST /v1/artifacts/read', { select: async input => {
+    const request = input as { artifactIds: string[]; projection?: 'headers' };
+    if (request.projection !== 'headers') bodyReads.push(request.artifactIds);
+    const response = await artifacts.handle('/v1/artifacts/read', { method: 'POST', body: JSON.stringify(input) });
+    if (!response) throw new Error('Expected Artifact read boundary');
+    return { body: await response.json() };
+  } });
+  for (const artifact of [selected, other]) {
+    const path = `/v1/artifacts/${artifact.id}`;
+    homes.answer(home, `GET ${path}`, { select: async () => {
+      bodyReads.push([artifact.id]);
+      const response = await artifacts.handle(path, { method: 'GET' });
+      if (!response) throw new Error('Expected Artifact detail boundary');
+      return { body: await response.json() };
+    } });
+  }
+  await act(async () => { storage.setState({ isDataReady: true, profileScope: accountScope }); });
+  expect(storage.getState().settingsScope).toEqual(accountScope);
+  expect(storage.getState().artifacts[selected.id]).toBeUndefined();
   const { screen, controller, settle } = await renderTab('variables', detail, {}, { lifetime: account.accountLifetime, serverId: home });
   try {
     expect(await settle('project-deployments.environment.secret-request.selected-secret')).not.toBeNull();
+    expect(indexedReads).toHaveLength(1);
+    expect(JSON.parse(indexedReads[0]!.searchParams.get('kinds')!)).toEqual([indexedKind]);
     expect(screen.findByTestId('project-deployments.environment.secret-request.other-secret')).toBeNull();
+    expect(bodyReads).toEqual([]);
     await screen.pressByTestIdAsync('project-deployments.environment.secret-request.selected-secret.review');
-    expect(await settle('approvals.in-place')).not.toBeNull();
+    await vi.waitFor(() => expect(bodyReads).toEqual([[selected.id]]));
     const settled = { ...request(detail.environment.id), status: 'canceled' as const };
-    await act(async () => { storage.getState().updateArtifact({ ...selected, header: buildApprovalRequestArtifactHeaderV1(settled),
+    const header = buildApprovalRequestArtifactHeaderV1(settled);
+    await act(async () => { storage.getState().updateArtifact({ ...selected, header, rawHeader: header,
       body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2 }); });
     expect(screen.findByTestId('project-deployments.environment.secret-request.selected-secret')).toBeNull();
     expect(screen.findByTestId('approvals.in-place')).toBeNull();
-  } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
+  } finally { await screen.unmount(); controller.retire(); account.dispose(); await connection.dispose(); await homes.reset(); }
 });

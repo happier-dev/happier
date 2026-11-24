@@ -912,7 +912,7 @@ describe('deployment scoped read transport', () => {
             await vi.waitFor(() => expect(feed()).toMatchObject({ status: 'unavailable', members: [{
                 failure: { code: 'deployment_access_denied' },
             }] }));
-            await vi.waitFor(() => expect(hook.getCurrent().result).toEqual({ status: 'denied', items: [] }));
+            await vi.waitFor(() => expect(hook.getCurrent().result).toEqual({ status: 'denied', reason: 'deployment_access_denied', items: [] }));
             expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(4);
         } finally { await hook.unmount(); controller.retire(); await flushHookEffects(); }
         await vi.waitFor(() => expect(methods).toContain(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE));

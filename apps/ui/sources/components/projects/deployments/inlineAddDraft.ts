@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * An open inline Add form (Add domain, Variables' Add) and what was typed into it, kept per form key for this app's
@@ -8,35 +9,44 @@ import * as React from 'react';
  */
 const drafts = new Map<string, Record<string, unknown>>();
 
+export function inlineAddDraftKey(
+  scope: ServerAccountScope | null,
+  environmentId: string,
+  form: 'domains' | 'variables' | 'add-check',
+): string | null {
+  return scope ? serverAccountScopedResourceKey(scope, environmentId, form) : null;
+}
+
 export function useInlineAddDraftField<T>(
-  draftKey: string,
+  draftKey: string | null,
   field: string,
   initial: T,
 ): readonly [T, (next: T | ((previous: T) => T)) => void] {
-  const [value, setValue] = React.useState<T>(() => {
-    const kept = drafts.get(draftKey);
-    return kept && field in kept ? (kept[field] as T) : initial;
-  });
+  const read = () => {
+    const kept = draftKey === null ? undefined : drafts.get(draftKey);
+    return { key: draftKey, value: kept && field in kept ? (kept[field] as T) : initial };
+  };
+  const [state, setState] = React.useState(read);
+  const current = state.key === draftKey ? state : read();
+  if (current !== state) setState(current);
   const set = React.useCallback(
     (next: T | ((previous: T) => T)) => {
-      setValue((previous) => {
+      setState((previous) => {
+        if (previous.key !== draftKey) return previous;
         const resolved =
           typeof next === 'function'
-            ? (next as (previous: T) => T)(previous)
+            ? (next as (previous: T) => T)(previous.value)
             : next;
-        if (
-          field === INLINE_ADD_OPEN &&
-          (resolved === false || resolved === null)
-        )
-          drafts.delete(draftKey);
-        else
-          drafts.set(draftKey, { ...drafts.get(draftKey), [field]: resolved });
-        return resolved;
+        if (draftKey !== null) {
+          if (field === INLINE_ADD_OPEN && (resolved === false || resolved === null)) drafts.delete(draftKey);
+          else drafts.set(draftKey, { ...drafts.get(draftKey), [field]: resolved });
+        }
+        return { key: draftKey, value: resolved };
       });
     },
     [draftKey, field],
   );
-  return [value, set] as const;
+  return [current.value, set] as const;
 }
 
 /** The field that holds whether (or which) form is open; closing it forgets the draft. */

@@ -19,7 +19,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
-import { INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
+import { inlineAddDraftKey, INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -196,7 +196,7 @@ export const DeploymentVariablesPanel = React.memo(
     }, [router]);
     const editable = draft.canEdit && !draft.saving;
     // The open Add form and what was typed in it survive a width change that recomposes the page (PAGE-ACCEPT-176 R8-D3).
-    const draftKey = `variables:${props.scope?.serverId ?? props.controlTarget?.serverId ?? ''}:${props.environmentId}`;
+    const draftKey = inlineAddDraftKey(props.scope ?? null, props.environmentId, 'variables');
     const [adding, setAdding] = useInlineAddDraftField<Adding | null>(draftKey, INLINE_ADD_OPEN, null);
     const [fact, setFact] = React.useState<DeploymentVariableFactV1>('primaryUrl');
     const [factOpen, setFactOpen] = React.useState(false);
@@ -1052,7 +1052,7 @@ function AddProviderDatabaseVariable(props: Readonly<{
 function AddReferenceVariable(
   props: Readonly<{
     /** Where the open form keeps what was typed (`useInlineAddDraftField`). */
-    draftKey: string;
+    draftKey: string | null;
     /** This Environment's Project; the "share one" link names it for this Environment's own Settings. */
     projectSourceId?: string;
     taken: readonly VariableRow[];

@@ -32,7 +32,12 @@ installDisconnectedServerSocketBoundary();
 
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | null = null;
 beforeEach(() => { resetSavedSecretCatalogEngineForTests(); resetSavedSecretCatalogSnapshotsForTests(); });
-afterEach(async () => { standardCleanup(); await home?.dispose(); home = null; });
+afterEach(async () => {
+  standardCleanup();
+  (await import('./inlineAddDraft')).forgetInlineAddDraftsForTest();
+  await home?.dispose();
+  home = null;
+});
 const prefix = 'project-deployments.environment.settings.migration';
 // These authoring cases exercise a manager's waived write; approval presentation has its own owner tests.
 const authoringSettings = settingsParse({ actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
@@ -433,7 +438,7 @@ it.each(['action_interactive_review_required', 'approval_stale', 'machine_unavai
 
 it('opens Environment alert setup before its first deployment instead of showing an unavailable placeholder', async () => {
   home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings,
-    token: authoringToken, serverIdentityId: `srv_${'9'.repeat(32)}`,
+    token: authoringToken, serverIdentityId: `srv_${'4'.repeat(32)}`,
     handleRequest: async path => path === '/v3/automations/query'
       ? Response.json({ automations: [], nextCursor: null }) : null });
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -454,13 +459,13 @@ it('opens Environment alert setup before its first deployment instead of showing
       editing={{ actions, serverId: home.scope.serverId, review: { pendingId: null, request() {}, open() {} }, onChanged() {} }}
       lifetime={context.accountLifetime} /></ModalProvider>);
     await screen.pressByTestIdAsync('project-deployments.environment.settings.checks-alerts.alerts');
-    await vi.waitFor(() => expect(screen.findByTestId('workflows-column-new-trigger-popover')).not.toBeNull());
+    await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.settings.checks-alerts.setup')).not.toBeNull());
   } finally { controller.retire(); context.dispose(); }
 });
 
 it('brings the addressed Settings section into view: Open backups lands on Backups, not Servers & build', async () => {
   home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings,
-    token: authoringToken, serverIdentityId: `srv_${'8'.repeat(32)}`,
+    token: authoringToken, serverIdentityId: `srv_${'5'.repeat(32)}`,
     handleRequest: async path => path === '/v3/automations/query'
       ? Response.json({ automations: [], nextCursor: null }) : null });
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');

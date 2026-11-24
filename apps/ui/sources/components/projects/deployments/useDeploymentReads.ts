@@ -20,13 +20,13 @@ const NO_TAB_ITEMS: readonly never[] = Object.freeze([]);
 export type DeploymentEnvironmentTabResult<T> = Readonly<{ items: readonly T[] }> & (
     | Readonly<{ status: 'loading' | 'ready' | 'empty' }>
     | Readonly<{ status: 'unavailable'; reason: string; retryable: boolean; retry(): Promise<void> }>
-    | Readonly<{ status: 'denied' }>
+    | Readonly<{ status: 'denied'; reason: 'deployment_access_denied' }>
 );
 
 export function projectDeploymentEnvironmentTabResult<T>(snapshot: Pick<DeploymentReadSnapshotV1<unknown>, 'status' | 'failure'>,
     items: readonly T[], retry: () => Promise<void>, coverage?: DeploymentEnvironmentCollectionV1['coverage']): DeploymentEnvironmentTabResult<T> {
     if (snapshot.status === 'unavailable') {
-        if (snapshot.failure?.code === 'deployment_access_denied') return { status: 'denied', items: NO_TAB_ITEMS };
+        if (snapshot.failure?.code === 'deployment_access_denied') return { status: 'denied', reason: snapshot.failure.code, items: NO_TAB_ITEMS };
         return { status: 'unavailable', items, reason: snapshot.failure?.code ?? 'deployment_unavailable',
             retryable: snapshot.failure?.retryable ?? false, retry };
     }

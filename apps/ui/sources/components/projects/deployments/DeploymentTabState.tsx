@@ -53,6 +53,7 @@ export function DeploymentTabState(
           size="line"
           kind="denied"
           title={t('projects.deployments.sectionDenied')}
+          diagnosticCode={result.reason}
         />
       );
     case 'unavailable':

@@ -45,7 +45,7 @@ import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, pr
 import { DeploymentDomainsList, projectDeploymentBuiltInAddresses, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
-import { INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
+import { inlineAddDraftKey, INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
@@ -118,7 +118,7 @@ export function DeploymentDomainsPanel(
     presentMachineAuthorityV1({ engine: projection.engineKind }).deployment.domains === 'unavailableDockerDesktop') ?? false;
   const editing = unavailableDockerDesktop ? null : props.editing;
   // The open Add domain form survives a remount (a width change that recomposes the page), per Environment.
-  const draftKey = `${props.controller.scope.serverId}:${props.environmentId}`;
+  const draftKey = inlineAddDraftKey(props.controller.scope, props.environmentId, 'domains');
   const [adding, setAdding] = useInlineAddDraftField(draftKey, INLINE_ADD_OPEN, false);
   const [dnsFor, setDnsFor] = React.useState<DomainItem | null>(null);
   const [checkSetup, setCheckSetup] = React.useState<Readonly<{ item: DomainItem }> | null>(null);
@@ -247,8 +247,7 @@ export function DeploymentDomainsPanel(
   // "3 domains" and what the list says about each (lab `envDom`); the list draws its own sheet.
   // + Add domain opens the form inline in this section and an empty list is one plain line (pfc-redesign dDomains KEEP).
   // The built-in address already fills the list; "no domains yet" would contradict the row above it.
-  const tabStateShown = !(unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0
-    || domains.result.status === 'empty' && addresses.length > 0);
+  const tabStateShown = !(domains.result.status === 'empty' && (unavailableDockerDesktop || adding || addresses.length > 0));
   // The list draws its own sheet; with no list, the section's sheet holds its one line (dDomains KEEP: a bordered
   // "No domains yet" row).
   const listShown = items.length > 0 || addresses.length > 0;
@@ -430,7 +429,7 @@ function domainOperands(environmentId: string, editing: DeploymentDomainEditing,
 function DomainAddForm(
   props: Readonly<{
     /** Where this form keeps what was typed while it is open (`useInlineAddDraftField`). */
-    draftKey: string;
+    draftKey: string | null;
     phone: boolean;
     busy: boolean;
     taken: readonly string[];
