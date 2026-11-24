@@ -23,7 +23,7 @@ export function captureAppActionAutomationPresentation(
         && (!target?.serverId || areServerProfileIdentifiersEquivalent(target.serverId, lifetime.scope.serverId))
         ? lifetime : null;
     const settled = (result: ActionExecuteResult): ActionExecuteResult => {
-        if (current && result.automationNotices?.length) void presentActionAutomationSkipNotice(result, current);
+        if (result.ok && current && result.automationNotices?.length) void presentActionAutomationSkipNotice(result, current);
         return result;
     };
     return { settled, prepared(prepared: ActionPrepareResult): ActionPrepareResult {

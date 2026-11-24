@@ -350,6 +350,40 @@ describe('Action before checks on the approval card', () => {
     await screen.unmount();
   });
 
+  it.each(['own', 'shared'] as const)('presents an unstarted %s check as a refusal with a way forward', async (ownership) => {
+    const refused = readApprovalAutomaticChecksForRequest({
+      status: 'failed',
+      automaticChecks: checks({ phase: 'refused', selected: [{ ...selected, workflowId: 'builtin:open-a-pull-request' }] }),
+      execution: { ok: false, errorCode: 'target_unavailable', details: {
+        kind: 'automatic_check_start_refusal', ...ref, reason: 'content_unavailable',
+      } },
+    });
+    expect(readApprovalAutomaticChecksCarryRefusal(refused)).toBe(true);
+    const open = vi.fn();
+    const accountLifetime = {
+      scope: { serverId: 'approval-home', accountId: ownership === 'own' ? selected.ownerAccountId : 'different-viewer' },
+      isCurrent: () => true,
+      onRetire: () => ({ dispose: () => undefined }),
+    };
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={refused!} actionTitle="Deploy" serverId="approval-home" onOpenRoute={open}
+        accountLifetime={accountLifetime} testID="checks" />,
+    );
+    expect(screen.findByTestId('checks:refused')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.startRefused');
+    expect(screen.findByTestId('checks:skipped:0')).toBeNull();
+    const link = screen.findByTestId('checks:open-workflow');
+    if (ownership === 'own') {
+      expect(link).not.toBeNull();
+      await act(() => link?.props.onPress());
+      expect(open).toHaveBeenCalledWith('/workflows/builtin%3Aopen-a-pull-request?serverId=approval-home');
+    } else {
+      expect(link).toBeNull();
+      expect(screen.getTextContent()).toContain('workflows.triggers.checks.startRefusedAskOwner');
+    }
+    await screen.unmount();
+  });
+
   // QA-UI-R 11-23: a person's Skip on a shared check is one consent and one skip notice for the same trigger; it reads once.
   it('says one Skip per check when its consent and its skip notice name the same trigger', async () => {
     const notice = { code: 'action_automation_skipped' as const, ...ref, workflowId: selected.workflowId, reason: 'consentSkipped' };

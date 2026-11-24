@@ -933,7 +933,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const failure = await automaticApproval.write(artifactId, pending, ctx);
       if (failure) return failure;
     }
-    if (pending.automaticChecks?.phase === 'checking') {
+    if (pending.automaticChecks?.phase === 'checking' || pending.automaticChecks?.phase === 'refused') {
       const continued = await automaticApproval.resume(artifactId, pending, automaticContinuationContext(pending, ctx));
       if ('ok' in continued) return continued;
       if (continued.kind === 'refused') return { request: continued.request, refused: true };

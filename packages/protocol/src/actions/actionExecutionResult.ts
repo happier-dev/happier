@@ -36,6 +36,7 @@ export const ActionAutomationNoticeV1Schema = lazyZodSchema(() => z.union([
     workflowId: z.string().check(z.minLength(1)) }),
 ]));
 export type ActionAutomationNoticeV1 = Readonly<z.infer<typeof ActionAutomationNoticeV1Schema>>;
+export const ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 = 'matching_unavailable';
 const ActionAutomationNoticesV1Schema = lazyZodSchema(() => z.array(ActionAutomationNoticeV1Schema));
 
 /** Known shared-check recovery reasons; other producers' notices retain their original reason. */

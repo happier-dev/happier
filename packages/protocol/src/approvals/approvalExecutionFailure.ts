@@ -97,7 +97,7 @@ function parseStrictApprovalFailure(input: Readonly<{
 }>, storedRead = false): ActionExecuteFailure | null {
   const workflowRefusal = readActionFailurePresentationV1(input.failure.errorCode, input.failure.details);
   if (workflowRefusal) return { ...input.failure,
-    details: workflowRefusal.message === null ? undefined : { message: workflowRefusal.message } };
+    details: workflowRefusal.startRefusal ?? (workflowRefusal.message === null ? undefined : { message: workflowRefusal.message }) };
   if (input.failure.errorCode === 'approval_request_conflict') {
     const details = (storedRead ? createStoredReadSchema(ApprovalRequestConflictFailureDetailsV1Schema)
       : ApprovalRequestConflictFailureDetailsV1Schema).safeParse(input.failure.details);
@@ -708,7 +708,10 @@ export function readApprovalExecutionFailure(
     ...(typeof currentExecution.effectAttempted === 'boolean' ? { effectAttempted: currentExecution.effectAttempted } : {}),
     ...(failureCause.success ? { failureCause: failureCause.data } : {}),
   };
-  if (request.v !== 2) return failure;
+  if (request.v !== 2) {
+    const startRefusal = readActionFailurePresentationV1(errorCode, currentExecution.details)?.startRefusal;
+    return startRefusal ? { ...failure, details: startRefusal } : failure;
+  }
   const details = request.execution?.details;
   if (details === undefined) return failure;
   return parseStrictApprovalFailure({

@@ -1,4 +1,4 @@
-import type { readActionAutomationSkipReasonV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1, type readActionAutomationSkipReasonV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { t } from '@/text';
@@ -21,6 +21,7 @@ export function formatAutomaticCheckSkipNotice(input: Readonly<{
 /** The fail-open note for an Action that proceeded without its checks; the producer's reason code becomes words. */
 export function formatAutomationsNotCheckedNotice(reason: string): string {
     if (reason === SERVER_UNREACHABLE_ERROR_CODE) return t('workflows.triggers.checks.notCheckedUnreachable');
+    if (reason === ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1) return t('workflows.triggers.checks.notCheckedMatchingUnavailable');
     return reason === 'database_connection_unavailable'
         ? t('workflows.triggers.checks.notCheckedHomeUnavailable')
         : t('workflows.triggers.checks.notChecked');

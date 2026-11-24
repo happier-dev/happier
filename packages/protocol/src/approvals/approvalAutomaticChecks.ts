@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AutomationSubjectV1Schema, AutomationSubjectContextV1Schema } from '../automations/automationSubjectV1.js';
 import { ActionAutomationTriggerReferenceV1Schema, AutomationActionConsentTriggerSchema } from '../automations/automationActionTriggerV1.js';
 import { ApprovalDecisionV2Schema } from './approvalRequestV1.js';
-import { ActionAutomationNoticeV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1, ActionAutomationNoticeV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 
 const id = () => z.string().check(z.minLength(1));
 const triggerRef = () => AutomationActionConsentTriggerSchema.shape.consentFor.shape;
@@ -84,7 +84,9 @@ export const ApprovalAutomaticChecksV1Schema = lazyZodSchema(() => z.strictObjec
   if ((value.phase === 'checking' || value.phase === 'passed') && value.consents.some(consent => consent.decision === 'pending')) {
     ctx.addIssue({ code: 'custom', path: ['consents'], message: 'Unanswered consent cannot advance the Action' });
   }
-  if (value.phase === 'passed' && value.selected.some(selection => selection.phase === 'before' && selection.mode !== 'notify'
+  if (value.phase === 'passed'
+    && !value.notices.some(notice => notice.code === 'action_automations_not_checked' && notice.reason === ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1)
+    && value.selected.some(selection => selection.phase === 'before' && selection.mode !== 'notify'
     && !value.consents.some(consent => actionAutomationTriggerKeyV1(consent) === actionAutomationTriggerKeyV1(selection) && consent.decision === 'skip')
     && !value.notices.some(notice => notice.code === 'action_automation_skipped' && actionAutomationTriggerKeyV1(notice) === actionAutomationTriggerKeyV1(selection))
     && !value.results.some(result => actionAutomationTriggerKeyV1(result) === actionAutomationTriggerKeyV1(selection)))) {

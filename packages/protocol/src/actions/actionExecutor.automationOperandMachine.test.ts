@@ -7,7 +7,7 @@ import {
   type ActionExecutorContext,
 } from './actionExecutor.js';
 import { listActionSpecs } from './actionSpecs.js';
-import { createActionAutomationHttpPortV1, createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import { createActionAutomationHttpPortV1, createActionAutomationPortV1, unavailableActionAutomationMatchingV1 } from './executor/actionAutomationAdmission.js';
 import { readActionAutomationExecutionMachineV1 } from './executor/actionSettlement.js';
 import { readActionOperandExecutionMachineV1 } from './executor/actionOperandExecutionMachine.js';
 
@@ -122,7 +122,7 @@ function context(
 }
 
 describe('Before checks on the Action operand Machine', () => {
-  it('keeps a deferred terminal approval from executing when the selected wait check cannot be opened', async () => {
+  it.each(['matching absent', 'matching installed'] as const)('decides a terminal approval with %s', async (capability) => {
     const port = createActionAutomationHttpPortV1({
       accountId: 'actor',
       request: async (_path, request) => {
@@ -136,7 +136,10 @@ describe('Before checks on the Action operand Machine', () => {
     let stored: Request | null = null;
     const effect = vi.fn(async () => ({ ok: true }));
     const executor = createActionExecutor({
-      actionAutomations: port,
+      actionAutomations: capability === 'matching absent' ? port : {
+        ...port,
+        prepareMatching: async () => unavailableActionAutomationMatchingV1('content_unavailable'),
+      },
       approvalsCreate: async ({ request }) => {
         stored = request;
         return { artifactId: 'approval' };
@@ -159,10 +162,22 @@ describe('Before checks on the Action operand Machine', () => {
       });
       expect(stored).toMatchObject({ automaticChecks: { selected: [{ triggerId: 'before' }], consents: [] } });
       const result = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, caller);
-      expect(effect).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', effectAttempted: false,
-        automationNotices: [{ code: 'action_automation_skipped', reason: 'content_unavailable', triggerId: 'before' }],
-      });
+      if (capability === 'matching absent') {
+        expect(result).toMatchObject({ ok: true,
+          automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
+        });
+        expect(effect).toHaveBeenCalledTimes(1);
+      } else {
+        const refused = { ok: false, errorCode: 'target_unavailable', effectAttempted: false,
+          failureCause: { nativeErrorReason: 'action_automation_selection_unavailable' },
+          details: { kind: 'automatic_check_start_refusal', automationId: 'guard', triggerId: 'before', reason: 'content_unavailable' },
+        };
+        expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: refused },
+        });
+        expect(result.automationNotices).toBeUndefined();
+        expect(stored).toMatchObject({ status: 'failed', execution: refused, automaticChecks: { phase: 'refused', runs: [], notices: [] } });
+        expect(effect).not.toHaveBeenCalled();
+      }
     } finally {
       port.dispose();
     }

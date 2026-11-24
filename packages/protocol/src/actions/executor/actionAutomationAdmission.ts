@@ -17,7 +17,7 @@ import { WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from '../../artifacts/artifactKi
 import type { ActionAutomationRunV1, ActionAutomationConsentReviewV1 } from '../../approvals/approvalAutomaticChecks.js';
 import type { WorkflowFinalResultV1, WorkflowRunStateV1 } from '../../workflows/workflowProgressV1.js';
 import { readActionAutomationExecutionMachineV1 } from './actionSettlement.js';
-import type { ActionAutomationNoticeV1 } from '../actionExecutionResult.js';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1, type ActionAutomationNoticeV1 } from '../actionExecutionResult.js';
 import { readActionErrorCodeV1 } from '../actionErrorClassV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { isSharedRequesterActionV1, readActionWorkflowOriginRunIdV1 } from '../actionRequestAttributionV1.js';
@@ -110,6 +110,8 @@ export type ActionAutomationSelectArgsV1 = Readonly<{
 export type ActionAutomationStartResultV1 = Readonly<{
   runs: readonly ActionAutomationRunV1[];
   notices: readonly ActionAutomationNoticeV1[];
+  /** This host cannot evaluate the admitted Before selection. An installed matcher may instead refuse a specific check. */
+  notEvaluated?: typeof ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1;
 }>;
 export type ActionAutomationStartV1 = (args: Readonly<{
   selected: readonly ActionAutomationTriggerReferenceV1[];
@@ -498,6 +500,9 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
       const selection = context.actionAutomationAdmission?.selection;
       const requestId = context.actionRequestId;
       if (!selection || !requestId || selected.length === 0) return { runs: [], notices: [] };
+      if (!selection.privateMatching) {
+        return { runs: [], notices: [], notEvaluated: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 };
+      }
       const selectedKeys = new Set(selected.map(row => JSON.stringify([row.automationId, row.triggerId])));
       const admitted = selection.before.flatMap(row => {
         if (!selectedKeys.has(JSON.stringify([row.automationId, row.triggerId]))) return [];

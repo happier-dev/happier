@@ -179,23 +179,40 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
     const admitted = owner.invocation(request);
     if ('ok' in admitted) return admitted;
     const started = await owner.actionAutomations.start({ selected, ...admitted, context, approvalArtifactId: artifactId });
+    const updatedAtMs = Math.max(Date.now(), request.updatedAtMs);
+    if (started.notEvaluated) {
+      return owner.parse({ ...request, updatedAtMs, status: 'approved',
+        ...(checks.humanDecision ? { decision: checks.humanDecision } : {}),
+        automaticChecks: { ...checks, phase: 'passed', notices: [...checks.notices,
+          { code: 'action_automations_not_checked', reason: started.notEvaluated }] } });
+    }
     const waiting = selected.filter(row => row.phase === 'before' && row.mode !== 'notify');
-    const allWaitingChecksAdmitted = waiting.every(row => started.runs.some(run => actionAutomationTriggerKeyV1(run) === actionAutomationTriggerKeyV1(row))
-      || started.notices.some(notice => notice.code === 'action_automation_skipped'
+    const unavailable = waiting.find(row => !started.runs.some(run => actionAutomationTriggerKeyV1(run) === actionAutomationTriggerKeyV1(row))
+      && !started.notices.some(notice => notice.code === 'action_automation_skipped'
         && (notice.reason === 'conditionNotMatched' || notice.reason === 'causeSuppressed')
-        && notice.automationId === row.automationId && notice.triggerId === row.triggerId));
-    if (!allWaitingChecksAdmitted) {
+        && actionAutomationTriggerKeyV1(notice) === actionAutomationTriggerKeyV1(row)));
+    if (unavailable) {
       // A selected wait can be absent only when its condition or the occurrence owner excluded it.
       await cancel({ ...request, automaticChecks: { ...checks, runs: started.runs } }, context);
-      return { ...actionAutomationAdmissionUnavailableV1('selection_unavailable'), automationNotices: started.notices };
+      const reason = started.notices.find(notice => notice.code === 'action_automation_skipped'
+        && actionAutomationTriggerKeyV1(notice) === actionAutomationTriggerKeyV1(unavailable))?.reason;
+      return owner.refusal(request, updatedAtMs, { ...checks, phase: 'refused' }, {
+        ...actionAutomationAdmissionUnavailableV1('selection_unavailable'),
+        details: { kind: 'automatic_check_start_refusal', automationId: unavailable.automationId,
+          triggerId: unavailable.triggerId, reason: reason ?? 'start_unavailable' },
+      });
     }
-    return owner.parse({ ...request, updatedAtMs: Math.max(Date.now(), request.updatedAtMs),
+    return owner.parse({ ...request, updatedAtMs,
       automaticChecks: { ...checks, phase: 'checking', runs: [...checks.runs, ...started.runs],
         notices: [...checks.notices, ...started.notices] } });
   }
 
   const resume = async (artifactId: string, request: Read, context: ActionExecutorContext): Promise<ApprovalAutomaticContinuationResultV1<Read>> => {
     const checks = request.automaticChecks;
+    if (request.status === 'failed' && checks?.phase === 'refused') {
+      const failure = owner.readFailure(request);
+      if (failure) return { kind: 'refused', request, failure };
+    }
     if (!checks || request.status !== 'open' || checks.phase !== 'checking') {
       return { kind: request.status === 'approved' ? 'approved' : 'pending', request };
     }

@@ -5,6 +5,7 @@ import {
   actionAutomationTriggerKeyV1,
   type ApprovalAutomaticChecksV1,
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
+import { readActionFailurePresentationV1, type ActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
@@ -17,7 +18,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { useApprovalAccountLabel } from '@/components/approvals/ApprovalRequesterConfirmationSection';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
-import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { Modal } from '@/modal';
 import { alertApprovalFailure, ApprovalExecutionError, type ApprovalDecisionOptions } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
@@ -32,10 +33,15 @@ import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/pre
 import { formatAutomaticCheckSkipNotice, formatAutomationsNotCheckedNotice } from './formatAutomaticCheckSkipNotice';
 import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
 
+type PresentedApprovalAutomaticChecks = ApprovalAutomaticChecksV1 & {
+  startRefusal?: ActionFailurePresentationV1['startRefusal'];
+};
+
 /** The stored check phase retains the failed occurrence after a person's final Deny. */
 export function readApprovalAutomaticChecksForRequest(
-  request: Readonly<{ status: ApprovalRequestV2['status']; automaticChecks?: ApprovalAutomaticChecksV1 }> | null,
-): ApprovalAutomaticChecksV1 | null {
+  request: Readonly<{ status: ApprovalRequestV2['status']; automaticChecks?: ApprovalAutomaticChecksV1;
+    execution?: Readonly<{ ok?: boolean; errorCode?: string; details?: unknown }> }> | null,
+): PresentedApprovalAutomaticChecks | null {
   const checks = request?.automaticChecks;
   if (!checks) return null;
   if (request?.status !== 'open' && checks.phase === 'consent') {
@@ -44,6 +50,11 @@ export function readApprovalAutomaticChecksForRequest(
   if (request?.status === 'canceled' && (checks.phase === 'checking' || checks.phase === 'override')) return null;
   if (request?.status === 'rejected' && checks.phase === 'override') {
     return { ...checks, phase: 'refused' };
+  }
+  const execution = request?.execution;
+  if (checks.phase === 'refused' && execution?.ok === false) {
+    const startRefusal = readActionFailurePresentationV1(execution.errorCode, execution.details)?.startRefusal;
+    if (startRefusal) return { ...checks, startRefusal };
   }
   return checks;
 }
@@ -76,12 +87,13 @@ export function ApprovalCheckRunLink(props: Readonly<{
 }
 
 /** Whether the checks have anything to tell: a pending consent, a running check, a failure, or a visible Skip. */
-export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecksV1): boolean {
+export function readApprovalAutomaticChecksShown(checks: PresentedApprovalAutomaticChecks): boolean {
   const failed = readFailedApprovalAutomaticCheck(checks) !== undefined;
   return (checks.phase === 'consent' && checks.consents.some((consent) => consent.decision === 'pending'))
     || checks.phase === 'checking'
     || (checks.phase === 'passed' && checks.results.some(result => result.outcome === 'passed'))
-    || ((checks.phase === 'override' || checks.phase === 'refused') && failed)
+    || (checks.phase === 'override' && failed)
+    || readApprovalAutomaticChecksCarryRefusal(checks)
     || checks.consents.some((consent) => consent.decision === 'skip')
     || checks.notices.some((notice) => notice.code === 'action_automation_skipped' || notice.code === 'action_automations_not_checked');
 }
@@ -90,9 +102,9 @@ export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecks
  * A refusal the checks themselves explain: the card's own failure line would repeat it, so the checks block carries the
  * reason (lab `wait-v-arefused`) and the card leaves its loose failure paragraph out.
  */
-export function readApprovalAutomaticChecksCarryRefusal(checks: ApprovalAutomaticChecksV1 | null | undefined): boolean {
+export function readApprovalAutomaticChecksCarryRefusal(checks: PresentedApprovalAutomaticChecks | null | undefined): boolean {
   return checks?.phase === 'refused'
-    && readFailedApprovalAutomaticCheck(checks) !== undefined;
+    && (Boolean(checks.startRefusal) || readFailedApprovalAutomaticCheck(checks) !== undefined);
 }
 
 /**
@@ -173,7 +185,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const ApprovalAutomaticChecks = React.memo(
   function ApprovalAutomaticChecks(
     props: Readonly<Partial<ApprovalAutomaticChecksPresentation> & {
-      checks: ApprovalAutomaticChecksV1;
+      checks: PresentedApprovalAutomaticChecks;
       actionTitle: string;
       serverId: string | null;
       /** Opens an in-app route (a check's Run, a shared check's workflow); absent where the card cannot navigate. */
@@ -222,11 +234,12 @@ export const ApprovalAutomaticChecks = React.memo(
         ? (checks.consents.find((consent) => consent.decision === 'pending') ??
           null)
         : null;
-    const pendingOwner = pending
-      ? selectedByKey.get(actionAutomationTriggerKeyV1(pending))?.ownerAccountId
-      : undefined;
+    const startRefusal = checks.startRefusal;
+    const refusedSelection = startRefusal ? selectedByKey.get(actionAutomationTriggerKeyV1(startRefusal)) : undefined;
+    const checkOwner = pending ? selectedByKey.get(actionAutomationTriggerKeyV1(pending))?.ownerAccountId
+      : refusedSelection?.ownerAccountId;
     const ownerLabel =
-      useApprovalAccountLabel(props.serverId, pendingOwner, 'sentence') ??
+      useApprovalAccountLabel(props.serverId, checkOwner, 'sentence') ??
       resolveUnknownAccountActorName('sentence');
     const failed = readFailedApprovalAutomaticCheck(checks);
     const failureReason = failed?.reason
@@ -366,27 +379,41 @@ export const ApprovalAutomaticChecks = React.memo(
           </View>
         </View>
       );
-    } else if (checks.phase === 'refused' && failed) {
+    } else if (checks.phase === 'refused' && (startRefusal || failed)) {
       // The refusal settled the request: its reason leads the block (said once, here), the check's name and Run beneath
       // (lab `wait-v-arefused`). Without a reason the block says which check refused or couldn't run.
-      const workflowName = knownNameOf(failed);
+      const workflowName = failed ? knownNameOf(failed) : null;
+      const refusedWorkflowId = refusedSelection?.workflowId;
+      const viewerOwnsCheck = props.accountLifetime?.isCurrent() === true
+        && props.accountLifetime.scope.accountId === refusedSelection?.ownerAccountId;
       body = (
         <View style={[styles.block, styles.dangerBlock]} testID={props.testID ? `${props.testID}:refused` : undefined}>
-          {failureReason ? (
+          {!startRefusal && failureReason ? (
             <Text variant="body" style={styles.primary} testID={props.testID ? `${props.testID}:reason` : undefined}>{failureReason}</Text>
           ) : (
             <View style={styles.lead}>
               <Icon name="warning" size={ICON_SIZE.sm} color={theme.colors.state.danger.foreground} />
               <Text variant="body" emphasis="semiBold" style={[styles.primary, styles.leadText]}>
-                {failed.outcome === 'unavailable'
-                  ? t('workflows.triggers.checks.couldNotRun', { workflow: nameOf(failed) })
-                  : t('workflows.triggers.checks.refused', { workflow: nameOf(failed, 'inline') })}
+                {startRefusal ? t('workflows.triggers.checks.startRefused', { workflow: nameOf(startRefusal), action: props.actionTitle })
+                  : failed?.outcome === 'unavailable'
+                    ? t('workflows.triggers.checks.couldNotRun', { workflow: nameOf(failed) })
+                    : failed && t('workflows.triggers.checks.refused', { workflow: nameOf(failed, 'inline') })}
               </Text>
             </View>
           )}
           <View style={styles.line}>
-            {failureReason && workflowName ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{workflowName}</Text> : null}
-            {openRun(failed.runId)}
+            {startRefusal ? (
+              viewerOwnsCheck && refusedWorkflowId ? props.onOpenRoute && <TextLinkButton
+                label={t('workflows.triggers.row.openWorkflow')} size="meta"
+                testID={props.testID ? `${props.testID}:open-workflow` : undefined}
+                onPress={() => props.onOpenRoute?.(createWorkflowDefinitionRoute(refusedWorkflowId, props.serverId))}
+              /> : <Text variant="meta" style={styles.secondary}>
+                {t('workflows.triggers.checks.startRefusedAskOwner', { name: ownerLabel })}
+              </Text>
+            ) : <>
+              {failureReason && workflowName ? <Text variant="meta" emphasis="semiBold" style={styles.primary}>{workflowName}</Text> : null}
+              {openRun(failed?.runId ?? null)}
+            </>}
           </View>
         </View>
       );
