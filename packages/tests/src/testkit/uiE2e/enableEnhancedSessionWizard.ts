@@ -3,7 +3,7 @@ import { expect, type Locator, type Page } from '@playwright/test';
 import { gotoDomContentLoadedWithPathFallback } from './pageNavigation';
 
 const SESSION_SETTINGS_PATHNAME = '/settings/session';
-const WIZARD_MODE_TEST_ID = 'settings-new-session-wizard-mode';
+const WIZARD_OPTION_TEST_ID = 'settings-session-startWith:wizard';
 
 export async function enableEnhancedSessionWizard(params: Readonly<{
   page: Page;
@@ -11,26 +11,19 @@ export async function enableEnhancedSessionWizard(params: Readonly<{
   timeoutMs?: number;
 }>): Promise<void> {
   const timeoutMs = params.timeoutMs ?? 60_000;
-  const wizardModeItem = await waitForWizardModeItem({
+  const wizardOption = await waitForWizardOption({
     page: params.page,
     baseUrl: params.baseUrl,
     timeoutMs,
   });
 
-  const wizardModeSwitch = wizardModeItem.locator('input[type="checkbox"]').first();
-  if ((await wizardModeSwitch.count()) === 0) {
-    await wizardModeItem.click();
-    return;
+  if (await wizardOption.getAttribute('aria-checked') !== 'true') {
+    await wizardOption.click();
   }
-
-  const isChecked = await wizardModeSwitch.isChecked().catch(() => false);
-  if (!isChecked) {
-    await wizardModeItem.click();
-  }
-  await expect(wizardModeSwitch).toBeChecked({ timeout: timeoutMs });
+  await expect(wizardOption).toHaveAttribute('aria-checked', 'true', { timeout: timeoutMs });
 }
 
-async function waitForWizardModeItem(params: Readonly<{
+async function waitForWizardOption(params: Readonly<{
   page: Page;
   baseUrl: string;
   timeoutMs: number;
@@ -51,17 +44,17 @@ async function waitForWizardModeItem(params: Readonly<{
       );
     }
 
-    const wizardModeItem = params.page.getByTestId(WIZARD_MODE_TEST_ID);
-    if ((await wizardModeItem.count()) === 1) {
-      return wizardModeItem;
+    const wizardOption = params.page.getByTestId(WIZARD_OPTION_TEST_ID);
+    if ((await wizardOption.count()) === 1) {
+      return wizardOption;
     }
 
     await params.page.waitForTimeout(Math.min(250, remainingTimeoutMs));
   }
 
-  const wizardModeItem = params.page.getByTestId(WIZARD_MODE_TEST_ID);
-  await expect(wizardModeItem).toHaveCount(1, { timeout: 1 });
-  return wizardModeItem;
+  const wizardOption = params.page.getByTestId(WIZARD_OPTION_TEST_ID);
+  await expect(wizardOption).toHaveCount(1, { timeout: 1 });
+  return wizardOption;
 }
 
 function readPathname(page: Pick<Page, 'url'>): string | null {

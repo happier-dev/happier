@@ -14,11 +14,8 @@ vi.mock('@playwright/test', () => ({
         throw new Error(`expected locator count ${expectedCount}, received ${actualCount}`);
       }
     },
-    async toBeChecked() {
-      const checked = await (locator as unknown as { isChecked: () => Promise<boolean> }).isChecked();
-      if (!checked) {
-        throw new Error('expected locator to be checked');
-      }
+    async toHaveAttribute(attribute: string, expected: string) {
+      expect(await locator.getAttribute(attribute)).toBe(expected);
     },
   }),
 }));
@@ -32,29 +29,33 @@ import { enableEnhancedSessionWizard } from './enableEnhancedSessionWizard';
 
 function createWizardModePage(params?: Readonly<{
   isWizardModeVisible?: () => boolean;
-}>): Page {
-  const switchLocator = {
-    count: async () => 1,
-    isChecked: async () => true,
-  };
+}>) {
+  let selected = false;
+  const clickWizard = vi.fn(async () => { selected = true; });
   const itemLocator = {
     count: async () => params?.isWizardModeVisible?.() === false ? 0 : 1,
-    locator: () => ({
-      first: () => switchLocator,
-    }),
-    click: async () => {},
+    locator: () => ({ first: () => ({ count: async () => 0 }) }),
+    click: async () => { throw new Error('The segmented row does not select Wizard'); },
+  };
+  const optionLocator = {
+    count: itemLocator.count,
+    getAttribute: async (attribute: string) => {
+      expect(attribute).toBe('aria-checked');
+      return String(selected);
+    },
+    click: clickWizard,
   };
 
-  return {
+  const page = {
     url: () => 'http://127.0.0.1:3000/settings/session',
     waitForTimeout: async () => {},
     getByTestId: ((testId: string) => {
-      if (testId !== 'settings-new-session-wizard-mode') {
-        throw new Error(`unexpected test id: ${testId}`);
-      }
-      return itemLocator;
+      if (testId === 'settings-new-session-wizard-mode') return itemLocator;
+      if (testId === 'settings-session-startWith:wizard') return optionLocator;
+      throw new Error(`unexpected test id: ${testId}`);
     }) as unknown as Page['getByTestId'],
   } as unknown as Page;
+  return { page, clickWizard };
 }
 
 describe('enableEnhancedSessionWizard', () => {
@@ -64,7 +65,7 @@ describe('enableEnhancedSessionWizard', () => {
   });
 
   it('navigates to session settings through the path fallback helper', async () => {
-    const page = createWizardModePage();
+    const { page } = createWizardModePage();
 
     await enableEnhancedSessionWizard({
       page,
@@ -80,6 +81,16 @@ describe('enableEnhancedSessionWizard', () => {
     );
   });
 
+  it('selects the Wizard segment once when called twice', async () => {
+    const { page, clickWizard } = createWizardModePage();
+
+    const settings = { page, baseUrl: 'http://127.0.0.1:3000' };
+    await enableEnhancedSessionWizard(settings);
+    await enableEnhancedSessionWizard(settings);
+
+    expect(clickWizard).toHaveBeenCalledTimes(1);
+  });
+
   it('retries the session settings route when auth restoration redirects to home first', async () => {
     let currentPath = '/';
     let navigationCount = 0;
@@ -87,7 +98,7 @@ describe('enableEnhancedSessionWizard', () => {
       navigationCount += 1;
       currentPath = navigationCount === 1 ? '/' : '/settings/session';
     });
-    const page = createWizardModePage({
+    const { page } = createWizardModePage({
       isWizardModeVisible: () => currentPath === '/settings/session',
     });
     page.url = () => `http://127.0.0.1:3000${currentPath}`;
