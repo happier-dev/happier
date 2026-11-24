@@ -21,6 +21,7 @@ type PluginSessionHookActionId =
 type MachinePluginSessionHookActionInput<TInput> = Readonly<
     TInput & {
         serverId?: string | null;
+        accountId?: string;
         signal?: AbortSignal;
     }
 >;
@@ -48,7 +49,7 @@ async function executeMachinePluginSessionHookAction<
     if (!method || !spec.outputSchema) {
         throw new Error(`plugin_session_hook_action_spec_incomplete:${actionId}`);
     }
-    const { serverId, machineId, signal, ...rawActionInput } = input;
+    const { serverId, accountId, machineId, signal, ...rawActionInput } = input;
     const actionInput = spec.inputSchema.parse(rawActionInput);
     if (!actionInput || typeof actionInput !== 'object') {
         throw new Error(`plugin_session_hook_action_input_invalid:${actionId}`);
@@ -60,6 +61,7 @@ async function executeMachinePluginSessionHookAction<
     const response = await machineRpcWithServerScope<unknown, typeof payload>({
         machineId: payload.machineId,
         serverId,
+        ...(accountId ? { accountId } : {}),
         method,
         payload,
         ...(signal ? { signal } : {}),

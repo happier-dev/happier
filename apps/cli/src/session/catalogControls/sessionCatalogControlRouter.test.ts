@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 
 import type { Credentials, StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
@@ -104,6 +105,32 @@ describe('routeSessionCatalogControl', () => {
       ctx: null,
       mode: 'plain',
     }));
+  });
+
+  it('falls back for a thrown unavailable method and preserves typed access refusals', async () => {
+    const localCatalog = { unsupported: false, skills: [{ name: 'local-skill' }] };
+    const resolveAdapter = vi.fn(async () => ({ listSkills: async () => localCatalog }));
+    const route = (callLiveSessionRpc: () => Promise<unknown>) => routeSessionCatalogControl({
+      token: 'token',
+      credentials: createTokenOnlyCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({ active: true }),
+      metadata: createMetadata(),
+      currentMachineId: 'machine-local',
+      ctx: null,
+      mode: 'plain',
+      operation: 'skills',
+      callLiveSessionRpc,
+      resolveAdapter,
+    });
+
+    await expect(route(async () => { throw new RpcError('Unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE); }))
+      .resolves.toEqual(localCatalog);
+    const refusal = new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN);
+    await expect(route(async () => { throw refusal; })).rejects.toBe(refusal);
+    // A returned legacy diagnostic can coexist with a more specific typed reason.
+    const result = { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'session_rpc_failed' };
+    await expect(route(async () => result)).resolves.toBe(result);
   });
 
   it('does not delegate remote inactive catalog requests', async () => {

@@ -397,7 +397,7 @@ import {
   flushWorkspaceSyncRelationship,
   terminatePersistedWorkspaceSyncRelationship,
 } from '@/sync/ops/workspaceSync';
-import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import { sessionRpcWithServerAccountScope, sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { createExecutionRunHostApprovalReplay } from './executionRunHostApproval';
 import { createApprovalArtifactAccess } from './approvalReading';
 import { importBrowserProfileLoginsInContext } from './browserProfileLoginsImport';
@@ -969,9 +969,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const actionMachineRpc: typeof machineRpcWithServerScope = <R, A>(params: Parameters<typeof machineRpcWithServerScope<R, A>>[0]) =>
     withAccountLifetime(params.signal ?? accountContext?.invocationSignal,
       async signal => readMachineActionRpcResult(await machineRpcWithServerScope<R, A>({ ...params, signal })));
-  const actionSessionRpc: typeof sessionRpcWithServerScope = <R, A>(params: Parameters<typeof sessionRpcWithServerScope<R, A>>[0]) =>
+  const actionSessionRpc = <R, A>(params: Parameters<typeof sessionRpcWithServerScope<R, A>>[0],
+    scope?: ServerAccountScope) =>
     withAccountLifetime(params.signal ?? accountContext?.invocationSignal,
-      signal => sessionRpcWithServerScope<R, A>({ ...params, signal }));
+      signal => scope ? sessionRpcWithServerAccountScope<R, A>({ ...params, scope, signal })
+        : sessionRpcWithServerScope<R, A>({ ...params, signal }));
   const usageLimitRecoveryOptions = (sessionId: string, serverId: string | null | undefined, signal?: AbortSignal) => {
     const session = storage.getState().sessions[sessionId];
     const throttle = session && (!serverId || areServerProfileIdentifiersEquivalent(session.serverId, serverId))
@@ -2086,7 +2088,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       const { machinePluginSessionHookStatusGet } = await import('@/sync/ops/machinePluginSessionHooks');
       return withAccountLifetime(signal, signal => machinePluginSessionHookStatusGet({
-        ...request, machineId, serverId, signal,
+        ...request, machineId, serverId, accountId: accountContext?.accountId, signal,
       }));
     }),
     ...(accountContext ? { npmRegistryProfileAction: createUiNpmRegistryProfileAction(accountContext, opts?.npmRegistryProfileDelivery) } : {}),
@@ -4901,7 +4903,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...createUiSessionCatalogActionDeps(accountContext, actionSessionRpc),
     sessionWorkStateGet: ({ sessionId, serverId }) => actionSessionRpc({
       sessionId, serverId, method: SESSION_RPC_METHODS.SESSION_WORK_STATE_GET, payload: {},
-    }),
+    }, accountContext?.accountLifetime.scope),
     readSessionManager: async ({ address, signal }) => {
       if (!accountContext || !areServerProfileIdentifiersEquivalent(address.serverId, accountContext.serverId)) return { kind: 'unavailable' };
       try {

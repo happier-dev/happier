@@ -18,7 +18,7 @@ function isCatalogFallback(code: unknown): boolean {
 function shouldFallbackFromLiveSessionCatalogRpc(result: unknown): boolean {
   if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
   const raw = result as Record<string, unknown>;
-  return isCatalogFallback(raw.errorCode) || isCatalogFallback(raw.error);
+  return isCatalogFallback(typeof raw.errorCode === 'string' ? raw.errorCode : raw.error);
 }
 
 export async function routeSessionCatalogControl(params: Readonly<{
