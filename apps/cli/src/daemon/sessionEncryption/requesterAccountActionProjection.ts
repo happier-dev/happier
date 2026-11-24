@@ -209,9 +209,16 @@ function isRequesterAccountActionAuthorizationBound(input: RequesterAccountActio
     && handoff.targetMachineId === stamp.machineId && handoff.targetInstallationId === stamp.installationId
     && parsed.data.binding.machineId === stamp.machineId && parsed.data.binding.installationId === stamp.installationId
     && bootstrap.getBoundSessionId?.() === handoff.sessionId;
+  // The admitted SOURCE's custody of the handed-off Session signs that handoff's
+  // TARGET-addressed child, whether a person or a Session started it.
+  const exactHandoffSource = parsed.success
+    && (parsed.data.binding.handoffContinuation !== undefined || parsed.data.binding.handoffPreflight !== undefined) && handoff !== undefined
+    && handoff.sourceMachineId === stamp.machineId && handoff.sourceInstallationId === stamp.installationId
+    && parsed.data.binding.machineId === handoff.targetMachineId && parsed.data.binding.installationId === handoff.targetInstallationId
+    && bootstrap.getBoundSessionId?.() === handoff.sessionId;
   if (!parsed.success || input.signal?.aborted
     || parsed.data.binding.accountId !== stamp.accountId
-    || (source || origin ? !exactSource && !exactHandoffTarget : parsed.data.binding.machineId !== stamp.machineId
+    || !exactHandoffSource && (source || origin ? !exactSource && !exactHandoffTarget : parsed.data.binding.machineId !== stamp.machineId
       || parsed.data.binding.installationId !== stamp.installationId)
     || parsed.data.binding.serverIdentityId !== input.serverIdentityId) return false;
   return true;

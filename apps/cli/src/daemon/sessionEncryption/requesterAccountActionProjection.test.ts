@@ -2423,6 +2423,32 @@ describe('admitted requester Action projection', () => {
       serverIdentityId: 'stable-home', bootstrap: { ...admitted, getBoundSessionId: () => 'other-session' } })).toBeNull();
   });
 
+  // A person (no Session origin) with Manage on another Account's SOURCE hands off to their own TARGET:
+  // the SOURCE's retained requester custody signs the TARGET-addressed child for that exact handoff.
+  it.each(['continuation', 'preflight'] as const)('projects a person\'s handoff %s child at its exact admitted SOURCE custody', async phase => {
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', version: 1,
+      signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } });
+    const childFor = (overrides: Readonly<Record<string, unknown>> = {}) => ExternalActionExecutionAuthorizationV1Schema.parse({
+      ...authorization, binding: { ...authorization.binding, actionId: phase === 'preflight' ? 'session.handoff' : 'session.handoff.prepare',
+        machineId: 'destination', installationId: 'destination-installation', target: { kind: 'machine', machineId: 'destination' },
+        handoffAdmission: { sessionId: 'handed-off', sourceMachineId: 'machine', targetMachineId: 'destination',
+          sourceInstallationId: 'installation', targetInstallationId: 'destination-installation' },
+        ...(phase === 'preflight'
+          ? { handoffPreflight: { rootRequestId: 'request', rootRequestEnvelopeDigest: 'b'.repeat(43) } }
+          : { handoffContinuation: { handoffId: 'handoff', rootRequestId: 'request', rootRequestEnvelopeDigest: 'b'.repeat(43) } }),
+        ...overrides } });
+    const source = { ...bootstrap({ token: 'bob-ordinary', encryption: null }), getBoundSessionId: () => 'handed-off' };
+    const project = (child: ReturnType<typeof childFor>, custody = source) => projectRequesterAccountActionAuthorization({
+      authorization: child, serverIdentityId: 'stable-home', bootstrap: custody });
+    expect((await project(childFor()))?.requesterAccountProjection?.accountId).toBe('bob');
+    // Another Session's custody, another admitted SOURCE, or an ordinary child for the TARGET stays refused.
+    expect(await project(childFor(), { ...source, getBoundSessionId: () => 'other-session' })).toBeNull();
+    expect(await project(childFor({ handoffAdmission: { sessionId: 'handed-off', sourceMachineId: 'machine', targetMachineId: 'destination',
+      sourceInstallationId: 'another-installation', targetInstallationId: 'destination-installation' } }))).toBeNull();
+    expect(await project(ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: { ...authorization.binding,
+      machineId: 'destination', installationId: 'destination-installation', target: { kind: 'machine', machineId: 'destination' } } }))).toBeNull();
+  });
+
   it('retains the original requester HTTP proof while attaching private Account ports on the same carrier', async () => {
     const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31));
     let live = true;
