@@ -1,9 +1,10 @@
 import { deriveSessionAttentionState } from '@/sync/domains/session/attention/deriveSessionAttentionState';
+import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { StorageState } from '@/sync/store/types';
 
-type SessionStatusRecord = Pick<Session | SessionListRenderableSession, 'latestTurnStatus' | 'lastRuntimeIssue' | 'thinking'>;
+type SessionStatusRecord = Session | SessionListRenderableSession;
 
 type ObservedSession = Readonly<{
     record: SessionStatusRecord | undefined;
@@ -17,11 +18,11 @@ type ObservedSession = Readonly<{
 }>;
 
 export type SessionSoundWatcherState = Pick<StorageState, 'sessions' | 'sessionListRenderables'>;
-export type SessionSoundEvent = 'failed' | 'resumedAfterUsageLimit';
+export type SessionSoundEvent = 'completed' | 'failed' | 'resumedAfterUsageLimit';
 
-/** The record the session status presentation reads: the full session when loaded, else its list row. */
+/** Hidden sessions can receive turn and request updates on the list row alone. */
 function readStatusRecord(state: SessionSoundWatcherState, sessionId: string): SessionStatusRecord | undefined {
-    return state.sessions[sessionId] ?? state.sessionListRenderables[sessionId];
+    return state.sessionListRenderables[sessionId] ?? state.sessions[sessionId];
 }
 
 /** When the record's latest turn failed (the red status), the failure's occurrence time; otherwise null. */
@@ -44,13 +45,14 @@ function isRunning(record: SessionStatusRecord | undefined): boolean {
     return record?.thinking === true || record?.latestTurnStatus === 'in_progress';
 }
 
-/** Whether the session's latest turn ended in failure, as its status presentation shows it. */
-export function isLatestTurnFailed(state: SessionSoundWatcherState, sessionId: string): boolean {
-    return readFailureAt(readStatusRecord(state, sessionId)) !== null;
+function hasPendingRequest(record: SessionStatusRecord): boolean {
+    const flags = 'agentState' in record ? derivePendingRequestFlagsFromSession(record) : record;
+    return flags.hasPendingPermissionRequests === true || flags.hasPendingUserActionRequests === true;
 }
 
 /**
  * Reports session changes that play a sound, each once:
+ * - `completed`: an observed turn completes and has no pending user input or approval;
  * - `failed`: a new failure, identified by its runtime issue's occurrence time;
  * - `resumedAfterUsageLimit`: a session blocked by a usage-limit failure starts working again.
  *
@@ -58,7 +60,7 @@ export function isLatestTurnFailed(state: SessionSoundWatcherState, sessionId: s
  * state, so failures that existed when the app started, or when a session was first loaded, are not
  * new; a usage limit seen that way still reports its resume, because limits often outlast an app run.
  */
-export function createSessionSoundWatcher(onEvent: (sessionId: string, event: SessionSoundEvent) => void) {
+export function createSessionSoundWatcher(onEvent: (event: SessionSoundEvent) => void) {
     const observed = new Map<string, ObservedSession>();
     let lastSessions: SessionSoundWatcherState['sessions'] | null = null;
     let lastRenderables: SessionSoundWatcherState['sessionListRenderables'] | null = null;
@@ -71,6 +73,11 @@ export function createSessionSoundWatcher(onEvent: (sessionId: string, event: Se
         const failureAt = readFailureAt(record);
         const usageLimitAt = readUsageLimitAt(record);
         const running = isRunning(record);
+        const previousRecord = previous?.record;
+        const isNewCompletion = record?.latestTurnStatus === 'completed'
+            && previousRecord?.latestTurnStatus === 'in_progress'
+            && (previousRecord.latestTurnId ?? null) === (record.latestTurnId ?? null)
+            && !hasPendingRequest(record);
         const isNewFailure = previous !== undefined
             && failureAt !== null
             && (previous.failureAt === null || failureAt > previous.failureAt);
@@ -91,8 +98,9 @@ export function createSessionSoundWatcher(onEvent: (sessionId: string, event: Se
             resumedFromUsageLimitAt: isUsageLimitResume ? blockedAt : previous?.resumedFromUsageLimitAt ?? null,
         });
         if (!notify) return;
-        if (isNewFailure) onEvent(sessionId, 'failed');
-        if (isUsageLimitResume) onEvent(sessionId, 'resumedAfterUsageLimit');
+        if (isNewCompletion) onEvent('completed');
+        if (isNewFailure) onEvent('failed');
+        if (isUsageLimitResume) onEvent('resumedAfterUsageLimit');
     };
 
     return {

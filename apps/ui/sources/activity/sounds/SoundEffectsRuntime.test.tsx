@@ -5,6 +5,7 @@ import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
 
 import { renderScreen } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getStorage } from '@/sync/domains/state/storage';
 import { Platform } from 'react-native';
 
@@ -103,6 +104,8 @@ describe('SoundEffectsRuntime', () => {
 
     it('plays the chosen attention and success sounds', async () => {
         getStorage().getState().applyLocalSettings({ soundEffectsSuccessSound: 'sound_electro_pop1' });
+        const running = createSessionFixture({ id: 'session-2', latestTurnId: 'turn-2', latestTurnStatus: 'in_progress' });
+        putSession(running);
         const { SoundEffectsRuntime } = await import('./SoundEffectsRuntime');
         const { notifyActivityAgentRequest, notifyActivityReady } = await import('@/activity/notifications/runtime/activityLocalNotificationBus');
         const screen = await renderScreen(<SoundEffectsRuntime />);
@@ -115,6 +118,10 @@ describe('SoundEffectsRuntime', () => {
 
         await act(async () => { notifyActivityReady('session-2', [], 7); });
         await flushPlayback();
+        expect(audio.played).toEqual([SOUND_EFFECT_SOURCES['sound_electro_swell-taps']]);
+
+        await act(async () => { putSession({ ...running, latestTurnStatus: 'completed' }); });
+        await flushPlayback();
         expect(audio.played).toEqual([
             SOUND_EFFECT_SOURCES['sound_electro_swell-taps'],
             SOUND_EFFECT_SOURCES.sound_electro_pop1,
@@ -123,13 +130,15 @@ describe('SoundEffectsRuntime', () => {
     });
 
     it('plays the error sound instead of success when a turn ends in failure', async () => {
-        putSession(createSessionFixture({ id: 'session-1', thinking: true }));
+        putSession(createSessionFixture({ id: 'session-1', thinking: true, latestTurnStatus: 'in_progress' }));
         const { SoundEffectsRuntime } = await import('./SoundEffectsRuntime');
         const { notifyActivityReady } = await import('@/activity/notifications/runtime/activityLocalNotificationBus');
         const screen = await renderScreen(<SoundEffectsRuntime />);
 
         // The ready event and the failed turn status arrive separately, in either order.
         await act(async () => { notifyActivityReady('session-1', [], 3); });
+        await flushPlayback();
+        expect(audio.played).toEqual([]);
         await act(async () => {
             putSession(createSessionFixture({
                 id: 'session-1',
@@ -149,12 +158,80 @@ describe('SoundEffectsRuntime', () => {
                 lastRuntimeIssue: { ...failure, occurredAt: 6_000 },
             }));
         });
-        // The ready event can trail the failure by more than the success settle window.
+        // The ready event may also trail the failure.
         await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
         await act(async () => { notifyActivityReady('session-2', [], 4); });
         await flushPlayback();
 
         expect(audio.played).toEqual([SOUND_EFFECT_SOURCES.sound_electro_158, SOUND_EFFECT_SOURCES.sound_electro_158]);
+        await act(async () => { screen.tree.unmount(); });
+    });
+
+    it('plays attention while a question is pending and waits for the resumed work to finish', async () => {
+        const running = createSessionFixture({
+            active: true,
+            latestTurnId: 'question-turn',
+            latestTurnStatus: 'in_progress',
+        });
+        putSession(running);
+        const { SoundEffectsRuntime } = await import('./SoundEffectsRuntime');
+        const { notifyActivityAgentRequest, notifyActivityReady } = await import('@/activity/notifications/runtime/activityLocalNotificationBus');
+        const screen = await renderScreen(<SoundEffectsRuntime />);
+
+        await act(async () => {
+            putSession({ ...running, pendingUserActionRequestCount: 1 });
+            notifyActivityAgentRequest({ sessionId: running.id, requestId: 'q1', requestKind: 'user_action', toolName: 'AskUserQuestion', toolArgs: {} });
+            notifyActivityReady(running.id, [], 7);
+            putSession({ ...running, pendingUserActionRequestCount: 1, latestTurnStatus: 'completed' });
+        });
+        await flushPlayback();
+        const attention = SOUND_EFFECT_SOURCES['sound_electro_swell-taps'];
+        expect(audio.played).toEqual([attention]);
+
+        await act(async () => {
+            putSession({ ...running, pendingUserActionRequestCount: 0, latestTurnStatus: 'completed' });
+            putSession({ ...running, pendingUserActionRequestCount: 0, latestTurnId: 'follow-up', latestTurnStatus: 'in_progress' });
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([attention]);
+
+        await act(async () => {
+            putSession({ ...running, latestTurnId: 'follow-up', latestTurnStatus: 'completed' });
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([attention, SOUND_EFFECT_SOURCES['sound_electro_windows-ish1']]);
+
+        // Late ready markers and repeated status snapshots cannot replay the same completion.
+        await act(async () => {
+            notifyActivityReady(running.id, [], 12);
+            putSession({ ...running, seq: 13, latestTurnId: 'follow-up', latestTurnStatus: 'completed' });
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([attention, SOUND_EFFECT_SOURCES['sound_electro_windows-ish1']]);
+        await act(async () => { screen.tree.unmount(); });
+    });
+
+    it('uses live list-row outcomes for hidden sessions and stays silent on cancellation', async () => {
+        const running = createSessionFixture({ latestTurnId: 'turn-1', latestTurnStatus: 'in_progress' });
+        putSession(running);
+        const updateListRow = (session: typeof running) => {
+            getStorage().setState({ sessionListRenderables: { [session.id]: buildSessionListRenderableFromSession(session) } });
+        };
+        updateListRow(running);
+        const { SoundEffectsRuntime } = await import('./SoundEffectsRuntime');
+        const screen = await renderScreen(<SoundEffectsRuntime />);
+
+        await act(async () => { updateListRow({ ...running, latestTurnStatus: 'cancelled' }); });
+        await flushPlayback();
+        expect(audio.played).toEqual([]);
+
+        const nextTurn = { ...running, latestTurnId: 'turn-2' };
+        await act(async () => {
+            updateListRow(nextTurn);
+            updateListRow({ ...nextTurn, latestTurnStatus: 'completed' });
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([SOUND_EFFECT_SOURCES['sound_electro_windows-ish1']]);
         await act(async () => { screen.tree.unmount(); });
     });
 
