@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import axios from '@/api/client/credentialAxios';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
   type ActionAutomationPortV1, type ActionAutomationSelectArgsV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -56,7 +57,10 @@ export function createCliActionAutomationPortV1(input: Readonly<{
     }
     return bind(current.port);
   }
-  const port = createActionAutomationHttpPortV1({ accountId, request: async (path, init) => {
+  const port = createActionAutomationHttpPortV1({ accountId, async readHomeFeatures(signal) {
+    const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: input.serverHttpBaseUrl, signal });
+    return snapshot.status === 'ready' ? snapshot.features : null;
+  }, request: async (path, init) => {
     const credential = requestCredential.getStore();
     if (!credential) throw new Error('Missing Action automation credential binding');
     if (credential.isCredentialCurrent && !await credential.isCredentialCurrent()) throw Object.assign(

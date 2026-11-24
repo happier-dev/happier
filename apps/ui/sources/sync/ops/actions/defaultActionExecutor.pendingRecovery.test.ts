@@ -12,6 +12,8 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
 // HTTP, device credentials and native confirmation are the only substituted boundaries.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -34,13 +36,21 @@ afterEach(async () => { await standardCleanup(); await homes.reset(); });
 const actionIds = ['session.pending.markHandled', 'session.pending.dismiss', 'session.pending.sendAsNew', 'session.pending.action.set'] as const;
 type RecoveryActionId = typeof actionIds[number];
 
-async function targetFixture(actionId: RecoveryActionId, approval: boolean | 'ask' = false) {
-    const serverId = await homes.addHome({ name: 'Pending Home', serverUrl: 'https://pending-recovery.test', accountId: 'pending-owner', active: false });
+async function targetFixture(actionId: RecoveryActionId, approval: boolean | 'ask' = false, indexCase?: {
+    workflowsEnabled: boolean; indexReply: 'missing' | 'empty';
+}) {
+    const host = indexCase ? `pending-index-${indexCase.workflowsEnabled}-${indexCase.indexReply}` : 'pending-recovery';
+    const serverId = await homes.addHome({ name: 'Pending Home', serverUrl: `https://${host}.test`, accountId: 'pending-owner', active: false });
     await homes.addHome({ name: 'Focused Home', serverUrl: 'https://pending-focused.test', accountId: 'focused-owner' });
     homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
     const baseline = createRootLayoutFeaturesResponse();
     const features = createRootLayoutFeaturesResponse({ capabilities: { session: { ...baseline.capabilities.session,
         pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } } } });
+    if (indexCase) {
+        expect(tryWriteServerEnabledBitInPlace(features, 'workflows', indexCase.workflowsEnabled)).toBe(true);
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    }
     homes.answer(serverId, '/v1/features', { body: features });
     homes.answer(serverId, '/v1/features/authenticated', { body: features });
     if (approval) homes.answer(serverId, '/v2/account/settings', { body: AccountSettingsV2GetResponseSchema.parse({
@@ -66,6 +76,30 @@ async function targetFixture(actionId: RecoveryActionId, approval: boolean | 'as
 }
 
 describe('registered UI Pending recovery Action delivery', () => {
+    it.each([
+        { workflowsEnabled: false, indexReply: 'missing', reads: [0, 0, 0] },
+        { workflowsEnabled: true, indexReply: 'missing', reads: [1, 0, 0] },
+        { workflowsEnabled: true, indexReply: 'empty', reads: [1, 0, 0] },
+    ] as const)('uses index demand for Workflows enabled=$workflowsEnabled and a $indexReply index', async ({ workflowsEnabled, indexReply, reads }) => {
+        const { path, serverId, input, context } = await targetFixture('session.pending.action.set', false, { workflowsEnabled, indexReply });
+        const indexPath = AUTOMATION_ACTION_INDEX_HTTP_PATH_V1;
+        homes.answer(serverId, `GET ${indexPath}`, indexReply === 'missing'
+            ? { status: 404, body: { error: 'not_found' } }
+            : { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
+        const result = { ok: true, result: { didUpdate: true, requestedAction: { v: 1, kind: 'enqueue' } } };
+        const notices = workflowsEnabled && indexReply === 'missing'
+            ? { automationNotices: [{ code: 'action_automations_not_checked', reason: 'not_found' }] } : {};
+        const counts: number[] = [];
+        for (let i = 0; i < reads.length; i++) {
+            const before = homes.requestsFor(indexPath).length;
+            const execution = await createDefaultActionExecutor().execute('session.pending.action.set', input, context);
+            counts.push(homes.requestsFor(indexPath).length - before);
+            expect(execution).toEqual({ ...result, ...notices });
+        }
+        expect(counts).toEqual(reads);
+        expect(homes.requestsFor(path)).toHaveLength(3);
+    });
+
     it.each([undefined, 'run/one'])('requeues the exact discarded identity for %s through the existing restore owner', async targetExecutionRunId => {
         const { serverId, context } = await targetFixture('session.pending.action.set');
         const base = targetExecutionRunId ? '/v2/sessions/session/execution-runs/run%2Fone/pending' : '/v2/sessions/session/pending';

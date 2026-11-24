@@ -1,5 +1,6 @@
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { readServerEnabledBit, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { vi } from 'vitest';
 import type { ActionSurfaceKey } from '@happier-dev/protocol/actions/actionSettings';
 
@@ -558,6 +559,9 @@ export function createHomeGovernanceHarness(): HomeGovernanceHarness {
             // old Home during mutation tests.
             record.answers.set('/v1/features', { body: features });
             record.answers.set('/v1/features/authenticated', { body: features });
+            if (readServerEnabledBit(features, 'workflows') === true) {
+                record.answers.set(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
+            }
 
             if (record.token) {
                 const write = await TokenStorage.setCredentialsForServerUrlWithRollback(

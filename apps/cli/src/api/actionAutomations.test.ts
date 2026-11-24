@@ -6,12 +6,31 @@ import { createActionAutomationPrivateMatchingV1 } from '@happier-dev/protocol/a
 import { readAccountStoredActionTriggerV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { applyCliActionAutomationUpdateV1, createCliActionAutomationPortV1,
   refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
 
 afterEach(() => vi.restoreAllMocks());
 
+function serveHomeFeatures(workflowsEnabled: boolean) {
+  const features = FeaturesResponseSchema.parse({ features: { workflows: { enabled: workflowsEnabled } } });
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+}
+
+it('skips selection and native completion demand for an Action on a Workflows-disabled Home', async () => {
+  serveHomeFeatures(false);
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+  const request = vi.spyOn(axios, 'request').mockResolvedValue({ status: 404, data: { error: 'not_found' } });
+  const port = createCliActionAutomationPortV1({ token, serverHttpBaseUrl: 'https://workflows-disabled.test' });
+  if (!port?.hasAfterActions) throw new Error('Expected the Account Action port');
+  const args = { actionId: 'machines.command.run', input: {}, context: { defaultSessionMachineId: 'invoking-machine' } };
+  expect(await port.select(args)).toMatchObject({ status: 'ready', before: [], after: [], notices: [] });
+  expect(await port.hasAfterActions([args.actionId])).toBe(false);
+  expect(request).not.toHaveBeenCalled();
+});
+
 it('keeps retained Action consumers on the same Account index when another credential for that Account is bound', async () => {
+  serveHomeFeatures(true);
   const accountId = randomUUID();
   const token = (device: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId, device })).toString('base64url')}.signature`;
   const originalToken = token('original');
@@ -41,6 +60,7 @@ it('keeps retained Action consumers on the same Account index when another crede
 });
 
 it('keeps each caller credential at the HTTP boundary while sharing ready selections and cursor updates', async () => {
+  serveHomeFeatures(true);
   const accountId = randomUUID();
   const token = (device: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId, device })).toString('base64url')}.signature`;
   const originalToken = token('original');
@@ -84,6 +104,7 @@ it('keeps each caller credential at the HTTP boundary while sharing ready select
 });
 
 it('settles an admitted after check with its originating caller credential after another caller binds', async () => {
+  serveHomeFeatures(true);
   const accountId = randomUUID();
   const token = (device: string) => `fixture.${Buffer.from(JSON.stringify({ sub: accountId, device })).toString('base64url')}.signature`;
   const originalToken = token('original');

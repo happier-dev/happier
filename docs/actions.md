@@ -6638,6 +6638,11 @@ reads invocation provenance, while raw input, output and exception text have no
 declared path. After evidence includes its terminal status. The trigger owner
 supplies the same declaration to stored, intended and inline validation.
 
+Action admission uses the Home's published `workflows` feature decision. A Home
+without that enabled bit runs Actions without reading the Action-trigger index.
+On an enabled Home, a failed index read preserves the Action's result and adds
+the typed notice that Automations could not be checked.
+
 The CLI and daemon retain one Action-trigger index per Account and Home across
 caller credentials. Pushed rows reach every retained consumer; each occurrence
 HTTP request keeps its originating caller's credential and currentness callback.

@@ -2,6 +2,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { ActionAutomationNoticeV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readRecordListProperty } from '@happier-dev/protocol/inputs/inputRecords';
 import { createCliActionExecutorFromCredentials } from '../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
@@ -80,47 +82,68 @@ describe('Action automation admission with empty and unloaded keys', () => {
       actionRequestId: 'failed-seed', serverId: fixture.serverId, serverIdentityId: fixture.serverId,
     })).toMatchObject({ ok: true, result: preference, automationNotices: [{ code: 'action_automations_not_checked' }] });
 
-    // Standalone MCP supports Account Actions without a bound Session. Keep
-    // the enrolled Home as credential authority; only HTTP transport uses the
-    // failing proxy, through the CLI's existing local Home URL override.
-    failingProxy.clear();
-    const mcp = await connectStdioMcp({ command: process.execPath,
-      args: [resolve(repoRootDir(), 'apps/cli/src/index.ts'), '--server-url', fixture.server.baseUrl,
-        '--local-server-url', failingProxy.baseUrl, 'mcp', 'serve'],
-      env: { ...process.env, CI: '1', HAPPIER_HOME_DIR: machine.homeDir,
-        NODE_OPTIONS: fixture.sourceOptions, HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
-        HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' } });
-    try {
-      const result = await mcp.client.callTool({ name: 'action_execute', arguments: {
-        actionId: 'settings.set', input: preference,
-      } });
-      expect(result.isError).not.toBe(true);
-      expect(parseToolJson(result)).toEqual(preference);
-      const notices = result.content?.flatMap(block => block.type === 'text'
-        ? readRecordListProperty(JSON.parse(block.text), 'automationNotices') : [])
-        .map(notice => ActionAutomationNoticeV1Schema.parse(notice));
-      expect(notices).toMatchObject([{ code: 'action_automations_not_checked' }]);
-      expect(failingProxy.entries().filter(request => request.path === '/v1/automations/actions/index')).toHaveLength(1);
-    } finally {
-      await mcp.client.close();
-      await mcp.transport.close();
-    }
-
-    failingProxy.clear();
-    const cli = await runCliJson({ testDir, cliHomeDir: machine.homeDir,
-      serverUrl: fixture.server.baseUrl, webappUrl: fixture.server.baseUrl,
-      label: 'failed-seed-notice',
-      env: { ...process.env, NODE_OPTIONS: fixture.sourceOptions,
-        HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' },
-      launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
-      args: ['--server-url', fixture.server.baseUrl, '--local-server-url', failingProxy.baseUrl,
-        'actions', 'invoke', 'settings.set', '--input-json', JSON.stringify(preference), '--json'],
+    const disabledProxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: fixture.server.baseUrl,
+      onRequestStart: request => {
+        if (request.path === '/v1/automations/actions/index') throw new Error('disabled Home served an index request');
+      },
+      rewriteResponseBody: {
+        when: request => ['/v1/features', '/v1/features/authenticated'].includes(request.path),
+        rewrite: (_request, body) => {
+          const features = FeaturesResponseSchema.parse(JSON.parse(body));
+          expect(tryWriteServerEnabledBitInPlace(features, 'workflows', false)).toBe(true);
+          return JSON.stringify(features);
+        },
+      },
     });
-    expect(cli).toMatchObject({ ok: true, kind: 'actions_invoke', data: preference });
-    const cliNotices = readRecordListProperty(cli, 'automationNotices')
-      .map(notice => ActionAutomationNoticeV1Schema.parse(notice));
-    expect(cliNotices).toMatchObject([{ code: 'action_automations_not_checked' }]);
-    expect(failingProxy.entries().filter(request => request.path === '/v1/automations/actions/index')).toHaveLength(1);
+    proxies.push(disabledProxy);
+
+    for (const { homeProxy, expectedNotices, expectedIndexReads } of [
+      { homeProxy: failingProxy, expectedNotices: [expect.objectContaining({ code: 'action_automations_not_checked' })], expectedIndexReads: 1 },
+      { homeProxy: disabledProxy, expectedNotices: [], expectedIndexReads: 0 },
+    ]) {
+      // Standalone MCP supports Account Actions without a bound Session. Keep
+      // the enrolled Home as credential authority; only HTTP transport uses the
+      // recording proxy, through the CLI's existing local Home URL override.
+      homeProxy.clear();
+      const mcp = await connectStdioMcp({ command: process.execPath,
+        args: [resolve(repoRootDir(), 'apps/cli/src/index.ts'), '--server-url', fixture.server.baseUrl,
+          '--local-server-url', homeProxy.baseUrl, 'mcp', 'serve'],
+        env: { ...process.env, CI: '1', HAPPIER_HOME_DIR: machine.homeDir,
+          NODE_OPTIONS: fixture.sourceOptions, HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
+          HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' } });
+      try {
+        const result = await mcp.client.callTool({ name: 'action_execute', arguments: {
+          actionId: 'settings.set', input: preference,
+        } });
+        expect(result.isError).not.toBe(true);
+        expect(parseToolJson(result)).toEqual(preference);
+        const notices = result.content?.flatMap(block => block.type === 'text'
+          ? readRecordListProperty(JSON.parse(block.text), 'automationNotices') : [])
+          .map(notice => ActionAutomationNoticeV1Schema.parse(notice));
+        expect(notices).toEqual(expectedNotices);
+        expect(homeProxy.entries().filter(request => request.path === '/v1/automations/actions/index')).toHaveLength(expectedIndexReads);
+      } finally {
+        await mcp.client.close();
+        await mcp.transport.close();
+      }
+
+      homeProxy.clear();
+      const cli = await runCliJson({ testDir, cliHomeDir: machine.homeDir,
+        serverUrl: fixture.server.baseUrl, webappUrl: fixture.server.baseUrl,
+        label: expectedIndexReads ? 'failed-seed-notice' : 'disabled-home-no-seed',
+        env: { ...process.env, NODE_OPTIONS: fixture.sourceOptions,
+          HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1' },
+        launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
+        args: ['--server-url', fixture.server.baseUrl, '--local-server-url', homeProxy.baseUrl,
+          'actions', 'invoke', 'settings.set', '--input-json', JSON.stringify(preference), '--json'],
+      });
+      expect(cli).toMatchObject({ ok: true, kind: 'actions_invoke', data: preference });
+      const cliNotices = readRecordListProperty(cli, 'automationNotices')
+        .map(notice => ActionAutomationNoticeV1Schema.parse(notice));
+      expect(cliNotices).toEqual(expectedNotices);
+      expect(homeProxy.entries().filter(request => request.path === '/v1/automations/actions/index')).toHaveLength(expectedIndexReads);
+    }
 
     let releaseCancelledSeed!: () => void;
     const cancelledSeedHeld = new Promise<void>(resolve => { releaseCancelledSeed = resolve; });

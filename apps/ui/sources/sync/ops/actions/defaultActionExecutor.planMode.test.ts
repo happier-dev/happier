@@ -1290,8 +1290,7 @@ describe('default Action executor mode and catalog contracts', () => {
       expect(retried).toMatchObject({ ok: true, result: { kind: 'fanout', results: expect.arrayContaining([
         ...['ask-session', 'pass-session', 'refused-session'].map(sessionId => ({
           target: { serverId, sessionId },
-          result: expect.objectContaining({ ok: true, result: outcome,
-            automationNotices: expect.arrayContaining([expect.objectContaining({ code: 'action_automations_not_checked' })]) }),
+          result: { ok: true, result: outcome },
         })),
       ]) } });
       expect(await retry()).toEqual(retried);

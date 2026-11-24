@@ -20,6 +20,8 @@ import { readActionAutomationExecutionMachineV1 } from './actionSettlement.js';
 import type { ActionAutomationNoticeV1 } from '../actionExecutionResult.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { isSharedRequesterActionV1, readActionWorkflowOriginRunIdV1 } from '../actionRequestAttributionV1.js';
+import type { FeaturesResponse } from '../../features/payload/featuresResponseSchema.js';
+import { readServerEnabledBit } from '../../features/serverEnabledBit.js';
 
 export { ActionAutomationTriggerReferenceV1Schema } from '../../automations/automationActionTriggerV1.js';
 export { ActionAutomationIndexV1Schema, ActionAutomationIndexChangeV1Schema,
@@ -180,9 +182,13 @@ export function projectActionAutomationSubjectsV1(args: ActionAutomationSelectAr
   return Object.freeze([...unique.values()]);
 }
 
+type ReadHomeFeatures = (signal?: AbortSignal) => Promise<Pick<FeaturesResponse, 'features'> | null>;
+type IndexAvailability = Readonly<{ status: 'disabled' | 'ready' } | { status: 'unavailable'; reason: string }>;
+
 /** One Account index; existing transport recovery selects changed scopes or invalidates an unknown snapshot. */
 export function createActionAutomationPortV1(options: Readonly<{
   accountId: string;
+  readHomeFeatures?: ReadHomeFeatures;
   seed(): Promise<unknown>;
   refresh?(selection: ActionAutomationIndexSelectionV1): Promise<unknown>;
   subscribe?(apply: (change: ActionAutomationIndexChangeV1) => void, invalidate: () => void): () => void;
@@ -286,8 +292,18 @@ export function createActionAutomationPortV1(options: Readonly<{
     failureReason = 'automation_index_unavailable';
     buckets.clear(); rowsByAutomation.clear(); consents.clear(); changedWhileSeeding.clear();
   };
-  const ensureLoaded = async (signal?: AbortSignal, progress?: ActionExecutorContext['operationProgress']) => {
+  const readHomeFeatures = options.readHomeFeatures;
+  const indexEnabled = readHomeFeatures && (async (signal?: AbortSignal) => {
+    const features = await readHomeFeatures(signal);
     signal?.throwIfAborted();
+    if (features && readServerEnabledBit(features, 'workflows') === true) return true;
+    invalidate();
+    return false;
+  });
+  const ensureLoaded = async (signal?: AbortSignal,
+    progress?: ActionExecutorContext['operationProgress']): Promise<IndexAvailability> => {
+    signal?.throwIfAborted();
+    if (indexEnabled && !await indexEnabled(signal)) return { status: 'disabled' };
     // Home can recover transaction acquisition while the socket stays connected.
     if (state === 'unavailable' && failureReason === 'database_connection_unavailable') loading = undefined;
     if ((state === 'unavailable' || state === 'ready') && loading === undefined) resetIndex();
@@ -310,19 +326,21 @@ export function createActionAutomationPortV1(options: Readonly<{
       }
     }
     signal?.throwIfAborted();
-    return refusal;
+    return refusal === undefined ? { status: 'ready' } : { status: 'unavailable', reason: refusal };
   };
   return {
     async hasAfterActions(actionIds: readonly string[]) {
-      const refusal = await ensureLoaded();
-      if (refusal !== undefined) throw new Error(refusal);
-      return actionIds.some(actionId => [...(buckets.get(actionId) ?? [])].some(row => row.phase === 'after'));
+      const availability = await ensureLoaded();
+      if (availability.status === 'unavailable') throw new Error(availability.reason);
+      return availability.status === 'ready'
+        && actionIds.some(actionId => [...(buckets.get(actionId) ?? [])].some(row => row.phase === 'after'));
     },
     async select(args) {
       const signal = args.signal ?? args.context.signal;
-      const refusal = await ensureLoaded(signal, args.context.operationProgress);
-      if (refusal !== undefined) return { status: 'unavailable', subjects: projectActionAutomationSubjectsV1(args), before: [], after: [],
-        notices: [{ code: 'action_automations_not_checked', reason: refusal }] };
+      const availability = await ensureLoaded(signal, args.context.operationProgress);
+      if (availability.status === 'disabled') return { status: 'ready', subjects: projectActionAutomationSubjectsV1(args), before: [], after: [], notices: [] };
+      if (availability.status === 'unavailable') return { status: 'unavailable', subjects: projectActionAutomationSubjectsV1(args), before: [], after: [],
+        notices: [{ code: 'action_automations_not_checked', reason: availability.reason }] };
       const before: ActionAutomationSelectedTriggerV1[] = [];
       const after: ActionAutomationSelectedTriggerV1[] = [];
       const notices: ActionAutomationNoticeV1[] = [];
@@ -414,6 +432,7 @@ export function createActionAutomationPortV1(options: Readonly<{
           .map(change => change.entityId))],
       };
       if (selection.automationIds.length === 0 && selection.workflowDefinitionIds.length === 0) return;
+      if (indexEnabled && !await indexEnabled()) return;
       // Another recovery can take the same slot while this caller is awaiting it.
       while (state === 'loading') await loading;
       if (state !== 'ready') return;
@@ -460,6 +479,7 @@ export function projectActionAutomationAdmitOutcomesV1(response: AutomationActio
 /** Both hosts share occurrence construction; adapters supply only their existing authenticated HTTP owner. */
 export function createActionAutomationHttpPortV1(options: Readonly<{
   accountId: string;
+  readHomeFeatures?: ReadHomeFeatures;
   request(path: string, init: Readonly<{ method: 'GET' | 'POST'; body?: unknown; signal?: AbortSignal }>): Promise<unknown>;
   subscribe?: Parameters<typeof createActionAutomationPortV1>[0]['subscribe'];
   allowConsent?: ActionAutomationAllowConsentV1;
@@ -468,7 +488,7 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
     AutomationActionAdmitResultV1Schema.parse(await options.request(AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1,
       { method: 'POST', body: AutomationActionAdmitRequestV1Schema.parse(input), signal: context.signal }))
   );
-  const port = createActionAutomationPortV1({ accountId: options.accountId,
+  const port = createActionAutomationPortV1({ accountId: options.accountId, readHomeFeatures: options.readHomeFeatures,
     seed: () => options.request(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { method: 'GET' }),
     refresh: selection => options.request(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { method: 'POST', body: selection }),
     subscribe: options.subscribe,
