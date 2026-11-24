@@ -118,6 +118,7 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
                 machineId: target.machineId, installationId: 'installation', installationPrivateKey: installation.secretKey,
                 serverId: 'srv_resource', serverIdentityId: 'srv_resource', serverHttpBaseUrl: channel.serverUrl,
                 ownCredentials: credentials, isCurrent: async () => true, isCustodyCurrent: async () => true,
+                isRetainedCustodyCurrent: async () => true,
                 createExecutor: () => executor }),
             invokeResource: async (resourceMethod, params, context) => handlers.get(resourceMethod)!(params, context),
         });
@@ -126,7 +127,9 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
             : result.response.v === 1 ? result.response.execution : null;
     };
     try {
-        expect(await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)).toMatchObject({ ok: true, result: { ok: true, subscriptionId: 'held-database' } });
+        const opened = await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN);
+        expect(opened).toEqual(expect.objectContaining({ ok: true,
+            result: expect.objectContaining({ ok: true, subscriptionId: 'held-database' }) }));
         expect(acquisitions).toBe(1);
         expect(await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toMatchObject({ ok: true, result: { ok: true } });
         expect(acquisitions).toBe(1);
