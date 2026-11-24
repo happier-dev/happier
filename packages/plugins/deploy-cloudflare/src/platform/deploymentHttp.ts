@@ -29,6 +29,20 @@ export async function request(context: DeploymentContext, accountId: string, pat
   }, intent, phase, method === 'DELETE');
 }
 
+/** Only the addressed resource's HTTP 404 proves absence during teardown. */
+export async function requestTeardownResource(context: DeploymentContext, accountId: string, path: string,
+  operation: readonly ['read', 'GET'] | readonly ['write', 'DELETE']): Promise<{ kind: 'absent' } | { kind: 'present'; value: unknown }> {
+  try {
+    const reply = await request(context, accountId, path, 'teardown', operation);
+    if ('code' in reply) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'teardown' },
+      failureCause: projectActionFailureCauseV1(reply, 'deployment.cloudflare.teardown') });
+    return { kind: 'present', value: reply.value };
+  } catch (error) {
+    if (isPluginError(error) && error.code === 'deployment_unavailable' && error.data.failureCause?.httpStatus === 404) return { kind: 'absent' };
+    throw error;
+  }
+}
+
 /** Account choices use the same credential binding and response owner as account-scoped reads. */
 export async function requestAccounts(context: DeploymentContext, query: string): Promise<Reply> {
   return send(context, { url: `${origin}/client/v4/accounts${query}`, method: 'GET', redirect: 'error',

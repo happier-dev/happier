@@ -4921,6 +4921,11 @@ supplies no explanation. The existing row renders **Expected during backup**
 presentation changes neither the health observation nor server-followed presence,
 and creates no second notice or separate expectation record.
 
+Cloudflare Pages Stop and remove deletes the entire linked project from a
+Production link. The provider handler checks the captured project ID before it
+deletes the project by name, then reads that name to confirm absence. A Preview
+link selects a branch and refuses project deletion.
+
 For a contributed target whose installed descriptor declares no teardown role,
 the development teardown Action prepares the existing plain detach disposition.
 Agents use the same compact intents as the UI: rollback names the Environment

@@ -1,10 +1,10 @@
 import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, DeploymentTargetRoleResultV1ProtocolSchema as output,
-  PluginError, type DeploymentTargetDeployInputV1, type DeploymentTargetRoleFailureV1,
+  PluginError, settleDeploymentTargetResourceRemovalV1, type DeploymentTargetDeployInputV1, type DeploymentTargetRoleFailureV1,
   type DeploymentTargetRoleResultV1, type DeploymentTargetObserveInputV1, type DeploymentTargetUploadDeployInputV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { isObject } from '../connectedAccounts/probe.js';
-import { failure, request, type DeploymentContext } from './deploymentHttp.js';
+import { failure, request, requestTeardownResource, type DeploymentContext } from './deploymentHttp.js';
 import { observePagesDeployment, pagesDeploymentResult } from './pages.js';
 import { pagesCommon, pagesIo } from './pagesPrepare.js';
 import { cloudflareRoleSchema, type CloudflareRoleInput, type PagesSelection } from './targetSelection.js';
@@ -47,6 +47,37 @@ export async function createPagesDeployment(input: CloudflareRoleInput<Deploymen
   return 'code' in result ? { v: 1, state: 'outcome_unknown', providerDeploymentId: reply.value.id, observedAtMs: context.now() } : result;
 }
 
+type TeardownSelection = Pick<CloudflareRoleInput<DeploymentTargetObserveInputV1, PagesSelection>,
+  'providerIdentity' | 'providerEnvironment' | 'preparedNative'>;
+
+async function teardownPages(input: TeardownSelection, context: DeploymentContext, observeOnly = false): Promise<DeploymentTargetRoleResultV1> {
+  // Deleting a Pages project removes every branch. Preview links only address a branch.
+  if (input.providerEnvironment.selection.kind !== 'production') {
+    throw new PluginError({ code: 'unsupported_action', details: { phase: 'teardown' } });
+  }
+  const name = input.preparedNative?.projectName;
+  if (!name) throw new PluginError({ code: 'deployment_content_unavailable', details: { phase: 'teardown' } });
+
+  const { providerAccountId, providerResourceId } = input.providerIdentity;
+  // Pages addresses projects by name. Compare the captured project ID before deleting that name.
+  const path = `/pages/projects/${encodeURIComponent(name)}`;
+  return settleDeploymentTargetResourceRemovalV1({
+    ...(observeOnly ? {} : { remove: async () => {
+      const current = await requestTeardownResource(context, providerAccountId, path, ['read', 'GET']);
+      if (current.kind === 'absent') return true;
+      if (!isObject(current.value) || typeof current.value.id !== 'string' || typeof current.value.name !== 'string') {
+        throw new PluginError({ code: 'provider_response_invalid', details: { phase: 'teardown' } });
+      }
+      if (current.value.id !== providerResourceId || current.value.name !== name) {
+        throw new PluginError({ code: 'deployment_conflict', details: { phase: 'teardown' } });
+      }
+      return (await requestTeardownResource(context, providerAccountId, path, ['write', 'DELETE'])).kind === 'absent';
+    } }),
+    observeAbsent: async () => (await requestTeardownResource(context, providerAccountId, path, ['read', 'GET'])).kind === 'absent',
+    now: context.now,
+  });
+}
+
 export const pagesLifecycleActions = {
   'pages-deploy': { ...pagesCommon, title: 'Deploy the Cloudflare Pages Git branch', dangerLevel: 'writesRemote', readOnly: false,
     confirmation: { title: 'Deploy the latest commit on this Cloudflare Pages branch?' }, inputSchema: cloudflareRoleSchema(inputs.deploy.jsonSchema, 'pages'), resultSchema: output.jsonSchema,
@@ -61,6 +92,13 @@ export const pagesLifecycleActions = {
   'pages-observe': { ...pagesCommon, title: 'Observe the selected Cloudflare Pages deployment', dangerLevel: 'safe', readOnly: true,
     inputSchema: cloudflareRoleSchema(inputs.observe.jsonSchema, 'pages'), resultSchema: output.jsonSchema,
     async run(value: JsonValue, context: PluginAccountActionContext) {
-      return pagesResult(await observePagesDeployment(value as unknown as CloudflareRoleInput<DeploymentTargetObserveInputV1, PagesSelection>, pagesIo(context)));
+      const input = value as unknown as CloudflareRoleInput<DeploymentTargetObserveInputV1, PagesSelection>;
+      const io = pagesIo(context);
+      if (input.operation === 'teardown') return teardownPages(input, io, true);
+      return pagesResult(await observePagesDeployment(input, io));
     } },
+  'pages-teardown': { ...pagesCommon, title: 'Delete the linked Cloudflare Pages project', dangerLevel: 'writesRemote', readOnly: false,
+    confirmation: { title: 'Delete this Cloudflare Pages project and all of its deployments?' },
+    inputSchema: cloudflareRoleSchema(inputs.teardown.jsonSchema, 'pages'), resultSchema: output.jsonSchema,
+    run: (value: JsonValue, context: PluginAccountActionContext) => teardownPages(value as unknown as TeardownSelection, pagesIo(context)) },
 } as const;

@@ -1,6 +1,5 @@
-import { isPluginError, PluginError, settleDeploymentTargetResourceRemovalV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
-import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
-import { request, type DeploymentContext } from './deploymentHttp.js';
+import { PluginError, settleDeploymentTargetResourceRemovalV1, type DeploymentTargetObserveInputV1, type DeploymentTargetRoleResultV1 } from '@happier-dev/plugin-sdk';
+import { requestTeardownResource, type DeploymentContext } from './deploymentHttp.js';
 import { type CloudflareRoleInput, type WorkerSelection } from './targetSelection.js';
 
 type Selection = Pick<CloudflareRoleInput<DeploymentTargetObserveInputV1, WorkerSelection>, 'providerIdentity' | 'providerEnvironment' | 'preparedNative'>;
@@ -21,26 +20,15 @@ function resourcePath(input: Selection): string {
   return `${root}/previews/${encodeURIComponent(previewId)}`;
 }
 
-async function absentAfterRequest(input: Selection, context: DeploymentContext, path: string, operation: readonly ['read', 'GET'] | readonly ['write', 'DELETE']): Promise<boolean> {
-  try {
-    const reply = await request(context, input.providerIdentity.providerAccountId, path, 'teardown', operation);
-    if ('code' in reply) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: 'teardown' },
-      failureCause: projectActionFailureCauseV1(reply, 'deployment.cloudflare.teardown') });
-    return false;
-  } catch (error) {
-    if (isPluginError(error) && error.code === 'deployment_unavailable' && error.data.failureCause?.httpStatus === 404) return true;
-    throw error;
-  }
-}
-
 /** Observation is read-only recovery; no retry or DELETE replay. The provider's
  * associated-resource deletion owns cleanup; no Account inventory is swept.
  */
 export async function teardownWorker(input: Selection, context: DeploymentContext, observeOnly = false): Promise<DeploymentTargetRoleResultV1> {
   const path = resourcePath(input);
+  const accountId = input.providerIdentity.providerAccountId;
   return settleDeploymentTargetResourceRemovalV1({
-    ...(observeOnly ? {} : { remove: () => absentAfterRequest(input, context, path, ['write', 'DELETE']) }),
-    observeAbsent: () => absentAfterRequest(input, context, path, ['read', 'GET']),
+    ...(observeOnly ? {} : { remove: async () => (await requestTeardownResource(context, accountId, path, ['write', 'DELETE'])).kind === 'absent' }),
+    observeAbsent: async () => (await requestTeardownResource(context, accountId, path, ['read', 'GET'])).kind === 'absent',
     now: context.now,
   });
 }

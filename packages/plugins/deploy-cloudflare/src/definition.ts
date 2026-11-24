@@ -184,7 +184,7 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
         }
       ],
       targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
-      actions: { inspect: 'pages-inspect', link: 'pages-link', create: 'pages-create', deploy: 'pages-deploy', observe: 'pages-observe', rollback: 'pages-rollback', logs: { build: 'pages-build-logs-read' },
+      actions: { inspect: 'pages-inspect', link: 'pages-link', create: 'pages-create', deploy: 'pages-deploy', observe: 'pages-observe', rollback: 'pages-rollback', teardown: 'pages-teardown', logs: { build: 'pages-build-logs-read' },
         variables: { read: 'pages-variables-read', sync: 'pages-variables-sync' },
         domains: { read: 'pages-domains-read', add: 'pages-domains-add', verify: 'pages-domains-verify', remove: 'pages-domains-remove' } } } } as const;
 
