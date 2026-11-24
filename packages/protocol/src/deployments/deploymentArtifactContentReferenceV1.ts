@@ -1,4 +1,5 @@
 import type { ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArtifactKindsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
@@ -55,8 +56,10 @@ export function readDeploymentArtifactHeaderV1(
     return deploymentArtifactReadFailureV1('revision');
   const header = readRecord(artifact.header);
   if (header.kind !== expectedKind) return deploymentArtifactReadFailureV1('kind');
-  return typeof header.title === 'string'
-    ? { ok: true, title: header.title } : deploymentArtifactReadFailureV1('header');
+  if (typeof header.title === 'string') return { ok: true, title: header.title };
+  // Provider-assigned Domains can be saved before there is a hostname to use as their title.
+  if (header.kind === DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1 && header.title === undefined) return { ok: true, title: '' };
+  return deploymentArtifactReadFailureV1('header');
 }
 
 /** Domain callers must still parse the full body or the exact leaf they consume. */

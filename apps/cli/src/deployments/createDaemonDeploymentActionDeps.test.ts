@@ -1879,9 +1879,9 @@ describe('installed deployment storage and target composition', () => {
             const documents = new Map<string, Record<string, unknown>>();
             let settling = false;
             const settlementReads = { metadata: 0, environmentBodies: 0, targetBodies: 0 };
-            const put = (id: string, kind: string, content: unknown) => documents.set(id, {
+            const put = (id: string, kind: string, content: unknown, title = 'Platform') => documents.set(id, {
                 id, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind, title: 'Platform' }),
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent({ kind, ...(title ? { title } : {}) }),
                 body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }), headerVersion: 1, bodyVersion: 1,
                 seq: 1, createdAt: 1, updatedAt: 1 });
             put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
@@ -2234,7 +2234,8 @@ describe('installed deployment storage and target composition', () => {
                         actionOperationId: 'domain-operation', requestId: 'domain-request' },
                     contentArtifactId: 'platform-domain-artifact', contentHeaderVersion: 1, contentBodyVersion: 1,
                     createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 });
-                put(domain.contentArtifactId, 'deployment-domain.v1', content);
+                // Provider-assigned Domains begin without a hostname or private header title.
+                put(domain.contentArtifactId, 'deployment-domain.v1', content, assignedDomainVerify ? '' : undefined);
                 const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
                 vi.mocked(axios.request).mockImplementation(async request => {
                     const path = new URL(request.url!).pathname;

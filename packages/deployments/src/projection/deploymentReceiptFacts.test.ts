@@ -200,7 +200,8 @@ describe('receipt facts', () => {
         const items = [{ ...current, source: { kind: 'repository' as const, sha: 'b'.repeat(40) } },
             { ...previous, source: { kind: 'repository' as const, sha: 'a'.repeat(40) } }];
         expect(selectDeploymentReceiptRetainedHistoryV1({ receipt: current, items, complete: true,
-            runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }).retainedRollbackTarget).toBeNull();
+            runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
+            .toMatchObject({ retainedRollbackTarget: null, retainedRollbackContentMissing: 'previous' });
     });
     it('omits the serving folder manifest from retained rollback targets', () => {
         const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });

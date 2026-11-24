@@ -30,7 +30,7 @@ export type DeploymentReceiptRetainedHistoryV1 = Readonly<{
 
 /** Every displayed retained-history fact comes from the same opened history page. */
 export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceiptRetainedHistoryV1):
-    Pick<DeploymentReceiptFactsV1, 'previousVersion' | 'retainedPreviousCount' | 'retainedRollbackTarget'> {
+    Pick<DeploymentReceiptFactsV1, 'previousVersion' | 'retainedPreviousCount' | 'retainedRollbackTarget' | 'retainedRollbackContentMissing'> {
     const lineage = getDeploymentTargetLinkLineageV1(input.runtime, input.targetLinks);
     const retained = selectDeploymentRetainedPreviousV1(input.items.filter(row => row.environmentId === input.receipt.environmentId
         && lineage.has(row.targetLinkId)), input.runtime.activeDeploymentId,
@@ -46,10 +46,12 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
         ? previous : retained.find(row => row.id === input.receipt.id);
     const source = candidate?.source;
     const servingSource = active?.source;
+    const distinct = candidate && active && candidate.id !== active.id && source
+        && areDeploymentSourceLabelsEqualV1(source, servingSource) === false ? { candidate, source } : null;
+    const available = distinct && hasDeploymentReceiptContentV1(distinct.candidate);
     return { previousVersion, retainedPreviousCount: input.placement === 'machine' && input.complete ? predecessors.length : null,
-        retainedRollbackTarget: candidate && hasDeploymentReceiptContentV1(candidate) && active && candidate.id !== active.id && source
-            && areDeploymentSourceLabelsEqualV1(source, servingSource) === false
-            ? { deploymentId: candidate.id, revision: source } : null };
+        retainedRollbackTarget: distinct && available ? { deploymentId: distinct.candidate.id, revision: distinct.source } : null,
+        ...(distinct && !available ? { retainedRollbackContentMissing: distinct.candidate.id } : {}) };
 }
 
 /** Exact operands for the existing deployments.logs.read stage-log owner. */
@@ -79,6 +81,8 @@ export type DeploymentReceiptFactsV1 = Readonly<{
     previousVersion: Version | null | undefined;
     retainedPreviousCount: number | null;
     retainedRollbackTarget: Version | null;
+    /** Exact previous release that would be offered for rollback if it still had its definition. */
+    retainedRollbackContentMissing?: string;
     logs: readonly DeploymentReceiptLogFactV1[];
     steps: readonly (DeploymentStepV1 & Readonly<{ machineId?: string; logs: readonly DeploymentReceiptLogFactV1[];
         stageLogs: readonly DeploymentReceiptStepLogFactV1[] }>)[];

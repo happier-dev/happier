@@ -371,12 +371,17 @@ export const DeploymentReceiptDetail = React.memo(
     const backupId = content.ownServer?.preMigrationBackup?.source.snapshot.snapshotId;
     const needsBackupChoice = migrationRan && (migrationPolicy === 'ask' || migrationPolicy === 'restoreBackupAndRollbackCode');
     // Restoring code does not restore migrated data, even when the incumbent is already serving again.
-    const backupTarget = needsBackupChoice && backupId && deployment.state === 'failed' && rollback !== null ? target : null;
+    const missingRollbackContent = facts.retainedRollbackContentMissing;
+    const backupTarget = needsBackupChoice && backupId && deployment.state === 'failed' && rollback !== null
+      && target?.deploymentId !== missingRollbackContent ? target : null;
     const codeTarget = (!migrationRan || migrationPolicy === 'rollbackCodeOnly' || migrationPolicy === 'ask')
       && deployment.state === 'failed' && rollback !== null && !restored ? facts.retainedRollbackTarget : null;
     const rollbackTarget = backupTarget ?? codeTarget;
     const retryRollbackTo = deployment.state === 'failed' && deployment.operation === 'rollback' && rollback !== null
-      && !rollbackTarget ? deployment.rollbackOfDeploymentId ?? null : null;
+      && !rollbackTarget && deployment.rollbackOfDeploymentId !== missingRollbackContent
+      ? deployment.rollbackOfDeploymentId ?? null : null;
+    const rollbackUnavailable = rollback !== null && !rollbackTarget && !retryRollbackTo && missingRollbackContent
+      ? readDeploymentRefusalRecovery('deployment_content_unavailable')?.remedy : null;
     // Deploy again leads the failure when nothing better does; a phone already holds it in its pinned bar.
     const bannerAgain = deployment.state === 'failed' && !rollbackTarget && !retryRollbackTo && againTarget !== null && !phone;
     const chooseRecovery = () => {
@@ -595,7 +600,7 @@ export const DeploymentReceiptDetail = React.memo(
                 // full stop ("… · Running, not verified"), which ran into the next sentence when joined by a space.
                 description={[recordedCause, ...(facts.failure?.validation?.issues.map(issue =>
                   issue.path.length ? `${issue.path.join('.')} · ${issue.code}` : issue.code) ?? []),
-                  failureConsequence(facts, firstMachine), recovery?.remedy]
+                  failureConsequence(facts, firstMachine), recovery?.remedy, rollbackUnavailable]
                   .filter((line, index, lines) => Boolean(line) && lines.indexOf(line) === index).join('\n')}
                 // The row's place is settled from first paint: the banner's own buttons are known then, beside the agent control.
                 actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || (recovery && props.onOpenRecoveryDestination) ? 'below' : undefined}
