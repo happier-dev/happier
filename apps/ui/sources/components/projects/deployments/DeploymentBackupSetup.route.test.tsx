@@ -186,7 +186,11 @@ it('reads local path capacity on the runtime Machine before Test, on path change
 });
 
 it('shows unknown local capacity before effects and keeps zero capacity eligible for Keep everything', async () => {
-  const initial = createDeploymentEnvironmentDetailV1();
+  const base = createDeploymentEnvironmentDetailV1();
+  const initial = createDeploymentEnvironmentDetailV1({ content: { ...base.content, bindings: [
+    { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword',
+      source: { kind: 'secret', ref: 'happier:shared-secret:v1:repository-password', resourceRevision: 1 } },
+  ] } });
   const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
   const definition = declaredDestination('local');
   if (!definition) throw new Error('Expected canonical local destination');
@@ -208,6 +212,7 @@ it('shows unknown local capacity before effects and keeps zero capacity eligible
     expect(configure).not.toHaveBeenCalled();
     await act(async () => screen.findAllByType(HappierInputField).find(field => field.props.field.path === 'path')!.props.onChange('/backups'));
     await screen.pressByTestIdAsync('local-setup.test');
+    expect(configure).toHaveBeenCalledWith(expect.objectContaining({ intent: 'test' }));
     expect(screen.getTextContent()).toContain(formatMachineBytes(0, 'storage'));
     expect(screen.findAllByType(Item).find(row => row.props.testID === 'local-setup.capacity')?.props.subtitle)
       .toContain('/archive-disk');

@@ -222,18 +222,13 @@ describe('failed deployment migration recovery', () => {
         expect(screen.findByTestId('investigation.agentActions.loading-action')).not.toBeNull();
         expect(offered()).toHaveLength(0);
         await act(async () => { answerRecords(); });
-        // The receipt offers the person's own records for it, one shared agent-action control each, in their words
-        // and launch modes.
-        await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 2); });
-        expect(offered().map(button => [button.props.title, button.props.launchMode]))
-          .toEqual([['Investigate', 'start'], ['Fix this deploy', 'review']]);
-        // One next step leads; the person's other records stay beside it, quieter (STORE-ACCEPT-1110 item 4).
-        expect(offered().map(button => button.props.emphasis ?? 'primary')).toEqual(['primary', 'secondary']);
+        await act(async () => { await waitForTestEvent(screen.subscribe, () => offered().length, count => count === 1); });
+        const [investigate] = offered();
+        expect(investigate?.props).toMatchObject({ title: 'Investigate', launchMode: 'start' });
+        const fix = investigate?.props.groups?.flatMap(group => group.items).find(item => item.label === 'Fix this deploy');
+        if (!fix) throw new Error('Expected the configured Fix this deploy record in the menu');
         await act(async () => { await controller.refreshDemanded(); });
-        // With no recovery to offer, the agent actions are the failed receipt's way forward (D5). A press starts the
-        // record it names through the configured run, with this exact receipt as the item and the mode chosen.
-        const fix = offered().find(button => button.props.title === 'Fix this deploy');
-        await act(async () => { fix?.props.onLaunch(fix.props.launchMode); });
+        await act(async () => { offered()[0]?.props.onSelectDestination?.(fix.id); });
         await act(async () => { await waitForTestEvent(screen.subscribe, () => triage.runs.length, count => count === 1); });
         const subject = { kind: 'deploymentReceipt', serverId, environmentId: detail.environment.id, deploymentId: receipt.deployment.id };
         expect(triage.runs).toEqual([expect.objectContaining({ handoff: expect.objectContaining({
@@ -241,9 +236,9 @@ describe('failed deployment migration recovery', () => {
           context: { kind: 'failure', subject }, evidence: [{ kind: 'failure', subject }] }) })]);
         expect(observed).toBeUndefined();
         // Edit action… opens the ONE actions editor (Triage's page) on the record pressed, never a page-local copy.
-        await act(async () => { fix?.props.onEdit?.(); });
+        await act(async () => { offered()[0]?.props.onEdit?.(); });
         expect(editorOpens).toEqual([{ destination: { pluginId: 'happier.triage', localId: 'triage' },
-          input: { v: 1, kind: 'actionEditor', actionId: 'deployments.fix-deploy' }, subPath: '' }]);
+          input: { v: 1, kind: 'actionEditor', actionId: 'investigate' }, subPath: '' }]);
         return;
       }
       const { Modal } = await import('@/modal');
