@@ -1598,8 +1598,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(WorkflowDefinitionArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(boundary.artifact.header)).metadata.title)
             .toBe('Saved after an index failure');
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
-        expect(visibleModals().filter(modal => modal.type === 'alert')).toHaveLength(1);
-        expect(readAlert()?.message).toBe(t('workflows.triggers.checks.notChecked'));
+        // R11: the Save proceeded, so the note is a passing notice, not a dialog.
+        expect(readAlert()).toBeUndefined();
+        const { readPresentationNotices } = await import('@/components/sessions/presentation/presentationNotices');
+        await vi.waitFor(() => expect(readPresentationNotices().map(notice => notice.message))
+            .toContain(t('workflows.triggers.checks.notChecked')));
     });
 
     it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {

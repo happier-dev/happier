@@ -1,19 +1,24 @@
 import { readActionAutomationSkipReasonV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
-import { formatAutomaticCheckSkipNotice } from '@/components/approvals/formatAutomaticCheckSkipNotice';
+import { formatAutomaticCheckSkipNotice, formatAutomationsNotCheckedNotice } from '@/components/approvals/formatAutomaticCheckSkipNotice';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { Modal } from '@/modal/ModalManager';
 import { t } from '@/text';
 
-/** Present the Action owner's settled notices without loading Workflow steps or rerunning checks. */
+/**
+ * Present the Action owner's settled notices without loading Workflow steps or rerunning checks.
+ *
+ * Every notice here is fail-open: the Action already proceeded and there is nothing to decide, so it
+ * is the transient notice, never a dialog. A refusal is a failed result and keeps its own presenter.
+ */
 export async function presentActionAutomationSkipNotice(
     result: Pick<ActionExecuteResult, 'automationNotices'>,
     lifetime?: ServerAccountScopeLifetime | null,
 ): Promise<void> {
     const notices = result.automationNotices ?? [];
     const skipped = notices.filter(notice => notice.code === 'action_automation_skipped');
-    const notChecked = notices.some(notice => notice.code === 'action_automations_not_checked');
-    if ((!notChecked && skipped.length === 0) || lifetime?.isCurrent() === false) return;
+    const notChecked = notices.flatMap(notice => notice.code === 'action_automations_not_checked' ? [notice.reason] : []);
+    if ((notChecked.length === 0 && skipped.length === 0) || lifetime?.isCurrent() === false) return;
     const names = new Map<string, string>();
     if (lifetime && skipped.length > 0) {
         const ids = [...new Set(skipped.map(notice => notice.workflowId))];
@@ -30,6 +35,8 @@ export async function presentActionAutomationSkipNotice(
     const lines = new Set(skipped.map(notice => formatAutomaticCheckSkipNotice({
         reason: readActionAutomationSkipReasonV1(notice), workflow: names.get(notice.workflowId) ?? t('workflows.triggers.checks.aCheck'),
     })));
-    if (notChecked) lines.add(t('workflows.triggers.checks.notChecked'));
-    Modal.alert(t('workflows.triggers.section.title'), [...lines].join('\n'), [{ text: t('common.ok'), style: 'cancel' }]);
+    for (const reason of notChecked) lines.add(formatAutomationsNotCheckedNotice(reason));
+    const message = [...lines].join('\n');
+    // The key is the message: the same cause from several Actions in a row replaces one notice instead of stacking.
+    publishPresentationNotice({ key: `action-automations:${message}`, message, severity: 'info' });
 }

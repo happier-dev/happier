@@ -388,4 +388,16 @@ describe('Action before checks on the approval card', () => {
     expect(text).toContain('workflows.triggers.checks.skippedUnavailable');
     await screen.unmount();
   });
+  // R11 (FIN-NOT-CHECKED-NOTICE-UI-1124): a held Action whose checks couldn't be loaded says so on its own card, no dialog.
+  it("carries 'Automations weren't checked' inline on the pending card without a dialog", async () => {
+    const { Modal } = await import('@/modal');
+    const value = checks({ phase: 'passed', selected: [], selectionStatus: 'unavailable',
+      notices: [{ code: 'action_automations_not_checked', reason: 'automation_index_unavailable' }] });
+    const screen = await renderScreen(
+      <ApprovalAutomaticChecks checks={value} actionTitle="Deploy" serverId={null} testID="checks" />,
+    );
+    expect(screen.getTextContent()).toContain('workflows.triggers.checks.notChecked');
+    expect(vi.mocked(Modal.alert)).not.toHaveBeenCalled();
+    await screen.unmount();
+  });
 });

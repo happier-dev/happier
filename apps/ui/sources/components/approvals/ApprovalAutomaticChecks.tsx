@@ -29,7 +29,7 @@ import { useCoreDisclosureToggleBinding } from '@/components/ui/lists/Disclosure
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { formatWorkflowInvocationElapsedLabel } from '@/components/workflows/presentation/workflowUsagePresentation';
-import { formatAutomaticCheckSkipNotice } from './formatAutomaticCheckSkipNotice';
+import { formatAutomaticCheckSkipNotice, formatAutomationsNotCheckedNotice } from './formatAutomaticCheckSkipNotice';
 import { readApprovalAutomaticChecksDecision } from './approvalAutomaticChecksDecision';
 
 /** The stored check phase retains the failed occurrence after a person's final Deny. */
@@ -83,7 +83,7 @@ export function readApprovalAutomaticChecksShown(checks: ApprovalAutomaticChecks
     || (checks.phase === 'passed' && checks.results.some(result => result.outcome === 'passed'))
     || ((checks.phase === 'override' || checks.phase === 'refused') && failed)
     || checks.consents.some((consent) => consent.decision === 'skip')
-    || checks.notices.some((notice) => notice.code === 'action_automation_skipped');
+    || checks.notices.some((notice) => notice.code === 'action_automation_skipped' || notice.code === 'action_automations_not_checked');
 }
 
 /**
@@ -422,6 +422,12 @@ export const ApprovalAutomaticChecks = React.memo(
       if (!skipped.has(key)) skipped.set(key, formatAutomaticCheckSkipNotice({
         reason, workflow: nameOf(notice, 'inline'), executionAccountName: props.automaticChecksExecutionAccountName ?? undefined,
       }));
+    }
+    // R11: the Action proceeds without its checks, and its own card says so (never a dialog).
+    for (const notice of checks.notices) {
+      if (notice.code !== 'action_automations_not_checked') continue;
+      const line = formatAutomationsNotCheckedNotice(notice.reason);
+      if (!skipped.has(`not-checked:${line}`)) skipped.set(`not-checked:${line}`, line);
     }
     if (!readApprovalAutomaticChecksShown(checks)) return null;
     return (

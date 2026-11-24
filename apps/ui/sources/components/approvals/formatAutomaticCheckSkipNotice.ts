@@ -16,3 +16,10 @@ export function formatAutomaticCheckSkipNotice(input: Readonly<{
     }
     return t('workflows.triggers.checks.skippedUnavailable', { workflow: input.workflow });
 }
+
+/** The fail-open note for an Action that proceeded without its checks; the producer's reason code becomes words. */
+export function formatAutomationsNotCheckedNotice(reason: string): string {
+    return reason === 'database_connection_unavailable'
+        ? t('workflows.triggers.checks.notCheckedHomeUnavailable')
+        : t('workflows.triggers.checks.notChecked');
+}
