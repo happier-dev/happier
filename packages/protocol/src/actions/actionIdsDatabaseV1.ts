@@ -50,6 +50,9 @@ export const TELEMETRY_COSTS_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capt
 export const TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1 = 'happier.telemetry/actions/health/key-flow' as const;
 export const TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/regressions/compare' as const;
 export const TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 = 'happier.telemetry/actions/capture/regressions/schedule' as const;
+export const TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1 = 'production-finding-observed/setup' as const;
+export const TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_ID_V1 =
+    `happier.telemetry/actions/${TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1}` as const;
 export const TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/occurrences/read' as const;
 export const TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/issues/transition' as const;
 export const TELEMETRY_EXCEPTION_ISSUES_REFRESH_ACTION_ID_V1 = 'happier.telemetry/actions/capture/exceptions/issues/refresh' as const;
@@ -66,6 +69,7 @@ export function telemetryCollectorActionSourceV1(id: string): 'source' | 'enviro
         case DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1:
         case DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1:
         case TELEMETRY_COSTS_READ_ACTION_ID_V1:
+        case TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_ID_V1:
             return 'source';
         case TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1:
         case TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1:

@@ -267,6 +267,11 @@ setup recorded in the Environment. If that collector is reinstalled, or the
 Environment's telemetry was set up before this check existed, reads stop with
 a collector key error until you run telemetry setup again.
 
+On a retained failing request or suspected N+1 in the **Telemetry** tab, choose
+**Automate** to open a Workflow draft for that finding. The draft uses the
+selected Environment and finding group. After you arm the Workflow, the
+collector can deliver distinct findings from that group.
+
 An Environment manager can choose **Clear capture** in the **Telemetry** tab
 and confirm to delete that Environment's retained capture. New telemetry can
 still arrive while the app continues exporting.

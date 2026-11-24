@@ -1,5 +1,5 @@
 import type { DeploymentTelemetryServiceV1 } from '@happier-dev/plugin-sdk';
-import type { BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
+import type { BackgroundServiceContext, BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
 import type { DaemonDatabaseService } from '@happier-dev/plugin-sdk/storage';
 import { localCaptureBackground, type createCaptureBackgroundOwner } from '../background.js';
 import { startTelemetryCollector, type TelemetryCollector } from './collector.js';
@@ -7,11 +7,13 @@ import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage'
 import { startCollectorIssueProjection } from '../exceptions/collectorIssues.js';
 import type { ExceptionIssueTransition } from '../exceptions/issueWriter.js';
 import { createExceptionIssuePublisher } from '../exceptions/publication.js';
+import { startProductionFindingObserver } from './productionFindingObserver.js';
 
 export interface TelemetryCollectorRunnerContext {
     signal: AbortSignal;
     services: { storage: { daemon: DaemonDatabaseService }; deploymentTelemetry: DeploymentTelemetryServiceV1 };
     /** The full background context; native exception issues use its Account storage and publication services. */
+    findings?: Readonly<{ context: BackgroundServiceContext; serverId: string; machineId: string }>;
     issues?: Readonly<{ account: PluginAccountStorageScope | undefined; publish: (transition: ExceptionIssueTransition) => Promise<void> }>;
 }
 export async function runTelemetryCollector(context: TelemetryCollectorRunnerContext,
@@ -22,6 +24,8 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
     let collector: TelemetryCollector | undefined;
     let withdrawEndpoint: (() => void) | undefined;
     let teams = new Map<string, string>();
+    const findingsLifetime = new AbortController();
+    let findings: ReturnType<typeof startProductionFindingObserver> | undefined;
     const issues = startCollectorIssueProjection({ account: context.issues?.account, runtime: acquisition.runtime,
         publish: context.issues?.publish ?? (async () => {}), teamOf: environmentId => teams.get(environmentId) });
     try {
@@ -34,24 +38,40 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
             },
             subscribeAssignmentsChanged: refresh => context.services.deploymentTelemetry.subscribeAssignmentsChanged(refresh),
             onExceptionsCommitted: (environment, fingerprints) => issues.observe(environment, fingerprints),
+            onTraceBatchCommitted: (partition, spans) => {
+                if (findings?.observes(partition)) findings.tracesCommitted(partition, spans.map(span => span.traceId));
+            },
             onEndpointChanged(endpoint) {
                 withdrawEndpoint?.();
                 withdrawEndpoint = endpoint === null ? undefined
                     : context.services.deploymentTelemetry.exposeEndpoint(() => endpoint);
             },
         });
-        await new Promise<void>(resolve => {
+        if (context.findings) {
+            findings = startProductionFindingObserver({ ...context.findings, runtime: acquisition.runtime,
+                context: { ...context.findings.context, signal: AbortSignal.any([context.signal, findingsLifetime.signal]) },
+            });
+        }
+        const shutdown = new Promise<void>(resolve => {
             if (context.signal.aborted) resolve();
             else context.signal.addEventListener('abort', () => resolve(), { once: true });
         });
+        await (findings ? Promise.race([shutdown, findings.running]) : shutdown);
     } catch (error) {
         if (!context.signal.aborted) throw error;
     } finally {
         withdrawEndpoint?.();
         withdrawEndpoint = undefined;
-        try { await collector?.stop(); }
+        findingsLifetime.abort();
+        try { await collector?.stop(); await findings?.running; }
         finally { issues.stop(); await acquisition.release(); }
     }
 }
-export const telemetryCollectorRunner: BackgroundServiceRunner = context => runTelemetryCollector({ ...context,
-    issues: { account: context.services.storage.account, publish: createExceptionIssuePublisher(context) } });
+export const telemetryCollectorRunner: BackgroundServiceRunner = context => {
+    const serverId = context.services.deploymentTelemetry.serverId;
+    const machineId = context.materialization?.machineId;
+    return runTelemetryCollector({ ...context,
+        ...(serverId && machineId ? { findings: { context, serverId, machineId } } : {}),
+        issues: { account: context.services.storage.account, publish: createExceptionIssuePublisher(context) },
+    });
+};

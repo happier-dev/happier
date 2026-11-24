@@ -1,4 +1,5 @@
 import type { CaptureRuntime } from '../runtime.js';
+import type { NormalizedTelemetryBatch } from '../otlp/types.js';
 import { createTelemetryAssignments, telemetryPartition, TELEMETRY_PARTITION_PREFIX, type TelemetryAssignment } from './assignments.js';
 
 export interface TelemetryCollectorOptions {
@@ -11,6 +12,7 @@ export interface TelemetryCollectorOptions {
     onEndpointChanged?: (endpoint: string | null) => void;
     /** Affected exception groups after their occurrences committed, for the native issue writer. */
     onExceptionsCommitted?: (environment: Readonly<{ partition: string; environmentId: string }>, fingerprints: readonly string[]) => void;
+    onTraceBatchCommitted?: (partition: string, spans: NormalizedTelemetryBatch['spans']) => void;
 }
 
 export interface TelemetryCollector {
@@ -46,6 +48,7 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
                 admit: request => admission.admit(request),
                 onExceptionsCommitted: (context, fingerprints) => options.onExceptionsCommitted?.({ partition: context.partition,
                     environmentId: context.partition.slice(TELEMETRY_PARTITION_PREFIX.length) }, fingerprints),
+                onTraceBatchCommitted: (context, spans) => options.onTraceBatchCommitted?.(context.partition, spans),
             });
             options.onEndpointChanged?.(receiver.endpoint);
         } else if (assigned.size === 0 && receiver) {

@@ -3281,6 +3281,14 @@ and the Environment's collector assignment. The tab retains results for the
 selected collector, Environment and Account read lifetime. Trace selection opens
 the shared request view, which follows the trace into query and correlated log
 details.
+For a retained failing request or suspected N+1 finding, the selected request
+can seed a Workflow with the Telemetry Event and its exact group filter. The
+ordinary collector read admission validates setup for the Environment. While
+armed, the collector retains one representative per stable shape and reported
+service within that Environment and submits its typed evidence through the
+existing Automations occurrence admission. The service label is workload
+reported and is used for grouping. Captured SQL and log bodies stay on the
+collector.
 For a native rollout, the tab reads the serving receipt for confirmation that
 the application received its managed collector bindings. Once the receipt
 confirms delivery, collector status distinguishes waiting for data from the

@@ -185,6 +185,8 @@ export const DatabaseTargetsListInputV1Schema: ProtocolComposableSchema<ReturnTy
     projectZodProtocolSchema(databaseOperations.DatabaseTargetsListInputV1Schema);
 export const DatabaseTargetsListResultV1Schema: ProtocolComposableSchema<ReturnType<typeof databaseOperations.DatabaseTargetsListResultV1Schema.parse>, JsonObjectOutput<ReturnType<typeof databaseOperations.DatabaseTargetsListResultV1Schema.parse>>> =
     projectZodProtocolSchema(databaseOperations.DatabaseTargetsListResultV1Schema);
+export type { DatabaseCaptureFindingDetailV1 } from './schemas/databaseFindings.js';
+export { DatabaseCaptureFindingDetailV1ProtocolSchema } from './schemas/databaseFindings.js';
 export { DATABASE_INSIGHT_SOURCES_POINT_ID_V1, DATABASE_INSIGHT_SOURCES_POINT_REF_V1, DATABASE_INSIGHT_SOURCE_PROTOCOL_ID_V1, DatabaseFindingBriefBuildResultV1ProtocolSchema, DatabaseFindingObservationV1ProtocolSchema, DatabaseFindingReadInputV1ProtocolSchema, DatabaseFindingReadResultV1ProtocolSchema, DatabaseFindingSourceScopeV1ProtocolSchema, DatabaseFindingsListInputV1ProtocolSchema, DatabaseFindingsListResultV1ProtocolSchema, DatabaseInsightBriefBuildInputV1ProtocolSchema, DatabaseInsightSourceDescriptorV1ProtocolSchema } from './schemas/databaseFindings.js';
 export { DatabaseInsightSourceOperationSchemasV1, DatabaseInsightSourceReadSchemasV1 } from './schemas/databaseFindings.js';
 export { DatabaseFindingDismissInputV1ProtocolSchema, DatabaseFindingDismissResultV1ProtocolSchema } from './schemas/databaseFindings.js';

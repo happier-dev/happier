@@ -21,6 +21,7 @@ import { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServ
 import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { discardSessionDraftPersistenceWrites, prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { clearBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
+import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -188,6 +189,8 @@ const answers = (call: Call, admittedSource: DatabaseCaptureSourceV1 = source) =
         sourceScope: { serverId: source.serverId, machineId: source.kind === 'worktree' ? source.machineId : 'collector' },
         evidenceIdentity: 'retained-request-failure',
         kind: 'failing_endpoint',
+        ...(source.kind === 'environment' ? { environmentObservation: { shapeKey: 'checkout-shape',
+          reportedService: { kind: 'workload_reported', name: request.serviceName } } } : {}),
         title: 'Endpoint request failed',
         observedWindow: { fromMs: request.at, toMs: request.at + request.durationMs },
         coverage: { status: 'complete' },
@@ -515,6 +518,41 @@ describe('Environment Telemetry tabs', () => {
       expect(
         screen.findByTestId('telemetry.capture.trace.req-1'),
       ).not.toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('opens a Workflow draft scoped to the selected production finding without saving it', async () => {
+    const { invoke, calls } = collector(call => answers(call));
+    router.spies.push.mockClear();
+    const screen = await renderScreen(panel(invoke, setUpDetail('reader')));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
+      await settle();
+      const readsBefore = calls.length;
+      await screen.pressByTestIdAsync('project-deployments.telemetry.request.automate');
+      expect(router.spies.push).toHaveBeenCalledWith({
+        pathname: '/workflows/[id]', params: { id: 'new', definitionDraftSeedId: expect.any(String), serverId: source.serverId },
+      });
+      const route = router.spies.push.mock.lastCall?.[0];
+      if (!route || typeof route === 'string' || typeof route.params?.definitionDraftSeedId !== 'string') throw new Error('Workflow draft route missing');
+      expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, lifetime.scope)).toMatchObject({
+        initialView: 'sentence',
+        eventSeed: {
+          eventRef: { pluginId: 'happier.telemetry', localId: 'production-finding-observed' },
+          monitoringMachineId: 'collector',
+          setupInput: { v: 1, source: source },
+          initialFilter: { v: 1, all: [
+            { op: 'eq', field: '/groupKey', value: expect.stringMatching(/^[a-zA-Z0-9_-]{43}$/) },
+          ] },
+        },
+      });
+      expect(calls).toHaveLength(readsBefore);
     } finally {
       await screen.unmount();
     }

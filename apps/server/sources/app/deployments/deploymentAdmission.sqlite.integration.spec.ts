@@ -59,7 +59,7 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-    DATABASE_CAPTURE_STATUS_ACTION_ID_V1, TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+    DATABASE_CAPTURE_STATUS_ACTION_ID_V1, TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_ID_V1, TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -120,7 +120,7 @@ describe('current Source deployment authority', () => {
             },
         }), async app => {
             const route = `/v1/actions/${ACTION_INVOKE_ACTION_ID_V1}`;
-            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'status' | 'regression' | 'clear' = 'list',
+            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'status' | 'regression' | 'clear' | 'finding' = 'list',
                 environmentId = environment.id) => {
                 const target = { kind: 'machine' as const, machineId };
                 const material = { type: 'dataKey' as const, machineKey: nacl.randomBytes(32) };
@@ -131,9 +131,11 @@ describe('current Source deployment authority', () => {
                         clear: DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
                         list: DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
                         status: DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
+                        finding: TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_ID_V1,
                     }[operation]),
                         input: { source: { kind: 'environment', serverId, environmentId },
-                            ...(operation === 'list' ? { page: { limit: 6 } } : {}) } };
+                            ...(operation === 'list' ? { page: { limit: 6 } } : {}),
+                            ...(operation === 'finding' ? { v: 1 } : {}) } };
                 const envelope = sealExternalActionRequestV2({ material, input, randomBytes: nacl.randomBytes,
                     projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                     binding: { accountId, serverIdentityId: serverId, actionId: ACTION_INVOKE_ACTION_ID_V1, target,
@@ -146,6 +148,15 @@ describe('current Source deployment authority', () => {
             const admit = (bearer: string, body: object) => post(bearer, `${route}/execution-authorization`, body);
             expect((await admit(ownerToken, makeRead(owner.id, collector.id).body)).statusCode).toBe(200);
             expect((await loadDeploymentEnvironmentInTx(db, teammate.id, serverId, environment.id)).ok).toBe(true);
+            const setup = await admit(readerToken, makeRead(teammate.id, collector.id, 'finding').body);
+            expect(setup.statusCode).toBe(200);
+            const setupBinding = ExternalActionExecutionAuthorizationV1Schema.parse(setup.json()).binding;
+            expect(setupBinding).toMatchObject({
+                accountId: teammate.id, custodianAccountId: owner.id, machineId: collector.id,
+                deploymentTelemetryRead: [{ environmentId: environment.id }],
+            });
+            expect((await admit(readerToken, makeRead(teammate.id, unrelated.id, 'finding').body)).statusCode).toBe(403);
+            expect((await admit(outsiderToken, makeRead(outsider.id, collector.id, 'finding').body)).statusCode).toBe(403);
             const { body, material } = makeRead(teammate.id, collector.id);
             const accepted = await admit(readerToken, body);
             expect(accepted.statusCode).toBe(200);

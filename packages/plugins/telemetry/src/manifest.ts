@@ -6,6 +6,7 @@ import { databaseActionLocalIdV1, type DatabaseActionIdV1, type DatabaseCaptureS
 import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
+import { productionFindingEventParts } from './telemetry/productionFindingEvent.js';
 import { telemetryExceptionManifestParts, telemetryExceptionSourceContribution } from './exceptions/contribution.js';
 import { TELEMETRY_ACCOUNT_DEFINITION, TELEMETRY_OPEN_ISSUES_FIELD } from './exceptions/serviceFacts.js';
 import { createCaptureActionProducers, createCaptureActions, createCapturePublicActionProducers } from './actions.js';
@@ -85,10 +86,10 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
    },
   }),
  } },
- actions: { ...createCaptureActions(capture), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions },
+ actions: { ...createCaptureActions(capture), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions, ...productionFindingEventParts.actions },
  accountCollections: telemetryExceptionManifestParts.accountCollections,
  notifications: telemetryExceptionManifestParts.notifications,
- events: telemetryExceptionManifestParts.events,
+ events: { ...telemetryExceptionManifestParts.events, ...productionFindingEventParts.events },
  workflows: { [TELEMETRY_REGRESSION_WORKFLOW_ID_V1]: TELEMETRY_REGRESSION_WORKFLOW_V1 },
  // D30/J2: the native exception detail, mounted by PRs & Issues for the Happier exceptions source.
  // D36: App vitals, Metric and Slowest routes, offered in Add widget → Telemetry and never auto-added.

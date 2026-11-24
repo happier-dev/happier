@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { router } from 'expo-router';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
@@ -6,7 +7,7 @@ import type {
   DatabaseCaptureEndpointV1,
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
-import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { buildProductionCaptureFindingWorkflowSeedV1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import {
@@ -38,6 +39,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { AddCheckSetup } from './AddCheckSetup';
 import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
@@ -646,9 +648,16 @@ export function TelemetryRequestDetail(props: Readonly<{
   }, [reads, active, traceId, attempt]);
   const readBody = React.useCallback((id: string) => active ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [active, reads]);
   const queries = read.kind === 'ready' ? read.trace.summaries.filter(summary => summary.kind === 'query').length : null;
-  const finding = active && read.kind === 'ready'
-    ? read.trace.findings?.find(candidate => candidate.verification.observationKey === request.id)
+  const findings = active && read.kind === 'ready'
+    ? read.trace.findings?.filter(candidate => candidate.verification.observationKey === request.id)
     : undefined;
+  const finding = findings?.[0];
+  const eventSeed = findings?.map(buildProductionCaptureFindingWorkflowSeedV1).find(seed => seed !== undefined);
+  const openWorkflow = () => {
+    if (!lifetime || !eventSeed) return;
+    const entry = prepareWorkflowSentenceEditorEntry({ name: requestLabelOf(request), eventSeed }, lifetime);
+    if (entry) router.push(entry);
+  };
   const { openingBrief, openBrief } = useDeploymentTelemetryBrief(lifetime, active ? reads : null);
   const status = request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode);
   const facts = [
@@ -677,6 +686,10 @@ export function TelemetryRequestDetail(props: Readonly<{
             <RoundButton size="small" display="secondary" testID="project-deployments.telemetry.request.investigate"
               title={t('deploymentTelemetry.request.investigate')}
               onPress={() => { void openBrief(() => finding); }} disabled={openingBrief} loading={openingBrief} />
+          ) : null}
+          {eventSeed && lifetime ? (
+            <RoundButton size="small" display="secondary" testID="project-deployments.telemetry.request.automate"
+              title={t('workflows.triggers.section.automate')} onPress={openWorkflow} />
           ) : null}
         </View>
         <Text variant="meta" style={styles.facts}>

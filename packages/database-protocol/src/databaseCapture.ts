@@ -1,4 +1,35 @@
+import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
+import type { DatabaseCaptureFindingDetailV1 } from '@happier-dev/plugin-sdk/database';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+
 export { DATABASE_CAPTURE_RESOURCE_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
+
+export const PRODUCTION_CAPTURE_FINDING_EVENT_REF_V1 = {
+    pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: 'production-finding-observed',
+} as const;
+
+/** Only finding kinds that the collector can qualify may arm the production finding Event. */
+export function readProductionCaptureFindingGroupKeyV1(finding: DatabaseCaptureFindingDetailV1): string | undefined {
+    if (finding.kind !== 'failing_endpoint' && finding.kind !== 'suspected_n_plus_one') return undefined;
+    const group = finding.environmentObservation;
+    if (!group) return undefined;
+    return computeCanonicalDomainSeparatedDigest('happier.telemetry.production-finding-shape-service.v1', [
+        group.shapeKey, group.reportedService?.name ?? '',
+    ]);
+}
+
+export function buildProductionCaptureFindingWorkflowSeedV1(finding: DatabaseCaptureFindingDetailV1): PluginUiOpenAutomationEventRequestV1 | undefined {
+    const groupKey = readProductionCaptureFindingGroupKeyV1(finding);
+    const subject = finding.verification.readBefore.input.source;
+    if (!groupKey || subject.kind !== 'environment') return undefined;
+    return {
+        eventRef: PRODUCTION_CAPTURE_FINDING_EVENT_REF_V1,
+        monitoringMachineId: finding.sourceScope.machineId,
+        setupInput: { v: 1, source: subject },
+        initialFilter: { v: 1, all: [{ op: 'eq', field: '/groupKey', value: groupKey }] },
+    };
+}
 
 /** The local capture launch producer and setup guidance share these names. */
 export const LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES = ['DATABASE_URL'] as const;

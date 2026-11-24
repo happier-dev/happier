@@ -79,6 +79,9 @@ export const DatabaseCaptureFindingDetailV1Schema = z.strictObject({
     })),
 });
 
+export type DatabaseCaptureFindingDetailV1 = z.infer<typeof DatabaseCaptureFindingDetailV1Schema>;
+export const DatabaseCaptureFindingDetailV1ProtocolSchema = projectZodProtocolSchema(DatabaseCaptureFindingDetailV1Schema);
+
 /** Structural names stay source-local; Event observations remain numeric only. */
 const findingObject = z.discriminatedUnion('kind', [
     z.extend(z.pick(DatabaseStatsTableV1Schema, { relation: true }), { kind: z.literal('table') }),

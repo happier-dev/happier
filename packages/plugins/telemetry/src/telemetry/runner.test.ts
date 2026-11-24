@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
+import type { BackgroundServiceContext, PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import type { DaemonDatabaseService } from '@happier-dev/plugin-sdk/storage';
 import { createCaptureBackgroundOwner } from '../background.js';
 import { createCaptureSqliteFixture } from '../testing/sqlite.js';
-import { runTelemetryCollector } from './runner.js';
+import { runTelemetryCollector, telemetryCollectorRunner } from './runner.js';
 
 describe('registered production collector runner', () => {
     it.each(['machine', 'deployed-app'] as const)('publishes the %s collector, joins shutdown and resumes assigned telemetry after role restart', async placement => {
@@ -99,4 +100,134 @@ describe('registered production collector runner', () => {
             finally { fixture.close(); }
         }
     });
+});
+
+it('publishes one typed finding per production shape only while the Environment trigger is armed', async () => {
+    const fixture = createCaptureSqliteFixture();
+    const lifetime = new AbortController();
+    const materialization = { pluginId: 'happier.telemetry', machineId: 'collector', materializationId: 'installed' };
+    const subject = { kind: 'environment' as const, serverId: 'home', environmentId: 'assigned' };
+    const eventRef = { pluginId: materialization.pluginId, localId: 'production-finding-observed' };
+    let endpoint: (() => string | null) | undefined;
+    let invalidate: (() => void) | undefined;
+    let definitions: readonly PluginCheckpointedEventSourceDefinitionV1[] = [];
+    const admissions: unknown[] = [];
+    const current = vi.fn();
+    const token = 'fixture-exporter';
+    const neighborToken = 'fixture-neighbor';
+    const hashToken = (value: string) => createHash('sha256').update(value).digest('hex');
+    // The Home Actions and signed invalidation are the boundary. HTTP ingest, capture SQLite and the SDK observer are real.
+    const context = {
+        plugin: { id: materialization.pluginId, version: '1.0.0' },
+        contribution: { id: 'telemetry-collector', qualifiedId: 'happier.telemetry/backgroundServices/telemetry-collector' },
+        materialization,
+        surface: 'background',
+        signal: lifetime.signal,
+        invokedAtMs: Date.now(),
+        services: {
+            storage: { daemon: { async database(_name: string, options: Parameters<DaemonDatabaseService['database']>[1]) {
+                for (const migration of options?.migrations ?? []) await migration.up(fixture.db);
+                return fixture.db;
+            } } },
+            deploymentTelemetry: {
+                serverId: subject.serverId,
+                async readAssignments() { return [
+                    { environmentId: subject.environmentId, tokenHash: hashToken(token) },
+                    { environmentId: 'neighbor', tokenHash: hashToken(neighborToken) },
+                ]; },
+                subscribeAssignmentsChanged() { return () => {}; },
+                exposeEndpoint(read: () => string | null) { endpoint = read; return () => { endpoint = undefined; }; },
+            },
+            events: { host: { subscribe(_target: unknown, receive: (change: unknown) => void) {
+                invalidate = () => receive({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload: {} });
+                return { dispose() { invalidate = undefined; } };
+            } } },
+            actions: { async execute(id: string, input: unknown) {
+                if (id === 'automation.event.sources.list') return { kind: 'page', revision: String(definitions.length + 1), definitions, nextCursor: null };
+                if (id === 'automation.event.source.status.report') { current(input); return { ok: true }; }
+                if (id === 'automation.event.admit') {
+                    admissions.push(input);
+                    return { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'workflow-run' }] };
+                }
+                throw new Error(`Unexpected fixture Action ${id}`);
+            } },
+        },
+    } as unknown as BackgroundServiceContext;
+    const running = telemetryCollectorRunner(context);
+    let sequence = 0;
+    async function sendTrace(exporter: string, serviceName = 'web', parameters?: readonly number[]) {
+        const spanId = (++sequence).toString(16).padStart(16, '0');
+        const traceId = spanId.padStart(32, '0');
+        const startTimeUnixNano = BigInt(Date.now()) * 1_000_000n;
+        const response = await fetch(`${endpoint?.()}/v1/traces`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${exporter}` },
+            body: JSON.stringify({ resourceSpans: [{
+                resource: { attributes: [{ key: 'service.name', value: { stringValue: serviceName } }] },
+                scopeSpans: [{ spans: [{ traceId, spanId, name: 'GET /orders', kind: 2,
+                    startTimeUnixNano: String(startTimeUnixNano), endTimeUnixNano: String(startTimeUnixNano + 1_000_000n),
+                    status: { code: parameters ? 1 : 2 }, attributes: [
+                        { key: 'http.request.method', value: { stringValue: 'GET' } },
+                        { key: 'http.route', value: { stringValue: '/orders' } },
+                        { key: 'http.response.status_code', value: { intValue: parameters ? '200' : '500' } },
+                    ] }, ...(parameters ?? []).map(parameter => ({
+                        traceId, spanId: (++sequence).toString(16).padStart(16, '0'), parentSpanId: spanId,
+                        name: 'SELECT', kind: 3, startTimeUnixNano: String(startTimeUnixNano),
+                        endTimeUnixNano: String(startTimeUnixNano + 500_000n), attributes: [
+                            { key: 'db.system.name', value: { stringValue: 'postgresql' } },
+                            { key: 'db.query.text', value: { stringValue: 'SELECT $1::integer AS id' } },
+                            { key: 'db.query.parameter.1', value: { intValue: String(parameter) } },
+                        ],
+                    }))] }],
+            }] }),
+        });
+        expect(response.status).toBe(200);
+    }
+    try {
+        await vi.waitFor(() => expect(endpoint?.()).toMatch(/^http:\/\/127\.0\.0\.1:/));
+        await sendTrace(token);
+        expect(admissions).toEqual([]);
+        const { PLUGIN_MANIFEST } = await import('../manifest.js');
+        const event = PLUGIN_MANIFEST.contributes.events.find(candidate => candidate.id === eventRef.localId);
+        expect(event?.automation?.subjectKinds).toEqual(['environment']);
+        const setup = event?.automation?.source?.setupActionRef;
+        expect(setup).toMatchObject({ pluginId: materialization.pluginId });
+        // AE passes the stable installation and the Environment input returned by the setup Action.
+        if (!setup) throw new Error('Production finding setup is unavailable');
+        const { computeCanonicalDomainSeparatedDigest } = await import('@happier-dev/plugin-sdk');
+        const sourceInstanceId = computeCanonicalDomainSeparatedDigest('happier.telemetry.production-finding-source.v1', [subject.serverId, subject.environmentId]);
+        definitions = [{ automationId: '11111111-1111-4111-8111-111111111111', triggerId: 'trigger',
+            triggerRevision: 1, eventRef, sourceInstanceId, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+            sourceContractVersion: 1, sourceConfig: { v: 1, subject },
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization },
+            filter: null, maximumObservationAgeMs: null }];
+        invalidate?.();
+        await vi.waitFor(() => expect(current.mock.calls).toContainEqual([expect.objectContaining({ kind: 'catalogReconciliation', adoptedRevision: '2' })]));
+        await vi.waitFor(() => expect(current.mock.calls).toContainEqual([expect.objectContaining({ kind: 'source', state: 'observing' })]));
+        await sendTrace(neighborToken);
+        await sendTrace(token);
+        await vi.waitFor(() => expect(admissions).toHaveLength(1));
+        await sendTrace(token);
+        await sendTrace(token, 'billing');
+        await vi.waitFor(() => expect(admissions).toHaveLength(2));
+        await sendTrace(token, 'web', [5, 5]);
+        await sendTrace(token, 'web', [5, 6, 7]);
+        await vi.waitFor(() => expect(admissions).toHaveLength(3));
+        expect(admissions).toEqual([['web', 'failing_endpoint'], ['billing', 'failing_endpoint'],
+            ['web', 'suspected_n_plus_one']].map(([name, kind]) => expect.objectContaining({
+            eventRef, subjectContexts: [{ role: 'operand', subject }],
+            payload: { subject, groupKey: expect.stringMatching(/^[a-zA-Z0-9_-]{43}$/), observation: expect.objectContaining({ kind,
+                environmentObservation: { shapeKey: expect.any(String), reportedService: { kind: 'workload_reported', name } },
+                verification: expect.objectContaining({ readBefore: expect.objectContaining({
+                    input: expect.objectContaining({ source: subject }),
+                }) }),
+            }) },
+        })));
+        const groupKeys = admissions.map(({ payload }) => (payload as { groupKey: string }).groupKey);
+        expect(new Set(groupKeys).size).toBe(3);
+    } finally {
+        lifetime.abort();
+        try { await running; }
+        finally { fixture.close(); }
+    }
 });
