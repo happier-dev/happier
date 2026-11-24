@@ -25,7 +25,7 @@ import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMemberDetailPath } from '../teamsRoutes';
 import { resolveTeamMembersCollectionLanding } from '../collection/teamsCollection';
 import { TeamOwnerRequiredNotice } from './TeamOwnerRequiredNotice';
-import { TeamMemberAddAction } from './TeamMemberAddAction';
+import { TeamMemberAddAction, teamMemberAddWays } from './TeamMemberAddAction';
 import { TeamMemberRow } from './TeamMemberRow';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
@@ -111,6 +111,8 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
         router.push(teamMemberDetailPath({ serverId: addressServerId, teamId }, membershipId));
     }, [router, addressServerId, teamId]);
     const canRead = context.team.capabilities.viewRoster;
+    const addWays = teamMemberAddWays(context);
+    const addOffered = addWays.add || addWays.invite;
     const searchTerm = query.trim();
     // While the first page is read, the people the Team summary counts hold their place (every membership, as the
     // whole roster lists them), at most the roster's first page. A narrowed or searched roster, or a Team whose
@@ -164,7 +166,8 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
             <ItemGroup
                 surface="none"
                 title={t('teams.tabs.members')}
-                action={<TeamMemberAddAction context={context} presentation="section" />}
+                // Only a way to add someone takes the action's place; an empty one would still stack under a narrow title.
+                action={addOffered ? <TeamMemberAddAction context={context} presentation="section" /> : undefined}
                 virtualizedSegment={{ first: true, last: roster.rows.length === 0 && roster.status !== 'loading' && roster.status !== 'ready' }}
             >
                 <SectionContentRow>
@@ -267,6 +270,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
         query,
         setQuery,
         reservedPeople,
+        addOffered,
         roster,
         openMember,
         language,

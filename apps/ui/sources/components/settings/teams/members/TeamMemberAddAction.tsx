@@ -11,6 +11,20 @@ import { t } from '@/text';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMemberAddPath } from '../teamsRoutes';
 
+type TeamMemberAddContext = Pick<TeamSectionContext, 'address' | 'homeName' | 'team' | 'canMutate' | 'archived' | 'approvalPending'>;
+
+/**
+ * Which ways to add someone this viewer has on this Team: the Team's projected capability, withheld on an archived
+ * Team or while an approval holds its writes. A section offers the action's place only when one exists.
+ */
+export function teamMemberAddWays(context: TeamMemberAddContext): Readonly<{ add: boolean; invite: boolean }> {
+  const offered = !context.archived && !context.approvalPending;
+  return {
+    add: context.team.capabilities.manageMembers && offered,
+    invite: context.team.capabilities.manageInvitations && offered,
+  };
+}
+
 /**
  * The roster's "+" (DR-06, lab `tsMembers-M`), the same on the Members page and on the Members rail
  * beside an open person. Two ways to add someone exist — an Account already on this Home, or an
@@ -22,7 +36,7 @@ import { teamMemberAddPath } from '../teamsRoutes';
  */
 export const TeamMemberAddAction = React.memo(function TeamMemberAddAction(
   props: Readonly<{
-    context: Pick<TeamSectionContext, 'address' | 'homeName' | 'team' | 'canMutate' | 'archived' | 'approvalPending'>;
+    context: TeamMemberAddContext;
     /** `section`: the labelled action of a page section. `rail`: the plain "+" of a collection rail. */
     presentation: 'section' | 'rail';
   }>,
@@ -30,9 +44,7 @@ export const TeamMemberAddAction = React.memo(function TeamMemberAddAction(
   const router = useRouter();
   const { context } = props;
   // Which ways exist is the Team's projected capability; whether they may be used now is the shell's one decision.
-  const offered = !context.archived && !context.approvalPending;
-  const canAdd = context.team.capabilities.manageMembers && offered;
-  const canInvite = context.team.capabilities.manageInvitations && offered;
+  const { add: canAdd, invite: canInvite } = teamMemberAddWays(context);
   const disabled = !context.canMutate;
   const [open, setOpen] = React.useState(false);
   const addExisting = React.useCallback(

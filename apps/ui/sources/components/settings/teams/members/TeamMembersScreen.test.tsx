@@ -294,6 +294,10 @@ describe('TeamMembersScreen', () => {
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids).not.toContain('team-members-forbidden');
         expect(ids).not.toContain('team-members-add');
+        // No empty action either: an action slot that draws nothing still stacks beneath a narrow title (+8).
+        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+        const controls = screen.findAllByType(ItemGroup).find((node) => node.props.title === 'teams.tabs.members');
+        expect(controls?.props.action).toBeUndefined();
         expect(harness.requestsFor(MEMBERS_LIST_PATH).length).toBeGreaterThan(0);
     });
 
