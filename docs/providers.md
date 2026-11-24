@@ -1005,8 +1005,12 @@ returns `provider_catalog_unavailable`; gateway compatibility declarations canno
 supply account membership. Sources without an observation declaration retain their
 static models as `account_unverified` diagnostics. Managed-purpose launch reads the
 same catalog owner through the Account-scoped model projection port, so launch and
-the picker admit the same models. For a sandbox guest enrolled under the
-controller's Account, the Home's managed Machine record identifies the controller.
+the picker admit the same models. An exact source read reuses its retained HTTP
+catalog observation. If a launch has no observation for the selected Account and
+purpose, it waits for the existing observer to acquire one. A failed acquisition
+keeps the typed catalog refusal and its retry action. For a sandbox guest enrolled
+under the controller's Account, the Home's managed Machine record identifies the
+controller.
 The controller observes the selected Connected Account and the guest applies its
 own Agent compatibility to that catalog. A selected source model missing from its
 current catalog returns `provider_model_not_found`, including during confirmation. The CLI's

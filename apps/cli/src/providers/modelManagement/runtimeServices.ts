@@ -454,7 +454,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       const observe = input.observeConnectedAccountSourceModels;
       const projection = await awaitWithinProviderOperation(readConnectedAccountModelCatalog({ registry, resolveSelection, signal,
         provider, purpose: savedPurpose?.purpose,
-        request: { machineId: request.machineId, connectedAccountTarget: request.source.target, sourceCatalog: true,
+        request: { machineId: request.machineId, connectedAccountTarget: request.source.target,
           application: request.application, agentTargetKey: request.application?.agentTargetKey,
           refreshPolicy: request.refreshPolicy, forceRefresh: request.forceRefresh },
         ...(invoke || observe ? { observeModels: createConnectedAccountModelObserver({ registry, invoke, observe,

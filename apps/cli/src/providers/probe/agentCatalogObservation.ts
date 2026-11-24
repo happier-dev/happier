@@ -55,6 +55,7 @@ export type AgentProviderCatalogObservationInput = Readonly<{
   resolveContributedCatalogParsers?: () => Promise<ContributedProviderCatalogParserBinding | null>;
   trigger: ProviderCatalogRefreshTrigger;
   currentOnly?: boolean;
+  acquireIfMissing?: boolean;
   isCurrent(): boolean;
   signal?: AbortSignal;
   wallDeadlineAtMs?: number;
@@ -246,7 +247,10 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
         lease.dispose();
         lease = null;
         assertCurrent();
-        if (input.currentOnly) return projectAgentCatalogObservationSnapshot(catalog, transitionByIdentity.get(scheduledIdentity));
+        const retained = transitionByIdentity.get(scheduledIdentity);
+        if (input.currentOnly || (input.acquireIfMissing && retained?.snapshot)) {
+          return projectAgentCatalogObservationSnapshot(catalog, retained);
+        }
         const schedulerWaiter = {
           unavailable: (): AgentCatalogScheduledResult => ({
             status: 'error',

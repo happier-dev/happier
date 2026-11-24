@@ -87,8 +87,8 @@ function headerValues(headers: readonly string[], name: string): string[] {
   return values;
 }
 
-const gatewaySigninScenarios = ['Claude Session', 'attached child Run'] as const;
-it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model for a %s through local request auth', async scenario => {
+const gatewaySigninScenarios = ['warm attached child Run', 'cold Claude Session', 'cold unavailable catalog'] as const;
+it.each(gatewaySigninScenarios)('admits the selected signed-in Gateway model through local request auth (%s)', async scenario => {
   await withConfiguredDaemonTestHome({ prefix: 'gateway-signin-' }, async ({ homeDir }) => {
     const cleanups: Array<() => unknown> = [];
     const defer = (cleanup: () => unknown) => { cleanups.unshift(cleanup); };
@@ -160,13 +160,14 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       const lookupRequestAuth = vi.fn(auth.lookupRequestAuth);
       const requestAuth = { lookupRequestAuth, refreshAfterAuthFailure: auth.refreshAfterAuthFailure };
       const resolveAddresses = async () => ['1.1.1.1'];
+      let failCatalog = scenario === 'cold unavailable catalog';
       const client = createProviderProbeHttpClient({
         resolveAddresses,
         async transport({ url, method, headers, signal }) {
           // Preserve the production path, query and headers across the vendor socket boundary.
           const requested = new URL(url);
           const response = await fetch(upstream.origin + requested.pathname + requested.search, { method, headers, signal });
-          return { status: response.status, headers: Object.fromEntries(response.headers), body: new Uint8Array(await response.arrayBuffer()) };
+          return { status: failCatalog ? 503 : response.status, headers: Object.fromEntries(response.headers), body: new Uint8Array(await response.arrayBuffer()) };
         },
       });
       const observation = createAgentProviderCatalogObservationService({
@@ -198,29 +199,23 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
       const backendTarget = { kind: 'backend' as const, backendId: agentId };
       const agentTargetKey = buildBackendTargetKeyV2(backendTarget);
       const connectedServices = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
-        [qualifiedConnectedAccountPreferenceServiceKey(service)]: { source: 'connected', profileId: account.accountId },
+        [qualifiedConnectedAccountPreferenceServiceKey(service)]: { source: 'connected', selection: 'profile', profileId: account.accountId },
       } });
-      const projection = await models.projectModels({ machineId, agentTargetKey, connectedServices });
-      if (projection.status !== 'success') {
-        throw new Error(`Connected Account catalog failed (${projection.error.code} after ${resolveSelection.mock.calls.length} source resolutions, ${lookupRequestAuth.mock.calls.length} auth lookups and ${upstream.requests.length} Gateway requests)`);
+      // Use the saved Session launch input without opening the picker in the cold cases.
+      const selection = SessionModelSelectionSchema.parse({ v: 2, updatedAt: 1,
+        ref: { source: 'connected_account', purpose, endpointTemplateId, agentTargetKey, modelId },
+      });
+      if (scenario === 'warm attached child Run') {
+        const projection = await models.projectModels({ machineId, agentTargetKey, connectedServices });
+        expect(projection).toMatchObject({ status: 'success', groups: expect.arrayContaining([expect.objectContaining({
+          rows: expect.arrayContaining([expect.objectContaining({
+            descriptor: expect.objectContaining({ id: modelId }), ref: selection.ref,
+          })]),
+        })]) });
+        expect(upstream.requests).toHaveLength(1);
+      } else {
+        expect(upstream.requests).toHaveLength(0);
       }
-      expect(projection).toMatchObject({ status: 'success', groups: expect.arrayContaining([expect.objectContaining({
-        rows: expect.arrayContaining([expect.objectContaining({
-          descriptor: expect.objectContaining({ id: modelId }),
-          ref: { source: 'connected_account', purpose, endpointTemplateId, agentTargetKey, modelId },
-        })]),
-      })]) });
-      expect(upstream.requests).toHaveLength(1);
-      expect(lookupRequestAuth).toHaveBeenCalledTimes(1);
-      expect(materializeAccount).toHaveBeenCalledTimes(1);
-      const [catalogRequest] = upstream.requests;
-      const catalogQuery = new URL(catalogRequest!.pathAndQuery, upstream.origin).searchParams;
-      expect(catalogQuery.getAll('teamId')).toEqual([teamId]);
-      expect(headerValues(catalogRequest!.rawHeaders, 'authorization').join() === `Bearer ${vendorToken}`).toBe(true);
-      expect(headerValues(catalogRequest!.rawHeaders, 'x-vercel-ai-gateway-team')).toEqual([teamId]);
-
-      const row = projection.groups.flatMap(group => group.rows).find(row => row.descriptor.id === modelId);
-      const selection = SessionModelSelectionSchema.parse({ v: 2, updatedAt: 1, ref: row?.ref });
       const openHttp = vi.fn<typeof openPinnedHttpStream>(request => {
         const requested = new URL(request.url);
         return openPinnedHttpStream({ ...request, url: upstream.origin + requested.pathname + requested.search,
@@ -243,7 +238,7 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
         observeConnectedAccountSourceModels: observation.observe,
         resolveProviderAddresses: resolveAddresses,
       };
-      const prepared = await prepareDaemonProviderLaunch({
+      const launch = () => prepareDaemonProviderLaunch({
         options: { directory: fixture.happyHomeDir, backendTarget, machineId, connectedServices },
         effectiveBackendTarget: backendTarget, catalogAgentId: agentId, modelSelection: selection,
         profileEnvironmentVariables: {}, daemonSpawnHooks: null, persistedProviderBinding: null,
@@ -255,7 +250,28 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
         launchResourceScope: scope,
         ...directAccountRuntime,
       });
+      let prepared = await launch();
+      if (scenario === 'cold unavailable catalog') {
+        expect(prepared).toMatchObject({ ok: false, result: { errorDetail: {
+          providerError: { code: 'provider_catalog_unavailable', action: 'retry' },
+        } } });
+        expect(upstream.requests.map(request => request.method)).toEqual(['GET']);
+        failCatalog = false;
+        prepared = await launch();
+      }
       expect(prepared).toMatchObject({ ok: true, managedPurpose: { selection: selection.ref }, attempt: null });
+      expect(upstream.requests.map(request => request.method)).toEqual(
+        scenario === 'cold unavailable catalog' ? ['GET', 'GET'] : ['GET'],
+      );
+      const catalogRequest = upstream.requests.at(-1)!;
+      const catalogQuery = new URL(catalogRequest.pathAndQuery, upstream.origin).searchParams;
+      expect(catalogQuery.getAll('teamId')).toEqual([teamId]);
+      expect(headerValues(catalogRequest.rawHeaders, 'authorization').join() === `Bearer ${vendorToken}`).toBe(true);
+      expect(headerValues(catalogRequest.rawHeaders, 'x-vercel-ai-gateway-team')).toEqual([teamId]);
+      if (scenario === 'cold unavailable catalog') return;
+      lookupRequestAuth.mockClear();
+      resolveCurrentBinding.mockClear();
+      materializeAccount.mockClear();
       if (!prepared.ok || !prepared.managedPurpose) throw new Error('Expected admitted Gateway Session launch');
       const credentials = { token: 'fixture-home-token', encryption: null };
       const committedOptions = { ...prepared.options, existingSessionId: 'gateway-claude-session',
@@ -371,7 +387,7 @@ it.each(gatewaySigninScenarios)('launches the selected signed-in Gateway model f
         expect(new URL(upstreamRequest.pathAndQuery, upstream.origin).searchParams.getAll('teamId')).toEqual([teamId]);
         expect(headerValues(upstreamRequest.rawHeaders, 'x-vercel-ai-gateway-team')).toEqual([teamId]);
       };
-      if (scenario === 'attached child Run') {
+      if (scenario === 'warm attached child Run') {
         await streamInheritedRun();
         return;
       }

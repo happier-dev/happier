@@ -112,7 +112,7 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
     const catalog = await readConnectedAccountModelCatalog({ registry, provider, purpose: binding.purpose.purpose,
       endpointTemplateId: connectedRef.endpointTemplateId,
       request: { machineId, agentTargetKey, connectedAccountTarget: binding.target, mode: 'management',
-        includeDirectMaterialization: true, refreshPolicy: 'current_only' },
+        includeDirectMaterialization: true, sourceCatalog: true },
       resolveSelection: input.resolveManagedPurposeBindingIntentSelection, readModelProjection: input.readModelProjection,
       observeModels: provider.definition.managedRuntime ? undefined : observeModels, signal });
     if (catalog.error) { catalogError ??= catalog.error; continue; }

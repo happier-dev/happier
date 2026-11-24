@@ -18,6 +18,7 @@ export type ObserveConnectedAccountModels = (input: Readonly<{
   machineId: string;
   source: ConnectedAccountCatalogSource;
   currentOnly: boolean;
+  acquireIfMissing?: boolean;
   refresh: boolean;
   signal: AbortSignal;
 }>) => Promise<AgentProviderCatalogObservationResult | null>;
@@ -36,7 +37,7 @@ export function createConnectedAccountModelObserver(input: Readonly<{
   observe?: ObserveConnectedAccountSourceModels;
   resolveContributedCatalogParsers?: ResolveContributedProviderCatalogParsers;
 }>): ObserveConnectedAccountModels {
-  return async ({ account, machineId, source, currentOnly, refresh, signal }) => {
+  return async ({ account, machineId, source, currentOnly, acquireIfMissing, refresh, signal }) => {
     const declared = source.family.catalogObservation;
     if (!declared) return null;
     if ('provider' in declared) {
@@ -54,7 +55,7 @@ export function createConnectedAccountModelObserver(input: Readonly<{
       return input.observe({ machineId, operationId: randomUUID(), consumer: source.provider.identity,
         purpose, binding: source.selection.binding,
         requestAuthUse: { purpose, materialization: use.materialization },
-        provider, trigger: refresh ? 'manual_refresh' : 'picker_open', currentOnly,
+        provider, trigger: refresh ? 'manual_refresh' : 'picker_open', currentOnly, acquireIfMissing,
         ...(input.resolveContributedCatalogParsers ? {
           resolveContributedCatalogParsers: () => input.resolveContributedCatalogParsers!(declared.provider),
         } : {}),

@@ -180,6 +180,7 @@ async function readConnectedAccountModelCatalogFromSource(input: Omit<ConnectedA
           observed = observedConnectedAccountDescriptors(await input.observeModels({
             account: selection.resolved.account, machineId: input.request.machineId, source,
             currentOnly: input.request.refreshPolicy === 'current_only',
+            acquireIfMissing: input.request.sourceCatalog === true && !input.request.forceRefresh,
             refresh: input.request.forceRefresh === true, signal,
           }));
         } else if (family.catalogObservation && input.readModelProjection && input.request.agentTargetKey) {
