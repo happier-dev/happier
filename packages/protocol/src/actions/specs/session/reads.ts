@@ -405,6 +405,7 @@ function createSessionReadActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.wait.idle', executionPlacement: 'session', approval: {result: 'required'},
+    originalExecution: { daemonIngressSurfaces: [] },
     title: 'Wait for session idle',
     description: 'Wait until the session becomes idle or the timeout elapses.',
     safety: 'safe',
