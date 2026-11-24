@@ -1,3 +1,4 @@
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { logger } from '@/ui/logger';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
@@ -93,10 +94,11 @@ export function readExecutionRunErrorCode(error: unknown): string | null {
   return null;
 }
 
-export function readExecutionRunErrorMessage(error: unknown): string {
+/** Agent and provider errors can echo a registered secret; every Run error message is redacted here. */
+export function readExecutionRunErrorMessage(error: unknown, fallback = 'Execution failed'): string {
   if (error && typeof error === 'object' && 'message' in error
-    && typeof error.message === 'string' && error.message.trim()) return error.message;
-  return 'Execution failed';
+    && typeof error.message === 'string' && error.message.trim()) return redactTranscriptSecrets(error.message);
+  return fallback;
 }
 
 /** Reuse the runtime's typed failure evidence; untyped errors do not acquire a guessed issue. */

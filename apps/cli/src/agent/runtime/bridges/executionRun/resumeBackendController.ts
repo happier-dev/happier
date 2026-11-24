@@ -23,7 +23,7 @@ import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunP
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import type { ExecutionRunEnsureResult } from './ensureExecutionRun';
 import type { ExecutionRunConnectedServicesSelectionReport } from './runtime/create';
-import { projectExecutionRunError } from './errors';
+import { projectExecutionRunError, readExecutionRunErrorMessage } from './errors';
 import type { finishExecutionRun } from './finishExecutionRun';
 
 export type ExecutionRunResumeMaterializationHooks = Readonly<{
@@ -191,7 +191,7 @@ export async function resumeBackendControllerForResumableRun(args: Readonly<{
     const missing = isMissingProviderState(error);
     const projected = projectExecutionRunError(error, { runId: args.runId });
     const errorCode = missing ? 'execution_run_provider_state_missing' : projected.code;
-    const message = error instanceof Error ? error.message : 'Resume failed';
+    const message = readExecutionRunErrorMessage(error, 'Resume failed');
     const details = readAgentStartupFailureDetails(error);
     // Only the exact retained occurrence may publish this definitive result.
     // Keep its provider identity for inspection; an unavailable handle never
