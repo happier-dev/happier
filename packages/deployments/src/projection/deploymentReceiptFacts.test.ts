@@ -192,6 +192,23 @@ describe('receipt facts', () => {
             runtime, targetLinks: [runtime], retainPreviousDeployments: 1, placement: 'machine' }))
             .toEqual({ previousVersion: undefined, retainedPreviousCount: null, retainedRollbackTarget: null });
     });
+    it('reports the settled serving release after a failed attempt, without treating the nearest older receipt as serving', () => {
+        const receipt = createDeploymentReceiptHeaderV1({ id: 'failed', state: 'failed', requestedAtMs: 3000,
+            startedAtMs: 3001, settledAtMs: 3002 });
+        const nearer = { ...createDeploymentReceiptHeaderV1({ id: 'nearer', requestedAtMs: 2000, startedAtMs: 2001, settledAtMs: 2002 }),
+            source: { kind: 'repository' as const, sha: 'b'.repeat(40) } };
+        const serving = { ...createDeploymentReceiptHeaderV1({ id: 'serving', requestedAtMs: 1000, startedAtMs: 1001, settledAtMs: 1002 }),
+            source: { kind: 'repository' as const, sha: 'a'.repeat(40) } };
+        const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: serving.id });
+        const input = { receipt, items: [receipt, nearer, serving], complete: true, runtime, targetLinks: [runtime],
+            retainPreviousDeployments: 2, placement: 'machine' as const };
+        expect(selectDeploymentReceiptRetainedHistoryV1(input)).toMatchObject({ previousVersion: undefined,
+            servingVersion: { deploymentId: serving.id, revision: serving.source } });
+        const withoutServing = { ...runtime, activeDeploymentId: undefined };
+        const facts = selectDeploymentReceiptRetainedHistoryV1({ ...input, runtime: withoutServing, targetLinks: [withoutServing] });
+        expect(facts.previousVersion).toBeUndefined();
+        expect(facts).not.toHaveProperty('servingVersion');
+    });
     it('does not offer a rollback to a successful receipt whose private content was removed', () => {
         const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: 'current' });
         const current = createDeploymentReceiptHeaderV1({ id: 'current', requestedAtMs: 2000,

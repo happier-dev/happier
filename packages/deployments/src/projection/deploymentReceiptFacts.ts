@@ -30,19 +30,25 @@ export type DeploymentReceiptRetainedHistoryV1 = Readonly<{
 
 /** Every displayed retained-history fact comes from the same opened history page. */
 export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceiptRetainedHistoryV1):
-    Pick<DeploymentReceiptFactsV1, 'previousVersion' | 'retainedPreviousCount' | 'retainedRollbackTarget' | 'retainedRollbackContentMissing'> {
+    Pick<DeploymentReceiptFactsV1, 'previousVersion' | 'servingVersion' | 'retainedPreviousCount' | 'retainedRollbackTarget' | 'retainedRollbackContentMissing'> {
     const lineage = getDeploymentTargetLinkLineageV1(input.runtime, input.targetLinks);
-    const retained = selectDeploymentRetainedPreviousV1(input.items.filter(row => row.environmentId === input.receipt.environmentId
-        && lineage.has(row.targetLinkId)), input.runtime.activeDeploymentId,
+    const entries = input.items.filter(row => row.environmentId === input.receipt.environmentId && lineage.has(row.targetLinkId));
+    const retained = selectDeploymentRetainedPreviousV1(entries, input.runtime.activeDeploymentId,
         input.placement === 'machine' ? input.retainPreviousDeployments : undefined);
     const predecessors = retained.filter(row => row.id !== input.receipt.id
         && (row.requestedAtMs < input.receipt.requestedAtMs
             || row.requestedAtMs === input.receipt.requestedAtMs && row.id.localeCompare(input.receipt.id) < 0));
     const previous = predecessors[0];
-    const previousVersion = previous ? previous.source ? { deploymentId: previous.id, revision: previous.source } : undefined
-        : input.complete ? null : undefined;
-    const active = input.items.find(row => row.id === input.runtime.activeDeploymentId);
-    const candidate = input.receipt.id === input.runtime.activeDeploymentId || !isDeploymentRollbackSourceEligibleV1(input.receipt.state)
+    const released = isDeploymentRollbackSourceEligibleV1(input.receipt.state);
+    const previousVersion = !released ? undefined
+        : previous ? previous.source ? { deploymentId: previous.id, revision: previous.source } : undefined
+            : input.complete ? null : undefined;
+    const active = entries.find(row => row.id === input.runtime.activeDeploymentId);
+    const failed = input.receipt.state === 'failed' || input.receipt.state === 'outcome_unknown';
+    // The target's serving settlement decides what is serving now. History only supplies its revision label.
+    const servingVersion = failed && active?.source && active.id !== input.receipt.id
+        ? { deploymentId: active.id, revision: active.source } : undefined;
+    const candidate = input.receipt.id === input.runtime.activeDeploymentId || !released
         ? previous : retained.find(row => row.id === input.receipt.id);
     const source = candidate?.source;
     const servingSource = active?.source;
@@ -51,6 +57,7 @@ export function selectDeploymentReceiptRetainedHistoryV1(input: DeploymentReceip
     const available = distinct && hasDeploymentReceiptContentV1(distinct.candidate);
     return { previousVersion, retainedPreviousCount: input.placement === 'machine' && input.complete ? predecessors.length : null,
         retainedRollbackTarget: distinct && available ? { deploymentId: distinct.candidate.id, revision: distinct.source } : null,
+        ...(servingVersion ? { servingVersion } : {}),
         ...(distinct && !available ? { retainedRollbackContentMissing: distinct.candidate.id } : {}) };
 }
 
@@ -79,6 +86,8 @@ export type DeploymentReceiptFactsV1 = Readonly<{
     /** undefined = not captured; null = admitted first deploy without an incumbent. Display only. */
     rollbackTarget: Readonly<{ deploymentId: string; revision: DeploymentReviewRevisionV1 }> | null | undefined;
     previousVersion: Version | null | undefined;
+    /** The target's currently serving release beside a failed attempt, when its revision is available. */
+    servingVersion?: Version;
     retainedPreviousCount: number | null;
     retainedRollbackTarget: Version | null;
     /** Exact previous release that would be offered for rollback if it still had its definition. */

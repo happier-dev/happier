@@ -956,7 +956,11 @@ function receiptFacts(input: Readonly<{
     }
   }
   const target = input.facts.previousVersion;
-  if (target !== undefined && !input.restoredSaid) {
+  const servingVersion = input.facts.servingVersion;
+  if (servingVersion && !input.restoredSaid) {
+    list.push({ key: 'serving-version', label: t('projects.deployments.servingNow'),
+      value: deploymentRevisionLabel(servingVersion.revision) });
+  } else if (target !== undefined && !input.restoredSaid) {
     list.push({ key: 'previous', testID: 'project-deployments.receipt.facts.previous',
       label: t('projects.deployments.factPrevious'),
       value: target ? deploymentRevisionLabel(target.revision) : t('projects.deployments.factFirstDeploy') });
