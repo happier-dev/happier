@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { flushHookEffects, renderSettingsView } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createEmptyAccountBootstrapHttpResponse, createEmptyAccountMigrationCensusHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
@@ -14,7 +15,8 @@ import {
     AccountEncryptionMigrateRequestSchema,
     createAccountEncryptionMigrateRequestBindingDigestV1} from '@happier-dev/protocol/account/encryptionMigrate';
 import {
-    computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+    computeAccountEncryptionMigrateKeyFingerprintV1,
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import {
     encodePasswordCredentialFieldV1} from '@happier-dev/protocol/auth/accountPasswordCredential';
 import {
@@ -646,6 +648,7 @@ async function mountCurrentEncryptionHome(params: Readonly<{
     provider?: 'mtls' | 'github';
     password?: boolean;
     mutableDeviceCustody?: boolean;
+    initialSettings?: Readonly<Record<string, unknown>>;
 }> = { mode: 'plain' }) {
     await import('fake-indexeddb/auto');
     const { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
@@ -669,8 +672,14 @@ async function mountCurrentEncryptionHome(params: Readonly<{
     const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
     const token = createAccountTokenForTests('account-a', { currentAccount: true });
     const credentials = mode === 'e2ee' || params.retainedCredential
-        ? { token, secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') }
+        ? { token, secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url'),
+            ...(mode === 'plain' ? { custody: 'historical' as const } : {}) }
         : { token };
+    if (params.initialSettings) {
+        const { sealAccountSettingsCleanup } = await import('@/sync/engine/settings/sealAccountSettingsCleanup');
+        const material = mode === 'e2ee' ? { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } : null;
+        settingsContent = sealAccountSettingsCleanup(mode, material, settingsVersion, params.initialSettings).nextSettings;
+    }
     const migrations: import('@happier-dev/protocol/account/encryptionMigrate').AccountEncryptionMigrateRequest[] = [];
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
     const passwordProof = { provider: 'email_password', pending: 'password-step-up-pending', proof: 'password-step-up-proof' };
@@ -895,19 +904,35 @@ describe('Account encryption current Home authority', () => {
         } finally { await home.dispose(); }
     });
 
-    it('preserves historical credentials without replacement or retry after disabling Account encryption', async () => {
-        const home = await mountCurrentEncryptionHome({ mode: 'e2ee' });
+    it('retains the same Account key as historical after one downgrade', async () => {
+        const home = await mountCurrentEncryptionHome({
+            mode: 'e2ee',
+            mutableDeviceCustody: true,
+            initialSettings: { clientEncryptionRequirementV1: 'follow_account' },
+        });
         try {
-            await act(async () => { await home.screen.findByTestId('settings-account-encryption-mode-switch')?.props.onValueChange(false); });
+            await act(async () => {
+                await home.screen.findByTestId('settings-account-encryption-mode-switch')?.props.onValueChange(false);
+            });
+            await vi.waitFor(() => {
+                const toggle = home.screen.findByTestId('settings-account-encryption-mode-switch');
+                expect(toggle?.props.value, JSON.stringify({
+                    mode: home.mode,
+                    writes: home.credentialWrites.length,
+                    alerts: home.alert.mock.calls.length,
+                    downgradeLock: home.screen.findByTestId('settings-account-encryption-downgrade') !== null,
+                })).toBe(false);
+            });
             expect(home.migrations, home.requests.map(({ method, path }) => `${method} ${path}`).join('\n')).toHaveLength(1);
             expect(home.migrations[0]).toMatchObject({ toMode: 'plain', expectedAccountVersion: 4,
                 expectedSettingsVersion: 0, settingsContent: { t: 'plain' } });
             expect(home.mode).toBe('plain');
-            expect(home.screen.findByTestId('settings-account-encryption-mode-switch')?.props.value).toBe(false);
+            const historicalCredentials = { ...home.credentials, custody: 'historical' };
+            expect(home.credentialWrites).toEqual([historicalCredentials]);
             const { getCurrentAuth } = await import('@/auth/context/currentAuth');
-            expect(getCurrentAuth()?.credentials).toEqual(home.credentials);
-            // The injected device custody boundary refuses mutation; successful
-            // mode transition therefore proves retirement was never required.
+            const { TokenStorage: currentTokens } = await import('@/auth/storage/tokenStorage');
+            expect(getCurrentAuth()?.credentials).toEqual(historicalCredentials);
+            await expect(currentTokens.getCredentialsForServerUrl(home.account.home.serverUrl)).resolves.toEqual(historicalCredentials);
             expect(home.alert).not.toHaveBeenCalled();
             expect(JSON.stringify(home.settingsContent)).not.toContain(Reflect.get(home.credentials, 'secret'));
         } finally { await home.dispose(); }
@@ -939,7 +964,10 @@ describe('Account encryption current Home authority', () => {
     });
 
     it('emits the request-bound body only for a restored pinned Account key', async () => {
-        const home = await mountCurrentEncryptionHome({ mode: 'plain', retainedCredential: true, password: true, mutableDeviceCustody: true });
+        const home = await mountCurrentEncryptionHome({
+            mode: 'plain', retainedCredential: true, password: true, mutableDeviceCustody: true,
+            initialSettings: { clientEncryptionRequirementV1: 'follow_account' },
+        });
         try {
             await act(async () => {
                 await home.screen.findByTestId('settings-account-encryption-mode-switch')?.props.onValueChange(true);
@@ -1082,7 +1110,16 @@ describe('Account encryption recovery through the current Home boundary', () => 
             await loadSyncSingletonForTests();
             const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
             const token = createAccountTokenForTests('account-a', { currentAccount: !legacy });
-            const credentials = legacy ? { token, secret: Buffer.from(new Uint8Array(32).fill(7)).toString('base64url') } : { token };
+            const secret = new Uint8Array(32).fill(7);
+            const credentials = legacy ? { token, secret: Buffer.from(secret).toString('base64url') } : { token };
+            const contentKeyFingerprint = legacy
+                ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                    createAccountScopedCryptoMaterialSnapshotV1({
+                        accountEncryptionMode: 'e2ee',
+                        material: { type: 'legacy', secret },
+                    }).contentPublicKeyFingerprint,
+                )
+                : null;
             let requireRecovery = false;
             const requests: Array<{ path: string; method: string }> = [];
             account = await restoreServerAccountForTest({
@@ -1096,7 +1133,7 @@ describe('Account encryption recovery through the current Home boundary', () => 
                         ? Response.json({ error: 'account-encryption-recovery-required' }, { status: 400 })
                         : Response.json({ mode: legacy ? 'e2ee' : 'plain', updatedAt: 1 });
                     if (path === '/v1/account/encryption/currentness') return Response.json({ mode: legacy ? 'e2ee' : 'plain',
-                        version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null });
+                        version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint });
                     if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                     if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'account-a' });
                     if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json({ sessions: [], hasNext: false, nextCursor: null });

@@ -16,6 +16,7 @@ import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/ses
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { AccountEncryptionMigratePrivateLabelInventoryV1Schema, AccountEncryptionMigrateSettingsHistoryInventoryPageSchema, AccountEncryptionMigrateTodosInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { DiscussionAccountEncryptionInventoryV1Schema } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { SESSION_FOLLOW_RULES_ROUTE_V1, ListSessionFollowRulesResponseV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigListResponseV1Schema } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
@@ -139,6 +140,12 @@ export function createEmptyAccountMigrationCensusHttpResponse(path: string, init
     if (pathname === ACCOUNT_DIRECTORY_HOMES_HTTP_PATH_V1) {
         return Response.json(AccountDirectoryHomesResponseV1Schema.parse({ v: 1, homes: [], preferredHomeServerIdentityId: null }));
     }
+    if (pathname === '/v1/account/encryption/migrate/todos/inventory') {
+        return Response.json(AccountEncryptionMigrateTodosInventoryResponseSchema.parse({ items: [] }));
+    }
+    if (pathname === '/v1/account/encryption/migrate/private-labels/inventory') {
+        return Response.json(AccountEncryptionMigratePrivateLabelInventoryV1Schema.parse({ items: [] }));
+    }
     if (pathname === '/v1/account/encryption/migrate/managed-machine-presets/inventory') {
         return Response.json(ManagedMachinePresetAccountEncryptionMigrationInventoryV1Schema.parse({ presets: [], snapshots: [] }));
     }
@@ -166,6 +173,9 @@ export function createEmptyAccountMigrationCensusHttpResponse(path: string, init
     if (pathname === NOTIFICATION_CHANNELS_ROUTE_V1) return Response.json(NotificationChannelCatalogReadResponseV1Schema.parse({ status: 'absent' }));
     if (pathname === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json(ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'absent' }));
     if (pathname === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json(ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'absent' }));
+    if (pathname === '/v1/account/encryption/migrate/settings-history/inventory') {
+        return Response.json(AccountEncryptionMigrateSettingsHistoryInventoryPageSchema.parse({ items: [], nextBeforeVersion: null }));
+    }
     if (pathname === '/v2/account/settings/history') return Response.json(AccountSettingsV2HistoryListResponseSchema.parse({ snapshots: [] }));
     return null;
 }
