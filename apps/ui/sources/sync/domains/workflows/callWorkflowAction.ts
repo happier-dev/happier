@@ -8,7 +8,6 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { presentActionAutomationSkipNotice } from '@/sync/ops/actions/actionAutomationSkipNotice';
 
 import { WorkflowActionError } from './workflowActionError';
 
@@ -102,7 +101,6 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     if (activeLifetime && !activeLifetime.isCurrent()) {
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });
     }
-    if (!executeChildAction && surface === 'ui') void presentActionAutomationSkipNotice(result, activeLifetime);
     if (!result.ok) {
         const failure = WorkflowActionFailureV1Schema.safeParse(result);
         const requestId = result.requestId ?? actionRequestId;

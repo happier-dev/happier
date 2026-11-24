@@ -1,7 +1,7 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
 import { WorkflowDraftMutationResultV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
-import { ActionApprovalRequestCreatedResultSchema, withActionAutomationNoticesV1, type ActionAutomationNoticeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -24,13 +24,7 @@ export function parseMountedWorkflowDraftMutation(value: unknown) {
 }
 
 export async function saveMountedWorkflowDraft(accountLifetime: ServerAccountScopeLifetime, draftId: string, operation?: WorkflowActionOperation) {
-    const notices: ActionAutomationNoticeV1[] = [];
-    const frontDoor = createFrontDoorActionExecute(undefined, {
-        onWorkflowDraftChildSettled: result => notices.push(...(result.automationNotices ?? [])),
-    });
-    // Both the draft and its children report through the existing notice owner.
-    const execute = Object.assign(async (...args: Parameters<typeof frontDoor>) =>
-        withActionAutomationNoticesV1(await frontDoor(...args), notices), frontDoor);
+    const execute = createFrontDoorActionExecute(undefined, { useCapturedWorkflowDraftChildren: true });
     return await callWorkflowAction({ actionId: WORKFLOW_AUTHORING_ACTION_ID.draftSave,
         input: { scope: accountLifetime.scope, draftId }, accountLifetime, execute, ...operation,
         parseResult: parseMountedWorkflowDraftMutation });

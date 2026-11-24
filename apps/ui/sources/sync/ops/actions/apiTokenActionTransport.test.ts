@@ -25,6 +25,16 @@ describe('API-token Action transport', () => {
         ] } });
         expect(JSON.stringify(result)).not.toContain(rejected);
     });
+    it('carries the Home’s automation notice alongside a validated successful result', async () => {
+        const automationNotices = [{ code: 'action_automations_not_checked', reason: 'index_unavailable' }];
+        const result = { ok: true, sessionId: 'session-1', permissionMode: 'read-only', updatedAt: 321 };
+        const request: ServerFetch = async () => Response.json({ v: 1, actionId: 'session.permission_mode.set',
+            execution: { ok: true, result, automationNotices } });
+        await expect(executeApiTokenAction({ request }, 'session.permission_mode.set', {
+            sessionId: 'session-1', permissionMode: 'read-only',
+        })).resolves.toMatchObject({ ok: true, result, automationNotices });
+    });
+
     it('preserves the Machine availability cause and remedy without adopting unrelated diagnostics', async () => {
         const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
         const request: ServerFetch = async () => Response.json({ error: 'invalid_request', code: 'target_unavailable', diagnostic }, { status: 409 });

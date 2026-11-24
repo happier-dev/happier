@@ -49,5 +49,5 @@ export async function executeApiTokenAction(transport: ApiTokenActionTransport, 
     const output = safeParse(outputSchema, parsed.execution.result);
     context?.signal?.throwIfAborted();
     if (output.success) transport.onActionAcknowledged?.(actionId, output.data);
-    return output.success ? { ok: true, result: output.data } : refused('invalid_action_output');
+    return output.success ? { ...parsed.execution, result: output.data } : refused('invalid_action_output');
 }

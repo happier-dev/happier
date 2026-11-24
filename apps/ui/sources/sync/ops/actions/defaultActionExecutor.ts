@@ -18,6 +18,7 @@ import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRp
 import { LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createUiActionAutomationPortV1 } from './actionAutomations';
+import { captureAppActionAutomationPresentation } from './actionAutomationSkipNotice';
 import { resolveApprovalReplayRoute } from './approvalReplayRoute';
 import { confirmOwnUiRefusal, executeMachineActionAtDaemon, isUiMachineOwnedAdmissionAction as isMachineOwnedAdmissionAction,
   readUiAdmittedActionId as readAdmittedActionId } from './executeMachineActionAtDaemon';
@@ -756,8 +757,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   function buildDefaultActionExecutor(opts?: Readonly<{
   /** Mounted draft destination; Action policy and draft settlement remain canonical. */
   sessionAuthoringPresentation?: import('@/components/sessions/new/newSessionSeedNavigation').SessionAuthoringPresentation;
-  /** Retain child Action notices in the native draft operation's result. */
-  onWorkflowDraftChildSettled?: (result: ActionExecuteResult) => void;
+  /** A mounted draft invokes its children through the ordinary captured Account executor. */
+  useCapturedWorkflowDraftChildren?: true;
   /** One captured Voice editor intent; never serialized into Action input or approval. */
   voiceSettingsEdit?: import('@/components/settings/catalog/settingDeclarations').SettingsMutationServices['voiceSettingsEdit'];
   /** Mounted History delivery; the consumer retains Account binding and delete-wins ownership. */
@@ -2696,7 +2697,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       context: { ...request.context,
         // Keep the admitted binding, but enter each child's ordinary captured
         // Account/approval lifecycle rather than the parent's lower-level graph.
-        ...(opts?.admittedClientActionId || opts?.onWorkflowDraftChildSettled ? {
+        ...(opts?.admittedClientActionId || opts?.useCapturedWorkflowDraftChildren ? {
           executeChildAction: async (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => {
             const parent = opts.admittedClientActionParent;
             const caller = context?.actionCaller;
@@ -2713,9 +2714,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             if (observationSetup && context?.authority !== 'present_user') {
               return Promise.resolve({ ok: false as const, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
             }
-            const result = await createDefaultActionExecutor(opts).execute(actionId, input, context);
-            opts.onWorkflowDraftChildSettled?.(result);
-            return result;
+            return createDefaultActionExecutor(opts).execute(actionId, input, context);
           },
         } : {}),
       },
@@ -5487,7 +5486,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           executor.execute(actionId, confirmedInput, bindPresentUserActionConfirmation(actionId, confirmedInput, confirmationRequest(actionId, resolved), reviewDigest)));
     return projectVoiceApprovalGuidance(resolved, actionId, result);
   };
-  return {
+  const appExecutor: ReturnType<typeof buildDefaultActionExecutor> = {
     previewSessionTargets: async (target, context) => {
       const input = { target, actionId: 'session.message.send' };
       const result = await executor.execute('session.targets.resolve', input, resolveContext(context, input, 'session.targets.resolve'));
@@ -5564,6 +5563,32 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     execute: executeAction,
     executeConfirmed: (actionId, input, context) => executeAction(actionId, input, context, true),
     replayApprovedApprovalRequest: async (args) => await executor.replayApprovedApprovalRequest(args),
+  };
+  const present = (context?: ActionExecutorContext) => captureAppActionAutomationPresentation({
+    surface: context?.surface,
+    authority: context?.authority,
+    serverId: accountContext?.serverId ?? context?.serverId,
+    expectedAccountId: context?.expectedAccountId,
+    runtimeAccountId: accountContext?.accountId ?? context?.runtimeAccountId,
+  });
+  return {
+    ...appExecutor,
+    execute: (actionId, input, context) => {
+      const { settled } = present(context);
+      return appExecutor.execute(actionId, input, context).then(settled);
+    },
+    executeConfirmed: (actionId, input, context) => {
+      const { settled } = present(context);
+      return appExecutor.executeConfirmed(actionId, input, context).then(settled);
+    },
+    executeNativeManagedAction: (actionId, input, context, ...options) => {
+      const { settled } = present(context);
+      return appExecutor.executeNativeManagedAction(actionId, input, context, ...options).then(settled);
+    },
+    prepare: (actionId, input, context, options) => {
+      const { prepared } = present(context);
+      return appExecutor.prepare(actionId, input, context, options).then(prepared);
+    },
   };
 }
 
@@ -6086,12 +6111,16 @@ function executeManagedNativeActionWithApprovalObservation(params: Readonly<{
 export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions): DefaultActionExecutor {
   let unscoped: ReturnType<typeof buildDefaultActionExecutor> | undefined;
   const ordinary = () => unscoped ?? (unscoped = buildDefaultActionExecutor(opts));
-  const apiTokenTransport = async (): Promise<ApiTokenActionTransport | null> => {
-    if (opts?.apiTokenAction) return opts.apiTokenAction;
-    if (getCurrentAuth()?.credentialAuthorityKind !== 'api_token') return null;
+  const apiTokenTransport = async (context?: ActionExecutorContext) => {
+    if (!opts?.apiTokenAction && getCurrentAuth()?.credentialAuthorityKind !== 'api_token') return null;
+    const presentation = captureAppActionAutomationPresentation(context);
+    if (opts?.apiTokenAction) return { transport: opts.apiTokenAction, presentation };
     const scoped = (await import('@/sync/sync')).sync.getEmbedSessionRequestContext();
     if (!scoped || !scoped.isCurrent()) throw new Error('action_account_scope_changed');
-    return { request: scoped.request, target: { kind: 'session', sessionId: scoped.sessionId }, onActionAcknowledged: scoped.onActionAcknowledged };
+    const transport: ApiTokenActionTransport = {
+      request: scoped.request, target: { kind: 'session', sessionId: scoped.sessionId }, onActionAcknowledged: scoped.onActionAcknowledged,
+    };
+    return { transport, presentation };
   };
   const apiTokenComposerSubmissionFailure = (actionId: ActionId) =>
     actionId === 'session.message.send' && opts?.sessionMessageComposerSubmission
@@ -6125,12 +6154,12 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     const { openRoute, archiveOperation, reviewedManagedMachine, voiceSpeechSource, ...actionContext } = context ?? {};
     const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
     if (custodyFailure) return custodyFailure;
-    const api = await apiTokenTransport();
+    const api = await apiTokenTransport(context);
     if (api) {
       const failure = apiTokenComposerSubmissionFailure(actionId);
       if (failure) return failure;
       const prepared = prepareAuthoredInput();
-      return prepared.ok ? await executeApiTokenAction(api, actionId, prepared.input, actionContext) : prepared;
+      return prepared.ok ? await executeApiTokenAction(api.transport, actionId, prepared.input, actionContext).then(api.presentation.settled) : prepared;
     }
     const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
     if (!serverId) {
@@ -6185,12 +6214,12 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       const { openRoute, archiveOperation, reviewedManagedMachine, voiceSpeechSource, ...actionContext } = context ?? {};
       const custodyFailure = opts?.filesystemActionDelivery?.actionId === actionId ? null : resolveUiFilesystemTransferCustodyFailure(actionId, input);
       if (custodyFailure) return { kind: 'settled', result: custodyFailure };
-      const api = await apiTokenTransport();
+      const api = await apiTokenTransport(context);
       if (api) {
         const failure = apiTokenComposerSubmissionFailure(actionId);
         let result: Promise<ActionExecuteResult> | undefined;
         return failure ? { kind: 'settled', result: failure }
-          : { kind: 'ready', invocation: { run: () => result ??= executeApiTokenAction(api, actionId, input, actionContext) } };
+          : { kind: 'ready', invocation: { run: () => result ??= executeApiTokenAction(api.transport, actionId, input, actionContext).then(api.presentation.settled) } };
       }
       const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
       if (!serverId) return await ordinary().prepare(actionId, input, actionContext, options);

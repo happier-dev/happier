@@ -14,7 +14,6 @@ import { createFrontDoorActionExecute, requireActionSuccess, type UiActionOperat
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { randomUUID } from '@/platform/randomUUID';
-import { presentActionAutomationSkipNotice } from '@/sync/ops/actions/actionAutomationSkipNotice';
 
 const onExecuted = () => {};
 const retired = (requestId?: string | null): ActionExecuteResult => ({ ok: false,
@@ -179,9 +178,8 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
     /** Value-parsing clients unwrap only the terminal receipt delivered by this same mounted owner. */
     const executeValue = React.useCallback(async (actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<unknown> => {
         const result = await execute(actionId, input, operation);
-        void presentActionAutomationSkipNotice(result, binding);
         requireActionSuccess(result);
         return result.result;
-    }, [binding, execute]);
+    }, [execute]);
     return { execute, executeForCaller, executeCaptured, executeValue, executeForPresentation, ready: isCurrent(), isCurrent, cancel, getSignal, approval, binding, resolution };
 }

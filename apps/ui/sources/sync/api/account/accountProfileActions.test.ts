@@ -50,31 +50,49 @@ beforeEach(async () => {
 afterEach(async () => { retirePresentationNotice(); standardCleanup(); disposeScope?.(); disposeScope = undefined; await homes.reset(); });
 
 describe('self-profile UI Action admission and acknowledgements', () => {
-    it('shows a skipped Before check after the mounted profile save proceeds', async () => {
-        const features = createRootLayoutFeaturesResponse({ features: { automations: { enabled: true }, workflows: { enabled: true } } });
-        homes.answer(serverId, '/v1/features', { body: features });
-        homes.answer(serverId, '/v1/features/authenticated', { body: features });
-        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
-        homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [{
-            automationId: 'profile-check', triggerId: 'before-name', triggerRevision: 1,
-            workflowId: 'profile-check-workflow', workflowRevision: 1, ownerAccountId: 'self',
-            actionIds: ['account.name.set'], phase: 'before', mode: 'notify',
-        }] } });
-        const response = { name: 'After', firstName: 'After', lastName: null, timestamp: 2 };
-        homes.answer(serverId, 'POST /v1/account/profile', { body: response });
-        const mounted = await renderHook(() => useMountedActionExecution(serverId));
-        await waitForHomeGovernance(() => expect(mounted.getCurrent().ready).toBe(true));
-        await expect(setAccountName(credentials, 'After', mounted.getCurrent())).resolves.toEqual(response);
-        expect(homes.requestsFor('/v1/account/profile')).toHaveLength(1);
-        expect(homes.requestsFor(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toHaveLength(1);
-        expect(storage.getState().profile.name).toBe('After');
-        expect(Modal.confirm).not.toHaveBeenCalled();
-        expect(Modal.alert).not.toHaveBeenCalled();
-        await waitForHomeGovernance(() => expect(readPresentationNotices().map(notice => notice.message)).toEqual([
-            t('workflows.triggers.checks.skippedNeedsMachine', { workflow: t('workflows.triggers.checks.aCheck') }),
-        ]));
-    });
+    it.each(['profile adapter', 'settled receipt', 'prepared invocation'] as const)(
+        'shows a skipped Before check when a %s consumes the Action result', async (consumer) => {
+            const features = createRootLayoutFeaturesResponse({ features: { automations: { enabled: true }, workflows: { enabled: true } } });
+            homes.answer(serverId, '/v1/features', { body: features });
+            homes.answer(serverId, '/v1/features/authenticated', { body: features });
+            const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+            primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+            homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [{
+                automationId: 'profile-check', triggerId: 'before-name', triggerRevision: 1,
+                workflowId: 'profile-check-workflow', workflowRevision: 1, ownerAccountId: 'self',
+                actionIds: ['account.name.set'], phase: 'before', mode: 'notify',
+            }] } });
+            const response = { name: 'After', firstName: 'After', lastName: null, timestamp: 2 };
+            const receipt = { ok: true, result: response, automationNotices: [
+                expect.objectContaining({ code: 'action_automation_skipped', reason: 'machineRequired' }),
+            ] };
+            homes.answer(serverId, 'POST /v1/account/profile', { body: response });
+            const mounted = await renderHook(() => useMountedActionExecution(serverId));
+            await waitForHomeGovernance(() => expect(mounted.getCurrent().ready).toBe(true));
+            if (consumer === 'profile adapter') {
+                await expect(setAccountName(credentials, 'After', mounted.getCurrent())).resolves.toEqual(response);
+                expect(storage.getState().profile.name).toBe('After');
+                expect(homes.requestsFor(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toHaveLength(1);
+            } else if (consumer === 'settled receipt') {
+                await expect(mounted.getCurrent().execute('account.name.set', { name: 'After' })).resolves.toMatchObject(receipt);
+            } else {
+                const execute = scopedHomeActionExecutor({ serverId, accountId: 'self' });
+                const prepared = await execute.prepare('account.name.set', { name: 'After' }, { surface: 'ui', serverId, authority: 'present_user' });
+                expect(prepared.kind).toBe('ready');
+                if (prepared.kind === 'ready') {
+                    const first = prepared.invocation.run();
+                    const second = prepared.invocation.run();
+                    expect(second).toBe(first);
+                    await expect(first).resolves.toMatchObject(receipt);
+                }
+            }
+            expect(homes.requestsFor('/v1/account/profile')).toHaveLength(1);
+            expect(Modal.confirm).not.toHaveBeenCalled();
+            expect(Modal.alert).not.toHaveBeenCalled();
+            await waitForHomeGovernance(() => expect(readPresentationNotices().map(notice => notice.message)).toEqual([
+                t('workflows.triggers.checks.skippedNeedsMachine', { workflow: t('workflows.triggers.checks.aCheck') }),
+            ]));
+        });
 
     it('releases a username directly by default without a native confirmation or self-approval Artifact', async () => {
         const mounted = await renderHook(() => useMountedActionExecution(serverId));

@@ -4,7 +4,6 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { presentActionAutomationSkipNotice } from '@/sync/ops/actions/actionAutomationSkipNotice';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -48,7 +47,6 @@ export function captureAccountProfileAction(
                     surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId, expectedAccountId: accountId,
                 }));
             assertCurrent();
-            void presentActionAutomationSkipNotice(execution, lifetime);
             if (!execution.ok) {
                 const failure = homeDomainFailureFromActionFailure(execution);
                 const message = failure.httpStatus === 200 ? options.invalidResponseMessage

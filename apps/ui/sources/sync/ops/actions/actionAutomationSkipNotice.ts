@@ -2,9 +2,42 @@ import { readActionAutomationSkipReasonV1, type ActionExecuteResult } from '@hap
 
 import { formatAutomaticCheckSkipNotice, formatAutomationsNotCheckedNotice } from '@/components/approvals/formatAutomaticCheckSkipNotice';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { t } from '@/text';
+import type { ActionExecutorContext, ActionPrepareResult } from '@happier-dev/protocol/actions/executor/types';
+
+/** The app's execution boundary presents the receipt before a consumer unwraps it. */
+export function captureAppActionAutomationPresentation(
+    target?: Pick<ActionExecutorContext, 'serverId' | 'surface' | 'authority' | 'expectedAccountId' | 'runtimeAccountId'>,
+) {
+    const surface = target?.surface ?? 'ui';
+    const presentsInApp = surface === 'ui' || surface === 'voice' || surface === 'plugin'
+        || (surface === 'rpc' && target?.authority === 'present_user');
+    const lifetime = presentsInApp
+        ? captureActiveServerAccountScopeLifetime() : null;
+    const accountId = target?.expectedAccountId ?? target?.runtimeAccountId;
+    const current = lifetime && (!accountId || lifetime.scope.accountId === accountId)
+        && (!target?.serverId || areServerProfileIdentifiersEquivalent(target.serverId, lifetime.scope.serverId))
+        ? lifetime : null;
+    const settled = (result: ActionExecuteResult): ActionExecuteResult => {
+        if (current && result.automationNotices?.length) void presentActionAutomationSkipNotice(result, current);
+        return result;
+    };
+    return { settled, prepared(prepared: ActionPrepareResult): ActionPrepareResult {
+        if (!current) return prepared;
+        if (prepared.kind === 'settled') {
+            settled(prepared.result);
+            return prepared;
+        }
+        let receipt: Promise<ActionExecuteResult> | undefined;
+        return { ...prepared, invocation: { ...prepared.invocation,
+            run: () => receipt ??= prepared.invocation.run().then(settled),
+        } };
+    } };
+}
 
 /**
  * Present the Action owner's settled notices without loading Workflow steps or rerunning checks.
