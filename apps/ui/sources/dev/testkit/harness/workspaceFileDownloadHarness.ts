@@ -13,6 +13,8 @@ import { vi } from 'vitest';
 
 import { createRootLayoutFeaturesResponse } from '../fixtures/featureFixtures';
 import { createMachineFixture, createPlainMachineRowFixture } from '../fixtures/machineFixtures';
+import { createDesktopSecureStorageBoundary } from '../mocks/desktopSecureStorage';
+import { createDesktopHostInternals } from './desktopHttpHost';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from './serverAccountConnectionHarness';
 import { encodeBase64 } from '@/encryption/base64';
 import { createExternalActionAccountHttpBoundary } from './externalActionAccountHttpBoundary';
@@ -54,6 +56,7 @@ function configureWorkspaceDownloadSocketBoundary() {
 }
 
 export async function createWorkspaceFileDownloadHarness(options: Readonly<{
+    host?: 'desktop';
     name?: string;
     bytes?: Uint8Array;
     advertisedDownloadSizeBytes?: number;
@@ -64,6 +67,34 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     /** Provider Action schemas at the genuine daemon transport boundary. */
     downloadActionInputSchema?: object;
 }> = {}) {
+    const nativeTunnelStarts: unknown[] = [];
+    const nativeTunnelStops: string[] = [];
+    const endpointId = 'b'.repeat(64);
+    const localPort = 48126;
+    function startTunnel(request: unknown) {
+        nativeTunnelStarts.push(request);
+        return { leaseId: `workspace-download-lease-${nativeTunnelStarts.length}`, localPort };
+    }
+
+    if (options.host === 'desktop') {
+        const secureStorage = createDesktopSecureStorageBoundary();
+        const desktop = createDesktopHostInternals(({ command, args }) => {
+            switch (command) {
+                case 'iroh_get_availability': return { available: true };
+                case 'iroh_get_application_endpoint': return { endpointId };
+                case 'iroh_start_machine_tunnel': return startTunnel(args.request);
+                case 'iroh_stop_machine_tunnel': {
+                    if (typeof args.leaseId !== 'string') throw new TypeError('Missing desktop tunnel lease id');
+                    nativeTunnelStops.push(args.leaseId);
+                    return null;
+                }
+                default:
+                    if (command.startsWith('desktop_secure_storage_')) return secureStorage.invoke(command, args);
+                    throw new Error(`Unexpected desktop IPC: ${command}`);
+            }
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', desktop.internals);
+    }
     configureWorkspaceDownloadSocketBoundary();
     const { createHomeGovernanceHarness } = await import('./homeGovernanceHarness');
     const { storage } = await import('@/sync/domains/state/storage');
@@ -116,8 +147,6 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] } });
     const requests: { method: string; url: string; signal: AbortSignal | null | undefined }[] = [];
     const rpcRequests: { machineId: string; method: string; payload: unknown }[] = [];
-    const nativeTunnelStarts: unknown[] = [];
-    const nativeTunnelStops: string[] = [];
     let statResponse: WorkspaceStatFileResponse = { success: true, exists: true, kind: 'file', sizeBytes: bytes.byteLength, modifiedMs: 1 };
     let transferCount = 0;
     let failChunk = false;
@@ -222,14 +251,14 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     }
     const native: NativeIrohModule = {
         getAvailability: () => ({ available: true }),
-        createEndpoint: async () => ({ endpointHandle: 'workspace-download-endpoint', endpointId: 'b'.repeat(64), relayPolicy: 'automatic', relayMode: 'custom', capProfile: 'machineBulk', relayUrls: [] }),
+        createEndpoint: async () => ({ endpointHandle: 'workspace-download-endpoint', endpointId, relayPolicy: 'automatic', relayMode: 'custom', capProfile: 'machineBulk', relayUrls: [] }),
         shutdownEndpoint: async () => {},
         ensureHomeTunnel: async () => { throw new Error('Unexpected Home tunnel'); },
         releaseHomeTunnel: async () => {},
         getTunnelStatus: async () => null,
         startMachineTunnel: async (input) => {
-            nativeTunnelStarts.push(input);
-            return { machineTunnelId: `workspace-download-lease-${nativeTunnelStarts.length}`, endpointHandle: input.endpointHandle, localPort: 48126, connectionActive: true, remoteEndpointId: input.endpointId, observedPath: 'direct', startedAtMs: Date.now(), lastErrorCode: null };
+            const { leaseId, localPort } = startTunnel(input);
+            return { machineTunnelId: leaseId, endpointHandle: input.endpointHandle, localPort, connectionActive: true, remoteEndpointId: input.endpointId, observedPath: 'direct', startedAtMs: Date.now(), lastErrorCode: null };
         },
         stopMachineTunnel: async (id) => { nativeTunnelStops.push(id); },
     };
