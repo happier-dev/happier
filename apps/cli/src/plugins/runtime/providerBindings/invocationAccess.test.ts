@@ -26,6 +26,13 @@ const providerRequirements = {
 };
 
 describe('composeProviderBindingProcessAccess', () => {
+    it('preserves engine process access when the host prepared another Agent Provider', () => {
+        const requests = Object.freeze([processAccess]);
+        expect(composeProviderBindingProcessAccess({ requests, providerRequirements: undefined,
+            providerBindingActive: true, environment: { HAPPIER_CODEX_PROVIDER_API_KEY: 'scoped-secret' } }))
+            .toBe(requests);
+    });
+
     it('authorizes only active materialized Provider-owned keys on existing process access', () => {
         const requests = composeProviderBindingProcessAccess({
             requests: [processAccess],

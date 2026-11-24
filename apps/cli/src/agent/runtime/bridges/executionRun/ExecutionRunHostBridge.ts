@@ -29,7 +29,7 @@ import type { ACPMessageData, ACPProvider } from '../../../../api/session/sessio
 import type { StreamedTranscriptWriterSession } from '../../../../api/session/streamedTranscriptWriter';
 import type { ExecutionBudgetRegistry } from '../../../../daemon/executionBudget/ExecutionBudgetRegistry';
 import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, resolveBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ExecutionRunApprovalProfileSetInputSchema, ExecutionRunScmDiffSummaryInputV1Schema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { executionRunChildSelectionNeedsAppliedParent, readExecutionRunAppliedParentModelId, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
 import type { AcpConfigOptionOverridesV1, BackendTargetRefV1, ConnectedServiceBindingsV2, ExecutionRunConnectedServicesLaunchV1, ExecutionRunUserTranscriptDirective, ExecutionRunBridgeLifecycleHookEventIdV1, ExecutionRunListRequest, ExecutionRunPublicState, ExecutionRunStartRequest, ExecutionRunResultContractV1, TeamCredentialProviderModelSelectionV1, SessionRunPromptReadActionIdV1, SessionRunPromptContextV1, SessionInputCausalPermissionAuthorityV1, SecretReferenceOverlayV1 } from '@happier-dev/protocol';
@@ -229,6 +229,7 @@ export function buildExecutionRunSessionPromptContext(params: Readonly<{
 }
 
 type ExecutionRunRuntimeCreateOptions = Readonly<{
+  runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
   nativeSandbox?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionConfigurationSnapshot['nativeSandbox'];
   functionTools?: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionOpenRequest['functionTools'];
   projectLaunchContext?: import('@/agent/runtime/registry/engineRegistryTypes').ExecutionRunProjectLaunchContext;
@@ -1513,6 +1514,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       } : {}),
       backendId: opts.backendId,
       backendTarget: opts.backendTarget,
+      runnerAgentTarget: opts.runnerAgentTarget,
       permissionMode: opts.permissionMode,
       workspaceWrites: opts.workspaceWrites,
       ...(opts.causalPermissionAuthority
@@ -1762,6 +1764,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(resumeOptions.modelSelection
         ? { modelSelection: resumeOptions.modelSelection }
         : {}),
+      ...(resumeOptions.runnerAgentTarget ? { runnerAgentTarget: resumeOptions.runnerAgentTarget } : {}),
       ...(resumeOptions.teamCredentialModel
         ? { teamCredentialModel: resumeOptions.teamCredentialModel }
         : {}),
@@ -2466,15 +2469,16 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             && params.modelSelection === undefined && params.teamCredentialModel === undefined
             && params.connectedServices === undefined && !params.connectedServicesDefaultServiceIds?.length);
           const accountSettings = params.accountSettings ?? (needsDefaultRoute ? await this.resolveAccountSettings?.() : undefined);
-          const agentTargetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(params.backendTarget));
+          const selectionTarget = params.runnerAgentTarget ?? params.backendTarget;
+          const agentTargetKey = resolveBackendTargetKeyV2(selectionTarget);
           const agentDefaultSelection = needsDefaultRoute
-            ? resolveExecutionRunAgentDefaultSelection({ backendTarget: params.backendTarget, accountSettings }) : null;
+            ? resolveExecutionRunAgentDefaultSelection({ backendTarget: selectionTarget, accountSettings }) : null;
           const defaultModelId = params.modelId ?? input.modelSelector?.modelId;
           summarySelection = resolveExecutionRunChildSelection({
-            backendTarget: params.backendTarget, lifecycle: 'attached', parent,
+            backendTarget: selectionTarget, lifecycle: 'attached', parent,
             ...(resolution.engineRegistry ? {
               agentCatalogEntry: resolution.engineRegistry.contributions.agentDefinitionsById
-                .get(resolveExecutionRunRuntimeBackendId(params.backendTarget))?.catalogEntry ?? null,
+                .get(resolveExecutionRunRuntimeBackendId(selectionTarget))?.catalogEntry ?? null,
               providerRegistry: resolution.engineRegistry.contributions,
             } : {}),
             modelId: params.modelId, modelSelection: params.modelSelection,
@@ -2891,6 +2895,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
             ...(resumedRun.launch?.launchOrigin ? { launchOrigin: resumedRun.launch.launchOrigin } : {}),
             ...(resumeOptions.modelId ? { modelId: resumeOptions.modelId } : {}),
             ...(resumeOptions.modelSelection ? { modelSelection: resumeOptions.modelSelection } : {}),
+            ...(resumeOptions.runnerAgentTarget ? { runnerAgentTarget: resumeOptions.runnerAgentTarget } : {}),
             ...(resumeOptions.teamCredentialModel ? { teamCredentialModel: resumeOptions.teamCredentialModel } : {}),
             ...(resumeOptions.sessionConfigOptionOverrides
               ? { sessionConfigOptionOverrides: resumeOptions.sessionConfigOptionOverrides }

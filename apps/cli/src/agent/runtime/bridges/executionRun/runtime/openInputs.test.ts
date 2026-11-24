@@ -28,6 +28,18 @@ const appliedParent: ExecutionRunAppliedParentSelection = {
     },
 };
 
+it('admits the runner model for an engine without retargeting the engine', () => {
+    const runnerAgentTarget = { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const input = { backendTarget: { kind: 'builtInAgent' as const, agentId: 'deepsec' },
+        runnerAgentTarget, modelSelection: providerSelection, modelId: providerSelection.modelId,
+        connectedServices: null, lifecycle: 'independent' as const };
+    expect(resolveExecutionRunChildSelection(input)).toMatchObject({ modelSelection: providerSelection });
+    expect(buildExecutionRunConfiguration({ ...input, permissionMode: 'read_only', updatedAtMs: 1 }))
+        .toMatchObject({ modelSelection: providerSelection, configuration: { model: { value: providerSelection.modelId } } });
+    expect(input.backendTarget.agentId).toBe('deepsec');
+});
+
 it.each([null, { v: 2 as const, bindingsByServiceId: { 'happier.agent.codex/openai-codex': { source: 'native' as const } } }])(
     'keeps decoded own sign-in out of an applied parent pool (%j)', connectedServices => {
         const selector = decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride({

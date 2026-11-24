@@ -2,7 +2,7 @@ import type { PluginDiagnosticData } from '../diagnostics.js';
 import type { PluginContributionRef } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
 import type { PluginJsonSchemaV2 } from '../actions/actionTypeMap.generated.js';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { AgentExecutionTargetV1, ProviderBoundModelRef } from '@happier-dev/protocol';
 import type { AgentExecutionRunEventV1 } from '@happier-dev/protocol/runtime';
 import type { AgentExecutionRunHostServicesV1, AgentRuntimeContext } from './context.js';
 import type {
@@ -33,6 +33,8 @@ export type AgentExecutionRunOpenRequest =
     runId: string;
     cwd: string;
     profile: PluginContributionRef;
+    /** Admitted Agent whose existing credential binding this engine drives. */
+    runnerAgentTarget?: AgentExecutionTargetV1;
     launchEnvironment?: AgentLaunchEnvironment;
     modelSelection?: ProviderBoundModelRef;
     configuration?: AgentSessionConfigurationSnapshot;

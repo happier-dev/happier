@@ -7,7 +7,9 @@ export function composeProviderBindingProcessAccess(params: Readonly<{
     environment?: Readonly<Record<string, string>>;
     providerBindingActive: boolean;
 }>): readonly PluginHostAccessRequestV2[] {
-    if (!params.providerBindingActive) return params.requests;
+    // Engines consume the selected runner's already prepared launch environment.
+    // Their process access is composed from admitted environment by the invocation owner.
+    if (!params.providerBindingActive || params.providerRequirements == null) return params.requests;
 
     const support = AgentProviderRequirementsV1Schema.parse(params.providerRequirements);
     const activeOwnedEnvKeys = support.authIsolation.ownedEnvKeys.filter((key) => (

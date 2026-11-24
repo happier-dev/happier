@@ -24,6 +24,7 @@ export type ExecutionRunResumeBackendOptions = Readonly<{
   nativeSandbox?: NonNullable<ExecutionRunState['launch']>['nativeSandbox'];
   workspaceWrites?: 'allow' | 'deny';
   modelId?: string;
+  runnerAgentTarget?: NonNullable<ExecutionRunState['launch']>['runnerAgentTarget'];
   modelSelectionSource?: 'explicit' | 'inherited';
   modelSelection?: PersonalSessionModelRef;
   teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
@@ -41,6 +42,7 @@ export function resolveExecutionRunResumeBackendOptions(args: Readonly<{
   if (!run) return {};
   const launch = run.launch ?? null;
   return {
+    ...(launch?.runnerAgentTarget ? { runnerAgentTarget: launch.runnerAgentTarget } : {}),
     ...(launch?.nativeSandbox !== undefined ? { nativeSandbox: launch.nativeSandbox } : {}),
     ...(run.workspaceWrites !== undefined ? { workspaceWrites: run.workspaceWrites === 'allow' ? 'allow' : 'deny' } : {}),
     // Historical lifecycle labels do not prove an explicit model operand.

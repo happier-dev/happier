@@ -16,6 +16,7 @@ import {
   parseBackendTargetKeyV2,
 } from '../../backends/targets/backendTargetRefV2.js';
 import { PersonalSessionModelRefSchema } from '../../providers/selection/v2.js';
+import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metadataOverridesV1.js';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
@@ -409,6 +410,7 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
   /** Launch Profile selection; profileId remains the plugin execution Profile. */
   launchProfileId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   intent: ExecutionRunIntentSchema,
+  runnerAgentTarget: z.optional(AgentExecutionTargetV1Schema),
   backendTarget: (<I extends zMini.core.$ZodType, O extends zMini.core.$ZodType>(input: I, output: O) => new z.ZodMiniPipe({ type: 'pipe', in: input, out: output }) as zMini.ZodMiniPipe<I, O>)(z.transform(normalizeExecutionRunStartBackendTargetInput), PersistedBackendTargetRefV2Schema),
   instructions: z.optional(z.string()),
   initialInput: z.optional(ExecutionRunInitialInputV1Schema),

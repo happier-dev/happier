@@ -29,6 +29,7 @@ import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/regi
 import { resolveBackendEngineAdapterResolution } from '@/agent/runtime/registry/engineRegistry';
 import { throwIfPluginRuntimeStartBlocked } from '@/agent/runtime/registry/throwIfPluginRuntimeStartBlocked';
 import { configuration } from '@/configuration';
+import { resolveExecutionRunRuntimeBackendId, resolveExecutionRunRuntimeBackendTarget } from '../backendTargets';
 import { resolveBackendIsolationBundle } from '@/packagedRuntime/isolation/resolveBackendIsolationBundle';
 import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
@@ -171,6 +172,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
     agentTarget?: AgentExecutionTargetV1;
+    runnerAgentTarget?: AgentExecutionTargetV1;
     backendSourceKind?: string;
     modelId?: string;
     modelSelectionSource?: CreateCliExecutionRunBackendParams['modelSelectionSource'];
@@ -239,6 +241,18 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             if (!engineResolution) {
                 throw new Error(`Unsupported execution-run backend: ${opts.backendId}`);
             }
+            const credentialResolution = opts.runnerAgentTarget
+                ? await (opts.engineRegistry
+                    ? opts.engineRegistry.resolveForAgentTarget(opts.runnerAgentTarget)
+                    : resolveBackendEngineAdapterResolution(resolveExecutionRunRuntimeBackendId(opts.runnerAgentTarget), {
+                        happyHomeDir: opts.happyHomeDir ?? configuration.happyHomeDir, agentTarget: opts.runnerAgentTarget,
+                    }))
+                : engineResolution;
+            if (!credentialResolution) throw new Error('Unsupported execution-run runner Agent');
+            throwIfPluginRuntimeStartBlocked(credentialResolution);
+            const credentialBackendTarget = opts.runnerAgentTarget
+                ? readBackendTargetRefV2(resolveExecutionRunRuntimeBackendTarget(opts.runnerAgentTarget, opts.engineRegistry?.contributions)!)
+                : opts.backendTarget ? readBackendTargetRefV2(opts.backendTarget) : null;
             const runtimeCore = engineResolution.engineAdapter.runtimeCore;
             if (typeof runtimeCore?.createExecutionRunBackend !== 'function') {
                 throw new Error(`Engine adapter for ${opts.backendId} does not expose runtimeCore.createExecutionRunBackend`);
@@ -252,6 +266,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const boundedOpenInputs = effectiveBackendTarget
                 ? buildExecutionRunConfiguration({
                     backendTarget: effectiveBackendTarget,
+                    runnerAgentTarget: opts.runnerAgentTarget,
                     modelSelectionSource: opts.modelSelectionSource,
                     ...(opts.modelId ? { modelId: opts.modelId } : {}),
                     ...(opts.modelSelection
@@ -277,8 +292,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const resolveConnectedServicesSelection = (connectedServices: ConnectedServiceBindingsV2 | null | undefined) =>
                 trace('connected_services_selection', () => resolveExecutionRunConnectedServicesSelection({
                     runId: opts.runId,
-                    backendId: engineResolution.backendId,
-                    agentCatalogEntry: engineResolution.agent.catalogEntry ?? null,
+                    backendId: credentialResolution.backendId,
+                    agentCatalogEntry: credentialResolution.agent.catalogEntry ?? null,
                     contributions: opts.engineRegistry?.contributions,
                     signal,
                     backendSourceKind:
@@ -316,6 +331,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     sessionConfigOptionOverrides: opts.sessionConfigOptionOverrides,
                     ...(opts.teamCredentialModel ? { teamCredentialModel: opts.teamCredentialModel } : {}),
                     backendTarget: effectiveBackendTarget,
+                    runnerAgentTarget: opts.runnerAgentTarget,
                     machineId: opts.machineId,
                     agentId: engineResolution.agentId,
                     runId: String(opts.runId ?? '').trim(),
@@ -377,9 +393,9 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                         remaining ?? { v: 2, bindingsByServiceId: {} },
                     );
                 }
-                if (effectiveBackendTarget && usesExecutionRunProviderModel(opts)) {
+                if (credentialBackendTarget && usesExecutionRunProviderModel(opts)) {
                     await assertExecutionRunStructuredAnalysisModelAllowed({
-                        backendTarget: convertBackendTargetRefV2ToV1(effectiveBackendTarget),
+                        backendTarget: convertBackendTargetRefV2ToV1(credentialBackendTarget),
                         intent: opts.start?.intent,
                         modelId: opts.modelId,
                         modelSelection: opts.modelSelection,
@@ -394,16 +410,16 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 if (materializedConnectedServicesSelection && opts.onConnectedServicesSelection) {
                     await opts.onConnectedServicesSelection({
                         connectedServicesBindings: materializedConnectedServicesSelection.bindings,
-                        agentContribution: engineResolution.agent.identity ?? null,
+                        agentContribution: credentialResolution.agent.identity ?? null,
                     });
                 }
                 connectedServicesEnv = await trace('connected_services_materialization', () => resolveExecutionRunConnectedServicesEnv({
                     signal,
                     runId: connectedServicesRunKey,
                     ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
-                    backendId: engineResolution.backendId,
+                    backendId: credentialResolution.backendId,
                     backendSourceKind: opts.backendSourceKind ?? 'built_in',
-                    agentCatalogEntry: engineResolution.agent.catalogEntry ?? null,
+                    agentCatalogEntry: credentialResolution.agent.catalogEntry ?? null,
                     contributions: opts.engineRegistry?.contributions,
                     ...(opts.connectedServices !== undefined
                         ? {
@@ -529,6 +545,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     : {}),
                 backendId: engineResolution.backendId,
                 backendTarget: opts.backendTarget,
+                runnerAgentTarget: opts.runnerAgentTarget,
                 modelId: opts.modelId,
                 ...(boundedOpenInputs?.modelSelection
                     ? { modelSelection: boundedOpenInputs.modelSelection }
@@ -601,7 +618,7 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                 }
                 const selectedModelSupportsStructuredOutput = opts.start?.intent === 'review'
                     ? providerLaunch?.providerBinding && effectiveBackendTarget
-                        ? await readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget: convertBackendTargetRefV2ToV1(effectiveBackendTarget),
+                        ? await readExecutionRunSelectedModelStructuredOutputSupport({ backendTarget: convertBackendTargetRefV2ToV1(credentialBackendTarget ?? effectiveBackendTarget),
                             prepared: providerLaunch, signal })
                         : await opts.start.readSelectedModelStructuredOutputSupport?.(signal) ?? false
                     : undefined;
@@ -702,6 +719,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
     getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider;
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
+    runnerAgentTarget?: AgentExecutionTargetV1;
     modelId?: string;
     modelSelectionSource?: CreateCliExecutionRunBackendParams['modelSelectionSource'];
     onEffectiveEngine?: (engine: Readonly<{ agentId: string; modelId?: string }>) => void;
@@ -786,6 +804,7 @@ export function createExecutionRunRuntime(opts: Readonly<{
                 : {}),
             backendId: runtimeBackendId,
             ...(agentTarget ? { agentTarget } : {}),
+            ...(opts.runnerAgentTarget ? { runnerAgentTarget: opts.runnerAgentTarget } : {}),
             ...(runtimeBackendTarget ? { backendTarget: runtimeBackendTarget } : {}),
             backendSourceKind: resolvedBackendTarget?.canonical.sourceKind ?? 'built_in',
             modelId: opts.modelId,

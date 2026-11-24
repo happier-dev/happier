@@ -19,6 +19,7 @@ import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sess
 import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { SessionOwnerCompatibilityViewV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { ReviewOutputSelectionSchema } from '@happier-dev/protocol/reviews/reviewNarration';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
 const RetainedRunStateSchema = z.strictObject({
@@ -37,6 +38,7 @@ const RetainedRunStateSchema = z.strictObject({
   runReportPolicy: z.optional(FollowPolicyV1Schema),
   effectiveEngine: z.optional(z.strictObject({ agentId: z.string().check(z.minLength(1)), modelId: z.optional(z.string()) })),
   launch: z.optional(z.strictObject({
+    runnerAgentTarget: z.optional(AgentExecutionTargetV1Schema),
     reviewOutputSelection: z.optional(z.nullable(ReviewOutputSelectionSchema)),
     nativeSandbox: SessionOwnerCompatibilityViewV1Schema.shape.nativeSandbox,
     ...AgentSessionToolPolicyShapeV1,

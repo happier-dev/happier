@@ -69,6 +69,7 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
                 providerConnectionId: null, modelId: nativeTeam.modelId } } : selection ? { selection } : {}),
             ...(nativeTeam ? { teamCredentialModel: nativeTeam } : {}),
             backendTarget: input.backendTarget,
+            ...(input.runnerAgentTarget ? { runnerAgentTarget: input.runnerAgentTarget } : {}),
             sessionConfigOptionOverrides: input.sessionConfigOptionOverrides,
             agentId: input.agentId, runId: input.runId,
             ...(controllerOccurrenceId ? { controllerOccurrenceId } : {}),

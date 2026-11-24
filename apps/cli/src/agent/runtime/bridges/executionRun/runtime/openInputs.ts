@@ -5,7 +5,7 @@ import { ConnectedServiceBindingsV2Schema, projectConnectedServiceBindingsForChi
 import { qualifiedConnectedAccountPreferenceServiceKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 import { resolveAgentStartBaselineSelectionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { parseBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 import type {
     AgentSessionConfigurationSnapshot,
@@ -51,10 +51,11 @@ export type ResolvedExecutionRunChildSelection = Readonly<{
 /** The Account's exact per-Agent launch choice; null leaves the Agent's own default in charge. */
 export function resolveExecutionRunAgentDefaultSelection(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
+    runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
     accountSettings?: Readonly<{ providerDefaultModelSelectionsByAgentTargetKeyV1?: unknown }> | null;
 }>): ProviderBoundModelRef | null {
     return readAgentDefaultModelSelectionV1(input.accountSettings?.providerDefaultModelSelectionsByAgentTargetKeyV1,
-        input.backendTarget)?.ref ?? null;
+        input.runnerAgentTarget ?? input.backendTarget)?.ref ?? null;
 }
 
 export function readExecutionRunAppliedParentModelId(parent: ExecutionRunAppliedParentSelection): string | null {
@@ -99,15 +100,16 @@ function projectInheritedConnectedServices(
         bindingsByServiceId[serviceId] = binding;
     }
     if (providerServiceIds) return { v: 2, bindingsByServiceId };
-    const target = readBackendTargetRefV2(backendTarget);
-    return resolveAgentStartBaselineSelectionV1({ targetKey: buildBackendTargetKeyV2(target),
+    const targetKey = resolveBackendTargetKeyV2(backendTarget);
+    return resolveAgentStartBaselineSelectionV1({ targetKey,
         profileId: undefined, connectedServices: undefined,
-    }, { agentTarget: target, connectedServices: { v: 2, bindingsByServiceId } }).connectedServices ?? null;
+    }, { agentTarget: parseBackendTargetKeyV2(targetKey), connectedServices: { v: 2, bindingsByServiceId } }).connectedServices ?? null;
 }
 
 /** Resolves child omissions once, before credential or Provider materialization. */
 export type ExecutionRunChildSelectionInput = Readonly<{
     backendTarget: BackendTargetRefV2Input;
+    runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
     agentCatalogEntry?: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null;
     providerRegistry?: ProviderContributionRegistryView;
     lifecycle: 'attached' | 'independent' | 'retained';
@@ -145,6 +147,7 @@ export function assertExecutionRunAgentDefaultChoice(input: Pick<ExecutionRunChi
 }
 
 export function resolveExecutionRunChildSelection(input: ExecutionRunChildSelectionInput): ResolvedExecutionRunChildSelection {
+    if (input.runnerAgentTarget) input = { ...input, backendTarget: input.runnerAgentTarget };
     try {
         if (input.childSelection === 'agentDefault') {
             assertExecutionRunAgentDefaultChoice(input);
@@ -156,7 +159,7 @@ export function resolveExecutionRunChildSelection(input: ExecutionRunChildSelect
     } catch (error) {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'execution_run_child_choice_required') {
             Object.assign(error, { details: { childChoice: projectExecutionRunChildChoiceV1({
-                agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget)),
+                agentTargetKey: resolveBackendTargetKeyV2(input.backendTarget),
                 parentRouteCompatibility: 'incompatible',
                 parentModelSelection: readExecutionRunParentChoiceModel(input.parent),
             }) } });
@@ -198,7 +201,7 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
     if (!parent || parent.status !== 'applied') {
         if (parent?.reason === 'direct_custody') {
             resolveAgentStartBaselineSelectionV1({
-                ...input, targetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget)),
+                ...input, targetKey: resolveBackendTargetKeyV2(input.backendTarget),
                 profileId: undefined, connectedServices: input.connectedServices,
             }, { directParentCustody: true });
         } else if (!hasExplicitCredentialRoute && input.fallbackSelection) {
@@ -255,7 +258,7 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
     const resolvedModelId = modelId ?? parentModelId ?? undefined;
     const agentTargetKey = sameAgent && parentModelTargetKey
         ? parentModelTargetKey
-        : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
+        : resolveBackendTargetKeyV2(input.backendTarget);
     // Launch re-admits the Provider purpose independently of the Agent's sign-in declarations.
     const providerServiceIds = inheritedModel && 'source' in inheritedModel ? new Set(
         !sameAgent && input.providerRegistry ? readProviderConnectedAccountSessionBindings({
@@ -297,6 +300,7 @@ function resolveExecutionRunModelInput(input: Readonly<{
 
 export function buildExecutionRunConfiguration(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
+    runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
     modelId?: string;
     modelSelectionSource?: ResolvedExecutionRunChildSelection['modelSelectionSource'];
     modelSelection?: PersonalSessionModelRef | null;
@@ -312,7 +316,8 @@ export function buildExecutionRunConfiguration(input: Readonly<{
     modelSelection?: PersonalSessionModelRef;
     configuration: AgentSessionConfigurationSnapshot;
 }> {
-    const { modelSelection, modelId } = resolveExecutionRunModelInput(input);
+    const { modelSelection, modelId } = resolveExecutionRunModelInput({ ...input,
+        backendTarget: input.runnerAgentTarget ?? input.backendTarget });
     const selectedModelId = modelId ?? null;
     const configuration = AgentSessionConfigurationSnapshotV1Schema.parse({
         mode: {

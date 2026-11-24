@@ -1,75 +1,37 @@
-import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
-import type { AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-sdk/agents/runtime';
 import { describe, expect, it } from 'vitest';
 
-import { activate } from '../activate.js';
-import { PLUGIN_MANIFEST } from '../manifest.js';
-import { buildDeepSecLaunchEnvironment, DEEPSEC_PROVIDER_ENV_KEYS } from './providerBinding.js';
-
-function createInput(): AgentProviderBindingMaterializeInput {
-  const transport = { id: 'key', protocols: ['openai-responses'], uses: ['runtime'],
-    destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } as const;
-  return {
-    v: 1, prepared: { v: 1, materialization: 'spawnEnv' },
-    credential: { kind: 'apiKey', transport, value: 'fixture-provider-secret' },
-    binding: { v: 1, agentTargetKey: 'agent:happier.review.deepsec/deepsec',
-      selection: { bindingKey: 'fixture', model: { id: 'custom-model', name: 'Custom' } }, contributionKey: null,
-      endpoint: { endpointTemplateId: 'responses', protocol: 'openai-responses',
-        normalizedUrl: 'https://provider.example.test/codex/v1', publicHeaders: {} },
-      runtimeCredentialTransport: transport, compatibilityFingerprint: 'pcf1:fixture' },
-  };
-}
+import { buildDeepSecLaunchEnvironment, DEEPSEC_PROVIDER_ENV_KEYS, readDeepSecProviderLaunch, resolveDeepSecProviderRoute } from './providerBinding.js';
 
 describe('DeepSec native Provider constraints', () => {
-  it('refuses endpoint shapes the native Codex harness would rewrite', async () => {
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    try {
-      const adapter = activation.registration('agents', 'deepsec')?.providerBinding;
-      if (!adapter) throw new Error('Expected DeepSec Provider adapter');
-      const input = createInput();
-      for (const normalizedUrl of ['https://provider.example.test', 'https://provider.example.test/v2',
-        'https://provider.example.test/v1?route=other', 'https://provider.example.test/v1#fragment']) {
-        await expect(adapter.materialize({ ...input, binding: { ...input.binding,
-          endpoint: { ...input.binding.endpoint, normalizedUrl } } })).rejects.toThrow('must end in /v1');
-      }
-    } finally { await activation.dispose(); }
+  it('refuses endpoint shapes the native Codex harness would rewrite', () => {
+    for (const normalizedUrl of ['https://provider.example.test', 'https://provider.example.test/v2',
+      'https://provider.example.test/v1?route=other', 'https://provider.example.test/v1#fragment']) {
+      expect(() => resolveDeepSecProviderRoute({ protocol: 'openai-responses', normalizedUrl, model: 'selected' }))
+        .toThrow('must end in /v1');
+    }
   });
 
-  it('refuses unsupported headers, unauthenticated routes and mismatched credential transports', async () => {
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    try {
-      const adapter = activation.registration('agents', 'deepsec')?.providerBinding;
-      if (!adapter) throw new Error('Expected DeepSec Provider adapter');
-      const input = createInput();
-      await expect(adapter.materialize({ ...input, binding: { ...input.binding,
-        endpoint: { ...input.binding.endpoint, publicHeaders: { 'x-team': 'coding' } } } })).rejects.toThrow('public headers');
-      await expect(adapter.materialize({ ...input, credential: { kind: 'none' } })).rejects.toThrow('API key');
-      await expect(adapter.materialize({ ...input, credential: { kind: 'apiKey', value: 'fixture-key',
-        transport: { ...input.binding.runtimeCredentialTransport!,
-          destination: { kind: 'httpHeader', name: 'x-api-key', format: 'raw' } } },
-      })).rejects.toThrow('does not support this credential transport');
-    } finally { await activation.dispose(); }
+  it('refuses Codex custom headers that the DeepSec SDK cannot forward', () => {
+    expect(() => readDeepSecProviderLaunch({ connectionId: 'selected', model: { id: 'selected', name: 'Selected' },
+      upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example.test/v1', credential: 'apiKey' },
+      materialization: { v: 1, kind: 'engineConfig', engineConfig: { modelProvider: 'selected', config: {
+        'model_providers.selected': { env_key: 'HOST_KEY', http_headers: { 'x-custom': 'required' } },
+      } } },
+    }, { values: { HOST_KEY: 'secret' }, unset: [] })).toThrow('cannot preserve');
   });
 
-  it('uses the host-admitted credential without rechecking its transport descriptor identity', async () => {
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    try {
-      const adapter = activation.registration('agents', 'deepsec')?.providerBinding;
-      if (!adapter) throw new Error('Expected DeepSec Provider adapter');
-      const input = createInput();
-      // The host admits protocol, runtime use and value before materialization
-      // (providerBindings/adapter.ts assertCredentialMatchesBinding).
-      await expect(adapter.materialize({ ...input, binding: { ...input.binding,
-        runtimeCredentialTransport: null }, credential: { kind: 'apiKey', value: 'fixture-key',
-          transport: { ...input.binding.runtimeCredentialTransport!, protocols: ['anthropic-messages'], uses: ['probe'],
-            destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } } },
-      })).resolves.toMatchObject({ kind: 'spawnEnv' });
-    } finally { await activation.dispose(); }
+  it('preserves the selected Claude Provider endpoint and environment without exposing its bearer in argv', () => {
+    const launch = readDeepSecProviderLaunch({ connectionId: 'selected', model: { id: 'selected', name: 'Selected' },
+      upstream: { protocol: 'anthropic', normalizedUrl: 'https://provider.example.test', credential: 'apiKey' },
+      materialization: { v: 1, kind: 'spawnEnv' },
+    }, { values: { ANTHROPIC_AUTH_TOKEN: 'host-token', CLAUDE_CONFIG_DIR: '/host/claude' }, unset: [] });
+    expect(launch.route).toEqual({ agent: 'claude', provider: 'anthropic', baseUrl: 'https://provider.example.test', model: 'selected' });
+    expect(launch.environment).toMatchObject({ ANTHROPIC_AUTH_TOKEN: 'host-token', OPENAI_API_KEY: '', CLAUDE_CONFIG_DIR: '/host/claude' });
   });
 
   it.each([

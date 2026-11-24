@@ -34,7 +34,10 @@ launcher uses the runner's existing model and account picker, including Team,
 Provider, Connected Account and explicit Machine-login routes. Each engine
 reviewer carries its `runnerAgentTarget`, `modelSelection` and `connectedServices`
 in the ordinary mixed roster; repeated panel members retain independent choices.
-Credential materialization remains owned by the existing host credential owner.
+The Execution Run host carries the admitted runner through start and resume to
+the engine's SDK open request. Its existing Provider and Connected Account owners
+prepare credentials and native home for that runner, while the runtime target
+and Run identity remain the review engine.
 
 For unnamed Voice Session creation in 0.3 development source, the inventory's
 `defaultTargetKey` comes from the shared backend preference owner using the

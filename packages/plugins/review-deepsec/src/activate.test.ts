@@ -7,7 +7,6 @@ import type {
   AgentRuntimeContext,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import type {
   PluginExecSpawnRequest,
@@ -17,14 +16,12 @@ import type {
   PluginServices,
 } from '@happier-dev/plugin-sdk';
 import { ReviewFindingsV2Schema, ReviewScmScopeV1Schema } from '@happier-dev/plugin-sdk/reviews';
-import { AgentProviderBindingMaterializationV1Schema, resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { DEEPSEC_PROVIDER_ENV_KEYS } from './agent/providerBinding.js';
 import { buildGitSnapshot } from '../../scm-git/src/statusSnapshot.js';
-import { claudeSubscriptionConnectedAccountRuntime } from '../../claude/src/connectedAccounts/claudeSubscriptionRuntime.js';
 import type { DeepSecReviewMode } from './agent/reviews/command.js';
 
 afterEach(() => {
@@ -258,36 +255,54 @@ function readStructuredOutput(events: readonly AgentExecutionRunEvent[]) {
   const output = events.find((event): event is Extract<AgentExecutionRunEvent, { kind: 'output-delta' }> => (
     event.kind === 'output-delta' && event.channel === 'assistant'
   ));
-  if (!output) throw new Error('Expected DeepSec output event');
+  if (!output) throw new Error(`Expected DeepSec output event; terminal: ${JSON.stringify(events.at(-1))}`);
   return ReviewFindingsV2Schema.parse(JSON.parse(output.text));
 }
 
-function createClaudeAccountFixture(modeId: 'oauth' | 'native-import' | 'setup-token', available = true) {
-  const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
-  const account = { service, accountId: 'fixture-claude' };
-  const credentials = new Map<string, string>([['refreshToken', 'host-only-refresh']]);
-  if (available) credentials.set(modeId === 'setup-token' ? 'setupToken' : 'accessToken', 'fixture-access-only');
-  const readCredential = vi.fn(async (key: string) => credentials.get(key) ?? null);
-  const context = {
-    account,
-    configuration: { target: { kind: 'account', account, modeId }, revision: 'fixture-1', values: {}, async getSecret() { return null; } },
-    credentials: { get: readCredential, async set() {}, async delete() {} },
-    signal: new AbortController().signal,
-    services: {},
-  } as unknown as Parameters<typeof claudeSubscriptionConnectedAccountRuntime.materialize>[1];
-  // Only the host service transport is replaced; the credential decoder and
-  // environment writer are the real Claude Connected Account implementation.
-  const materialize = vi.fn(async (_purpose: string, request: Parameters<typeof claudeSubscriptionConnectedAccountRuntime.materialize>[0]) =>
-    claudeSubscriptionConnectedAccountRuntime.materialize(request, context));
-  return { account, readCredential, connectedAccounts: {
-    getBinding: async (purpose: string) => ({ purpose, service, account, target: { kind: 'account' as const, displayName: 'Claude' } }),
-    resolveSelection: async (purpose: string) => ({ credentialSource: 'connectedAccount' as const,
-      binding: { purpose, service, account, target: { kind: 'account' as const, displayName: 'Claude' } } }),
-    materialize,
-  } };
-}
-
 describe('activate', () => {
+  it('translates the host Codex Provider config while retaining its projected native home', async () => {
+    const fixture = createRuntimeContext({ checkReadiness: async request => ({ launchable: request.candidates.map(agentId => ({ agentId })) }) });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      providerBinding: { connectionId: 'host-provider', model: { id: 'selected-model', name: 'Selected' },
+        upstream: { protocol: 'openai-responses', normalizedUrl: 'https://selected.example/codex/v1', credential: 'apiKey' },
+        materialization: { v: 1, kind: 'engineConfig', engineConfig: { modelProvider: 'selected', config: {
+          'model_providers.selected': { base_url: 'https://selected.example/codex/v1', env_key: 'HOST_PROVIDER_KEY', wire_api: 'responses' },
+        } } } },
+      launchEnvironment: { values: { HOST_PROVIDER_KEY: 'host-provider-secret', CODEX_HOME: '/host/codex' }, unset: [] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    const process = fixture.run.mock.calls.find(([request]) => request.args?.[0] === 'process')?.[0];
+    expect(process?.args).toEqual(expect.arrayContaining(['--agent', 'codex', '--ai-base-url', 'https://selected.example/codex/v1', '--model', 'selected-model']));
+    expect(process?.env).toMatchObject({ OPENAI_API_KEY: 'host-provider-secret', CODEX_HOME: '/host/codex', AI_GATEWAY_API_KEY: '' });
+    expect(JSON.stringify(events)).not.toContain('host-provider-secret');
+    expect(JSON.stringify(process?.args)).not.toContain('host-provider-secret');
+  });
+  it('consumes the host Claude runner and access token without selecting or acquiring an account again', async () => {
+    const fixture = createRuntimeContext({ connectedAccounts: {
+      getBinding: async () => { throw new Error('Host already admitted this account'); },
+      resolveSelection: async () => { throw new Error('Host already admitted this account'); },
+      materialize: async () => { throw new Error('Host already materialized this account'); },
+    } });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(),
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      launchEnvironment: { values: { CLAUDE_CODE_OAUTH_TOKEN: 'host-access-only', CLAUDE_CONFIG_DIR: '/host/claude' }, unset: [] },
+    }, fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    const events = await watchToTerminal(opened);
+    await opened.dispose();
+    expect(events.at(-1)?.kind).toBe('run-complete');
+    const process = fixture.run.mock.calls.find(([request]) => request.args?.[0] === 'process')?.[0];
+    expect(process?.args).toEqual(expect.arrayContaining(['--agent', 'claude', '--ai-provider', 'anthropic']));
+    expect(process?.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'host-access-only', CLAUDE_CONFIG_DIR: '/host/claude',
+      OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '' });
+    expect(JSON.stringify(events)).not.toContain('host-access-only');
+  });
   it.each([
     { route: 'Machine login', audit: false },
     { route: 'Machine login', audit: true },
@@ -296,14 +311,14 @@ describe('activate', () => {
     { route: 'Claude subscription', audit: false },
     { route: 'Claude subscription', audit: true },
   ])('keeps the admitted model on the $route route (audit=$audit)', async ({ route, audit }) => {
-    const claude = route === 'Claude subscription' ? createClaudeAccountFixture('oauth') : null;
-    const fixture = createRuntimeContext({ connectedAccounts: claude?.connectedAccounts });
+    const fixture = createRuntimeContext();
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open({ ...createOpenRequest(audit ? {
       profileLocalId: 'repository-security-audit', includeExplicitMode: false, confirmedCostWarning: true,
     } : {}),
       modelSelection: { agentTargetKey: 'agent:happier.review.deepsec/deepsec', providerConnectionId: null, modelId: 'selected/nondefault-model' },
-      launchEnvironment: { values: route === 'Gateway' ? { AI_GATEWAY_API_KEY: 'fixture-gateway' } : {}, unset: [] },
+      launchEnvironment: { values: route === 'Gateway' ? { AI_GATEWAY_API_KEY: 'fixture-gateway' }
+        : route === 'Claude subscription' ? { CLAUDE_CODE_OAUTH_TOKEN: 'host-access-only' } : {}, unset: [] },
     }, fixture.context);
     if (!opened) throw new Error('Expected DeepSec execution');
     const events = await watchToTerminal(opened);
@@ -314,128 +329,6 @@ describe('activate', () => {
     expect(investigations[0]?.[0].args).toEqual(expect.arrayContaining(['--model', 'selected/nondefault-model']));
     expect(fixture.run.mock.calls.filter(([request]) => request.args?.[0] !== 'process')
       .every(([request]) => !request.args?.includes('--model'))).toBe(true);
-  });
-
-  it.each(['oauth', 'native-import', 'setup-token'] as const)('runs both audit stages with a real %s Claude materializer and no Gateway key', async modeId => {
-    const claude = createClaudeAccountFixture(modeId);
-    const fixture = createRuntimeContext({ connectedAccounts: claude.connectedAccounts });
-    const { runtime } = await createNativeDeepSecRuntime();
-    const opened = await runtime.executionRuns?.open({ ...createOpenRequest({
-      profileLocalId: 'repository-security-audit', includeExplicitMode: false, confirmedCostWarning: true,
-    }), launchEnvironment: { values: {}, unset: [] } }, fixture.context);
-    if (!opened) throw new Error('Expected DeepSec execution');
-    const events = await watchToTerminal(opened);
-    await opened.dispose();
-    expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete' });
-    expect(claude.connectedAccounts.materialize).toHaveBeenCalledTimes(1);
-    expect(claude.connectedAccounts.materialize).toHaveBeenCalledWith('claude-subscription',
-      { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] }, expect.objectContaining({ expectedAccount: claude.account }));
-    expect(claude.readCredential.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
-    expect(fixture.checkReadiness).toHaveBeenCalledWith(expect.objectContaining({ candidates: ['claude'] }));
-    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
-    const processRequest = fixture.run.mock.calls[1]?.[0];
-    expect(processRequest?.args).toEqual(expect.arrayContaining(['--agent', 'claude', '--ai-provider', 'anthropic', '--ai-base-url', 'https://api.anthropic.com']));
-    expect(processRequest?.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'fixture-access-only',
-      ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', OPENAI_API_KEY: '', AI_GATEWAY_API_KEY: '', VERCEL_OIDC_TOKEN: '' });
-    expect(JSON.stringify(events)).not.toContain('fixture-access-only');
-    expect(JSON.stringify(events)).not.toContain('host-only-refresh');
-    expect(JSON.stringify(processRequest?.args)).not.toContain('fixture-access-only');
-  });
-
-  it.each(['missing', 'codex'] as const)('refuses a Claude Connected Account with %s credentials or harness before launch', async mode => {
-    const claude = createClaudeAccountFixture('oauth', mode !== 'missing');
-    const fixture = createRuntimeContext({ connectedAccounts: claude.connectedAccounts });
-    const { runtime } = await createNativeDeepSecRuntime();
-    const original = createOpenRequest();
-    const opened = await runtime.executionRuns?.open({ ...original, input: { ...original.input,
-      structuredInput: { ...original.input.structuredInput as Record<string, unknown>,
-        engines: { deepsec: { mode: 'current_diff', confirmedCostWarning: true, ...(mode === 'codex' ? { agentCli: 'codex' } : {}) } } } } }, fixture.context);
-    if (!opened) throw new Error('Expected DeepSec execution');
-    const events = await watchToTerminal(opened);
-    await opened.dispose();
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: {
-      code: mode === 'missing' ? 'plugin_connected_account_claude_subscription_credentials_unavailable' : 'deepsec_connected_account_harness_mismatch',
-    } });
-    expect(fixture.run).not.toHaveBeenCalled();
-    expect(claude.readCredential.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
-    expect(JSON.stringify(events)).not.toContain('fixture-access-only');
-  });
-  it('routes an activated Responses Provider binding into both audit stages without shared credential config', async () => {
-    const protocol = 'openai-responses' as const;
-    const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    try {
-      const registration = activation.registration('agents', 'deepsec');
-      const adapter = registration?.providerBinding;
-      expect(adapter).toBeDefined();
-      if (!adapter || !registration?.factory) throw new Error('DeepSec Provider adapter missing');
-      const requirements = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
-      if (!requirements) throw new Error('DeepSec Provider requirements missing');
-      const transport = { id: 'key', protocols: [protocol], uses: ['runtime' as const], destination: {
-        kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const,
-      } };
-      const model = { id: 'exact/custom-model', name: 'Selected model', capabilities: { toolRoundTrips: 'supported' as const } };
-      const baseUrl = 'https://provider.example.test/codex/v1';
-      const compatibility = resolveProviderBindingCompatibilityWithFingerprintV1({
-        agentTargetKey: 'agent:happier.review.deepsec/deepsec', adapterVersion: adapter.adapterVersion, agent: requirements,
-        endpoints: [{ id: 'custom', protocol, baseUrl, capabilities: {
-          streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'unknown',
-        } }], model, credential: { kind: 'apiKey', required: true, transports: [transport] },
-      });
-      expect(compatibility.result).toMatchObject({ status: 'experimental', selectedProtocol: protocol });
-      const materialized = AgentProviderBindingMaterializationV1Schema.parse(await adapter.materialize({
-        v: 1, prepared: adapter.prepare({ v: 1, agentTargetKey: 'agent:happier.review.deepsec/deepsec', bindingKey: 'fixture' }),
-        credential: { kind: 'apiKey', transport, value: 'fixture-provider-secret' },
-        binding: { v: 1, agentTargetKey: 'agent:happier.review.deepsec/deepsec', selection: { bindingKey: 'fixture', model },
-          contributionKey: null, endpoint: { endpointTemplateId: 'custom', protocol, normalizedUrl: baseUrl, publicHeaders: {} },
-          runtimeCredentialTransport: transport, compatibilityFingerprint: compatibility.compatibilityFingerprint },
-      }));
-      expect(materialized.kind).toBe('spawnEnv');
-      const binding = { connectionId: 'pc_fixture', model, upstream: { protocol, normalizedUrl: baseUrl, credential: 'apiKey' as const },
-        materialization: { v: 1 as const, kind: 'spawnEnv' as const } };
-      expect(JSON.stringify(binding)).not.toContain('fixture-provider-secret');
-      const fixture = createRuntimeContext({
-        connectedAccounts: { getBinding: async () => { throw new Error('Explicit Provider must bypass conflicting linked selection'); },
-          resolveSelection: async () => { throw new Error('Explicit Provider must bypass conflicting linked selection'); },
-          materialize: async () => { throw new Error('Explicit Provider must bypass linked credentials'); } },
-        checkReadiness: async (request) => ({ launchable: request.candidates.map(agentId => ({ agentId })) }),
-      });
-      const runtime = await registration.factory({ plugin: { id: 'happier.review.deepsec', version: '0.0.0' }, agent: { id: 'deepsec' }, signal: new AbortController().signal });
-      const opened = await runtime.executionRuns?.open({ ...createOpenRequest(
-        { profileLocalId: 'repository-security-audit', includeExplicitMode: false, confirmedCostWarning: true }), providerBinding: binding,
-        launchEnvironment: { values: Object.fromEntries(materialized.env.filter(row => row.value !== null).map(row => [row.name, row.value!])), unset: [] },
-      }, fixture.context);
-      if (!opened) throw new Error('Expected DeepSec execution');
-      const events = await watchToTerminal(opened);
-      await opened.dispose();
-      expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete' });
-      const expectedAgent = 'codex';
-      expect(fixture.checkReadiness).toHaveBeenCalledWith(expect.objectContaining({ candidates: [expectedAgent] }));
-      const processRequest = fixture.run.mock.calls.find(([request]) => request.args?.[0] === 'process')?.[0];
-      expect(processRequest).toBeDefined();
-      if (!processRequest) throw new Error('Expected DeepSec process launch');
-      expect(fixture.run.mock.calls[0]?.[0].args).toEqual(['scan', '--root', '/repo']);
-      expect(processRequest.args).toEqual(expect.arrayContaining(['--agent', expectedAgent, '--model', model.id,
-        '--ai-provider', 'openai', '--ai-base-url', baseUrl]));
-      expect(processRequest.env).toMatchObject({ AI_GATEWAY_API_KEY: '', VERCEL_OIDC_TOKEN: '', CLAUDE_CODE_OAUTH_TOKEN: '',
-        OPENAI_API_KEY: 'fixture-provider-secret', OPENAI_BASE_URL: baseUrl,
-        ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', ANTHROPIC_BASE_URL: '' });
-      expect(JSON.stringify(processRequest.args)).not.toContain('fixture-provider-secret');
-    } finally { await activation.dispose(); }
-  });
-
-  it('refuses incompatible protocols and unauthenticated endpoints through shared typed compatibility', () => {
-    const agent = PLUGIN_MANIFEST.contributes.agents[0]?.providerRequirements;
-    expect(agent).toBeDefined();
-    if (!agent) throw new Error('DeepSec Provider requirements missing');
-    const resolve = (protocol: 'openai-chat' | 'anthropic' | 'openai-responses') => resolveProviderBindingCompatibilityWithFingerprintV1({
-      agentTargetKey: 'agent:happier.review.deepsec/deepsec', adapterVersion: 1, agent,
-      credential: undefined, endpoints: [{ id: 'custom', protocol, baseUrl: 'https://provider.example.test', capabilities: {
-        streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'unknown', reasoningControls: 'unknown',
-      } }], model: { id: 'custom', name: 'Custom', capabilities: { toolRoundTrips: 'supported' } },
-    }).result;
-    expect(resolve('openai-chat')).toMatchObject({ status: 'incompatible', reasons: ['no_compatible_protocol'] });
-    expect(resolve('anthropic')).toMatchObject({ status: 'incompatible', reasons: ['no_compatible_protocol'] });
-    expect(resolve('openai-responses')).toMatchObject({ status: 'incompatible', reasons: ['no_auth_unsupported'] });
   });
 
   it('refuses an explicitly conflicting harness before process launch with a typed reason', async () => {
@@ -472,7 +365,7 @@ describe('activate', () => {
     if (!opened) throw new Error('Expected DeepSec execution');
     const events = await watchToTerminal(opened);
     await opened.dispose();
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_execution_failed' } });
+    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_provider_transport_unsupported' } });
     expect(fixture.checkReadiness).not.toHaveBeenCalled();
     expect(fixture.run).not.toHaveBeenCalled();
     expect(JSON.stringify(events)).not.toContain('revoked-provider-key');
@@ -984,35 +877,6 @@ describe('activate', () => {
         '--agent', agent, '--ai-provider', provider, '--ai-api-key-env', key,
       ]));
     }
-  });
-
-  it('does not borrow a legacy binding when canonical credential selection is unavailable', async () => {
-    const { resolveSelection: _resolveSelection, ...legacyAccounts } = createClaudeAccountFixture('oauth').connectedAccounts;
-    const fixture = createRuntimeContext({ connectedAccounts: legacyAccounts });
-    const { runtime } = await createNativeDeepSecRuntime();
-    const opened = await runtime.executionRuns?.open({ ...createOpenRequest(), launchEnvironment: { values: {}, unset: [] } }, fixture.context);
-    if (!opened) throw new Error('Expected DeepSec execution');
-    const events = await watchToTerminal(opened);
-    await opened.dispose();
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_model_access_unavailable' } });
-    expect(fixture.run).not.toHaveBeenCalled();
-    expect(legacyAccounts.materialize).not.toHaveBeenCalled();
-  });
-
-  it('does not use Machine login or an unrelated Gateway when the host cannot resolve a selected account', async () => {
-    const fixture = createRuntimeContext({ connectedAccounts: {
-      getBinding: async () => null,
-      resolveSelection: async () => { throw new PluginError({ code: 'plugin_connected_account_binding_unavailable',
-        message: 'Selected account unavailable' }); },
-      materialize: async () => { throw new Error('No credential acquisition is authorized'); },
-    } });
-    const { runtime } = await createNativeDeepSecRuntime();
-    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
-    if (!opened) throw new Error('Expected DeepSec execution');
-    const events = await watchToTerminal(opened);
-    await opened.dispose();
-    expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'plugin_connected_account_binding_unavailable' } });
-    expect(fixture.run).not.toHaveBeenCalled();
   });
 
   it('blanks all unused credential keys for the admitted Gateway route', async () => {

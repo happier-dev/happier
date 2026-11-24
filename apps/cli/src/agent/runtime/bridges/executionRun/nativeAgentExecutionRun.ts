@@ -1001,6 +1001,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     const configuration = params.options.configuration
         ?? (params.options.workspaceWrites === undefined ? undefined : buildExecutionRunConfiguration({
             backendTarget: params.options.backendTarget ?? { kind: 'backend', backendId: params.options.backendId },
+            runnerAgentTarget: params.options.runnerAgentTarget,
             modelId: params.options.modelId,
             modelSelection: params.options.modelSelection,
             modelSelectionSource: params.options.modelSelectionSource,
@@ -1011,6 +1012,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             updatedAtMs: 0,
         }).configuration);
     const boundedOpenInputs = Object.freeze({
+        ...(params.options.runnerAgentTarget ? { runnerAgentTarget: params.options.runnerAgentTarget } : {}),
         stateSharing: resolveNativeAgentSessionStateSharingPolicy(params.lease.agentId),
         ...(launchEnvironment ? { launchEnvironment } : {}),
         ...(params.options.runtimeDescriptorV1

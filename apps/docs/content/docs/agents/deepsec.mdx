@@ -45,19 +45,20 @@ its Claude, Codex, and Pi harnesses. See its
 [model configuration](https://github.com/vercel-labs/deepsec/blob/main/docs/models.md)
 for native setup.
 
-In unreleased 0.3 development source, a DeepSec review Run can use a selected
-Provider model through the **Codex harness with OpenAI Responses**. The endpoint
-must end in `/v1`, with no query or fragment. An API key is required; no-auth
-connections and additional public headers are unsupported. Chat Completions
-and Anthropic routes are refused by this integration, even though DeepSec has
-other native harnesses.
+In unreleased 0.3 development source, choose the review's Codex or Claude runner,
+model and account. Happier prepares that runner's Provider, Connected Account or
+admitted Machine login once and passes it to DeepSec.
+
+The **Codex harness with OpenAI Responses** requires a credentialed endpoint
+ending in `/v1`, with no query or fragment. No-auth connections and additional
+public headers are unsupported. The **Claude harness** supports the selected
+runner's Anthropic key or token and endpoint; custom headers are unsupported.
 
 The selected key is passed only to the review process, not saved into shared
 native configuration. If you explicitly choose a conflicting harness, Happier
-refuses the Run with `deepsec_provider_harness_mismatch`; choose Codex or leave
-the harness automatic. With no Provider selected, a selected Claude Connected
-Account takes precedence over an admitted gateway key. An unavailable selected
-account fails visibly instead of falling back to another account.
+refuses the Run with `deepsec_provider_harness_mismatch`; choose the matching
+runner or leave the harness automatic. An unavailable selected account fails
+visibly instead of falling back to another account.
 Real Provider-key acceptance remains release validation.
 
 Development Runs blank competing credential and endpoint environment variables

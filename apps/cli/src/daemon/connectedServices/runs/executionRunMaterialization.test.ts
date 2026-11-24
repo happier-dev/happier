@@ -837,7 +837,7 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             .resolves.toEqual({ ok: true, released: false });
     });
 
-    it('keeps a hosted Session\'s Run authority when another Session of the same host ends', async () => {
+    it.each(['agent', 'engine'] as const)('keeps a hosted Session\'s %s Run authority when another Session of the same host ends', async runtime => {
         // Two Sessions in one session host share its pid; each Run belongs to the Session that started it.
         const hostPid = 4242;
         const home = await mkdtemp(join(tmpdir(), 'happier-hosted-run-authority-'));
@@ -852,7 +852,9 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             const sessionB = hosted('session-b');
             const trackedSessionsByKey: TrackedSessionMap = new Map([sessionA, sessionB].map(tracked => [tracked.trackingKey, tracked]));
             await retainExecutionRunState({ runId: 'run_abc', callId: 'call', sidechainId: 'side', sessionId: 'session-b', depth: 0,
-                intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+                intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: runtime === 'engine' ? 'deepsec' : 'codex' },
+                backendId: runtime === 'engine' ? 'deepsec' : 'codex', instructions: 'Review',
+                ...(runtime === 'engine' ? { launch: { runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } : {}),
                 permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
                 status: 'running', startedAtMs: 1 });
             const { bridge, unregisterRunTargets, cleanupOnExit } = createBridge({

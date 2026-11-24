@@ -1,5 +1,13 @@
 # Compatibility and version skew
 
+## Execution Run runner selection (unreleased 0.3)
+
+Optional `runnerAgentTarget` extends Execution Run start and SDK Run open
+requests. The retained launch preserves this nonsecret choice for resume.
+The runtime target remains the engine while credential preparation uses the
+selected runner. Protocol, SDK and daemon deploy together for this closed
+development contract; no migration, compatibility epoch or adapter is added.
+
 ## Mounted Workflow observation setup (unreleased 0.3)
 
 An Agent saving a mounted Workflow draft can continue a seeded, read-only

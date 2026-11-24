@@ -17,10 +17,15 @@ and checksum handling. Enabling the plugin starts no daemon or review.
 
 ## Run a review
 
-Select **roborev** for a supported change review. Choose the native agent,
-model and reasoning options; panel mode consumes the repository's native panel
-configuration. The selected backend needs working model access on that Machine.
-Real provider authentication remains release validation.
+Select **roborev** for a supported change review. In unreleased 0.3 development
+source, choose its Codex or Claude runner, model and account. For independently
+selected accounts, add separate reviewers to the Review roster. Each receives
+its own prepared runner credentials and native data directory.
+
+Repository panel mode consumes the repository's native panel configuration and
+shares one login environment. It cannot use independently selected accounts.
+Claude Provider routes require the native bearer's proxy-token transport;
+unsupported key or header transports fail visibly.
 
 Native panel configurations can permit workspace edits. Select a
 [background role](/agents/roles) with **Review** intent and **Hands-off** off

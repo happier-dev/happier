@@ -84,7 +84,7 @@ import { isExecutionRunControllerCurrent, settleExecutionRunController } from '.
 import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import { assertExecutionRunStructuredAnalysisModelAllowed, usesExecutionRunProviderModel, readExecutionRunOfferedModel, readExecutionRunSelectedModelStructuredOutputSupport } from './structuredOutputAdmission';
 import { executionRunChildSelectionNeedsAppliedParent, readExecutionRunParentChoiceModel, resolveExecutionRunAgentDefaultSelection, resolveExecutionRunChildSelection, type ExecutionRunAppliedParentSelection, type ExecutionRunAppliedParentSelectionReader, type ResolvedExecutionRunChildSelection } from './runtime/openInputs';
-import { projectExecutionRunError } from './errors';
+import { projectExecutionRunError, readExecutionRunErrorMessage } from './errors';
 import { resolveExecutionRunInitialInputLocalId } from './initialInput';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
@@ -300,6 +300,7 @@ type StartExecutionRunArgs = Readonly<{
     getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider;
     backendId: string;
     backendTarget?: BackendTargetRefV1;
+    runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
     permissionMode: string;
     workspaceWrites?: 'allow' | 'deny';
     causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
@@ -546,9 +547,9 @@ async function startAdmittedExecutionRunInWorkspace(
     const providerRegistry = args.contributions?.providersByContributionKey
       ? { providersByContributionKey: args.contributions.providersByContributionKey } : undefined;
     const voiceCommitSelectionInput = voiceInput ? {
-      backendTarget: originalParams.backendTarget,
+      backendTarget: originalParams.runnerAgentTarget ?? originalParams.backendTarget,
       ...(args.contributions ? { agentCatalogEntry: args.contributions.agentDefinitionsById
-        .get(resolveExecutionRunRuntimeBackendId(originalParams.backendTarget))?.catalogEntry ?? null } : {}),
+        .get(resolveExecutionRunRuntimeBackendId(originalParams.runnerAgentTarget ?? originalParams.backendTarget))?.catalogEntry ?? null } : {}),
       providerRegistry,
       lifecycle,
       modelId: originalParams.commitModelId === 'default' ? undefined : originalParams.commitModelId,
@@ -574,9 +575,9 @@ async function startAdmittedExecutionRunInWorkspace(
       throw Object.assign(new Error('The child Account defaults are unavailable. Choose an explicit model.'), { code: 'execution_run_child_default_unavailable' });
     }
     childSelection = args.childSelectionContext?.resolvedSelection ?? resolveExecutionRunChildSelection({
-      backendTarget: originalParams.backendTarget,
+      backendTarget: originalParams.runnerAgentTarget ?? originalParams.backendTarget,
       ...(args.contributions ? { agentCatalogEntry: args.contributions.agentDefinitionsById
-        .get(resolveExecutionRunRuntimeBackendId(originalParams.backendTarget))?.catalogEntry ?? null } : {}),
+        .get(resolveExecutionRunRuntimeBackendId(originalParams.runnerAgentTarget ?? originalParams.backendTarget))?.catalogEntry ?? null } : {}),
       providerRegistry,
       lifecycle,
       modelId: primaryModelId,
@@ -690,6 +691,7 @@ async function startAdmittedExecutionRunInWorkspace(
       ? args.params.modelId.trim()
       : undefined;
   const launch = {
+    ...(args.params.runnerAgentTarget ? { runnerAgentTarget: args.params.runnerAgentTarget } : {}),
     ...(args.params.reviewOutputSelection !== undefined
       ? { reviewOutputSelection: args.params.reviewOutputSelection } : {}),
     ...(args.params.nativeSandbox !== undefined ? { nativeSandbox: args.params.nativeSandbox } : {}),
@@ -840,6 +842,7 @@ async function startAdmittedExecutionRunInWorkspace(
         sidechainId,
         backendId,
         backendTarget: args.params.backendTarget,
+        ...(args.params.runnerAgentTarget ? { runnerAgentTarget: args.params.runnerAgentTarget } : {}),
         permissionMode: args.params.permissionMode,
         modelSelectionSource: childSelection.modelSelectionSource,
         workspaceWrites: args.params.workspaceWrites,
@@ -1415,7 +1418,7 @@ async function startAdmittedExecutionRunInWorkspace(
     const recordRetainedInitialPendingOutcomeUnknown = (error: unknown): void => {
       const current = args.runs.get(runId);
       if (!current) return;
-      const message = error instanceof Error ? error.message : 'Initial Session input admission outcome is unknown';
+      const message = readExecutionRunErrorMessage(error, 'Initial Session input admission outcome is unknown');
       args.runs.set(runId, {
         ...current,
         summary: message,

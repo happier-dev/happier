@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 
 import { logger } from '@/ui/logger';
 import { isCatalogAgentId } from '@/agent/catalog/resolution';
@@ -940,7 +941,9 @@ export function createExecutionRunConnectedServicesBridge(
             if ('failureCause' in retained) return runStateUnavailable(retained);
             const retainedRun = retained.record;
             if (retainedRun && (retainedRun.state.sessionId !== runner.parentSessionId
-                || retainedRun.state.backendId !== agentId)) {
+                || (retainedRun.state.launch?.runnerAgentTarget
+                    ? resolveExecutionRunRuntimeBackendId(retainedRun.state.launch.runnerAgentTarget)
+                    : retainedRun.state.backendId) !== agentId)) {
                 return blocked('Retained execution-run identity does not match this materialization.');
             }
             const nativeResumeId = input.recovery?.nativeResumeId

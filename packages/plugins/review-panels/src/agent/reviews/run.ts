@@ -13,6 +13,8 @@ export type RoborevReviewRunInput = Readonly<{
   env: Readonly<Record<string, string>>;
   signal: AbortSignal;
   instructions?: string;
+  /** Native non-secret settings translated from the host's selected runner. */
+  configuration?: string;
   onProgress?: () => void;
 }>;
 
@@ -23,8 +25,9 @@ export async function runRoborevReview(
   input.signal.throwIfAborted();
   const dataDirectory = await services.fs.getPluginDataDirectory({ relativePath: `runs/${input.runId}`, signal: input.signal });
   input.signal.throwIfAborted();
-  if (input.instructions) await services.fs.writeFile({ root: 'pluginData', relativePath: `runs/${input.runId}/config.toml` },
-    new TextEncoder().encode(`review_guidelines = ${JSON.stringify(input.instructions)}\n`), { signal: input.signal });
+  const configuration = (input.instructions ? `review_guidelines = ${JSON.stringify(input.instructions)}\n` : '') + (input.configuration ?? '');
+  if (configuration) await services.fs.writeFile({ root: 'pluginData', relativePath: `runs/${input.runId}/config.toml` },
+    new TextEncoder().encode(configuration), { signal: input.signal });
   const launch = {
     executable: input.executable, cwd: input.cwd,
     env: { ...input.env, ROBOREV_DATA_DIR: dataDirectory, ROBOREV_TELEMETRY_ENABLED: '0', NO_COLOR: '1' },

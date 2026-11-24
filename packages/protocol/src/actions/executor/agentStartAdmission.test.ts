@@ -13,11 +13,42 @@ import type { ActionExecutorDeps } from './types.js';
 import { createSessionMembershipReadFixture } from '../../sessions/read/sessionReadBatchV1.testkit.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { createActionExecutor } from '../actionExecutor.js';
+import { refuseExecutionRunStartOutsideCallerModelsV1 } from './executionRuns.js';
 
 const nativeTarget = { kind: 'agent' as const, identity: { pluginId: 'native.agent', localId: 'agent' } };
 const roleTarget = { kind: 'agent' as const, identity: { pluginId: 'role.agent', localId: 'agent' } };
 
 describe('canonical Action agent-start adapter', () => {
+  it('admits the engine while inheriting model access from its selected runner', () => {
+    const connectedServices = { v: 2 as const, bindingsByServiceId: {
+      'native.auth/subscription': { source: 'connected' as const, profileId: 'parent-account' },
+    } };
+    const context: AgentStartContextV1 = {
+      caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
+      baseline: { machineId: 'machine', directory: '/repo', configuration: { agentTarget: nativeTarget, connectedServices } },
+      roles: {}, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'default',
+    };
+    const input = { backendTarget: roleTarget, runnerAgentTarget: nativeTarget, modelId: 'runner-model',
+      intent: 'review', instructions: 'Review', permissionMode: 'no_tools', retentionPolicy: 'ephemeral',
+      runClass: 'bounded', ioMode: 'request_response' };
+    expect(refuseExecutionRunStartOutsideCallerModelsV1(input, { callerInputConstraints: {
+      models: [{ agentTargetKey: 'agent:native.agent/agent', providerConnectionId: null, modelId: 'runner-model' }],
+      permissionModes: null,
+    } })).toBeNull();
+    expect(refuseExecutionRunStartOutsideCallerModelsV1(input, { callerInputConstraints: {
+      models: [{ agentTargetKey: 'agent:role.agent/agent', providerConnectionId: null, modelId: 'runner-model' }],
+      permissionModes: null,
+    } })).toMatchObject({ errorCode: 'model_not_granted' });
+    const resolved = resolveActionAgentStartRequestsV1({ actionId: 'execution.run.start', input, context: {}, baseline: context.baseline });
+    if (!resolved.ok || !resolved.requests[0]) throw new Error('Expected selected engine admission');
+    expect(resolved.requests[0]).toMatchObject({ facts: { agentTarget: roleTarget,
+      modelSelection: { agentTargetKey: 'agent:native.agent/agent', modelId: 'runner-model' } } });
+    const admitted = admitActionAgentStartV1({}, resolved.requests[0], context);
+    if (!admitted.ok) throw new Error(admitted.refusal.code);
+    expect(stampAgentStartSelectionV1(resolved.effectiveInput, admitted.stamped, 'execution_run', context))
+      .toMatchObject({ backendTarget: roleTarget, runnerAgentTarget: nativeTarget, connectedServices });
+  });
+
   it('does not spend an accepted native Review stamp on a separate Session target', async () => {
     const executor = createActionExecutor({});
     expect(await executor.execute('review.start', {

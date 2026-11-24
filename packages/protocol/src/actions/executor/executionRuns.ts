@@ -18,7 +18,7 @@ import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } fr
 import { type ActionId } from '../actionIds.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
+import { resolveBackendTargetKeyV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
 import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
 import { PersonalSessionModelRefSchema } from '../../providers/selection/v2.js';
 import type { SessionModelRefV2 } from '../../providers/selection/v2.js';
@@ -81,7 +81,7 @@ function readExecutionRunStartModelRefV1(request: Readonly<Record<string, unknow
   const modelId = normalizeId(request.modelId);
   if (!modelId) return 'automatic';
   try {
-    return { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(request.backendTarget as BackendTargetRefV2Input)),
+    return { agentTargetKey: resolveBackendTargetKeyV2((request.runnerAgentTarget ?? request.backendTarget) as BackendTargetRefV2Input),
       providerConnectionId: null, modelId };
   } catch {
     return 'automatic';

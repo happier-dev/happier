@@ -3,6 +3,8 @@ import type { ReviewFindingsV2, ReviewStartInput } from '@happier-dev/plugin-sdk
 import { RoborevReviewError, type RoborevReviewResult } from './document.js';
 import { runRoborevReview } from './run.js';
 import type { RoborevReviewOptions } from './profile.js';
+import { roborevRunnerAccess } from './access.js';
+import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
 
 export function createRoborevExecutionRunFactory(): AgentExecutionRunRuntimeFactory {
   return Object.freeze({
@@ -50,17 +52,24 @@ export function createRoborevExecutionRunFactory(): AgentExecutionRunRuntimeFact
           } else if (input.changeType === 'uncommitted') scopeArgs = ['--dirty'];
           else if (input.changeType === 'committed' && scope?.baseRef.ref) scopeArgs = ['--sha', `${scope.baseRef.ref}..HEAD`];
           else return { status: 'failed', diagnostic: { code: 'roborev_scope_unsupported', severity: 'error', message: 'Select uncommitted changes or an admitted committed comparison.' } };
-          if (request.providerBinding || request.modelSelection?.providerConnectionId) {
-            return { status: 'failed', diagnostic: { code: 'roborev_provider_binding_unsupported', severity: 'error', message: 'Configure model access in the native reviewer on this Machine.' } };
-          }
+          const runnerKey = request.runnerAgentTarget ? buildAgentTargetKeyV2(request.runnerAgentTarget) : null;
+          const agent = runnerKey === null ? options?.agent : new Map([
+            [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), 'codex'],
+            [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }), 'claude-code'],
+          ]).get(runnerKey);
+          if (runnerKey !== null && !agent) return { status: 'failed', diagnostic: {
+            code: 'roborev_runner_unsupported', severity: 'error', message: 'The selected runner is not supported by roborev.',
+          } };
+          const access = roborevRunnerAccess(request, agent ?? 'codex', options?.panel ?? 'none');
+          if (access.status === 'unsupported') return { status: 'failed', diagnostic: { code: access.code, severity: 'error', message: access.message } };
           let result: RoborevReviewResult;
           try { result = await runRoborevReview(context.services, {
             runId: request.runId, cwd: request.cwd, executable: { kind: 'managedDependency', id: 'review-executable' }, signal,
             instructions: input.instructions,
-            env: { ...request.launchEnvironment?.values, ...Object.fromEntries((request.launchEnvironment?.unset ?? []).map(key => [key, ''])) },
+            env: access.env, configuration: access.config,
             reviewArgs: [...scopeArgs, '--panel', options?.panel ?? 'none', '--type', options?.reviewType ?? 'exhaustive',
-              ...(options?.agent ? ['--agent', options.agent] : []), ...(options?.reasoning ? ['--reasoning', options.reasoning] : []),
-              ...(request.modelSelection ? ['--model', request.modelSelection.modelId] : [])],
+              ...(agent ? ['--agent', agent] : []), ...(options?.reasoning ? ['--reasoning', options.reasoning] : []),
+              ...(access.model ? ['--model', access.model] : [])],
             onProgress: () => emit({ kind: 'run-progress' }),
           }); } catch (error) {
             if (signal.aborted && error instanceof AggregateError) return { status: 'cancelled', diagnostic: {

@@ -21,6 +21,8 @@ import type { AgentProviderRequirementsV1 } from '@happier-dev/protocol/provider
 /** Real committed plugin/Agent/Provider source. Only endpoint transport is
  * supplied by each test; no authorization, registry or materializer is mocked. */
 export async function createManagedRunLaunchFixture(input: Readonly<{ directory?: string; happyHomeDir?: string; controller?: PluginReloadController; remote?: boolean; probeCatalog?: boolean; physicalGateway?: boolean; sourceEnvelopeTransport?: 'cpx-v1'; materializationUrl?: string; materializationFiles?: Extract<AgentProviderBindingMaterializationV1, { kind: 'configFile' }>['files']; signedOutAgentCli?: boolean;
+  reviewEngine?: boolean;
+  agentIsolation?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['agentIsolation'];
   catalogModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['catalogModels'];
   connectedAccountModels?: Parameters<typeof createSharedGatewayRegistryTestkit>[0]['connectedAccountModels'];
   modelLoad?: ProviderModelLoadDescriptorV1;
@@ -47,6 +49,7 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
   const agentId = `${pluginId}/agent`;
   const agentTargetKey = `agent:${agentId}`;
   const gateway = input.physicalGateway ? createSharedGatewayRegistryTestkit({ directory,
+    ...(input.agentIsolation ? { agentIsolation: input.agentIsolation } : {}),
     ...(input.includeBundledDeclarations ? { includeBundledDeclarations: true } : {}),
     ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
     ...(input.catalogModels ? { catalogModels: input.catalogModels } : {}),
@@ -85,7 +88,10 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
           fields: [{ id: 'token', title: 'Token', schema: { type: 'string', minLength: 1 }, secret: true }] }] },
       })) } : {}),
       systemTools: [{ id: 'fixture-runtime', title: 'Fixture runtime', executableNames: [basename(process.execPath)] }],
-      agents: [{ id: 'agent', title: 'Run Agent', runtime: { kind: 'custom' }, primary: 'sessions',
+      agents: [...(input.reviewEngine ? [{ id: 'engine', title: 'Review engine', runtime: { kind: 'custom' }, primary: 'executionRuns',
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
+        runnerAgents: [{ agentTarget: { kind: 'agent', identity: { pluginId, localId: 'agent' } }, providerProtocols: ['openai-responses'] }],
+      }] : []), { id: 'agent', title: 'Run Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
         ...(input.signedOutAgentCli ? { cli: {
           executable: { binaryName: 'managed-run-agent', sourcePreference: 'system-first', knownUserBinDirSuffixes: null },
@@ -165,9 +171,14 @@ export async function createManagedRunLaunchFixture(input: Readonly<{ directory?
       async dispose() { listeners.clear(); }
     };
   } } }; }
+  export function fixtureEngineRuntimeFactory() { return { executionRuns: { async open(request, context) {
+    if (request.runnerAgentTarget?.identity.localId !== 'agent') throw new Error('Selected runner missing at engine open');
+    return fixtureAgentRuntimeFactory().sessions.executionRunContextV1.open(request, context);
+  } } }; }
   `, 'utf8');
-  await writeFile(join(pluginRoot, 'daemon.mjs'), `import { fixtureAgentRuntimeFactory } from './agentRuntime.mjs';
+  await writeFile(join(pluginRoot, 'daemon.mjs'), `import { fixtureAgentRuntimeFactory, fixtureEngineRuntimeFactory } from './agentRuntime.mjs';
   export function activate(api) {
+    ${input.reviewEngine ? `api.agents.register('engine', fixtureEngineRuntimeFactory, { sessionRunnerFactory: { module: './agentRuntime.mjs', export: 'fixtureEngineRuntimeFactory', runtimeApiVersion: 1 } });` : ''}
     ${localAccountServices.map(id => `api.connectedAccounts.register(${JSON.stringify(id)}, {
       authentication: { modes: { manual: { kind: 'manual', async complete() {
         return { status: 'connected', accountId: 'selected-source', displayName: 'Source', scopes: [] };

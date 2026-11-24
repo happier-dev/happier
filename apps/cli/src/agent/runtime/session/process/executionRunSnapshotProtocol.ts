@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
 import { lazyActionSpecArray } from '@happier-dev/protocol/actions/lazyActionSpecValue';
 import { z } from 'zod/mini';
 import { z as zMini } from 'zod/mini';
@@ -28,6 +29,7 @@ const StrictBackendTargetRefV2Schema = lazyZodSchema(() => zMini.pipe(
 ));
 
 const ProviderLaunchRequestShape = {
+  runnerAgentTarget: z.optional(asHostProtocolZod(AgentExecutionTargetV1Schema)),
   selection: z.optional(asHostProtocolZod(PersonalSessionModelRefSchema)),
   teamCredentialModel: z.optional(asHostProtocolZod(TeamCredentialProviderModelSelectionV1Schema)),
   sessionConfigOptionOverrides: z.optional(asHostProtocolZod(AcpConfigOptionOverridesV1Schema)),

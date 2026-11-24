@@ -34,13 +34,20 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
   const state = join(directory, 'repository-a');
   const commands: string[][] = [];
   const environments: unknown[] = [];
+  const configs: unknown[] = [];
   let selected: string[] = [];
   const exec: Pick<ExecService, 'run' | 'spawn'> = { async run(request, options) {
     const args = [...request.args ?? []]; commands.push(args); environments.push(request.env);
+    if (args.includes('--config')) configs.push(JSON.parse(await readFile(args[args.indexOf('--config') + 1]!, 'utf8')));
     expect(request.executable).toEqual({ kind: 'managedDependency', id: 'review-executable' });
     expect(options?.signal?.aborted).toBe(false);
     expect(args.slice(-5)).toEqual(['--root', directory, '--state-dir', state, '--json']);
-    if (args[0] === 'init') { await mkdir(state, { recursive: true }); await writeFile(join(state, 'project.json'), '{}'); return completed({ initialized: true }); }
+    if (args[0] === 'init') {
+      await mkdir(state, { recursive: true }); await writeFile(join(state, 'project.json'), '{}');
+      await writeFile(join(state, 'config.json'), JSON.stringify({ schemaVersion: 1, provider: { name: 'codex', model: null },
+        review: { preservedNativeSetting: true } }));
+      return completed({ initialized: true });
+    }
     if (args[0] === 'map') {
       await mkdir(join(state, 'features'), { recursive: true });
       for (const featureId of ['slice-a', 'slice-b', 'stale']) await writeFile(join(state, 'features', `${featureId}.json`),
@@ -84,12 +91,67 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
       },
     };
   } };
-  return { directory, state, commands, environments, controller, exec, selected: () => selected,
+  return { directory, state, commands, environments, configs, controller, exec, selected: () => selected,
     run: () => runClawpatchReview({ exec, fs: { getPluginDataDirectory: async () => state }, cwd: directory,
       stateRelativePath: 'repository-a', signal: controller.signal }) };
 }
 
 describe('native clawpatch review', () => {
+  // U9/F5 replaces the former blanket Provider refusal with the admitted runner route.
+  it.each(['codex-account', 'claude-account', 'codex-provider', 'claude-provider'] as const)(
+    'runs the selected model with the host-materialized %s route', async route => {
+      const f = await fixture();
+      const provider = route.startsWith('claude') ? 'claude' : 'codex';
+      const modelProvider = 'happier_0123456789abcdef0123456789abcdef';
+      const binding: AgentExecutionRunOpenRequest['providerBinding'] = route === 'codex-provider' ? {
+        connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://example.com/codex/v1', credential: 'apiKey' },
+        model: { id: 'selected-model', name: 'Selected model' }, materialization: { v: 1, kind: 'engineConfig', engineConfig: {
+          v: 1, modelProvider, config: { [`model_providers.${modelProvider}`]: {
+            name: 'Happier provider', base_url: 'https://example.com/codex/v1', wire_api: 'responses',
+            env_key: 'HAPPIER_CODEX_PROVIDER_API_KEY', requires_openai_auth: false, supports_websockets: false,
+          }, model_context_window: 200000 },
+        } },
+      } : route === 'claude-provider' ? {
+        connectionId: 'selected-provider', upstream: { protocol: 'anthropic', normalizedUrl: 'https://example.com', credential: 'apiKey' },
+        model: { id: 'selected-model', name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
+      } : undefined;
+      const values = { CODEX_HOME: '/host/projected-codex', CLAUDE_CONFIG_DIR: '/host/projected-claude',
+        CLAUDE_CODE_OAUTH_TOKEN: route === 'claude-account' ? 'fixture-subscription-token' : '',
+        ANTHROPIC_AUTH_TOKEN: route === 'claude-provider' ? 'fixture-provider-token' : '',
+        HAPPIER_CODEX_PROVIDER_API_KEY: route === 'codex-provider' ? 'fixture-provider-token' : '',
+        ANTHROPIC_BASE_URL: route === 'claude-provider' ? 'https://example.com' : '', OPENAI_API_KEY: 'must-be-unset' };
+      const context = { agent: { id: 'clawpatch' }, signal: f.controller.signal,
+        services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
+      const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: route, cwd: f.directory,
+        profile: { pluginId: 'happier.review.clawpatch', localId: 'review' },
+        runnerAgentTarget: { kind: 'agent', identity: { pluginId: `happier.agent.${provider}`, localId: provider } },
+        modelSelection: { modelId: 'selected-model', ...(binding ? { providerConnectionId: 'selected-provider' } : {}) },
+        ...(binding ? { providerBinding: binding } : {}), launchEnvironment: { values, unset: ['OPENAI_API_KEY'] },
+        input: { text: 'Review', structuredInput: { scope: 'repository', engines: { clawpatch: { provider: provider === 'claude' ? 'codex' : 'claude', model: 'stale-model' } },
+          scmReviewScope: { scope: 'repository', status: 'supported', worktreeRoot: f.directory } } },
+      }, context);
+      try {
+        const terminal = await new Promise<AgentExecutionRunEvent>(resolve => { runtime.watch(event => {
+          if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve(event);
+        }); });
+        expect(terminal.kind).toBe('run-complete');
+        expect(f.commands.map(args => args[0])).toEqual(['init', 'map', 'review']);
+        for (const args of f.commands.slice(1)) expect(args).toEqual(expect.arrayContaining(['--provider', provider, '--model', 'selected-model']));
+        for (const environment of f.environments) expect(environment).toMatchObject({ ...values, OPENAI_API_KEY: '',
+          ...(provider === 'claude' ? { CLAWPATCH_CLAUDE_AUTH_CONTEXT: 'host' } : {}) });
+        if (route === 'codex-provider') {
+          expect(f.configs).toHaveLength(2);
+          for (const config of f.configs) {
+            expect(config).toMatchObject({ review: { preservedNativeSetting: true }, provider: { name: 'codex', codexConfig: {
+              model_provider: modelProvider, [`model_providers.${modelProvider}.base_url`]: 'https://example.com/codex/v1',
+              [`model_providers.${modelProvider}.env_key`]: 'HAPPIER_CODEX_PROVIDER_API_KEY', model_context_window: 200000,
+            } } });
+            expect(JSON.stringify(config)).not.toContain('fixture-provider-token');
+          }
+        }
+        expect(await readdir(join(f.state, 'findings'))).toContain('old.json');
+      } finally { await runtime.dispose(); }
+    });
   it.each([
     { workspaceWrites: 'deny', unset: [], expected: 'read-only' },
     { workspaceWrites: 'allow', unset: [], expected: 'bypass' },
@@ -199,17 +261,6 @@ describe('native clawpatch review', () => {
     expect(f.commands.at(-1)).toContain('--prompt-file');
     expect(f.commands.at(-1)).toEqual(expect.arrayContaining(['--provider', 'mock']));
     await runtime.dispose();
-    const before = f.commands.length;
-    const bound = await createClawpatchExecutionRunFactory().open({ ...request, providerBinding: {
-      connectionId: 'selected-provider', upstream: { protocol: 'openai.responses', normalizedUrl: 'https://example.com/v1', credential: 'apiKey' },
-      model: { id: 'selected-model', name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
-    } }, context);
-    const terminal = await new Promise<AgentExecutionRunEvent>(resolve => { bound.watch(event => {
-      if (event.kind === 'run-complete' || event.kind === 'run-failed') resolve(event);
-    }); });
-    expect(terminal.kind).toBe('run-failed');
-    expect(f.commands).toHaveLength(before);
-    await bound.dispose();
     await activation.dispose();
   });
   it('explicitly reviews every active slice and joins only the selected run IDs to full finding evidence', async () => {

@@ -233,6 +233,7 @@ export type CreateCliExecutionRunBackendParams = Readonly<{
     getPermissionRequestStore?: ExecutionRunPermissionRequestStoreProvider;
     backendId: string;
     backendTarget?: BackendTargetRefV2Input;
+    runnerAgentTarget?: import('@happier-dev/protocol').AgentExecutionTargetV1;
     modelId?: string;
     modelSelection?: PersonalSessionModelRef;
     modelSelectionSource?: 'explicit' | 'inherited';

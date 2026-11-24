@@ -23,6 +23,7 @@ import { resolveExecutionBackendTargetSelectionForValue } from '../resolveAction
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { findAssignedProviderModelCredentialBinding, readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
+import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
 import { resolveWorkflowStepSelectionV1, type WorkflowResolvedStepSelectionV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { readRoleEngineSessionModelSelectionV1, type RoleEngineV1 } from '../../prompts/roles/roleArtifactV1.js';
@@ -535,10 +536,12 @@ function readExecutionRunPersonalModelSelection(value: unknown): SessionModelSel
 }
 /** Selection translation only. All policy, role and depth decisions stay in admitAgentStartV1. */
 export function executionRunStartFactsV1(input: Readonly<Record<string, unknown>>, target: PersistedBackendTargetRefV2 | Unresolved, context: ActionExecutorContext, baseline: AgentStartContextV1['baseline']): AgentStartFactsV1 {
+    const modelTarget = input.runnerAgentTarget === undefined ? target
+        : selection(AgentExecutionTargetV1Schema, input.runnerAgentTarget) ?? unresolved;
     const modelSelection = input.modelSelection !== undefined
         ? readExecutionRunPersonalModelSelection(input.modelSelection)
         : typeof input.modelId === 'string'
-            ? target.kind === 'unresolved' ? unresolved : { agentTargetKey: buildBackendTargetKeyV2(target), providerConnectionId: null, modelId: input.modelId }
+            ? modelTarget.kind === 'unresolved' ? unresolved : { agentTargetKey: buildBackendTargetKeyV2(modelTarget), providerConnectionId: null, modelId: input.modelId }
             : undefined;
     const overrides = AcpConfigOptionOverridesV1Schema.safeParse(input.sessionConfigOptionOverrides);
     const shorthand = input.configOptions;
@@ -656,7 +659,7 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
         ? projectAgentStartSelectionV1(input, { ...stamped, engine: stamped.engine }, kind, baseline)
         : input;
     const selected = kind === 'spawn_new' ? projectCapturedSessionSpawnModel(roleSelection, context) : roleSelection;
-    const target = readAgentStartTargetV1(kind === 'spawn_new' ? selected.agentTarget : selected.backendTarget);
+    const target = readAgentStartTargetV1(kind === 'spawn_new' ? selected.agentTarget : selected.runnerAgentTarget ?? selected.backendTarget);
     const profileField = kind === 'spawn_new' ? 'profileId' : 'launchProfileId';
     const machineId = kind === 'spawn_new' && selected.executionTarget && typeof selected.executionTarget === 'object'
         && 'machineId' in selected.executionTarget ? selected.executionTarget.machineId : selected.machineId;

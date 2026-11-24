@@ -26,6 +26,8 @@ export type RunClawpatchReviewInput = Readonly<{
   instructions?: string;
   onProgress?: (progress?: Readonly<{ phase: 'start' | 'done'; featureId: string; index: number; total: number }>) => void;
   environment?: Readonly<Record<string, string>>;
+  /** Secret-free scalar projection of the native Codex owner's admitted config. */
+  codexConfig?: Readonly<Record<string, string | number | boolean | null>>;
   signal: AbortSignal;
 }>;
 
@@ -99,34 +101,42 @@ export async function runClawpatchReview(input: RunClawpatchReviewInput): Promis
   if (!await exists(join(directory, 'project.json'))) {
     if (!succeeded(await invoke(['init']))) throw new Error('Native slice initialization failed');
   }
-  if (!succeeded(await invoke(['map', ...provider]))) throw new Error('Native slice mapping failed');
-  const names = (await readdir(join(directory, 'features'))).filter(name => name.endsWith('.json')).sort();
-  const activeIds = (await Promise.all(names.map(async name => readSliceSelection(JSON.parse(
-    await readFile(join(directory, 'features', name), 'utf8')))))).filter(item => item.status !== 'skipped').map(item => item.featureId);
-  const featureIds = input.featureIds ?? activeIds;
-  if (featureIds.length === 0) return { status: 'completed', nativeRunId: null, findings: [], findingEvidence: [], errors: [] };
   const selection = createSecureTempDirectorySync({ prefix: 'review-clawpatch-selection' });
-  let result: PluginProcessResult;
   try {
+    if (input.codexConfig) {
+      // Init owns native defaults. Preserve those settings and override only the
+      // admitted route in a trusted explicit file; never persist credentials.
+      const config: Record<string, unknown> & { provider: Readonly<Record<string, unknown>> } = JSON.parse(
+        await readFile(join(directory, 'config.json'), 'utf8'));
+      const configPath = join(selection.path, 'config.json');
+      await writeFile(configPath, JSON.stringify({ ...config, provider: { ...config.provider, codexConfig: input.codexConfig } }));
+      common.unshift('--config', configPath);
+    }
+    if (!succeeded(await invoke(['map', ...provider]))) throw new Error('Native slice mapping failed');
+    const names = (await readdir(join(directory, 'features'))).filter(name => name.endsWith('.json')).sort();
+    const activeIds = (await Promise.all(names.map(async name => readSliceSelection(JSON.parse(
+      await readFile(join(directory, 'features', name), 'utf8')))))).filter(item => item.status !== 'skipped').map(item => item.featureId);
+    const featureIds = input.featureIds ?? activeIds;
+    if (featureIds.length === 0) return { status: 'completed', nativeRunId: null, findings: [], findingEvidence: [], errors: [] };
     const selectionPath = join(selection.path, 'slices.txt');
     await writeFile(selectionPath, featureIds.join('\n') + '\n');
     const promptPath = join(selection.path, 'instructions.txt');
     if (input.instructions) await writeFile(promptPath, input.instructions);
-    result = await invoke(['review', '--feature-list', selectionPath,
+    const result = await invoke(['review', '--feature-list', selectionPath,
       ...(input.instructions ? ['--prompt-file', promptPath] : []), ...provider]);
+    // A failed native review still writes its run and full findings. Its start
+    // diagnostic identifies that run; never discover it by scanning old history.
+    const response = succeeded(result) ? decode(result) : null;
+    const runId = response && typeof response === 'object' && 'run' in response && typeof response.run === 'string'
+      ? response.run
+      : !result.stderrTruncated ? /(?:^|\n)clawpatch review start run=([A-Za-z0-9_-]+)(?:\s|$)/u.exec(Buffer.from(result.stderr).toString('utf8'))?.[1] : undefined;
+    if (!runId) throw new Error('Native clawpatch review did not identify its run');
+    const run = readSliceRun(JSON.parse(await readFile(join(directory, 'runs', `${safeRecordId(runId)}.json`), 'utf8')), runId);
+    const mapped = await Promise.all(run.findingIds.map(async (id, index) => readSliceFinding(JSON.parse(
+      await readFile(join(directory, 'findings', `${safeRecordId(id)}.json`), 'utf8')), id, runId, index)));
+    return { status: !succeeded(result) || run.status !== 'completed' ? 'failed' : run.errors.length ? 'partial' : 'completed',
+      nativeRunId: runId, findings: mapped.map(item => item.finding), findingEvidence: mapped.map(item => item.evidence), errors: run.errors };
   } finally { selection.cleanup(); }
-  // A failed native review still writes its run and full findings. Its start
-  // diagnostic identifies that run; never discover it by scanning old history.
-  const response = succeeded(result) ? decode(result) : null;
-  const runId = response && typeof response === 'object' && 'run' in response && typeof response.run === 'string'
-    ? response.run
-    : !result.stderrTruncated ? /(?:^|\n)clawpatch review start run=([A-Za-z0-9_-]+)(?:\s|$)/u.exec(Buffer.from(result.stderr).toString('utf8'))?.[1] : undefined;
-  if (!runId) throw new Error('Native clawpatch review did not identify its run');
-  const run = readSliceRun(JSON.parse(await readFile(join(directory, 'runs', `${safeRecordId(runId)}.json`), 'utf8')), runId);
-  const mapped = await Promise.all(run.findingIds.map(async (id, index) => readSliceFinding(JSON.parse(
-    await readFile(join(directory, 'findings', `${safeRecordId(id)}.json`), 'utf8')), id, runId, index)));
-  return { status: !succeeded(result) || run.status !== 'completed' ? 'failed' : run.errors.length ? 'partial' : 'completed',
-    nativeRunId: runId, findings: mapped.map(item => item.finding), findingEvidence: mapped.map(item => item.evidence), errors: run.errors };
 }
 
 function safeRecordId(id: string): string {

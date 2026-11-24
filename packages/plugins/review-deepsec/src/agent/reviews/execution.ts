@@ -25,9 +25,10 @@ import {
   type DeepSecScopedPathListDiagnostic,
 } from './run.js';
 import { createDeepSecTempFiles } from './tempFiles.js';
-import { buildDeepSecLaunchEnvironment, readDeepSecProviderLaunch, type DeepSecProviderRoute } from '../providerBinding.js';
+import { buildDeepSecLaunchEnvironment, omitDeepSecProviderEnvironment, readDeepSecLaunchEnvironment,
+  readDeepSecProviderLaunch, type DeepSecProviderRoute } from '../providerBinding.js';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
-import { DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, prepareDeepSecClaudeAccount } from '../connectedAccount.js';
+import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
 import { preflightDeepSecReviewScope } from './scopePreflight.js';
 
 type NormalizedDeepSecStart = Readonly<{
@@ -341,17 +342,6 @@ async function resolveAgentCliReadiness(params: Readonly<{
   return readReadyAgentCli(readiness);
 }
 
-function readGatewayKey(request: AgentExecutionRunOpenRequest): string | null {
-  const launchEnvironment = request.launchEnvironment;
-  if (!launchEnvironment) return null;
-  const unset = new Set(launchEnvironment.unset.map((key) => key.toUpperCase()));
-  if (unset.has('AI_GATEWAY_API_KEY')) return null;
-  const gatewayEntry = Object.entries(launchEnvironment.values)
-    .find(([key]) => key.toUpperCase() === 'AI_GATEWAY_API_KEY');
-  const value = gatewayEntry?.[1]?.trim();
-  return value ? gatewayEntry?.[1] ?? value : null;
-}
-
 type DeepSecModelAccess = Readonly<{
   environment: Readonly<Record<string, string>>;
   agentCli: DeepSecAgentCli | null;
@@ -361,33 +351,42 @@ type DeepSecModelAccess = Readonly<{
   machineLogin?: true;
 }>;
 
-async function prepareDeepSecModelAccess(
+function prepareDeepSecModelAccess(
   request: AgentExecutionRunOpenRequest,
-  context: AgentRuntimeContext,
   agentCli: DeepSecAgentCli | null | undefined,
-): Promise<DeepSecModelAccess> {
+): DeepSecModelAccess {
+  if (request.runnerAgentTarget) {
+    const runnerKey = buildAgentTargetKeyV2(request.runnerAgentTarget);
+    const runner = new Map([
+      [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), 'codex' as const],
+      [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }), 'claude' as const],
+    ]).get(runnerKey);
+    if (!runner) throw new PluginError({ code: 'deepsec_runner_unsupported', message: 'The selected runner is not supported by DeepSec.' });
+    agentCli = runner;
+  }
   if (request.providerBinding) {
     const provider = readDeepSecProviderLaunch(request.providerBinding, request.launchEnvironment);
     if (agentCli && agentCli !== provider.route.agent) {
-      throw new DeepSecProviderHarnessMismatchError('The selected DeepSec Provider requires the Codex harness.');
+      throw new DeepSecProviderHarnessMismatchError(`The selected DeepSec Provider requires the ${provider.route.agent} harness.`);
     }
     return { environment: provider.environment, agentCli: provider.route.agent,
       provider: provider.route, claudeSubscription: false };
   }
-  const accounts = context.services.connectedAccounts;
-  const selection = await accounts.resolveSelection?.(DEEPSEC_CLAUDE_ACCOUNT_PURPOSE, { signal: context.signal });
-  const binding = selection?.credentialSource === 'connectedAccount' ? selection.binding : null;
-  if (binding) return { environment: await prepareDeepSecClaudeAccount(context, agentCli, binding),
+  // Admission already selected and materialized the runner. The adapter only
+  // translates the environment accepted by DeepSec's nested Agent SDKs.
+  const values = readDeepSecLaunchEnvironment(request.launchEnvironment);
+  const nativeValues = omitDeepSecProviderEnvironment(values);
+  const oauthToken = values.CLAUDE_CODE_OAUTH_TOKEN || values.ANTHROPIC_OAUTH_TOKEN;
+  if (oauthToken && agentCli !== 'codex') return { environment: buildDeepSecLaunchEnvironment({ ...nativeValues,
+    CLAUDE_CODE_OAUTH_TOKEN: oauthToken, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }),
     agentCli: 'claude', claudeSubscription: true };
-  const gatewayKey = readGatewayKey(request);
-  if (gatewayKey) return { environment: buildDeepSecLaunchEnvironment({ AI_GATEWAY_API_KEY: gatewayKey }),
+  const gatewayKey = Object.entries(values).find(([key]) => key.toUpperCase() === 'AI_GATEWAY_API_KEY')?.[1];
+  if (gatewayKey?.trim()) return { environment: buildDeepSecLaunchEnvironment({ ...nativeValues, AI_GATEWAY_API_KEY: gatewayKey }),
     agentCli: agentCli ?? null, claudeSubscription: false, gateway: true };
-  if (selection?.credentialSource === 'machineLogin') return {
-    environment: buildDeepSecLaunchEnvironment(), agentCli: agentCli ?? null,
+  return {
+    environment: buildDeepSecLaunchEnvironment(nativeValues), agentCli: agentCli ?? null,
     claudeSubscription: false, machineLogin: true,
   };
-  throw new PluginError({ code: 'deepsec_model_access_unavailable',
-    message: 'Select a Provider or Connected Account for DeepSec model access.' });
 }
 
 function createRuntime(
@@ -443,7 +442,7 @@ function createRuntime(
         });
         return { status: 'failed', diagnostic: { code: 'deepsec_scope_failed', severity: 'error' } };
       }
-      const modelAccess = await prepareDeepSecModelAccess(request, context, startInput.agentCli);
+      const modelAccess = prepareDeepSecModelAccess(request, startInput.agentCli);
       const agentCli = await resolveAgentCliReadiness({
         context,
         configuredAgentCli: modelAccess.agentCli,
@@ -467,7 +466,7 @@ function createRuntime(
         claudeSubscription: modelAccess.claudeSubscription,
         gateway: modelAccess.gateway,
         machineLogin: modelAccess.machineLogin,
-        model: request.modelSelection?.modelId,
+        model: request.providerBinding?.model.id ?? request.modelSelection?.modelId,
         readiness: {
           agentCli,
         },

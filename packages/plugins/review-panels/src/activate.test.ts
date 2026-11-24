@@ -1,6 +1,7 @@
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import type { FileSystemService } from '@happier-dev/plugin-sdk/fs';
 import { ReviewFindingsV2Schema } from '@happier-dev/plugin-sdk/reviews';
 import { describe, expect, it, vi } from 'vitest';
 import selectedReview from './agent/reviews/fixtures/selected-review.json';
@@ -11,7 +12,10 @@ function completed(stdout = '', exitCode = 0): PluginProcessResult {
     termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } } };
 }
 
-async function runFixture(options: { engineId?: string; failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean } = {}) {
+async function runFixture(options: { engineId?: string; failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean;
+  providerBinding?: AgentExecutionRunOpenRequest['providerBinding']; launchEnvironment?: AgentExecutionRunOpenRequest['launchEnvironment']; nativeAgent?: string; model?: string; panel?: string; providerConnectionId?: string;
+  runnerAgentTarget?: AgentExecutionRunOpenRequest['runnerAgentTarget'];
+} = {}) {
   const engineId = options.engineId ?? 'roborev';
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'roborev')?.factory;
@@ -37,7 +41,7 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
     if (args?.[1] === 'show') return completed(JSON.stringify(options.missingDocument ? { job_id: 3 } : record));
     return completed();
   });
-  const writeFile = vi.fn(async () => {});
+  const writeFile = vi.fn<FileSystemService['writeFile']>(async () => {});
   const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'roborev', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/roborev` },
     surface: 'agent', signal: controller.signal, agent: { id: engineId }, services: { availability: () => ({ status: 'available' }),
       exec: { run }, fs: { getPluginDataDirectory: async () => '/plugin-data/runs/test', writeFile } },
@@ -45,10 +49,14 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
   const request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> = {
     kind: 'create', runId: 'test', cwd: '/workspace', profile: { pluginId: PLUGIN_MANIFEST.id, localId: 'review' },
     launchEnvironment: { values: { SELECTED_OVERLAY: 'value' }, unset: ['SELECTED_OVERLAY'] },
+    ...(options.launchEnvironment ? { launchEnvironment: options.launchEnvironment } : {}),
+    ...(options.providerBinding ? { providerBinding: options.providerBinding } : {}),
+    ...(options.runnerAgentTarget ? { runnerAgentTarget: options.runnerAgentTarget } : {}),
+    ...(options.model ? { modelSelection: { agentTargetKey: options.nativeAgent === 'claude-code' ? 'backend:claude' : 'backend:codex', providerConnectionId: options.providerConnectionId ?? null, modelId: options.model } } : {}),
     input: { text: 'Review this change.', structuredInput: { reviewers: [{ kind: 'engine', engineId }], instructions: 'Review this change.',
       ...(options.selectedPaths ? { selectedPaths: options.selectedPaths } : {}),
       ...(options.selectedFiles ? { selectedFiles: options.selectedFiles } : {}),
-      scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' }, engines: { [engineId]: { panel: 'fixture', reviewType: 'security', agent: 'codex', reasoning: 'high' } },
+      scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' }, engines: { [engineId]: { panel: options.panel ?? 'fixture', reviewType: 'security', agent: options.nativeAgent ?? 'codex', reasoning: 'high' } },
       scmReviewScope: { kind: 'review_scm_scope.v1', status: 'supported', scmBackendId: 'git', scmMode: '.git',
         repositoryRoot: '/workspace', worktreeRoot: '/workspace', baseRef: { source: 'unavailable', ref: null },
         selectedPaths: [], committedPaths: [], uncommittedPaths: [], changedPaths: [], diagnostics: [],
@@ -76,6 +84,74 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
 }
 
 describe('activated roborev reviewer', () => {
+  it('uses the admitted Claude runner instead of a stale engine agent and preserves its host login', async () => {
+    const result = await runFixture({ panel: 'none', nativeAgent: 'codex', model: 'selected-claude',
+      runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      launchEnvironment: { values: { CLAUDE_CODE_OAUTH_TOKEN: 'selected-subscription' }, unset: [] },
+    });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    const review = result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0];
+    expect(review?.args).toEqual(expect.arrayContaining(['--agent', 'claude-code', '--model', 'selected-claude']));
+    expect(review?.env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'selected-subscription' });
+  });
+  it('runs the selected Codex Provider with its host-projected home and native config', async () => {
+    const result = await runFixture({ panel: 'none', model: 'selected-model',
+      launchEnvironment: { values: { CODEX_HOME: '/host/selected-codex', SELECTED_PROVIDER_KEY: 'selected-secret' }, unset: [] },
+      providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://selected.example/v1', credential: 'apiKey' },
+        model: { id: 'selected-model', name: 'Selected' }, materialization: { v: 1, kind: 'engineConfig', engineConfig: {
+          v: 1, modelProvider: 'selected', config: { 'model_providers.selected': { name: 'Selected', base_url: 'https://selected.example/v1', wire_api: 'responses', env_key: 'SELECTED_PROVIDER_KEY', requires_openai_auth: false } },
+        } } },
+    });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.run.mock.calls[0]?.[0].env).toMatchObject({ CODEX_HOME: '/host/selected-codex', SELECTED_PROVIDER_KEY: 'selected-secret' });
+    const config = new TextDecoder().decode(result.writeFile.mock.calls[0]?.[1]);
+    expect(config).toContain('model_provider = "selected"');
+    expect(config).toMatch(/"?env_key"? = "SELECTED_PROVIDER_KEY"/);
+    expect(config).not.toContain('selected-secret');
+    expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args).toContain('selected-model');
+  });
+  it('translates the materialized Claude bearer route to the supported native proxy transport', async () => {
+    const result = await runFixture({ panel: 'none', nativeAgent: 'claude-code', model: 'selected-claude',
+      launchEnvironment: { values: { ANTHROPIC_BASE_URL: 'https://selected.example', ANTHROPIC_AUTH_TOKEN: 'selected-secret', CLAUDE_CONFIG_DIR: '/host/selected-claude' }, unset: ['ANTHROPIC_API_KEY'] },
+      providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'anthropic', normalizedUrl: 'https://selected.example', credential: 'apiKey' },
+        model: { id: 'selected-claude', name: 'Selected' }, materialization: { v: 1, kind: 'spawnEnv' } },
+    });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.run.mock.calls[0]?.[0].env).toMatchObject({ ROBOREV_CLAUDE_PROXY_TOKEN: 'selected-secret', CLAUDE_CONFIG_DIR: '/host/selected-claude' });
+    expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args).toContain('selected-claude@https://selected.example');
+    expect(result.writeFile.mock.calls.map(call => new TextDecoder().decode(call[1])).join('')).not.toContain('selected-secret');
+  });
+  it('keeps selected Claude transports that roborev cannot preserve from falling back to Machine login', async () => {
+    const result = await runFixture({ panel: 'none', nativeAgent: 'claude-code', model: 'selected-claude',
+      launchEnvironment: { values: { ANTHROPIC_BASE_URL: 'https://selected.example', ANTHROPIC_API_KEY: 'selected-secret' }, unset: [] },
+      providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'anthropic', normalizedUrl: 'https://selected.example', credential: 'apiKey' },
+        model: { id: 'selected-claude', name: 'Selected' }, materialization: { v: 1, kind: 'spawnEnv' } },
+    });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_provider_transport_unsupported' } });
+    expect(result.run).not.toHaveBeenCalled();
+  });
+  it('never substitutes Machine login when the selected Provider materialization is missing', async () => {
+    const result = await runFixture({ panel: 'none', model: 'selected-model', providerConnectionId: 'selected-provider' });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_provider_materialization_missing' } });
+    expect(result.run).not.toHaveBeenCalled();
+  });
+  it('refuses to apply one selected account to a repository-defined native panel', async () => {
+    const result = await runFixture({ panel: 'repository-panel', model: 'selected-model',
+      providerBinding: { connectionId: 'selected-provider', upstream: { protocol: 'openai-responses', normalizedUrl: 'https://selected.example/v1', credential: 'apiKey' },
+        model: { id: 'selected-model', name: 'Selected' }, materialization: { v: 1, kind: 'configFile', rootPath: '/host/codex', relativePaths: ['config.toml'] } },
+    });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_panel_account_unsupported' } });
+    expect(result.run).not.toHaveBeenCalled();
+  });
+  it('preserves the host-materialized Claude subscription without choosing a proxy', async () => {
+    const result = await runFixture({ panel: 'none', nativeAgent: 'claude-code', model: 'sonnet',
+      launchEnvironment: { values: { CLAUDE_CODE_OAUTH_TOKEN: 'selected-oauth', CLAUDE_CONFIG_DIR: '/host/selected-claude' }, unset: [] },
+    });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.run.mock.calls[0]?.[0].env).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: 'selected-oauth', CLAUDE_CONFIG_DIR: '/host/selected-claude' });
+    expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args).toContain('sonnet');
+    expect(result.run.mock.calls[0]?.[0].env?.ROBOREV_CLAUDE_PROXY_TOKEN).toBeFalsy();
+  });
   it.each([
     { selectedPaths: ['selected.ts'] },
     { selectedFiles: ['selected.ts'] },

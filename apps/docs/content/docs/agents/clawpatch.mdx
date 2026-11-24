@@ -18,11 +18,11 @@ native dependency.
 
 ## Run a Hunt
 
-Choose a repository Hunt and select **clawpatch** as the reviewer. Configure
-the native provider and model for that Machine, then start the review. The model
-backend must already have working access in the selected launch environment.
-Real provider login remains release validation; the development process probes
-use a deterministic model boundary.
+Choose a repository Hunt and select **clawpatch** as the reviewer. In unreleased
+0.3 development source, select its Codex or Claude runner, model and account.
+Happier prepares that runner's selected Provider, Connected Account or admitted
+Machine login and passes it to the native review. An unavailable selected account
+fails visibly instead of using another login.
 
 The reviewer maps the repository and passes an explicit list of active slices
 to the native engine. You can supply selected slice IDs through the engine

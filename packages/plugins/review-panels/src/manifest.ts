@@ -16,7 +16,7 @@ export const ROBOREV_PLUGIN = definePlugin({
   hostAccess: { required: [{ id: 'roborev-workspace', capability: 'filesystem',
     reason: 'Review the admitted workspace with the native reviewer.', scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
   { id: 'roborev-process', capability: 'process', reason: 'Run and stop the native reviewer for one admitted review.',
-    scope: { executables: [{ kind: 'managedDependency', id: 'review-executable' }], envKeys: ['ROBOREV_DATA_DIR', 'ROBOREV_TELEMETRY_ENABLED', 'NO_COLOR'] } }], optional: [] },
+    scope: { executables: [{ kind: 'managedDependency', id: 'review-executable' }], envKeys: ['ROBOREV_DATA_DIR', 'ROBOREV_TELEMETRY_ENABLED', 'ROBOREV_CLAUDE_PROXY_TOKEN', 'NO_COLOR'] } }], optional: [] },
   agents: { roborev: { declaration: { title: 'roborev', runtime: { kind: 'custom' }, primary: 'executionRuns',
     runnerAgents: [
       { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, providerProtocols: ['openai-responses'] },

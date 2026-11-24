@@ -1,9 +1,24 @@
-import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
+import { computeCanonicalDomainSeparatedDigest, type JsonValue } from '@happier-dev/plugin-sdk';
 import { createFiniteExecutionRunHostRuntime, type AgentExecutionRunRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ReviewFindingsV2, ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
+import { buildAgentTargetKeyV2 } from '@happier-dev/plugin-sdk/agents';
 import { runClawpatchReview, type RunClawpatchReviewInput } from './run.js';
 
 export type ClawpatchReviewOptions = Pick<RunClawpatchReviewInput, 'provider' | 'model' | 'featureIds'>;
+
+function isJsonArray(value: JsonValue): value is readonly JsonValue[] {
+  return Array.isArray(value);
+}
+
+/** Native 0.8.4 accepts scalar dotted Codex overrides in an explicit config. */
+function flattenCodexConfig(config: Readonly<Record<string, JsonValue>>, prefix = ''): Record<string, string | number | boolean | null> {
+  return Object.fromEntries(Object.entries(config).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (isJsonArray(value)) throw new Error('clawpatch cannot represent an array in Codex configuration');
+    return value !== null && typeof value === 'object'
+      ? Object.entries(flattenCodexConfig(value, path)) : [[path, value]];
+  }));
+}
 
 /** The host admits scope and validates the profile's options once. This leaf
  * translates that admitted input into the native repository-only contract. */
@@ -23,17 +38,30 @@ export function createClawpatchExecutionRunFactory(): AgentExecutionRunRuntimeFa
           }
           // Options have already crossed the host profile-schema boundary.
           const options = (review.engines[context.agent.id] ?? {}) as ClawpatchReviewOptions;
-          if (request.providerBinding || request.modelSelection?.providerConnectionId) {
-            return { status: 'failed', diagnostic: { code: 'clawpatch_provider_binding_unsupported', severity: 'error', message: 'The native clawpatch reviewer cannot translate this Provider binding. Select its configured native model access.' } };
-          }
+          const runnerKey = request.runnerAgentTarget ? buildAgentTargetKeyV2(request.runnerAgentTarget) : null;
+          const provider = runnerKey === null ? options.provider : new Map([
+            [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), 'codex'],
+            [buildAgentTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }), 'claude'],
+          ]).get(runnerKey);
+          if (runnerKey !== null && !provider) return { status: 'failed', diagnostic: {
+            code: 'clawpatch_runner_unsupported', severity: 'error', message: 'The selected runner is not supported by clawpatch.',
+          } };
+          const materialization = request.providerBinding?.materialization;
+          const codexConfig = materialization?.kind === 'engineConfig'
+            ? flattenCodexConfig({ model_provider: materialization.engineConfig.modelProvider!,
+              ...materialization.engineConfig.config as Readonly<Record<string, JsonValue>> }) : undefined;
           const result = await runClawpatchReview({ exec: context.services.exec, fs: context.services.fs,
             cwd: scope.worktreeRoot,
             // This plugin owns the native state identity; the SDK owns its storage root.
             stateRelativePath: `repositories/${computeCanonicalDomainSeparatedDigest('review-clawpatch.repository.v1', [scope.worktreeRoot])}`,
-            ...options, model: request.modelSelection?.modelId ?? options.model,
+            ...options, provider, model: request.modelSelection?.modelId ?? options.model,
+            codexConfig,
             instructions: review.instructions, signal,
             environment: { ...request.launchEnvironment?.values,
               ...Object.fromEntries((request.launchEnvironment?.unset ?? []).map(key => [key, ''])),
+              // Native clawpatch enforces Claude >=2.1.169 for --safe-mode.
+              // Host mode preserves the admitted home and subscription token.
+              ...(provider === 'claude' ? { CLAWPATCH_CLAUDE_AUTH_CONTEXT: 'host' } : {}),
               // Native 0.8.4 map/review use read-only provider modes. Bind its
               // supported Codex override to the host's already-admitted Role.
               ...(request.configuration?.workspaceWrites === 'deny' ? { CLAWPATCH_CODEX_SANDBOX: 'read-only' } : {}) },

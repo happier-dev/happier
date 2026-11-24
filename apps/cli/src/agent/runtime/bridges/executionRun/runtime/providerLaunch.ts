@@ -6,6 +6,8 @@ import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { AcpConfigOptionOverridesV1, BackendTargetRefV2Input, ConnectedServiceBindingsV2, TeamCredentialProviderModelSelectionV1, ProviderErrorV1 } from '@happier-dev/protocol';
 import type { AgentSessionProviderBinding } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { resolveExecutionRunRuntimeBackendId, resolveExecutionRunRuntimeBackendTarget } from '../backendTargets';
 
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -55,6 +57,7 @@ export type ExecutionRunProviderSelectionInput = Readonly<{
 
 /** Only the caller's exact choice crosses the existing snapshot service seam. */
 export type ExecutionRunProviderLaunchRequest = Readonly<{
+    runnerAgentTarget?: AgentExecutionTargetV1;
     selection?: PersonalSessionModelRef;
     teamCredentialModel?: TeamCredentialProviderModelSelectionV1;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -181,6 +184,7 @@ const nativeLaunch = Object.freeze({
  * runtime creation; only the resulting bounded SDK inputs live for the run.
  */
 export async function prepareExecutionRunProviderLaunch(input: Readonly<{
+    runnerAgentTarget?: AgentExecutionTargetV1;
     signal?: AbortSignal;
     selection?: PersonalSessionModelRef;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
@@ -205,6 +209,11 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
     retainCleanup?: (cleanup: ProviderLaunchCleanup) => void;
     runtimeRegistryLease?: PluginRuntimeRegistryLease;
 }>): Promise<PreparedExecutionRunProviderLaunch> {
+    if (input.runnerAgentTarget) {
+        input = { ...input, backendTarget: resolveExecutionRunRuntimeBackendTarget(input.runnerAgentTarget,
+            input.runtimeRegistryLease?.registry.contributes)!,
+            agentId: resolveExecutionRunRuntimeBackendId(input.runnerAgentTarget) };
+    }
     if ((!input.selection || input.teamCredentialModel) && input.prepareTeamCredentialProviderBinding) {
         const teamBinding = await input.prepareTeamCredentialProviderBinding({
             runId: input.runId,

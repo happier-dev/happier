@@ -1,4 +1,4 @@
-import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, resolveBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { createPersonalSessionModelSelection, projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ManagedAgentSandboxContext } from '@happier-dev/protocol/teams/managedDefaults';
@@ -14,6 +14,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { ExecutionRunManagerStartParams } from './executionRunTypes';
 import { createExecutionRunCodedError } from './errors';
 import { assertExecutionRunAgentDefaultChoice } from './runtime/openInputs';
+import { resolveExecutionRunRuntimeBackendId } from './backendTargets';
 
 /** A Run adapts its launch vocabulary; Session creation owns defaults and purpose selection. */
 export async function resolveDetachedRunManagedDefaults(params: ExecutionRunManagerStartParams, host: Readonly<{
@@ -32,7 +33,8 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
     return null;
   }
   assertExecutionRunAgentDefaultChoice(params);
-  const agentTarget = parseBackendTargetKeyV2(buildBackendTargetKeyV2(readBackendTargetRefV2(params.backendTarget)));
+  const selectionTarget = params.runnerAgentTarget ?? params.backendTarget;
+  const agentTarget = parseBackendTargetKeyV2(resolveBackendTargetKeyV2(selectionTarget));
   if (agentTarget.kind !== 'agent') throw createExecutionRunCodedError('target_unavailable', 'Agent target is unavailable');
   const accountSettingsContext = bootstrap?.accountSettingsContext ?? requester?.accountSettingsContext;
   const loader = createCliManagedSessionDefaultsContextLoader({ credentials, serverId, serverHttpBaseUrl,
@@ -56,7 +58,7 @@ export async function resolveDetachedRunManagedDefaults(params: ExecutionRunMana
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
       } : undefined, params.nativeSandbox),
     }, {
-      agentId: readBackendTargetRefV2(params.backendTarget).backendId,
+      agentId: resolveExecutionRunRuntimeBackendId(selectionTarget),
       accountSettings: accountSettingsContext?.rawSettings ?? accountSettingsContext?.settings ?? params.accountSettings,
       purposeCatalog: accountSettingsContext?.connectedPurposeCatalog,
       organizationPolicy: configuration.organizationPolicy,

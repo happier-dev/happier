@@ -1375,15 +1375,32 @@ In 0.3 development, Run credential materialization returns a retryable
 unavailable result when the daemon cannot read retained Run state. A successful
 read that fails the exact runner identity check still refuses materialization.
 
-DeepSec review Runs in 0.3 development use the same Provider compatibility,
-authorization and per-Run materialization owner as other Agent launches. Its
-adapter supports credentialed OpenAI Responses through the native Codex harness,
-not Chat Completions or Anthropic. URLs must end in `/v1` without a query or
-fragment; arbitrary public headers and no-auth connections are refused. The
-key is passed only to the child process. An explicit conflicting review harness
-returns `deepsec_provider_harness_mismatch`, rather than changing the requested
-harness. Unbound review Runs keep their existing gateway path. This does not
-add general DeepSec Sessions or Session resume support.
+Review engine Runs in 0.3 development carry the admitted `runnerAgentTarget`
+through the CLI execution host into the SDK request. The engine remains the Run
+backend; the selected runner supplies model admission and credential
+materialization through its existing Provider, connected-account or native-home
+owner. The host reuses its launch and purpose custody and materializes once per
+admitted runner. The adapters consume that result without acquiring an account.
+An unavailable selected account refuses the Run instead of borrowing another
+account or Machine login.
+
+clawpatch receives the native runner and model arguments, Codex's `CODEX_HOME`,
+and Claude's host authentication context with its materialized home or token.
+roborev receives a separate `ROBOREV_DATA_DIR` for each Run. Codex consumes its
+native home/configuration; Claude uses native login or the native
+`<model>@<base_url>` proxy route with `ROBOREV_CLAUDE_PROXY_TOKEN`. Repository
+panels that share one daemon environment cannot represent independently selected
+accounts; use separate members of the Review roster for those selections.
+
+DeepSec uses the same host materialization. Its native Codex harness accepts
+credentialed OpenAI Responses endpoints ending in `/v1` without a query or
+fragment; headers that its SDK cannot preserve are refused. Its Claude harness
+consumes the runner's supported Anthropic key/token and endpoint environment.
+Secrets remain in the child environment. Each Run blanks competing credential
+and endpoint keys to suppress repository dotenv overrides. Native login pins the
+selected harness; a supplied Gateway key retains the existing Gateway route.
+These controls select the route; they do not establish credential validity or
+entitlement. This does not add general DeepSec Sessions or Session resume.
 
 The generic Anthropic-compatible catalog parser and Claude's static model catalog
 share the Protocol-owned model-name and effort-option projection at

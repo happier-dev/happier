@@ -28,6 +28,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
     directory: string;
     happyHomeDir?: string;
     controller?: PluginReloadController;
+    agentIsolation?: Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]['agentIsolation'];
     pluginId?: string;
     includeBundledDeclarations?: boolean;
     peerId?: string;
@@ -162,6 +163,7 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
         if (!generationAuthority) throw new Error('Expected installed generation authority');
         const serving = controller.retainServingSlots?.(changed);
         return await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, generationAuthority,
+            ...(input.agentIsolation ? { agentIsolation: input.agentIsolation } : {}),
             connectedAccounts: purposeBindingOwner,
             ...(serving ? { servingPluginOccurrences: serving.occurrencesByPluginId, retainedActivationRegistryLeases: serving.leases } : {}),
             managedProviderOperationAuthority: operationAuthority, resolveCurrentMachineId: () => 'machine',
