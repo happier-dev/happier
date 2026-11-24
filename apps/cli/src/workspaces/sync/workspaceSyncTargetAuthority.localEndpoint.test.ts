@@ -22,7 +22,7 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 
-it('retains signed native target admission at the carrier while the guest owns its filesystem and release', async () => {
+it.each([false, true])('retains signed native target admission at the carrier while the guest owns its filesystem and release (stopped on target: %s)', async stoppedOnTarget => {
   await withTempDir('native-target-dispatch-', async fixture => {
     const root = join(fixture, 'guest'); await mkdir(root);
     runScmExecutable(root, 'git', ['init', '-q']);
@@ -44,6 +44,7 @@ it('retains signed native target admission at the carrier while the guest owns i
     const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({ definition: { id: 'git', kind: 'git' },
       qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration })]);
     let guestSnapshot: ActiveProjectAccountRowsSnapshot | null = snapshot;
+    let carrierSnapshot: ActiveProjectAccountRowsSnapshot | null = snapshot;
     const guest = createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: 'carrier', localAccountId: 'owner',
       localManagedTarget: { managedId: target.managedId, controller }, getProjectSnapshot: () => guestSnapshot,
       scmRegistry: registry,
@@ -56,7 +57,7 @@ it('retains signed native target admission at the carrier while the guest owns i
         rootOwnershipManager: createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'guest-locks') }) } });
     let stoppedBeforeRootRelease = false;
     const carrier = createWorkspaceSyncTargetAuthority({ localServerId: 'home', localMachineId: 'carrier', localAccountId: 'owner',
-      getProjectSnapshot: () => snapshot, callMachineRpc: async () => { throw new Error('No Machine RPC expected'); },
+      getProjectSnapshot: () => carrierSnapshot, callMachineRpc: async () => { throw new Error('No Machine RPC expected'); },
       // The process transport is the boundary; the guest's real authority below owns all root effects.
       resolveNativeTargetExecution: async () => ({ ...guest,
         replaceSnapshot: async (next: ActiveProjectAccountRowsSnapshot | null) => { guestSnapshot = next; } }),
@@ -133,6 +134,22 @@ it('retains signed native target admission at the carrier while the guest owns i
         ({ status: 'rejected', reason: expect.objectContaining({ code: 'forbidden' }) })));
 
       expect(stoppedBeforeRootRelease).toBe(true);
+      if (stoppedOnTarget) {
+        // The person stops the link on this Machine: its own Account rows drop the relationship.
+        carrierSnapshot = { ...snapshot, relationships: [] };
+        await carrier.reconcileRetainedBootstraps();
+        const afterStop = await Promise.allSettled([guest, carrier].flatMap(receiver => [
+          receiver.readFileHere({ ...reviewed, maxBytes: 128 }, undefined, inspectContext),
+          receiver.observeEntryHere(reviewed, undefined, inspectContext),
+        ]));
+        expect(afterStop).toEqual(Array.from({ length: 4 }, () =>
+          ({ status: 'rejected', reason: expect.objectContaining({ code: 'forbidden' }) })));
+        await expect(carrier.releaseBootstrapHere({ v: 1, bootstrapOperationId: request.bootstrapOperationId,
+          targetWorkspaceRefId: target.id, reason: 'abort' }, undefined, releaseContext)).resolves.toMatchObject({ ok: true });
+        await expect(guest.authorizeWorkspaceSyncMachineAgent({ operationId: relationship.relationshipId,
+          sourceMachineId: 'source-machine', targetMachineId: 'carrier' })).rejects.toMatchObject({ code: 'peer_unavailable' });
+        return;
+      }
       guestSnapshot = snapshot;
       await expect(carrier.releaseBootstrapHere({ v: 1, bootstrapOperationId: request.bootstrapOperationId,
         targetWorkspaceRefId: target.id, reason: 'abort' }, undefined, releaseContext)).resolves.toEqual({ ok: true, released: true });

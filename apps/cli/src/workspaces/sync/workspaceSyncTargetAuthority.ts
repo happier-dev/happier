@@ -3957,8 +3957,17 @@ export function createWorkspaceSyncTargetAuthority(
       };
       for (const [authorityKey, entry] of [...physicalRetained.entries()]) {
         const snapshot = getSnapshot(entry.operationId);
-        // Installed Account publication cannot withdraw a signed SOURCE loan.
-        // Its retained preparation ends through release, not unrelated rows.
+        // A committed SOURCE loan whose requester is this Machine's installed
+        // Account ends at that Account's Stop: its own rows are authoritative.
+        if (entry.relationshipId && entry.sourceWriterTargetRouting && entry.readyPublished
+          && dependencies.localAccountId !== undefined
+          && entry.targetRouting?.targetContext.machineAdmission.actorAccountId === dependencies.localAccountId
+          && !(snapshot.relationships ?? []).some(relationship => relationship.relationshipId === entry.relationshipId)) {
+          await discardRetained(authorityKey);
+          continue;
+        }
+        // Installed Account publication cannot withdraw a signed SOURCE loan
+        // lent to another Account. It ends through release, not unrelated rows.
         if (entry.relationshipId && (!entry.transientAuthority || !(entry.sourceWriterTargetRouting || entry.requesterCopyCustody))) {
           const enabledOwner = relationshipStillOwnsEndpoint(snapshot, entry);
           const stagedOwner = entry.transientAuthority && relationshipOwnsEndpoint(snapshot, entry, false);
