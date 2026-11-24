@@ -3421,7 +3421,12 @@ export class AcpBackend implements AgentBackend {
   /** Let the provider source admit continuations it was refused while another turn or prompt RPC owned the session. */
   private retryProviderTurnAdmission(): void {
     if (!this.providerSource) return;
+    const lifetime = this.providerSourceLifetime;
     void this.catchUpProviderTurns().catch((error: unknown) => {
+      if (lifetime?.signal.aborted && error instanceof Error && error.name === 'AbortError') {
+        logger.warnFile('[AcpBackend] Provider observation stopped with its source', error);
+        return;
+      }
       this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'Provider observation failed', error });
     });
   }

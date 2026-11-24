@@ -395,6 +395,30 @@ describe('ACP provider continuation ownership', () => {
         });
     });
 
+    it('does not report a catch-up failure when cancelling retires its source', async () => {
+        await fixture(async ({ backend, host, events, setCatchUp }) => {
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+            const sink = host().beginContinuation({ id: 'task', turnId: 'native-1' });
+            if (!sink) throw new Error('Missing provider continuation');
+            const retryStarted = createDeferred();
+            const retired = createDeferred();
+            host().signal.addEventListener('abort', () => retired.resolve(), { once: true });
+            setCatchUp(async () => {
+                retryStarted.resolve();
+                await retired.promise;
+            });
+            await sink.finish({ kind: 'completed', stopReason: 'end_turn' });
+            await retryStarted.promise;
+
+            await backend.cancel('owned');
+
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
+            expect(events).not.toContainEqual(expect.objectContaining({ type: 'status', status: 'error' }));
+        });
+    });
+
     it('withdraws permissions when the native source cannot prove their owner', async () => {
         await fixture(async ({ backend, host, permissionHandler, setCatchUp, setPermissionMode }) => {
             const observations: Array<Parameters<AcpProviderTurnSource['catchUp']>[0]> = [];
