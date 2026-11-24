@@ -17,7 +17,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAu
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1,
     verifyExternalActionMachineRequestV1, decodeDeploymentChildExecutionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainAddAdmissionInputV1Schema,
-    DeploymentDomainPreparedContentInputV1Schema, DeploymentDomainTransitionInputV1Schema,
+    DeploymentDomainNativeSetupObservationV1Schema, DeploymentDomainPreparedContentInputV1Schema, DeploymentDomainTransitionInputV1Schema,
     deploymentDomainObservationProofPayloadV1, nativeCaddyDomainRouteIdsV1,
     nativeCaddyRemovalSigningBytes } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -562,8 +562,18 @@ it.each(['connector grant authorization refused', 'create connector grant author
     type RpcCall = Parameters<ClientToServerEvents[typeof SOCKET_RPC_EVENTS.CALL]>[0];
     channel.server.on('connection', socket => {
         socket.on(SOCKET_RPC_EVENTS.CALL, async (call: RpcCall, acknowledge: (value: unknown) => void) => {
-            const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, call.params, call.method);
-            const job = DeploymentChildRpcV1Schema.parse(decoded.params);
+            const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, call.params, call.method).catch(() => null);
+            const parsed = decoded && DeploymentChildRpcV1Schema.safeParse(decoded.params);
+            const invalidParameters = { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } as const;
+            if (!parsed?.success) {
+                acknowledge({ ok: true, result: invalidParameters });
+                return;
+            }
+            const job = parsed.data;
+            if (job.kind === 'domainReview') {
+                acknowledge({ ok: true, result: DeploymentDomainNativeSetupObservationV1Schema.parse({ status: 'notNeeded' }) });
+                return;
+            }
             if (job.kind === 'domainDiscover') {
                 discoveredPrivateCandidates.push('contentArtifactId' in job.input
                     && authored.artifacts.read(job.input.contentArtifactId) ? job.input.contentArtifactId : undefined);
@@ -580,8 +590,12 @@ it.each(['connector grant authorization refused', 'create connector grant author
                         containerOrigins: [{ serverId: 'private_app', networkName: 'environment_default', service: 'http://172.18.0.2:9381' }] } }) });
                 return;
             }
+            if (job.kind !== 'domain') {
+                acknowledge({ ok: true, result: invalidParameters });
+                return;
+            }
             trace.push('native-dispatch');
-            nativeJobs.push(DeploymentDomainChildRpcV1Schema.parse(job));
+            nativeJobs.push(job);
             if (realNativeRemoval) {
                 acknowledge({ ok: true, result: await runNativeJob(job) });
             } else if (unprepared || settledRemoval) {

@@ -53,8 +53,9 @@ const failure = (reason: string, details?: unknown, failureCause?: unknown, effe
         : reason === 'machine_reachability_posture_unavailable' ? 'machine_network_review_required' : reason;
     const parsedCause = failureCause === undefined ? undefined : readActionFailureCauseV1(failureCause);
     const adminAccessRefused = isDeploymentDomainAdminAccessRefusalV1(errorCode);
-    const { machineId, ...scope } = nativeScope ?? {};
+    const { machineId, tunnelId, ...scope } = nativeScope ?? {};
     const scoped = nativeScope ? { ...scope, ...(isRecord(details) ? details : {}),
+        ...(tunnelId === undefined ? {} : { tunnelId }),
         ...(adminAccessRefused && machineId ? { machineId } : {}) } : details;
     const recoveryFacts = nativeScope && isRecord(scoped) && typeof scoped.tunnelId === 'string' ? { ...scoped,
         ...(scoped.requiredFact === undefined || scoped.requiredFact === 'nativeExecutionResult' ? { requiredFact: 'cloudflarePreparation' } : {}),
