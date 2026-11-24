@@ -219,6 +219,29 @@ describe('a data body keeps its own shape while its first read is in flight', ()
     expect(pending).toBe(loaded);
   });
 
+  it('a table keeps its columns where the rows will put them', () => {
+    // The trailing columns' declared widths place every header after the name column, so their sum is where
+    // "Plan" starts from the card's end. A table sized from its header labels alone sat ~73 px off on screen.
+    const trailingWidth = (element: ReactElement) => {
+      const mount = mountThroughReactNativeWeb(element);
+      try {
+        return [1, 2, 3].reduce((sum, index) => {
+          const cell = mount.container.querySelector<HTMLElement>(`[data-testid="t-header-${index}"]`)!.parentElement!;
+          return sum + px(styleOf(cell).width);
+        }, 0);
+      } finally {
+        mount.unmount();
+      }
+    };
+    const columns = [{ label: 'Person' }, { label: 'Plan', priority: 'secondary' as const }, { label: 'Got to' }, { label: 'Joined' }];
+    const rows = [['Mira Kovač', 'Team', 'Paired 2 machines', '10:38'], ['Jonas Weber', 'Free', 'Started a session', '10:21'],
+      ['Aiko Tanaka', 'Free', 'Signed up', '10:02']];
+    const loaded = trailingWidth(<HappierDataTable testID="t" theme={theme} label="Newest people" columns={columns} rows={rows} />);
+    const pending = trailingWidth(<HappierDataTable testID="t" theme={theme} label="Newest people" columns={columns} rows={[]} pendingRows={3} />);
+    expect(loaded).toBeGreaterThan(0);
+    expect(Math.abs(pending - loaded)).toBeLessThanOrEqual(30);
+  });
+
   it('a chart holds its plot, its axis line and its Details toggle', () => {
     const points = [
       { x: 'Mon', y: 120 },

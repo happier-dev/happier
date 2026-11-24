@@ -67,6 +67,13 @@ export type HappierDataRowsProps = Readonly<{
   testID?: string;
 }>;
 
+/**
+ * The cell a table's columns are sized for while its rows are still being read: a short phrase's room (a status, a
+ * plan, a date), as a figure still being read holds `0,000`. Sized from the header labels alone, the columns sat
+ * ~73 px from where the rows put them and moved when the rows landed.
+ */
+const PENDING_CELL = '0000000000';
+
 const pendingRowIndexes = (props: HappierDataRowsProps): readonly number[] =>
   props.rows.length === 0 && props.pendingRows ? Array.from({ length: Math.max(0, Math.floor(props.pendingRows)) }, (_, index) => index) : [];
 
@@ -241,9 +248,10 @@ export function HappierDataTable(props: HappierDataRowsProps) {
   const enclosed = onBodyEdge || enclosingSheet !== null;
   const palette = useOptionalHappierUiPalette() ?? resolveHappierUiPalette(props.theme);
   const sheetInsetPx = enclosed ? 0 : HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx;
+  const pending = pendingRowIndexes(props);
   const sizing = {
     columns: props.columns,
-    rows: props.rows,
+    rows: pending.length ? [props.columns.map(() => PENDING_CELL)] : props.rows,
     characterWidth: (text.body.fontSize ?? props.theme.typography.body.fontSize) * HAPPIER_DATA_METRICS.averageCharacterEm,
     locale: text.locale,
   };
@@ -267,7 +275,6 @@ export function HappierDataTable(props: HappierDataRowsProps) {
     : { flexGrow: 0, flexShrink: 1, width: widths[index]! });
   const align = (index: number, position: number) => (index === lastVisible && position > 0 ? { textAlign: 'right' as const } : {});
   const divider = { borderBottomWidth: 1, borderBottomColor: props.theme.colors.divider };
-  const pending = pendingRowIndexes(props);
   return (
     <View
       testID={props.testID}
