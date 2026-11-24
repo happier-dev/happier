@@ -46,6 +46,9 @@ import { resolveAccountConfiguredAcpLaunchForAgent } from '@/agent/runtime/regis
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { executeSpawnSessionRequest, type ExecuteSpawnSessionRequestParams } from './executeSpawnSessionRequest';
+import { completeSpawnActionResult, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createAgentIsolationMemberPreparationBoundary } from '../agentIsolation/agentIsolationEffects.testkit';
+import { createSessionAgentIsolationMemberPreparation } from '../agentIsolation/sessionPreparation';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { prepareCgroupProcessLaunchScope } from '../platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
@@ -3378,6 +3381,53 @@ describe('Custom ACP fresh daemon launch composition', () => {
       expect(launchPreparations).toBe(1);
       expect(admissionRequests.slice(admittedRequests.length)).toEqual([{ actorAccountId: 'df38-member', valid: true }]);
       expect(admittedRequests).toEqual([{ actorAccountId: 'df38-member', valid: true }]);
+      if (process.platform !== 'linux') return;
+
+      access = true;
+      const attribution = { serverId: 'df38-home', accountId: 'df38-member', machineId: 'df38-machine',
+        installationId: installation.installationId };
+      const requesterIdentity = { kind: 'isolated' as const, requester: attribution, separationRequired: true,
+        homeServerIdentityId: 'srv_df38_owner' };
+      const native = createAgentIsolationMemberPreparationBoundary({ activeServerDir: storage.home, requesterIdentity,
+        custodianAccountId: 'df38-owner', encryptionMode: 'plain', uid: 2401, adminAccess: { version: 1, mode: 'none' } });
+      const machine = new ApiMachineClient(storage.credentials.token, { id: 'df38-machine', encryptionMode: 'plain',
+        metadata: fixtureMachineMetadata(), metadataVersion: 1, daemonState: null, daemonStateVersion: 0 });
+      Reflect.set(machine, 'agentIsolationMemberOperations', native.members);
+      try {
+        const prepareMember = createSessionAgentIsolationMemberPreparation({
+          machineId: attribution.machineId, custodianAccountId: 'df38-owner',
+          agentIsolation: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+            status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [] }),
+            prepareMember: request => machine.prepareAgentIsolationMember(request) },
+          resolveCurrentMachineExecutionOriginContext: async () => ({
+            machineId: attribution.machineId, serverIdentityId: requesterIdentity.homeServerIdentityId,
+          }),
+        });
+        const nativeRefusal = await executeSpawnSessionRequest({ ...input,
+          options: { ...input.options, requesterWorkAttributionV1: attribution },
+          prepareAgentIsolationMember: prepareMember({ bootstrap: { attribution,
+            homeServerIdentityId: requesterIdentity.homeServerIdentityId,
+            savedSecretOperationContext: { machineAdmission: {
+              actorAccountId: attribution.accountId, custodianAccountId: 'df38-owner', role: 'use',
+            } } },
+          }, new AbortController().signal),
+        });
+        expect(launchPreparations).toBe(1);
+        expect(admissionRequests.slice(2)).toEqual([{ actorAccountId: attribution.accountId, valid: true }]);
+        if (nativeRefusal.type !== 'error') throw new Error('Expected native setup refusal before runner launch');
+        const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(nativeRefusal));
+        expect(response.errorDetail).toMatchObject({ kind: 'launch_error', code: 'agent_isolation_unavailable',
+          agentIsolationRefusal: { reason: 'member_setup_required', phase: 'native_execution_preparation',
+            remedy: { kind: 'ask_machine_manager' } } });
+        const result = projectSessionSpawnFailure({
+          errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+        });
+        const action = settleActionOutput('session.spawn_new', completeSpawnActionResult(result));
+        expect(action).toMatchObject({ ok: false, failureCause: {
+          errorCode: 'agent_isolation_unavailable', phase: 'agent_isolation.native_execution_preparation',
+          nativeErrorReason: 'member_setup_required',
+        } });
+      } finally { await machine.shutdown(); }
     } finally {
       storage.persistedToken = originalPersistedToken;
       get.mockRestore();

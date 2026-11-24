@@ -355,12 +355,28 @@ export function completeSpawnActionResult(result: unknown): ActionExecuteResult 
   const spawn = SessionSpawnNewResultV1Schema.safeParse(result);
   if (spawn.success && spawn.data.type === 'error') {
     const refusal = spawn.data;
+    const launchError = 'launchError' in refusal ? refusal.launchError : undefined;
+    const { agentIsolationRefusal, connectionPhase, failureCause: runtimeCause } = launchError ?? {};
+    const specificLaunchCode = launchError && launchError.code.toLowerCase() !== refusal.code
+      ? launchError.code : undefined;
+    const failureCause: ActionFailureCauseV1 | undefined =
+      ('failureCause' in refusal ? refusal.failureCause : undefined) ?? runtimeCause?.actionCause
+      ?? (launchError && (specificLaunchCode || agentIsolationRefusal || runtimeCause || connectionPhase)
+        ? {
+          phase: agentIsolationRefusal ? `agent_isolation.${agentIsolationRefusal.phase}`
+            : runtimeCause ? `session.launch.${runtimeCause.phase}`
+            : connectionPhase ? `session.launch.${connectionPhase.replaceAll('-', '_')}` : 'session.launch',
+          errorClass: 'Error',
+          errorCode: specificLaunchCode ?? runtimeCause?.code ?? launchError.code,
+          httpStatus: runtimeCause?.httpStatus ?? launchError.currentnessFailure?.statusCode ?? null,
+          ...(agentIsolationRefusal ? { nativeErrorReason: agentIsolationRefusal.reason } : {}),
+        } : undefined);
     return {
       ok: false,
       errorCode: refusal.code,
-      error: 'launchError' in refusal && refusal.launchError ? refusal.launchError.message : refusal.code,
+      error: launchError?.message ?? refusal.code,
       details: refusal,
-      ...('failureCause' in refusal && refusal.failureCause ? { failureCause: refusal.failureCause } : {}),
+      ...(failureCause ? { failureCause } : {}),
       ...('effectAttempted' in refusal && refusal.effectAttempted !== undefined
         ? { effectAttempted: refusal.effectAttempted } : {}),
     };

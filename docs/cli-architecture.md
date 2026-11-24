@@ -3519,7 +3519,11 @@ the existing content-free runtime cause through child stderr capture into option
 `launchError.failureCause`. Its code, phase and classified reason use
 `SessionRuntimeFailureCauseV1`; native messages, paths and credentials are excluded.
 The same spawn-result owner serves separated members and the shared isolated Agent.
-This presentation leaf does not change admission, retry or Session identity.
+The Session start Action exposes the launch refusal's diagnostic code and phase
+through its existing `failureCause`. When the launch already carries an Action
+cause, settlement passes it through. For native isolation, the cause includes
+the Machine isolation phase and its closed reason. The existing launch detail
+supplies recovery copy and the existing spawn outcome supplies retryability.
 
 In 0.3 development, `CHILD_EXITED_BEFORE_WEBHOOK` retains optional closed
 `launchError.childExit` presentation evidence: observed code/signal, a redacted

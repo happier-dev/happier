@@ -18,7 +18,39 @@ describe('Session spawn Action settlement', () => {
     if (settled.ok) throw new Error('Spawn refusal was reported as successful execution');
     expect(settled.error).toContain('admission_unavailable');
     expect(settled.effectAttempted).toBe(effectAttempted);
-    expect(settled.failureCause).toEqual(effectAttempted === undefined ? undefined : failureCause);
+    expect(settled.failureCause).toEqual(effectAttempted === undefined
+      ? { phase: 'session.launch', errorClass: 'Error', errorCode: 'admission_unavailable', httpStatus: null }
+      : failureCause);
+  });
+
+  it('carries a sibling native launch refusal and its phase through settlement', () => {
+    const settled = settleActionOutput('session.spawn_new', completeSpawnActionResult({
+      type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'agent_startup_model_reconciliation_failed', message: 'Choose a model',
+        failureCause: { code: 'agent_startup_model_reconciliation_failed', phase: 'client_start',
+          failureReason: 'model_selection_required' } },
+    }));
+    expect(settled).toMatchObject({ ok: false, errorCode: 'spawn_failed', failureCause: {
+      phase: 'session.launch.client_start', errorCode: 'agent_startup_model_reconciliation_failed',
+    } });
+  });
+
+  it('passes through an existing Action cause carried by a runtime refusal', () => {
+    const actionCause = { phase: 'providers.catalog', errorClass: 'HttpStatusError', errorCode: 'provider_unavailable', httpStatus: 503 };
+    const settled = settleActionOutput('session.spawn_new', completeSpawnActionResult({
+      type: 'error', code: 'spawn_failed', retryable: false,
+      launchError: { kind: 'launch_error', code: 'provider_unavailable', message: 'Provider unavailable',
+        failureCause: { phase: 'client_start', failureReason: 'unknown', actionCause } },
+    }));
+    expect(settled).toMatchObject({ ok: false, failureCause: actionCause });
+  });
+
+  it('keeps an unclassified spawn failure without a typed cause', () => {
+    const settled = settleActionOutput('session.spawn_new', completeSpawnActionResult({
+      type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { kind: 'launch_error', code: 'spawn_failed', message: 'Session launch failed' },
+    }));
+    expect(settled).not.toHaveProperty('failureCause');
   });
 
   it('keeps an accepted pending spawn successful without declaring effects', () => {
