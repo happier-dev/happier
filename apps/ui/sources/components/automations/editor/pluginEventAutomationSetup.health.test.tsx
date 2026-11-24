@@ -1241,7 +1241,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 });
 
 // The alternate Machine can finish its first origin read after the native form opens.
-it.each(['submitted', 'replyLostAndCompensated', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1263,6 +1263,7 @@ it.each(['submitted', 'replyLostAndCompensated', 'cancelled', 'switched', 'refre
     const workflows = createWorkflowAutomationHttpBoundary();
     const peerMachineId = 'eadc2422-b42b-478d-97b1-af9b530d5f09';
     let exactIntentRead: unknown;
+    let savedWithoutReceipt = false;
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-add-check.test',
         serverIdentityId, accountId, peerMachineId: outcome === 'switched' ? peerMachineId : undefined, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
@@ -1270,9 +1271,16 @@ it.each(['submitted', 'replyLostAndCompensated', 'cancelled', 'switched', 'refre
                 return Response.json(exactIntentRead);
             if (path === '/v1/features' || path === '/v1/features/authenticated')
                 return Response.json(createRootLayoutFeaturesResponse());
+            if (outcome === 'replyLostAfterSave' && path.startsWith('/v3/automations/') && init?.method === 'DELETE') {
+                throw new TypeError('Connection unavailable for compensation');
+            }
             const response = await workflows.handle(new URL(String(input)), init);
             if (outcome === 'replyLostAndCompensated' && path === '/v3/automations' && init?.method === 'POST' && response?.ok) {
                 throw new TypeError('Connection lost after the Home saved the Automation');
+            }
+            if (outcome === 'replyLostAfterSave' && path === '/v3/automations' && init?.method === 'POST' && response?.ok) {
+                savedWithoutReceipt = workflows.rows.size === 1;
+                return Response.json({});
             }
             return response ?? http.request(input, init);
         } });
@@ -1519,6 +1527,21 @@ it.each(['submitted', 'replyLostAndCompensated', 'cancelled', 'switched', 'refre
             expect(workflows.creates).toHaveLength(1);
             expect(workflows.rows.size).toBe(0);
             expect(onClose).not.toHaveBeenCalled();
+            return;
+        }
+        if (outcome === 'replyLostAfterSave') {
+            const { t } = await import('@/text');
+            const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+            await waitForHomeGovernance(() => expect(screen!.findByTestId('add-check.failed')).not.toBeNull());
+            expect(workflows.creates).toHaveLength(1);
+            const card = screen.findByType(SurfaceStateCard);
+            expect(card.props.action?.label).toBe(t('common.close'));
+            expect(card.props.diagnosticCode).toBe('workflow_outcome_unresolved');
+            expect(savedWithoutReceipt).toBe(true);
+            expect(workflows.rows.size).toBe(1);
+            await act(async () => { card.props.action?.onPress(); });
+            expect(onClose).toHaveBeenCalledTimes(1);
+            expect(workflows.creates).toHaveLength(1);
             return;
         }
         await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));

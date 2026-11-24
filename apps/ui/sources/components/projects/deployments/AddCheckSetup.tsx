@@ -1,11 +1,14 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { PluginUiActionFailureV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -34,12 +37,13 @@ export function AddCheckSetup(
     testID: string;
   }>,
 ) {
-  const [write, setWrite] = React.useState<Readonly<{
-    settlement: Configured;
-    status: 'saving' | 'failed';
-  }> | null>(null);
+  const [write, setWrite] = React.useState<
+    | { status: 'saving' }
+    | { status: 'failed'; settlement: Configured; failure: PluginUiActionFailureV1 }
+    | null
+  >(null);
   const save = useEventCallback(async (settlement: Configured) => {
-    setWrite({ settlement, status: 'saving' });
+    setWrite({ status: 'saving' });
     try {
       await addWorkflowTrigger(
         {
@@ -48,8 +52,13 @@ export function AddCheckSetup(
         },
         { accountLifetime: props.lifetime },
       );
-    } catch {
-      setWrite({ settlement, status: 'failed' });
+    } catch (error) {
+      const workflow = error instanceof WorkflowActionError ? error : null;
+      const failure = workflow?.failure ?? {
+        ok: false as const, errorCode: workflow?.rawCode ?? UNEXPECTED_ACTION_FAILURE_CODES_V1[1],
+        details: workflow?.rawDetails, requestId: workflow?.requestId,
+      };
+      setWrite({ settlement, status: 'failed', failure });
       return;
     }
     fireAndForget(sync.refreshAutomations());
@@ -62,6 +71,10 @@ export function AddCheckSetup(
   const machineLabel = (machineName: string | null) =>
     machineName ?? t('machine.unnamedMachine');
   const seed = props.seed;
+  const failedWrite = write?.status === 'failed' ? write : null;
+  const unconfirmed = isActionOutcomeUnknownErrorCodeV1(failedWrite?.failure.errorCode);
+  const writeFailure = failedWrite && presentActionExecutionFailure(failedWrite.failure,
+    t(unconfirmed ? 'errors.scmOutcomeUnknown' : 'common.requestFailed'), { closedCodesOnly: true });
   return (
     <View testID={props.testID}>
       {write?.status === 'saving' ? (
@@ -70,18 +83,19 @@ export function AddCheckSetup(
           kind="loading"
           title={t('projects.deployments.services.addCheckSaving')}
         />
-      ) : write?.status === 'failed' ? (
+      ) : failedWrite && writeFailure ? (
         <SurfaceStateCard
           testID={`${props.testID}.failed`}
           size="line"
           kind="error"
-          title={t('projects.deployments.services.addCheckFailed')}
-          action={{
-            label: t('common.retry'),
-            onPress: () => {
-              void save(write.settlement);
-            },
-          }}
+          title={t(unconfirmed ? 'projects.deployments.stateUnknown' : 'projects.deployments.services.addCheckFailed')}
+          reason={writeFailure.reason}
+          diagnosticCode={failedWrite.failure.errorCode}
+          diagnosticDetail={writeFailure.technicalDetails
+            .filter(line => line.key !== 'code').map(line => `${line.label} ${line.value}`).join('\n')}
+          action={unconfirmed || failedWrite.failure.effectAttempted === true
+            ? { label: t('common.close'), onPress: props.onClose }
+            : { label: t('common.retry'), onPress: () => { void save(failedWrite.settlement); } }}
         />
       ) : seed ? (
         <PluginEventAutomationEditor
