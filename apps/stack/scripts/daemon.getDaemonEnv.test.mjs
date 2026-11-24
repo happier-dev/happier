@@ -50,6 +50,24 @@ test('getDaemonEnv leaves installed launch PATH and command publication unchange
   await assert.rejects(access(fixture.path('cli', 'source-runtime', 'bin')), { code: 'ENOENT' });
 });
 
+test('named QA daemon CLI commands share the host cache without enabling it at Node startup',
+  { skip: process.platform === 'win32' }, async t => {
+    const fixture = await createTempFixture(t);
+    const baseEnv = {
+      HAPPIER_STACK_QA_DAEMON_TARGETS: 'fixture-target',
+      HAPPIER_STACK_CANONICAL_HOME_DIR: fixture.path('canonical-home'),
+    };
+    const env = await getDaemonEnv({
+      baseEnv,
+      cliHomeDir: fixture.path('stack', 'cli-identities', 'account-a'),
+      stackName: 'qa-cache',
+      cliIdentity: 'account-a',
+    });
+    assert.equal(env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR,
+      fixture.path('canonical-home', 'cache', `qa-node-compile-cache-${process.getuid()}`));
+    assert.equal(env.NODE_COMPILE_CACHE, undefined);
+  });
+
 test('getDaemonEnv publishes a Windows source command and preserves case-insensitive PATH/PATHEXT identity', async t => {
   const fixture = await createTempFixture(t);
   const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');

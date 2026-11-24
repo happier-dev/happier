@@ -30,7 +30,7 @@ import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
 import { checkDaemonStatePingAware, stopLocalDaemon } from './daemon.mjs';
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
-import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
+import { configureStackQaCliCompileCache, parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
 import {
   getCliHomeDirFromEnvOrDefault,
   getServerLightDataDirFromEnvOrDefault,
@@ -1443,6 +1443,7 @@ async function cmdLogin({ argv, json }) {
     ...(force ? { HAPPIER_AUTH_FORCE: '1' } : {}),
   };
   env = applyStackActiveServerScopeEnv({ env, stackName, cliIdentity: identity });
+  configureStackQaCliCompileCache({ env, cliHomeDir, cliIdentity: identity });
   const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env });
   const loginEnv =
     credentialPaths.activeServerId && credentialPaths.activeServerId !== env.HAPPIER_ACTIVE_SERVER_ID

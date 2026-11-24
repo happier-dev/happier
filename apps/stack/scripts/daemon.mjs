@@ -27,6 +27,7 @@ import { getComponentDir, getRootDir, resolveStackBaseDir, resolveStackEnvPath }
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './utils/stack/dirs.mjs';
+import { configureStackQaCliCompileCache } from './utils/stack/cli_identities.mjs';
 import {
   isCliDirectExecutableCommand,
   probeCliDistRuntimeImport,
@@ -1797,6 +1798,7 @@ export async function getDaemonEnv({
       resolveStackDaemonStartVerifyTimeoutMs(scopedEnv),
     );
   }
+  configureStackQaCliCompileCache({ env: scopedEnv, cliHomeDir, cliIdentity: cliIdentity ?? scopedEnv.HAPPIER_STACK_CLI_IDENTITY });
   return await sourceDaemonCommandEnv({ cliHomeDir, cliLaunchSpec, env: {
     ...scopedEnv,
     HAPPIER_SERVER_URL: internalServerUrl,

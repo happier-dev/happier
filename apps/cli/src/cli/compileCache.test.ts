@@ -11,7 +11,10 @@ const owner = new URL('./compileCache.ts', import.meta.url).href;
 type CompileCacheRun = Readonly<{ dir: string | null; stderr: string }>;
 
 // Runs the owner in a fresh Node process: the compile cache is per process and cannot be undone.
-function runCompileCacheOwner(args: readonly string[], prepare: (paths: { temp: string; home: string }) => void = () => {}): CompileCacheRun {
+function runCompileCacheOwner(
+  args: readonly string[],
+  prepare: (paths: { temp: string; home: string; env: NodeJS.ProcessEnv }) => void = () => {},
+): CompileCacheRun {
   const code = `const { enableShortLivedCliCompileCache } = await import(${JSON.stringify(owner)});
     enableShortLivedCliCompileCache(${JSON.stringify(args)});
     const { getCompileCacheDir } = await import('node:module');
@@ -23,8 +26,9 @@ function runCompileCacheOwner(args: readonly string[], prepare: (paths: { temp: 
   const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: temp, TEMP: temp, TMP: temp, HAPPIER_HOME_DIR: home };
   delete env.NODE_COMPILE_CACHE;
   delete env.NODE_DISABLE_COMPILE_CACHE;
+  delete env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR;
   try {
-    prepare({ temp, home });
+    prepare({ temp, home, env });
     const child = spawnSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], {
       cwd: cliRoot, env, encoding: 'utf8',
     });
@@ -66,11 +70,25 @@ describe('CLI compile cache', () => {
     expect(run.stderr).toContain('HAPPIER_COMPILE_CACHE_UNAVAILABLE');
   });
 
+  it.skipIf(process.platform === 'win32')('uses the identity cache when the shared directory is not private', () => {
+    const run = runCompileCacheOwner(['daemon', 'status'], ({ temp, env }) => {
+      const directory = join(temp, 'shared');
+      mkdirSync(directory);
+      chmodSync(directory, 0o755);
+      env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR = directory;
+    });
+    expect(run.dir).toMatch(/happier-home[\\/]cache[\\/]node-compile-cache/);
+    expect(run.stderr).toContain('HAPPIER_COMPILE_CACHE_UNAVAILABLE');
+  });
+
   it.each([
     ['daemon', 'start-sync'],
     ['daemon', 'background-service-worker'],
     ['codex', '--started-by', 'daemon'],
   ])('leaves daemon-hosted long-lived roles uncached (%s %s)', (...args) => {
-    expect(readCompileCacheDirAfter(args)).toBeNull();
+    const run = runCompileCacheOwner(args, ({ temp, env }) => {
+      env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR = join(temp, 'shared');
+    });
+    expect(run.dir).toBeNull();
   });
 });

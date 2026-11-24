@@ -3,9 +3,9 @@ import { resolveMachineRegistrationPath } from '@happier-dev/cli-common/firstPar
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { copyFile, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 import * as stackHappierPassthrough from './stack_happier_passthrough_command.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
@@ -492,6 +492,60 @@ test('stack happier keeps recorded local daemon placement despite a configured r
   });
   assert.equal(result.code, 0, result.stderr);
   assert.equal(result.stdout.trim(), 'LOCAL CLI');
+});
+
+test('two named QA identities on one CLI tree write their compilation cache once', { skip: process.platform === 'win32' }, async (t) => {
+  const fixture = await createStackHappierCliCommandFixture(t, {
+    prefix: 'hstack-qa-compile-cache-',
+    stackName: 'agent-qa-compile-cache',
+    distIndexScript: `import { tsImport } from ${JSON.stringify(import.meta.resolve('tsx/esm/api'))};
+import { flushCompileCache, getCompileCacheDir } from 'node:module';
+import { pathToFileURL } from 'node:url';
+const args = process.argv.slice(2);
+${buildStubHappierServerSetSource()}
+const { enableShortLivedCliCompileCache } = await tsImport(${JSON.stringify(new URL('../../../cli/src/cli/compileCache.ts', import.meta.url).href)}, { parentURL: import.meta.url, tsconfig: ${JSON.stringify(fileURLToPath(new URL('../../../cli/tsconfig.json', import.meta.url)))} });
+enableShortLivedCliCompileCache(args);
+await import(pathToFileURL(process.env.HSTACK_FIXTURE_COMPILE_SOURCE));
+flushCompileCache();
+console.log(JSON.stringify({ home: process.env.HAPPIER_HOME_DIR, dir: getCompileCacheDir() }));
+`,
+  });
+  await appendFile(fixture.envPath, 'HAPPIER_STACK_QA_DAEMON_TARGETS=fixture-target\n');
+  const sourceModule = fixture.path('cache-fixture.mjs');
+  await writeFile(sourceModule, 'export const fixture = 123;\n');
+  const canonicalHome = fixture.path('canonical-home');
+  const invoke = async (identity) => {
+    const run = await runNodeCapture([fileURLToPath(new URL('../../bin/hstack.mjs', import.meta.url)),
+      'stack', 'happier', fixture.stackName, `--identity=${identity}`, '--', '--version'], {
+      cwd: fixture.root,
+      env: buildStackHarnessEnv({ baseEnv: fixture.baseEnv, extraEnv: {
+        HAPPIER_STACK_CANONICAL_HOME_DIR: canonicalHome,
+        HSTACK_FIXTURE_COMPILE_SOURCE: sourceModule,
+      } }),
+    });
+    assert.equal(run.code, 0, run.stderr);
+    return JSON.parse(run.stdout.trim());
+  };
+  const readCache = async (path) => {
+    const entries = await readdir(path, { withFileTypes: true });
+    const files = await Promise.all(entries.filter(entry => entry.isFile())
+      .map(async entry => [entry.name, (await stat(join(path, entry.name))).mtimeMs]));
+    assert.ok(files.length > 0, 'the CLI wrote a cache for the fixture source');
+    return files.sort();
+  };
+  const first = await invoke('fixture-a');
+  const firstCache = await readCache(first.dir);
+  const second = await invoke('fixture-b');
+  assert.notEqual(first.home, second.home);
+  assert.equal(second.dir, first.dir);
+  assert.deepEqual(await readCache(second.dir), firstCache);
+
+  const cacheRoot = dirname(first.dir);
+  assert.ok(!relative(canonicalHome, cacheRoot).startsWith('..'));
+  assert.equal((await stat(cacheRoot)).mode & 0o777, 0o700);
+
+  const defaultIdentity = await invoke('default');
+  assert.ok(!relative(defaultIdentity.home, defaultIdentity.dir).startsWith('..'));
 });
 
 test('resolveStackHappierPassthroughInvocation strips spaced wrapper identity args when no separator is used', () => {

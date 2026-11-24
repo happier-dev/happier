@@ -1,5 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { getCanonicalHomeDirFromEnv } from '../paths/canonical_home.mjs';
 
 const IDENTITY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
@@ -34,6 +35,18 @@ export function resolveCliHomeDirForIdentity({ cliHomeDir, identity }) {
       ? parentDir
       : join(parentDir, 'cli-identities');
   return join(identitiesDir, id);
+}
+
+export function configureStackQaCliCompileCache({ env, cliHomeDir, cliIdentity = env.HAPPIER_STACK_CLI_IDENTITY }) {
+  const uid = process.getuid?.();
+  const identity = String(cliIdentity ?? '').trim();
+  delete env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR;
+  if (process.platform === 'win32' || uid === undefined || !env.HAPPIER_STACK_QA_DAEMON_TARGETS?.trim()) return;
+  if (!cliHomeDir || !identity || identity === 'default' || basename(cliHomeDir) !== identity
+      || basename(dirname(cliHomeDir)) !== 'cli-identities') return;
+  env.HAPPIER_STACK_QA_CLI_COMPILE_CACHE_DIR = join(
+    getCanonicalHomeDirFromEnv(env), 'cache', `qa-node-compile-cache-${uid}`,
+  );
 }
 
 /** Identity homes survive runtime-state replacement; intent alone is not an inventory. */

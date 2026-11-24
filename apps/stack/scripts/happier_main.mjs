@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
+import { configureStackQaCliCompileCache } from './utils/stack/cli_identities.mjs';
 import { getComponentDir, getRootDir, getStackName } from './utils/paths/paths.mjs';
 import { readPrefixServerSelection, resolveStackHappierCliHome, splitHstackHappierWrapperArgs } from './stack/stack_happier_passthrough_entrypoint.mjs';
 import { getPublicServerUrlEnvOverride, resolveStackCanonicalServerUrl, resolveStackServerEndpoint } from './utils/server/urls.mjs';
@@ -246,6 +247,8 @@ async function main() {
   }
 
   env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec, sourceCliEnv: resolvedCli.env });
+  const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
+  configureStackQaCliCompileCache({ env, cliHomeDir, cliIdentity: isStackScopedInvocation ? cliIdentity : 'default' });
   // Auth recovery supplies the evidence required to refresh a retained Home's
   // endpoints. Its current endpoint and stable scope are already selected by
   // the environment; keep the authenticated descriptor intact until then.
@@ -261,7 +264,6 @@ async function main() {
     });
   }
   if (isStackScopedInvocation && requiresStackDaemonPreflight(forwardedArgv)) {
-    const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';
     await ensureStackDaemonPreflight({
       rootDir,
       stackName,
