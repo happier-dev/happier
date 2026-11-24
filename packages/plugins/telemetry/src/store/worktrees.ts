@@ -1,4 +1,4 @@
-import type { DaemonDatabase, DaemonDatabaseMigration, DaemonDatabaseRow, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
+import type { DaemonDatabase, DaemonDatabaseMigration, DaemonDatabaseRow, DaemonDatabaseTransaction, DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 
 /** Retained observations outlive their launch and its in-memory path association. */
@@ -7,7 +7,7 @@ export const worktreeMigration: DaemonDatabaseMigration = { version: 6, id: 'wor
  await tx.execute('CREATE INDEX captureWorktreeRoot ON captureWorktrees(physicalRoot,worktree)');
 } };
 
-export async function writeCaptureWorktree(db: DaemonDatabase, worktree: string, physicalRoot: string) {
+export async function writeCaptureWorktree(db: DaemonDatabaseTransaction, worktree: string, physicalRoot: string) {
  await db.execute('INSERT INTO captureWorktrees (worktree,physicalRoot) VALUES (?,?) ON CONFLICT(worktree) DO UPDATE SET physicalRoot=excluded.physicalRoot WHERE physicalRoot != excluded.physicalRoot', [worktree, physicalRoot]);
 }
 
