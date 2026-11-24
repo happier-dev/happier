@@ -8,6 +8,7 @@ import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/pr
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import { projectDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -270,9 +271,21 @@ describe('approval failure outcome', () => {
         expect(outcome.reason).toBe(details.remedy);
     });
 
+    it('prefers the typed private-placement refusal to generic stored recovery', () => {
+        const errorCode = 'private_scope_unenforceable';
+        const remedy = projectDeploymentFailureRecoveryV1({}, 'invalid_provider_output').remedy;
+        const details = DeploymentDomainFailureDetailsV1Schema.parse({
+            environmentId: 'environment', domainId: 'domain', step: 'native_execution',
+            requiredFact: 'reachabilityPosture', remedy,
+        });
+        const refusal = readDeploymentRefusalRecoveryV1(errorCode, details);
+        expect(refusal?.remedy).toBeDefined();
+        expect(refusal?.remedy).not.toBe(remedy);
+        expect(presentActionFailureOutcome({ errorCode, error: errorCode, details }, 'deployment').reason).toBe(refusal?.remedy);
+    });
+
     it.each(['deployment_content_unavailable', 'deployment_unavailable', 'unsupported', 'deployment_in_progress'])(
-        'renders shared recovery for the bare %s refusal', async errorCode => {
-            const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+        'renders shared recovery for the bare %s refusal', errorCode => {
             const remedy = readDeploymentRefusalRecoveryV1(errorCode)!.remedy;
             expect(presentActionFailureOutcome({ errorCode, error: errorCode }, 'deployment').reason).toBe(remedy);
             const lines = presentActionFailureTechnicalDetails({ errorCode, error: errorCode }, 'deployment');

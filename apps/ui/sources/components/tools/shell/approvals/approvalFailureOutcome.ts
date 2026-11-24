@@ -1,6 +1,6 @@
 import type { ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDeploymentConnectionPermissionRemedy, readDeploymentFailureRecovery, readDeploymentRefusalRecovery } from '@/components/projects/deployments/deploymentPresentation';
+import { readDeploymentConnectionPermissionRemedy, readDeploymentRefusalRecovery } from '@/components/projects/deployments/deploymentPresentation';
 import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions';
@@ -184,9 +184,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
-                // The recovery owner reads the stored remedy: a sentence stays, a remedy code becomes its sentence.
-                : deploymentRecovery ? (remedy ? readDeploymentFailureRecovery(failure.errorCode, failure.details).remedy : deploymentRecovery.remedy)
-                : presented.reason || (scope === 'deployment' ? null : remedy) || null);
+            : deploymentRecovery?.remedy || (scope === 'deployment' ? remedy || presented.reason : presented.reason || remedy) || null);
     return {
         reason: scope === 'deployment' ? readDeploymentConnectionPermissionRemedy(failure.errorCode, failure.details) ?? reason : reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
