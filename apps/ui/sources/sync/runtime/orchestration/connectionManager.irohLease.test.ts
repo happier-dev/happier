@@ -133,6 +133,7 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         irohRuntimeMock.releaseActiveHomeTunnels.mockClear();
         startLifecycleSpy.mockClear();
         publishActiveServerRuntimeOriginSpy.mockClear();
+        publishActiveServerRuntimeOriginSpy.mockImplementation(() => true);
         recoveryRequiredListener = null;
     });
 
@@ -630,6 +631,116 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         expect(authorizations).toEqual([null]);
         expect(publishActiveServerRuntimeOriginSpy).not.toHaveBeenCalled();
         expect(syncSwitchServer).not.toHaveBeenCalled();
+    });
+
+    /** Every request at the fetch boundary, by origin, with whether it carried a bearer. */
+    async function recordHomeRequests(serverIdentityId: string): Promise<Array<Readonly<{ origin: string; bearer: boolean }>>> {
+        const requests: Array<Readonly<{ origin: string; bearer: boolean }>> = [];
+        const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+        setRuntimeFetch(async (input, init) => {
+            requests.push({
+                origin: new URL(String(input)).origin,
+                bearer: new Headers(init?.headers).has('Authorization'),
+            });
+            return new Response(JSON.stringify(String(input).endsWith('/v1/features')
+                ? { features: {}, capabilities: { serverIdentity: { serverIdentityId } } }
+                : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+        });
+        return requests;
+    }
+
+    // M1: the bearer goes only to an address the carrier policy selected. An
+    // unavailable or fail-closed carrier selected none, so failed-apply recovery
+    // sends no authenticated probe and waits on the carrier owner's own signals.
+    it.each([
+        { name: 'unavailable', failure: new IrohError('unavailable', 'Native Iroh transport is unavailable.') },
+        { name: 'fail_closed', failure: new IrohError('identity_mismatch', 'native lease does not match the requested Home identity') },
+    ])('sends no bearer to the canonical URL when failed-apply recovery follows a $name carrier', async ({ failure }) => {
+        mockActiveSnapshot({
+            serverId: 'srv_home_a',
+            serverUrl: 'https://iroh-only.example.test',
+            kind: 'custom',
+            generation: 11,
+        });
+        mockProfile({
+            id: 'profile-a',
+            serverIdentityId: 'srv_home_a',
+            serverUrl: 'https://iroh-only.example.test',
+            publicServerUrl: null,
+            irohEndpoint: { endpointId: 'endpoint-a' },
+            connectionDescriptorRevision: 2,
+        });
+        mockTokenStorage({ token: 'scoped-token', secret: 'scoped-secret' });
+        const { syncSwitchServer } = mockSyncInfra();
+        vi.doMock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
+            getIrohHomeTunnelRuntime: () => ({
+                ...irohRuntimeMock,
+                ensureHomeTunnel: vi.fn(async () => { throw failure; }),
+            }),
+        }));
+        vi.doMock('@/sync/runtime/nativeLoopbackTunnels/runtime', () => ({
+            startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
+        }));
+        const requests = await recordHomeRequests('srv_home_a');
+
+        const { switchConnectionToActiveServer } = await import('./connectionManager');
+        await expect(switchConnectionToActiveServer()).rejects.toBeDefined();
+        // Recovery signals (browser `online`, foreground, Retry) restart every pooled entry.
+        const { invalidateAllServerReachabilitySupervisors, peekServerReachabilityState } = await import(
+            '@/sync/runtime/connectivity/serverReachabilitySupervisorPool'
+        );
+        await invalidateAllServerReachabilitySupervisors();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        expect(requests.filter((request) => request.bearer && request.origin === 'https://iroh-only.example.test')).toEqual([]);
+        expect(peekServerReachabilityState('https://iroh-only.example.test', 'scoped-token')).toBeNull();
+        expect(syncSwitchServer).not.toHaveBeenCalled();
+    });
+
+    it('recovers a failed apply by probing the HTTPS origin the carrier policy selected', async () => {
+        const snapshot: Record<string, unknown> = {
+            serverId: 'srv_home_a',
+            serverUrl: 'https://iroh-fail.example.test',
+            kind: 'custom',
+            generation: 12,
+        };
+        mockActiveSnapshot(snapshot);
+        publishActiveServerRuntimeOriginSpy.mockImplementation(((params: { runtimeOrigin?: string; carrier?: string }) => {
+            snapshot.runtimeOrigin = params.runtimeOrigin;
+            snapshot.carrier = params.carrier;
+            return true;
+        }) as never);
+        mockProfile({
+            id: 'profile-a',
+            serverIdentityId: 'srv_home_a',
+            serverUrl: 'https://iroh-fail.example.test',
+            publicServerUrl: 'https://public-iroh-fail.example.test',
+            irohEndpoint: { endpointId: 'endpoint-a' },
+            connectionDescriptorRevision: 2,
+        });
+        mockTokenStorage({ token: 'scoped-token', secret: 'scoped-secret' });
+        const { syncSwitchServer } = mockSyncInfra();
+        syncSwitchServer.mockRejectedValueOnce(new Error('first apply failed'));
+        vi.doMock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
+            getIrohHomeTunnelRuntime: () => ({
+                ...irohRuntimeMock,
+                ensureHomeTunnel: vi.fn(async () => {
+                    throw new IrohError('unavailable', 'Native Iroh transport is unavailable.');
+                }),
+            }),
+        }));
+        vi.doMock('@/sync/runtime/nativeLoopbackTunnels/runtime', () => ({
+            startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
+        }));
+        const requests = await recordHomeRequests('srv_home_a');
+
+        const { switchConnectionToActiveServer } = await import('./connectionManager');
+        await expect(switchConnectionToActiveServer()).rejects.toThrow('first apply failed');
+
+        await vi.waitFor(() => expect(syncSwitchServer).toHaveBeenCalledTimes(2));
+        expect(requests.filter((request) => request.bearer).map((request) => request.origin))
+            .toContain('https://public-iroh-fail.example.test');
+        expect(requests.filter((request) => request.bearer && request.origin === 'https://iroh-fail.example.test')).toEqual([]);
     });
 
     it('fails typed when Iroh is unavailable and the descriptor proves no independent HTTPS ingress', async () => {

@@ -24,6 +24,7 @@ import {
     type AcquiredHomeCarrier,
 } from '@/sync/runtime/homeCarrierPolicy';
 import { startNativeLoopbackTunnelRuntimeAppStateLifecycle } from '@/sync/runtime/nativeLoopbackTunnels/runtime';
+import { isServerRuntimeTransportPublished } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 import type { IrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/types';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { refreshDegradedHomeDescriptor } from './refreshDegradedHomeDescriptor';
@@ -112,6 +113,10 @@ function recoverFailedApplyWhenHomeAnswers(
     stopFailedApplyRecovery = null;
     const token = credentials?.token?.trim();
     if (!token || isAppliedActiveServerRuntimeAvailable() || !capturePublicationTargetForSnapshot(snapshot)) return;
+    // The bearer goes only to an address the carrier policy selected. A descriptor-backed
+    // Home whose apply published no carrier (unavailable or fail-closed) has none, so no
+    // authenticated probe runs; its carrier owner's recovery signal and Retry remain.
+    if (!isServerRuntimeTransportPublished(snapshot)) return;
     let subscribed = false;
     const stop = (): void => {
         if (stopFailedApplyRecovery === stop) stopFailedApplyRecovery = null;
