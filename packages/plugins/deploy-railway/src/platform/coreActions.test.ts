@@ -123,6 +123,20 @@ it('settles service removal from one Environment inventory read after a negative
   expect(requests[1]?.variables).toMatchObject({ projectId: coordinates.projectId, environmentId: coordinates.environmentId });
 }));
 
+it('retains Railway’s documented GraphQL failure code on an unconfirmed deletion', () => withVendor(() => ({
+  data: null,
+  errors: [{ message: 'Never expose this vendor message', extensions: { code: 'INTERNAL_SERVER_ERROR' } }],
+}), async (kit, requests) => {
+  const failure = await kit.invokeAction('teardown', { ...lifecycle, operation: 'teardown' }).catch(error => error);
+  expect(failure).toMatchObject({
+    code: 'outcome_unknown',
+    data: { failureCause: { phase: 'deployment.railway.teardown.send', errorCode: 'railway_graphql_unavailable',
+      nativeErrorCode: 'INTERNAL_SERVER_ERROR', httpStatus: 200 } },
+  });
+  expect(failure.message).not.toContain('Never expose this vendor message');
+  expect(requests).toHaveLength(1);
+}));
+
 it('leaves a lost deletion reply unknown and observes the selected instance without repeating the delete', () => withVendor(request => {
   if (request.query.includes('serviceDelete')) throw new Error('Connection closed after the request was sent');
   return { data: { environment: { id: coordinates.environmentId, projectId: coordinates.projectId,

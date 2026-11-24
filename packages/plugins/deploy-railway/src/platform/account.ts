@@ -39,9 +39,13 @@ export function projectRailwayFailure(error: unknown, context: PluginAccountActi
   if (error instanceof RailwayNativeError && error.code === 'credential_unavailable') {
     throw new PluginError({ code: 'deployment_access_denied', retryable: false, details: { phase } });
   }
-  if (effectAttempted) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
-    failureCause: projectActionFailureCauseV1(error, `deployment.railway.${phase}`, { allowUnknownErrorCode: error instanceof RailwayNativeError }) });
-  const code = error instanceof RailwayNativeError && error.code === 'railway_invalid_response'
+  const native = error instanceof RailwayNativeError ? error : null;
+  const failureCause = effectAttempted || native
+    ? { ...projectActionFailureCauseV1(error, `deployment.railway.${phase}`, { allowUnknownErrorCode: native !== null }),
+        ...(native?.nativeErrorCode === undefined ? {} : { nativeErrorCode: native.nativeErrorCode }) }
+    : undefined;
+  if (effectAttempted) throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase }, failureCause });
+  const code = native?.code === 'railway_invalid_response'
     ? 'provider_response_invalid' : 'provider_unavailable';
-  throw new PluginError({ code, retryable: true, details: { phase } });
+  throw new PluginError({ code, retryable: true, details: { phase }, ...(failureCause ? { failureCause } : {}) });
 }

@@ -5,7 +5,7 @@ export const RAILWAY_ORIGIN = 'https://backboard.railway.com';
 export const RAILWAY_API = RAILWAY_ORIGIN + '/graphql/v2';
 
 export class NativeError extends Error {
-  constructor(readonly code: string, readonly status?: number) {
+  constructor(readonly code: string, readonly status?: number, readonly nativeErrorCode?: string) {
     super(code);
   }
 }
@@ -16,6 +16,18 @@ export function railwayErrorCode(error: unknown): string {
     return 'credential_unavailable';
   }
   return 'railway_unavailable';
+}
+
+// Railway's HTTP 200 error may be a service error or a refusal. Preserve the documented category without vendor prose.
+function readGraphqlErrorCode(errors: unknown): string | undefined {
+  if (!Array.isArray(errors)) return;
+  for (const error of errors) {
+    if (error === null || typeof error !== 'object' || !('extensions' in error)) continue;
+    const extensions: unknown = error.extensions;
+    if (extensions && typeof extensions === 'object' && 'code' in extensions && extensions.code === 'INTERNAL_SERVER_ERROR') {
+      return extensions.code;
+    }
+  }
 }
 
 /** The request adapter carries the invocation's admitted Connected Account. */
@@ -35,7 +47,7 @@ export function createRailwayGraphqlClient(request: typeof fetch, signal?: Abort
       if (!body || typeof body !== 'object') throw new NativeError('railway_invalid_response');
       // HTTP 200 does not establish GraphQL success. Never forward vendor error prose.
       if ('errors' in body && (!Array.isArray(body.errors) || body.errors.length > 0)) {
-        throw new NativeError('railway_graphql_unavailable');
+        throw new NativeError('railway_graphql_unavailable', response.status, readGraphqlErrorCode(body.errors));
       }
       if (!('data' in body) || !body.data || typeof body.data !== 'object' || Array.isArray(body.data)) {
         throw new NativeError('railway_invalid_response');
