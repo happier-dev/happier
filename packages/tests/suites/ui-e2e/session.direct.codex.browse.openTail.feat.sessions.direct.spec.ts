@@ -83,6 +83,8 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
       extraEnv: {
         HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
         HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
+        // The earlier usage-evidence fixture is a plain session; allow both storage modes.
+        HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
         HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES__QUOTAS__ENABLED: '1',
