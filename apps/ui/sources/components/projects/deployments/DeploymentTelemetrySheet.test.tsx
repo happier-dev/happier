@@ -218,7 +218,7 @@ describe('Environment telemetry sheet', () => {
     }
   });
 
-  it('uses the selected Project collector default ahead of the runtime Machine on first setup', async () => {
+  it('uses the Project collector default without opting into absent capabilities on first setup', async () => {
     const account = await createSecretSettingsTestHarness({ handleRequest: async path => {
       if (path.startsWith('/v1/projects/sources/source-app')) return Response.json({ ok: true, canManage: true,
         source: { id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'account-a' },
@@ -228,7 +228,7 @@ describe('Environment telemetry sheet', () => {
         content: { contentArtifactId: 'project-defaults', contentHeaderVersion: 1, contentBodyVersion: 1 } });
       return null;
     } });
-    account.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: 'project-defaults', isDecrypted: true,
+    account.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: 'project-defaults', title: 'App', isDecrypted: true,
       header: { kind: 'project-deployment-defaults.v1', title: 'App' },
       body: JSON.stringify({ projectSourceId: 'source-app', deploymentDefaults: { telemetryMachineId: 'collector-default' } }),
       headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }, account.scope.accountId));
@@ -246,7 +246,10 @@ describe('Environment telemetry sheet', () => {
       const picker = () => screen.findAllByType(SessionMachineField).find(row => row.props.testID === 'project-deployments.telemetry.collector');
       await vi.waitFor(() => expect(picker()?.props.machineId).toBe('collector-default'));
       await screen.pressByTestIdAsync('project-deployments.telemetry.save');
-      expect(setTelemetry).toHaveBeenCalledWith(expect.objectContaining({ collector: { machineId: 'collector-default' } }));
+      expect(setTelemetry).toHaveBeenCalledWith({
+        collector: { machineId: 'collector-default' },
+        capabilities: { metrics: false, appLlmCost: false, exceptions: false },
+      });
     } finally {
       await screen.unmount();
       context.dispose();

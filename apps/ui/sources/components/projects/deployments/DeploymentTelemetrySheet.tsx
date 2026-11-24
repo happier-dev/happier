@@ -108,14 +108,9 @@ export function DeploymentTelemetrySheet(
     });
     return () => { cancellation.abort(); retirement.dispose(); };
   }, [setUp, canManage, environment, detail.targetLinks, lifetime]);
-  const saved = resolveDeploymentTelemetryCapabilitiesV1(
+  const initial = resolveDeploymentTelemetryCapabilitiesV1(
     detail.content.telemetry,
   );
-  // A first setup starts from the lab's proposal (errors and model calls on, metrics at the next deploy off).
-  const initial =
-    setUp || detail.content.telemetry
-      ? saved
-      : { metrics: false, appLlmCost: true, exceptions: true };
   const [requests, setRequests] = React.useState(true);
   const [exceptions, setExceptions] = React.useState(initial.exceptions);
   const [appLlmCost, setAppLlmCost] = React.useState(initial.appLlmCost);
