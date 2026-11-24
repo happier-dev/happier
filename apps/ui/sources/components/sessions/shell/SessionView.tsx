@@ -1764,6 +1764,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     // subscribes to the workspace's tab set.
     const openAllTabsRef = React.useRef<(() => void) | null>(null);
     const handlePullAllTabs = React.useCallback(() => { openAllTabsRef.current?.(); }, []);
+    const taskSessionScope = stableSessionForHeader && !blockedSurfaceState ? sessionAccountBinding?.scope : undefined;
     const sessionHeader = React.useMemo(() => showTopHeader ? (
         <View style={{ zIndex: 1000 }} {...pane.overlayFocusReturnCaptureProps}>
             {isTablet ? null : (
@@ -1772,6 +1773,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             <SessionViewLiveStatusPaneHeader
                 {...headerProps}
                 rightElement={headerRightElement}
+                taskSession={taskSessionScope ? { sessionId, scope: taskSessionScope } : undefined}
                 // Desktop renames in place (the title is the field); a phone keeps ⋯ Rename.
                 rename={isTablet && stableSessionForHeader?.access?.capabilities.renameSession === true
                     ? { sessionId, serverId: currentSessionRouteServerId || null } : undefined}
@@ -1817,6 +1819,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         stableSessionForHeader?.access?.capabilities.renameSession,
         pane.overlayFocusReturnCaptureProps,
         showTopHeader,
+        taskSessionScope,
         theme.colors.chrome.header.foreground,
     ]);
 

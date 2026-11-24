@@ -57,16 +57,21 @@ const safeAreaState = vi.hoisted(() => ({
     initial: { insets: { top: 0, bottom: 0, left: 0, right: 0 } },
 }));
 
-vi.mock('react-native-safe-area-context', () => ({
-    useSafeAreaInsets: () => safeAreaState.insets,
-    initialWindowMetrics: safeAreaState.initial,
-}));
+vi.mock('react-native-safe-area-context', async () => {
+    const React = await import('react');
+    return {
+        useSafeAreaInsets: () => safeAreaState.insets,
+        SafeAreaInsetsContext: React.createContext(safeAreaState.insets),
+        initialWindowMetrics: safeAreaState.initial,
+    };
+});
 
 vi.mock('@react-navigation/native', () => createReactNavigationNativeMock({
     navigation: { goBack: vi.fn() },
 }));
 
-vi.mock('expo-router', () => createExpoRouterMock().module);
+const taskPagePush = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', () => createExpoRouterMock({ router: { push: taskPagePush } }).module);
 
 vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/utils/platform/responsive')>()),
@@ -212,6 +217,76 @@ describe('SessionPaneHeader', () => {
             expect(screen.findHostByTestId(`session-header-badge:${index}`)?.props.accessibilityLabel).toBe(badge);
         }
         expect(metadata.findAll((node) => node.props.testID === 'session-header-subtitle').length).toBeGreaterThan(0);
+    });
+
+    it('opens the source-owned page for a task linked to the presented Session', async () => {
+        platformState.os = 'web';
+        const { PluginContributesV2Schema } = await import('@happier-dev/protocol/plugins/contributions/v2');
+        const { buildWorkBoardItemKeyV1 } = await import('@happier-dev/protocol/boards/workBoardV1');
+        const { createExternalWorkItemsPluginFixture, createWorkItemsAccountFixture } = await import('@/dev/testkit/fixtures/workItemsPlugin');
+        const { getInstalledPluginUiClientExecutableComposition } = await import('@/components/plugins/reactNative/clientExecutableContributions');
+        const { createPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
+        const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+        const appShell = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { SessionSurfacePresenceProvider } = await import('../sessionSurfacePresence');
+        const { SessionViewLiveStatusPaneHeader } = await import('./SessionViewLiveStatusPaneHeader');
+        const sessionId = 'linked-session';
+        const serverId = 'home';
+        const controller = new AbortController();
+        const { accountLifetime } = createWorkItemsAccountFixture(serverId, controller.signal);
+        const fixture = createExternalWorkItemsPluginFixture({
+            linked: { title: 'Reconcile invoices', category: 'started', linkedSessions: [{ serverId, sessionId }],
+                page: { pageId: 'tasks', subPath: 'selected/invoices' } },
+            unrelated: { title: 'Unrelated task', category: 'started', linkedSessions: [{ serverId, sessionId: 'other-session' }],
+                page: { pageId: 'tasks', subPath: 'selected/other' } },
+        });
+        const { id: pluginId, version: pluginVersion } = fixture.plugin.manifest;
+        const contributes = PluginContributesV2Schema.parse(fixture.plugin.manifest.contributes);
+        const target = { ...fixture.client, platform: 'web' as const };
+        const executionOrigin = { serverIdentityId: 'srv_header_work', materializationRef: { pluginId, machineId: 'machine', materializationId: 'current' } };
+        const occurrenceId = 'current';
+        const source = { id: `${pluginId}/work-items`, pluginId, pluginVersion, occurrenceId,
+            definition: contributes.workItems[0]!, executionOrigin };
+        // The Account registry publication and the installed artifact bytes are the test boundaries.
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, workItemsById: { [source.id]: source } };
+        const snapshot: import('@/components/appShell/plugins/AppShellPluginUiProjection').AppShellPluginUiProjectionValue = {
+            pluginUiProjection: projection, accountLifetime, interactionEnabled: true, pluginBrowserProjection: null,
+            phase: 'current', machineId: 'machine', serverId, platform: 'web', clientExecutableActivation: { status: 'ready' },
+            reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+        };
+        const spy = vi.spyOn(appShell, 'useAppShellPluginUiProjection').mockImplementation(((selector?: (value: typeof snapshot) => unknown) =>
+            selector ? selector(snapshot) : snapshot) as typeof appShell.useAppShellPluginUiProjection);
+        const composition = getInstalledPluginUiClientExecutableComposition();
+        const cache = createPluginReactNativeBundleCache();
+        const identity = { pluginId, contributionId: 'work-items', artifactId: target.artifactId, platform: target.platform,
+            artifactDigest: `sha256:${'a'.repeat(64)}` as const };
+        cache.putInstalledArtifact({ identity, format: 'plainJs', bytes: new Uint8Array([0]) });
+        try {
+            expect(await composition.reconcile([{ pluginId, pluginVersion, contributes, target, executionOrigin, occurrenceId,
+                hostUiApiRange: '^1.0.0', authority: { serverId, machineId: 'machine' }, cache, identity,
+                moduleReference: { exportName: target.exportName }, accountLifetime, isCurrent: accountLifetime.isCurrent,
+                backend: { backendId: 'commonJs', available: true, async loadInstalledBundle() { return fixture.activateClient; } },
+            }])).toMatchObject([{ result: { ok: true } }]);
+            const taskSession = { sessionId, scope: accountLifetime.scope };
+            const screen = await renderScreen(<SessionSurfacePresenceProvider sessionId={sessionId} focusedOverride visibleOverride
+                sceneActive routeAnchorOverride={null} presentedWhileVisible>
+                <SessionViewLiveStatusPaneHeader title="Investigate invoices" subtitle="~/work" taskSession={taskSession} />
+            </SessionSurfacePresenceProvider>);
+            try {
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain('Reconcile invoices'));
+                expect(screen.getTextContent()).not.toContain('Unrelated task');
+                const key = buildWorkBoardItemKeyV1({ kind: 'task', pluginId, qualifiedId: { serverId, id: 'linked' } });
+                await screen.pressByTestIdAsync(`session-header-task-chip:${key}`);
+                expect(taskPagePush).toHaveBeenCalledWith(`/plugins/${pluginId}/tasks/selected/invoices`);
+                await act(async () => fixture.setItem('linked', { title: 'Reconcile invoices', category: 'started', linkedSessions: [] }));
+                await vi.waitFor(() => expect(screen.getTextContent()).not.toContain('Reconcile invoices'));
+            } finally { await screen.unmount(); }
+        } finally {
+            spy.mockRestore();
+            controller.abort();
+            await composition.unload();
+            taskPagePush.mockClear();
+        }
     });
 
     it('suppresses session-scoped testIDs when the session screen is hidden', async () => {

@@ -30,6 +30,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import { SessionHeaderTitleAccessoryCompactContext } from './sessionHeaderTitleCompact';
+import { SessionHeaderTaskLinks } from './SessionHeaderTaskLinks';
 
 export type SessionPaneHeaderProps = Readonly<{
     title: string;
@@ -55,6 +56,7 @@ export type SessionPaneHeaderProps = Readonly<{
     lineage?: React.ReactNode;
     /** The sandbox the Session runs in, after the folder (a leaf that draws nothing for a Session that runs directly). */
     sandbox?: React.ReactNode;
+    taskSession?: React.ComponentProps<typeof SessionHeaderTaskLinks>;
     /** The header's controls: Next, attention, Follow, ⋯, the pane's Hide. */
     rightElement?: React.ReactNode;
     /** A phone screen's Back; absent beside a permanent sidebar, where there is no stack to pop. */
@@ -155,7 +157,7 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                 </PullTarget>
             ) : undefined}
             titleControl={titleControl}
-            metaLeading={props.badges?.length || props.subtitle || props.subtitleState || props.lineage || props.sandbox ? (
+            metaLeading={props.badges?.length || props.subtitle || props.subtitleState || props.lineage || props.sandbox || props.taskSession ? (
                 <SessionScreenTestIdView dataSet={themeSurfaceDataSet('chat-header', 'facts', 'default')}
                     style={[styles.metadataRow, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'facts' } : undefined)]} sessionScreenTestId="session-header-metadata">
                     {props.subtitle || props.subtitleState ? (
@@ -163,6 +165,7 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                     ) : null}
                     {props.sandbox}
                     {props.lineage}
+                    {props.taskSession ? <SessionHeaderTaskLinks {...props.taskSession} /> : null}
                     {props.badges?.map((badge, index) => (
                         <SessionHeaderBadge key={`${badge}:${index}`} label={badge} index={index} />
                     ))}
