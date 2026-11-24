@@ -3,6 +3,7 @@ import { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
 export { teamGroupLabelBinding } from '@happier-dev/protocol/teams/groupLabel';
 import type {
     PrivateLabelReadPolicyV1,
+    PrivateLabelReadV1,
     PrivateLabelStoredV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
 
@@ -44,9 +45,19 @@ export async function openTeamGroupNameProjection(params: Readonly<{
     signal?: AbortSignal;
 }>): Promise<string | null> {
     if (params.name.kind !== 'available') return null;
+    return await openTeamGroupLabelProjection({ ...params, label: params.name.label, field: 'name' });
+}
+
+export async function openTeamGroupLabelProjection(params: Readonly<{
+    client: PrivateLabelOpener;
+    groupId: string;
+    field: 'name' | 'description';
+    label: PrivateLabelReadV1;
+    signal?: AbortSignal;
+}>): Promise<string | null> {
     return await params.client.open({
-        binding: teamGroupNameBinding(params.groupId),
-        label: params.name.label,
+        binding: teamGroupLabelBinding(params.groupId, params.field),
+        label: params.label,
         readPolicy: TEAM_GROUP_LABEL_READ_POLICY,
         signal: params.signal,
     });

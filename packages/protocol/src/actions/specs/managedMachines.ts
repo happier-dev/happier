@@ -5,6 +5,8 @@ import { declareDeploymentPreparationScopeV1 } from './deploymentPreparationScop
 import { ActionOperationCompletionOutputV1Schema, type ActionCompletionDeclaration } from '../actionCompletion.js';
 import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
+import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelV1.js';
+import { MachinePoolAudienceV1Schema } from '../../machines/pools/v1.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1, MACHINE_PRESET_UPDATE_ACTION_ID_V1 } from '../../machines/managed/machinePresetActionIdsV1.js';
@@ -345,7 +347,20 @@ export const MACHINE_POOL_ACTION_SPECS: ActionSpecArrayConcat<readonly [
         }],
       },
       inputHints: { title: titles[actionId], fields: MACHINE_POOL_INPUT_FIELDS[actionId] },
-      ...(verb === 'create' || verb === 'update' ? { approvalPresentation: { clearInputPaths: ['description'] } } : {}),
+      ...(verb === 'create' || verb === 'update' ? { approvalPresentation: {
+        clearInputPaths: ['description'],
+        referenceForField: (field, value, input) => {
+          if ((field !== 'name' && field !== 'description') || !input || typeof input !== 'object'
+              || !('poolId' in input) || typeof input.poolId !== 'string') return undefined;
+          const stored = PrivateLabelStoredV1Schema.safeParse(value);
+          if (!stored.success) return undefined;
+          const audience = MachinePoolAudienceV1Schema.safeParse('audience' in input ? input.audience : undefined);
+          const owner = audience.success ? audience.data.kind === 'team' ? 'teamPool' : 'privatePool'
+            : verb === 'update' && 'expectedRevision' in input && typeof input.expectedRevision === 'number'
+              ? { kind: 'retainedPool' as const, expectedRevision: input.expectedRevision } : 'privatePool';
+          return { kind: 'privateLabel', id: input.poolId, field, stored: stored.data, owner };
+        },
+      } } : {}),
       inputSchema: MachinePoolActionInputSchemasV1[actionId],
       outputSchema: MachinePoolActionOutputSchemasV1[actionId],
       serverTransport: {

@@ -22,6 +22,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { BUILT_IN_REGISTRY_SOURCES_V1 } from '@happier-dev/protocol/registries';
 import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { describeUnnamedApprovalSession, resolveApprovalHomeName, resolveApprovalHomeSentenceName } from './approvalRequesterLabels';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -35,7 +36,7 @@ import { teamCredentialDisplayNameBinding, teamCredentialExternalApiKeyLabelBind
 import { readObservedTeamCredentialExternalKey, readObservedTeamCredentialLimit, readObservedTeamExternalGroupBinding, readTeamCredentialResourceApprovalProjection,
     readTeamDirectoryGroupName, readTeamDirectorySourceName, readTeamSetupStepName, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
 import { limitMetricLabel, limitPeriodLabel, limitSubjectLine } from '@/components/settings/teams/credentials/teamCredentialPresentation';
-import { openTeamGroupNameProjection } from '@/sync/ops/teams/teamGroupLabels';
+import { openTeamGroupLabelProjection, openTeamGroupNameProjection } from '@/sync/ops/teams/teamGroupLabels';
 import { readHomeSetupStepTitle } from '@/components/hub/setup/homeSetupStepTitles';
 import { approvalProfileDefaultNoneTitle } from './approvalProfileDefaultChoiceCopy';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
@@ -57,7 +58,8 @@ import { useManagedMachineInventory } from '@/components/settings/machines/manag
 import { createManagedMachineActionClient } from '@/sync/api/machines/managedMachineActions';
 import { createMachinePresetActionClient } from '@/sync/api/machines/managedMachinePresets';
 import { createMachinePoolActionClient } from '@/sync/api/machines/machinePoolActions';
-import { createMachinePoolPrivateLabelClientForAccount, readMachinePoolPrivateNameV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
+import { createMachinePoolPrivateLabelClientForAccount, openMachinePoolPrivateLabelV1,
+    readMachinePoolPrivateNameV1 } from '@/sync/ops/machinePoolPrivateLabelProjection';
 import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
 import { useProjectedQualifiedConnectedAccountTargetPresentations, type ProjectedQualifiedConnectedAccountTarget } from '@/hooks/server/connectedServices/useProjectedQualifiedConnectedAccountTargetPresentations';
@@ -139,6 +141,10 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
     }
     if (reference.kind === 'machinePreset' || reference.kind === 'machinePool') {
         sources.machineCatalogName = await readMachineCatalogReferenceName(reference, account, signal);
+        account.assertCurrent();
+    }
+    if (reference.kind === 'privateLabel') {
+        sources.privateLabelName = await readApprovalPrivateLabel(reference, account, signal);
         account.assertCurrent();
     }
     if (reference.kind === 'teamCredentialResource') {
@@ -266,13 +272,38 @@ async function readTeamDomainReference(reference: TeamDomainReference, account: 
     return [limitSubjectLine(limit, () => subjectName), limitMetricLabel(limit.metric), limitPeriodLabel(limit.period), limit.maximum].join(' · ');
 }
 
+type PrivateLabelReference = Extract<ApprovalReference, { kind: 'privateLabel' }>;
+
+async function readExactPoolForApproval(id: string, account: LazyActionAccountContext, signal?: AbortSignal) {
+    const view = await createMachinePoolActionClient({ request: account.request }).execute('machines.pools.get',
+        { poolId: id }, { serverId: account.serverId, signal });
+    return view.pool.id === id ? view : null;
+}
+
+async function readApprovalPrivateLabel(reference: PrivateLabelReference, account: LazyActionAccountContext,
+    signal?: AbortSignal): Promise<string | null> {
+    const { owner, id, field } = reference;
+    const label = projectPrivateLabelForRecipientV1({ stored: reference.stored, recipientAccountId: account.accountId });
+    if (owner === 'teamGroup') {
+        return await openTeamGroupLabelProjection({ client: createPrivateLabelClientForActionAccountContext(account),
+            groupId: id, field, label, signal });
+    }
+    const labels = createMachinePoolPrivateLabelClientForAccount(account);
+    const retained = typeof owner === 'object' ? await readExactPoolForApproval(id, account, signal) : null;
+    if (typeof owner === 'object' && retained?.pool.revision !== owner.expectedRevision) return null;
+    const readPolicy = retained ? await labels.readPolicyForPool(retained, signal)
+        : await labels.readPolicyForAudience(owner === 'teamPool' ? 'team' : 'private', signal);
+    const opened = await openMachinePoolPrivateLabelV1({ poolId: id, field, label: { kind: 'available', label }, labels,
+        readPolicy, signal });
+    return opened.kind === 'available' ? opened.value : null;
+}
+
 async function readMachineCatalogReferenceName(reference: MachineCatalogReference, account: LazyActionAccountContext,
     signal?: AbortSignal): Promise<string | null> {
     try {
         if (reference.kind === 'machinePool') {
-            const view = await createMachinePoolActionClient({ request: account.request }).execute('machines.pools.get',
-                { poolId: reference.id }, { serverId: account.serverId, signal });
-            if (view.pool.id !== reference.id) return null;
+            const view = await readExactPoolForApproval(reference.id, account, signal);
+            if (!view) return null;
             return await readMachinePoolPrivateNameV1({ view, labels: createMachinePoolPrivateLabelClientForAccount(account), signal });
         }
         const homeId = reference.homeId ?? account.serverIdentityId;
@@ -367,13 +398,15 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     const profileId = reference?.kind === 'approvalProfile' ? reference.id : null;
     const machineCatalogReference = reference?.kind === 'machinePreset' || reference?.kind === 'machinePool' ? reference : null;
     const teamReference = isTeamDomainReference(reference) ? reference : null;
-    const lookupKey = machineCatalogReference ? JSON.stringify([machineCatalogReference.kind,
+    const privateLabel = reference?.kind === 'privateLabel' ? reference : null;
+    const lookupKey = privateLabel ? JSON.stringify(privateLabel) : machineCatalogReference ? JSON.stringify([machineCatalogReference.kind,
         machineCatalogReference.id, machineCatalogReference.kind === 'machinePreset' && machineCatalogReference.homeId])
         : teamReference ? JSON.stringify(teamReference) : profileId === null ? null : JSON.stringify(['approvalProfile', profileId]);
     const lookup = useScopedSharingRead(lookupKey, approvalServerId, async (scope, signal) => {
         const account = await captureLazyActionAccountContext(scope.serverId, signal);
         try {
             if (account.accountId !== scope.accountId) return null;
+            if (privateLabel) return await readApprovalPrivateLabel(privateLabel, account, signal);
             if (teamReference) return await readTeamDomainReference(teamReference, account, signal);
             return machineCatalogReference ? await readMachineCatalogReferenceName(machineCatalogReference, account, signal)
                 : profileId === null ? null : (await readApprovalProfileDescriptor(account, profileId, signal))?.name ?? null;
@@ -416,6 +449,8 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         approvalProfileName: profileId === null ? undefined : lookup.value ?? undefined,
         approvalProfileResolving: profileId !== null && lookup.resolving,
         teamCredentialResourceName, teamCredentialExternalKeyName, signInIdentityName, teamDirectorySourceName, teamInvitationName, homeLayoutItemName,
+        privateLabelName: privateLabel ? lookup.value : null,
+        privateLabelResolving: privateLabel !== null && lookup.resolving,
         teamDomainName: teamReference ? lookup.value : null,
         teamDomainResolving: teamReference !== null && lookup.resolving,
         homeSetupStepName: reference?.kind === 'homeSetupStep' ? readSetupStepName(reference.id, ownHome ? viewer : null) : null,
@@ -523,6 +558,8 @@ type ApprovalReferenceSources = {
     teamCredentialExternalKeyName?: string | null;
     signInIdentityName?: string | null;
     teamDirectorySourceName?: string | null;
+    privateLabelName?: string | null;
+    privateLabelResolving?: boolean;
     teamDomainName?: string | null;
     teamDomainResolving?: boolean;
     homeSetupStepName?: string | null;
@@ -573,6 +610,10 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     if (reference?.kind === 'teamCredentialAudience') {
         return { text: sources.principalName ?? t(sources.principalResolving ? 'common.loading' : 'common.unavailable'),
             named: Boolean(sources.principalName), ...(sources.principalResolving ? { resolving: true } : {}) };
+    }
+    if (reference?.kind === 'privateLabel') {
+        return { text: sources.privateLabelName ?? t(sources.privateLabelResolving ? 'common.loading' : 'common.unavailable'),
+            named: sources.privateLabelName != null, ...(sources.privateLabelResolving ? { resolving: true } : {}) };
     }
     if (reference?.kind === 'teamCredentialResource') {
         const name = sources.teamCredentialResourceName;

@@ -7,6 +7,7 @@ import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actio
 import { MACHINE_PRESET_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_POOL_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { PrivateLabelStoredV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -162,6 +163,16 @@ function reviewOperands(input: unknown, authored = false): { value: string; auth
     return Object.entries(input).flatMap(([key, value]) => reviewOperands(value, authored || authoredFields.has(key)));
 }
 
+// Authored name and description values may appear verbatim. Their stored envelopes may not.
+function serializedPrivateLabels(input: unknown): string[] {
+    if (Array.isArray(input)) return input.flatMap(serializedPrivateLabels);
+    if (input === null || typeof input !== 'object') return [];
+    if ('content' in input && 'recipients' in input && PrivateLabelStoredV1Schema.safeParse(input).success) {
+        return [JSON.stringify(input)];
+    }
+    return Object.values(input).flatMap(serializedPrivateLabels);
+}
+
 function hostText(node: ReactTestInstance): string {
     return node.children.map(child => typeof child === 'string' ? child : hostText(child)).join(' ');
 }
@@ -173,8 +184,7 @@ it('has schema-valid review cases for every Preset and Pool Action', () => {
 });
 
 const zeroDefectCases: readonly { actionId: string; cases: readonly unknown[] }[] = [
-    // Pool create and update still expose sealed labels. Keep their cases inventoried until the label reader lands.
-    ...machineCatalogCases.filter(({ actionId }) => actionId !== 'machines.pools.create' && actionId !== 'machines.pools.update'),
+    ...machineCatalogCases,
     ...signInCases, { actionId: TEAM_SETUP_RUN_ACTION_ID_V1, cases: teamSetupCases }, ...teamCredentialCases, ...namedTargetCases,
 ];
 
@@ -209,6 +219,7 @@ it.each(zeroDefectCases)('keeps $actionId free of technical operands and untrans
             await flushHookEffects({ cycles: 12 });
             batch.forEach(({ actionArgs, summary }, index) => {
                 let text = hostText(screen.findHostByTestId(`catalog-case-${index}`)!);
+                const exposedEnvelopes = serializedPrivateLabels(actionArgs).filter(envelope => text.includes(envelope));
                 const operands = reviewOperands(actionArgs);
                 for (const operand of operands) {
                     if (!operand.authored || !operand.value || operands.some(other => !other.authored && other.value === operand.value)) continue;
@@ -217,6 +228,7 @@ it.each(zeroDefectCases)('keeps $actionId free of technical operands and untrans
                 }
                 const visibleTokens = new Set(text.match(/[a-z][a-z0-9]*(?:_[a-z0-9]+)+/g));
                 const visible = [
+                    ...exposedEnvelopes,
                     ...new Set(text.match(opaqueIdentifier)),
                     ...operands.filter(operand => !operand.authored && codeLiteral.test(operand.value)
                         && visibleTokens.has(operand.value)).map(operand => operand.value),

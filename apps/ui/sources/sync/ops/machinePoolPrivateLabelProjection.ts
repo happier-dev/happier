@@ -3,6 +3,7 @@ import type {
     PrivateLabelReadPolicyV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import type {
+    MachinePoolAudienceV1,
     MachinePoolPrivateLabelProjectionV1,
     MachinePoolPrivateViewV1,
     MachinePoolViewV1,
@@ -32,7 +33,7 @@ function machinePoolPrivateLabelBinding(poolId: string, field: 'name' | 'descrip
     return { entity: 'machine_pool', field, id: poolId };
 }
 
-async function openMachinePoolPrivateLabelV1(params: Readonly<{
+export async function openMachinePoolPrivateLabelV1(params: Readonly<{
     poolId: string;
     field: 'name' | 'description';
     label: MachinePoolPrivateLabelProjectionV1 | null;
@@ -106,17 +107,19 @@ export async function openMachinePoolPrivateViewV1(params: MachinePoolNameRead):
 export function createMachinePoolPrivateLabelClientForAccount(account: MachinePoolPrivateLabelAccountContext) {
     let accountOwnedReadPolicy: Promise<PrivateLabelReadPolicyV1> | undefined;
     const client = createPrivateLabelClientForActionAccountContext(account);
+    async function readPolicyForAudience(audience: MachinePoolAudienceV1['kind'] | undefined, signal?: AbortSignal): Promise<PrivateLabelReadPolicyV1> {
+        signal?.throwIfAborted();
+        if (audience === 'team') return { kind: 'team-resource' };
+        accountOwnedReadPolicy ??= (async () => {
+            const contentEncryptionMode = await account.resolveAccountMode(signal);
+            account.assertCurrent();
+            return { kind: 'account-owned', contentEncryptionMode };
+        })();
+        return await accountOwnedReadPolicy;
+    }
     return {
         ...client,
-        readPolicyForPool: async (view: MachinePoolPrivateViewV1, signal?: AbortSignal): Promise<PrivateLabelReadPolicyV1> => {
-            signal?.throwIfAborted();
-            if (view.pool.audience?.kind === 'team') return { kind: 'team-resource' };
-            accountOwnedReadPolicy ??= (async () => {
-                const contentEncryptionMode = await account.resolveAccountMode(signal);
-                account.assertCurrent();
-                return { kind: 'account-owned', contentEncryptionMode };
-            })();
-            return await accountOwnedReadPolicy;
-        },
+        readPolicyForAudience,
+        readPolicyForPool: (view: MachinePoolPrivateViewV1, signal?: AbortSignal) => readPolicyForAudience(view.pool.audience?.kind, signal),
     };
 }

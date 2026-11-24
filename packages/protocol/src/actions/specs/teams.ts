@@ -1,5 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { z } from '../../zodRuntimePolicy.js';
+import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelV1.js';
 
 import { TEAM_IDENTITY_ACTION_IDS_V1, type TeamIdentityActionIdV1 } from '../../teams/identity/actionIds.js';
 import { TEAM_DIRECTORY_ACTION_IDS_V1, type TeamDirectoryActionIdV1 } from '../../teams/directory/actionIds.js';
@@ -1126,6 +1127,14 @@ function createTeamActionSpecs(): TeamActionSpecs {
     inputSchema: TeamGroupCreateActionInputV1Schema,
     wireInputSchema: TeamGroupCreateInputV1Schema,
     outputSchema: TeamGroupV1Schema,
+    approvalPresentation: {
+      referenceForField: (field, value, input) => {
+        const { groupId } = readRecord(input);
+        if ((field !== 'name' && field !== 'description') || typeof groupId !== 'string') return undefined;
+        const stored = PrivateLabelStoredV1Schema.safeParse(value);
+        return stored.success ? { kind: 'privateLabel', id: groupId, field, stored: stored.data, owner: 'teamGroup' } : undefined;
+      },
+    },
     inputHints: { fields: [
       TEAM_ID_FIELD,
       approvalField('name', 'Group name', { required: true }),

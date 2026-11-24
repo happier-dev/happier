@@ -21,6 +21,7 @@ import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { VoiceConversationTargetSchema } from './voiceConversationActionFamily.js';
 import type { ActionInputFieldHint, ActionInputOption } from './actionInputHintsRuntime.js';
 import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
+import type { PrivateLabelStoredV1 } from '../crypto/privateLabelV1.js';
 import { normalizeUiSurfaceCapabilityRequestV1 } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '../sessions/board/item.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -215,6 +216,9 @@ export type ApprovalActionReference =
   /** A saved Home layout item, read through the presenting Account's existing layout projection. */
   | Readonly<{ kind: 'homeLayoutItem'; id: string }>
   | Readonly<{ kind: 'homeSetupStep'; id: string }>
+  /** Pending label content stays bound to the row and is opened only on the viewing Account's device. */
+  | Readonly<{ kind: 'privateLabel'; id: string; field: 'name' | 'description'; stored: PrivateLabelStoredV1;
+      owner: 'teamGroup' | 'teamPool' | 'privatePool' | Readonly<{ kind: 'retainedPool'; expectedRevision: number }> }>
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
@@ -1348,7 +1352,7 @@ export function describeApprovalActionFields(input: Readonly<{
     rows.push({
       // An intent read as its value ("Directory intent" → "Directory  /repo") is named by what it is.
       kind: 'value', path: field.path, title: kindValue !== null ? field.title.replace(/\s+intent$/i, '') : field.title,
-      value: kindValue ?? value,
+      value: reference?.kind === 'privateLabel' ? reference.id : kindValue ?? value,
       ...(selectedOptions?.some(option => option.labelKey) ? { selectedOptions: selectedOptions.map(({ label, labelKey }) => ({
         label, ...(labelKey ? { labelKey } : {}),
       })) } : {}),
