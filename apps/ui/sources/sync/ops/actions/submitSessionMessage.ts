@@ -17,14 +17,15 @@ function createHomeDeliverySubmitPort(port: SessionSubmitPort, args: Parameters<
     delivery: SessionMessageDelivery): SessionSubmitPort {
     const send = async (sessionId: string, text: string, displayText: string | undefined,
         messageMeta: Record<string, unknown> | undefined,
-        requestedAction: Parameters<SessionMessageDelivery>[0]['requestedAction'], localId?: string | null) => {
+        requestedAction: Parameters<SessionMessageDelivery>[0]['requestedAction'], localId?: string | null,
+        offlineResumeWhenAvailable?: true) => {
         if (!args.authoredInput || !('message' in args.authoredInput)) throw new HappyError('Invalid message input', false, { code: 'invalid_parameters' });
         const sent = readSendReceipt(completeActionResult(await delivery({ ...args, sessionId, message: text,
             displayText, messageMeta: { ...args.messageMeta, ...messageMeta }, requestedAction, localId: localId ?? args.localId,
             authoredInput: { ...args.authoredInput, sessionId, message: text,
                 messageMeta: { ...args.authoredInput.messageMeta, ...messageMeta }, requestedAction,
                 ...(localId ? { localId } : {}) },
-        })));
+        }, offlineResumeWhenAvailable)));
         if (sent.status === 'outcomeUnknown') throw new HappyError(sent.code, false, { code: sent.code });
         return sent;
     };
@@ -33,7 +34,7 @@ function createHomeDeliverySubmitPort(port: SessionSubmitPort, args: Parameters<
         shouldDelegatePendingActivationToDaemon: undefined,
         enqueuePendingMessage: async (sessionId, text, displayText, meta, options) => {
             const sent = await send(sessionId, text, displayText, { ...args.messageMeta, ...meta },
-                options?.requestedAction ?? args.requestedAction, options?.localId);
+                options?.requestedAction ?? args.requestedAction, options?.localId, options?.offlineResumeWhenAvailable);
             return sent;
         },
         sendMessage: async (sessionId, text, displayText, meta, options) => {

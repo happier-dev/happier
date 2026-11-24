@@ -240,6 +240,7 @@ vi.mock('@/utils/timing/runAfterInteractionsWithFallback', () => ({
 type HttpWrite = Readonly<{ url: URL; method: string; body: Record<string, unknown>; authorization: string | null }>;
 type RpcCall = Readonly<{ targetId: string; method: string; payload: unknown; token: unknown }>;
 const httpWrites: HttpWrite[] = [];
+const pendingReads: string[] = [];
 const rpcCalls: RpcCall[] = [];
 let enqueueResponse: (write: HttpWrite) => Promise<Response>;
 type ComposerSendInput = Extract<SessionMessageSendAuthoredInput, { message: string }>;
@@ -351,7 +352,10 @@ const runtime = installSessionPaneRuntimeTestHarness({
             return createMachineReadBatchResponseFixture(init?.body, id => id === 'm-target'
                 ? guestResumeHttp?.machine ?? ownerMachineRow(id) : null);
         }
-        if (method === 'GET' && url.pathname === '/v2/sessions/s1/pending' && pendingReadOverride) return pendingReadOverride();
+        if (method === 'GET' && url.pathname === '/v2/sessions/s1/pending') {
+            pendingReads.push(url.pathname);
+            if (pendingReadOverride) return pendingReadOverride();
+        }
         if (method === 'GET' && url.pathname === '/v1/machines') {
             if (inventoryReadOverride) return inventoryReadOverride();
             const state = storage.getState();
@@ -662,6 +666,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await prepareSessionDraftPersistenceStorage();
         (globalThis as { __DEV__?: boolean }).__DEV__ = false;
         httpWrites.length = 0;
+        pendingReads.length = 0;
         rpcCalls.length = 0;
         sessionOpenDisabled = false;
         sessionOpenAskFirst = false;
@@ -1623,15 +1628,53 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('explains an offline Machine refusal before admission and keeps the unqueued draft', async () => {
+    it.each(['online_only', 'when_available'] as const)('holds ordinary Send in Home Pending while the Machine is offline (%s)', async (policy) => {
+        storage.setState({ settings: { ...storage.getState().settings, sessionInactiveResumePolicy: policy } });
+        setMachineOnline(false);
+        homeSendResult = () => offlineHomeSendRefusal;
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Keep this queued draft');
+            const pendingReadsBeforeSend = pendingReads.length;
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            expect(pendingWrites()).toHaveLength(1);
+            expect(pendingWrites()[0]?.body).toMatchObject({
+                requestedAction: { v: 1, kind: 'enqueue' },
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Keep this queued draft' } } },
+            });
+            expect(pendingWrites()[0]?.body.resumeWhenAvailable).toBe(policy === 'when_available' ? true : undefined);
+            expect(pendingReads).toHaveLength(pendingReadsBeforeSend);
+            expect(homeSends).toHaveLength(0);
+            expect(resumeCalls()).toHaveLength(0);
+            expect(readComposerText(findAgentInput(screen))).toBe('');
+            const localId = String(pendingWrites()[0]?.body.localId);
+            expect(storage.getState().sessionPending.s1.messages).toMatchObject([
+                { localId, deliveryStatus: 'accepted' },
+            ]);
+            const authorization = policy === 'when_available'
+                ? { requestId: localId, requestedAt: 300, status: 'waiting' } as const
+                : null;
+            await publishDurablePendingState(durablePendingRow(localId, 'enqueue'), authorization);
+            expect(storage.getState().sessionPending.s1.messages).toMatchObject([
+                { localId, pendingDeliveryStatus: 'server_queued' },
+            ]);
+            const notice = policy === 'when_available' ? 'waiting_offline' : 'queued_offline';
+            expect(queueLine(screen)).toMatchObject({ text: `session.pendingActivation.${notice}.title`,
+                detail: `session.pendingActivation.${notice}.body` });
+            expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
+    it('explains an offline Machine Send now refusal before admission and keeps the unqueued draft', async () => {
         await stoppedSession();
         setMachineOnline(false);
         homeSendResult = () => offlineHomeSendRefusal;
         const screen = await renderSessionView({ routeServerId: runtime.serverId });
         try {
             await changeText(screen, 'Keep this unsent draft');
-            await send(screen);
-            await expectHomeSend({ message: 'Keep this unsent draft', requestedAction: { v: 1, kind: 'enqueue' } });
+            await send(screen, { forceImmediate: true });
+            await expectHomeSend({ message: 'Keep this unsent draft', requestedAction: { v: 1, kind: 'send_now' } });
             await waitForSubmittedDraft(screen);
             await vi.waitFor(() => expect(modalMockState.current?.spies.alert).toHaveBeenCalled());
             expect(readComposerText(findAgentInput(screen))).toBe('Keep this unsent draft');

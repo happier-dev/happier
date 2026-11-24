@@ -2,12 +2,13 @@ import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema } from "@happier-dev/protocol";
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 
 import { auth } from "@/app/auth/auth";
 import { createMaterializedEphemeralRunnerFixture } from "@/app/ephemeralRunner/materializedRunner.testkit";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { db } from "@/storage/db";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { sessionPendingRoutes } from "./pendingRoutes";
@@ -46,6 +47,40 @@ describe("Pending HTTP credential authority (integration)", () => {
         });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it.each(["plain", "e2ee"] as const)("keeps owner %s enqueue in Pending for a stopped Session on an offline Machine", async (encryptionMode) => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: account.id, installationId: randomUUID(), active: false,
+            metadata: encryptionMode === "plain" ? encodePlainMachineStoredContent({}) : "{}",
+            ...(encryptionMode === "plain" ? { dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64") } : {}),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const sessionId = randomUUID();
+        const target = { homeId: await getOrCreateServerIdentityId(), accountId: account.id, sessionId,
+            machineId: machine.id, installationId: machine.installationId! };
+        await db.session.create({ data: { id: sessionId, accountId: account.id, tag: randomUUID(), metadata: "{}",
+            encryptionMode, active: false, runtimeMachineTarget: target } });
+        await db.accessKey.create({ data: { accountId: account.id, sessionId, machineId: machine.id, data: "fixture-access" } });
+        const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const localId = randomUUID();
+        const payload = encryptionMode === "plain" ? content("Owner input") : { t: "encrypted", c: "fixture-ciphertext" };
+        const app = createApp();
+        try {
+            const response = await app.inject({ method: "POST", url: `/v2/sessions/${sessionId}/pending`, headers: headers(token),
+                payload: { localId, content: payload, requestedAction: { v: 1, kind: "enqueue" } } });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ didWrite: true, pending: { localId } });
+            expect(await db.sessionPendingMessage.findMany({ where: { sessionId } })).toMatchObject([
+                { localId, content: payload, status: "queued", requestedAction: { v: 1, kind: "enqueue" },
+                    inputAdmissionReceipt: { issuer: "authenticatedAccount", admittedTarget: target } },
+            ]);
+            expect(await db.session.findUniqueOrThrow({ where: { id: sessionId } })).toMatchObject({
+                active: false, pendingCount: 1, pendingActivationRequestId: null,
+            });
+        } finally { await app.close(); }
+    });
 
     it("admits bound Runner mutations as shared-editor input, never owner activation", async () => {
         // The canonical route contract binds the ordinary runtime to its exact

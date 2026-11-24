@@ -8,6 +8,7 @@ import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { storage } from '@/sync/domains/state/storage';
 import type { readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
 import { SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
@@ -17,7 +18,10 @@ import { captureLazyActionAccountContext, withActionAccountRequestSignal, type L
 import { createUiAccountAction } from './accountActionDeps';
 import { readSessionMessageInputSchema } from './sessionMessageInputSchema';
 
-export type SessionMessageDelivery = NonNullable<ActionExecutorDeps['sessionSendMessage']>;
+export type SessionMessageDelivery = (
+  args: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0],
+  offlineResumeWhenAvailable?: true,
+) => ReturnType<NonNullable<ActionExecutorDeps['sessionSendMessage']>>;
 
 export function projectSessionMessageTarget({ session, target }: Awaited<ReturnType<typeof readMachineControlTargetForSessionAuthority>>) {
   const metadata = readSessionOwnerMetadataView(session);
@@ -83,7 +87,7 @@ export function createSessionMessageDelivery(params: Readonly<{
   const composerSubmission = params.composerSubmission;
   const readAccountSessionControlTarget = params.readTarget;
   const assertExpectedActionAccount = params.assertExpectedAccount;
-  return async (args) => {
+  return async (args, offlineResumeWhenAvailable) => {
     const { sessionId, serverId, localId, signal } = args;
     const requiresReplyCustody = args.reply === 'wait' || args.reply === 'return' || args.wait === true;
     if (composerSubmission && (!composerSubmission.isCurrent() || signal?.aborted)) {
@@ -116,10 +120,13 @@ export function createSessionMessageDelivery(params: Readonly<{
       }
       if (target.archived) return buildUnavailableSessionInputTargetFailureV1();
       const { machineId, isRecipient, hostOccurrence } = target;
-      const pendingDuringStart = !isRecipient && machineId !== null
-        && resolveServerScopedMachine(storage.getState(), account.serverId, machineId)?.managedInputRuntime?.state === 'starting'
+      const machine = !isRecipient && machineId !== null
+        ? resolveServerScopedMachine(storage.getState(), account.serverId, machineId) : null;
+      const pendingDuringStart = machine?.managedInputRuntime?.state === 'starting'
         && args.requestedAction?.kind !== 'reset_start';
-      if ((isRecipient || pendingDuringStart)
+      const pendingWhileOffline = args.requestedAction?.kind === 'enqueue' && machine?.managedMachineRef === null
+        && resolveMachineReachability(account.accountLifetime.scope, machine) === 'unreachable';
+      if ((isRecipient || pendingDuringStart || pendingWhileOffline)
         && account.credentialAuthorityKind === 'account'
         && (!args.actionCaller || args.actionCaller.kind === 'host')
         && args.context.authority !== 'account_automation'
@@ -127,12 +134,13 @@ export function createSessionMessageDelivery(params: Readonly<{
         && !args.context.externalActionExecutionAuthorization && !args.context.actionRequestAttributionV1
         && !args.sessionInputSource && !composerSubmission?.legacyAttachments
         && 'message' in args.authoredInput
-        && (!pendingDuringStart || args.authoredInput.forgeEvidence === undefined)
+        && (!(pendingDuringStart || pendingWhileOffline) || args.authoredInput.forgeEvidence === undefined)
         && supportsAccountPendingForSessionInput({ ...args.authoredInput, request: args.inputAdmission?.request })) {
-        // Home owns exact placement and activation. A published Start allows
-        // Account Pending to accept this Send before guest RPC registration.
+        // Home owns exact placement and activation for guest Start and ordinary
+        // offline enqueue. Managed sleep and immediate input keep their Action routes.
         return await withActionAccountRequestSignal(account, signal, pendingSignal =>
-          deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal }, pendingDuringStart ? true : undefined));
+          deliverSessionMessageToAccountPending({ ...args, serverId: account.serverId, signal: pendingSignal },
+            pendingDuringStart ? true : pendingWhileOffline ? offlineResumeWhenAvailable : undefined));
       }
       if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       if (requiresReplyCustody) {

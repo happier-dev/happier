@@ -601,6 +601,8 @@ async function enqueuePending(
                 ...(opts.allowedPermissionModes ? { allowedPermissionModes: opts.allowedPermissionModes } : {}),
                 requestedAction,
                 ...(wakeFromUiForWhenAvailable === false ? { resumeWhenAvailable: true as const } : {}),
+                ...(inactiveResumePolicy === 'when_available' && !isSendCrossingStopHold(opts)
+                    ? { offlineResumeWhenAvailable: true as const } : {}),
                 onLocalPendingProjectionCreated: opts.onOutboundHandoff
                     ? ({ localId }) => {
                         handoffLocalId = localId;

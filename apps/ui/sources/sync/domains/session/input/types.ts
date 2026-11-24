@@ -213,6 +213,8 @@ export interface SessionSubmitPort {
             onLocalPendingProjectionCreated?: (event: DirectMessageLocalPendingProjection) => void;
             requestedAction: PendingRequestedActionV1;
             resumeWhenAvailable?: true;
+            /** Activation intent for the Action transport if it holds input in Home while offline. */
+            offlineResumeWhenAvailable?: true;
             allowedModels?: readonly ProviderBoundModelRef[] | null;
             allowedPermissionModes?: readonly SessionPermissionMode[] | null;
         }>,
