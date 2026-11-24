@@ -37,6 +37,8 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
     { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'append' },
     { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'finish' },
     { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'disconnect' },
+    { contentMode: 'e2ee', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'response_timeout' },
+    { contentMode: 'plain', holdNativeAdmission: false, nativeFailure: false, slowPhase: 'response_timeout' },
   ] as const)('preserves capture and native outcomes in the Account content mode %j', async ({ contentMode, holdNativeAdmission, nativeFailure, slowPhase }) => {
     const streamRoot = await mkdtemp(join(tmpdir(), 'happier-df66-intake-'));
     const events = new EventTarget();
@@ -150,8 +152,22 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
       },
     };
     const stream = await openPeerTcpTunnelRelayStream(relayInput);
-    const transport = createDaemonSpeechStreamTunnelTransport({ tunnelId: binding.tunnelId, stream, maxFrameBytes,
-      ...(!slowPhase || slowPhase === 'disconnect' ? { responseTimeoutMs: 500 } : {}),
+    let acknowledgementWaits = 0;
+    let releasedWaits = 0;
+    const transport = createDaemonSpeechStreamTunnelTransport({ tunnelId: binding.tunnelId, maxFrameBytes,
+      stream: {
+        ...stream,
+        get relaySocketLost() { return stream.relaySocketLost; },
+        onSubstreamFrame: handler => {
+          acknowledgementWaits++;
+          const detach = stream.onSubstreamFrame(handler);
+          return () => {
+            releasedWaits++;
+            detach();
+          };
+        },
+      },
+      ...(!slowPhase || slowPhase === 'disconnect' || slowPhase === 'response_timeout' ? { responseTimeoutMs: 500 } : {}),
       controlTransport: {
         // The RPC owner's content mode decides key issuance (registration reads it).
         startWithContentMode: async input => ({ contentMode,
@@ -167,6 +183,21 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
     });
     try {
       await sender.start();
+      if (slowPhase === 'response_timeout') {
+        await expect(sender.pushChunk(new Uint8Array(640))).resolves.toMatchObject([{ type: 'partial', seq: 0 }]);
+        holdReplies = true;
+        const inFlight = sender.pushChunk(new Uint8Array(640)).catch((error: unknown) => error);
+        await waitForTestEvent(subscribe, () => expect(replies).toHaveLength(1));
+        expect(received).toHaveLength(2);
+        await expect(inFlight).resolves.toMatchObject({ code: 'request_timeout', cause: {
+          ok: false, errorCode: 'request_timeout',
+          error: 'daemon_voice_inference_substream_response_timeout', retryable: true,
+        } });
+        expect({ sentDataFrames, acknowledgementWaits, releasedWaits }).toEqual({
+          sentDataFrames: 2, acknowledgementWaits: 2, releasedWaits: 2,
+        });
+        return;
+      }
       if (slowPhase === 'disconnect') {
         await expect(sender.pushChunk(new Uint8Array(640))).resolves.toMatchObject([{ type: 'partial', seq: 0 }]);
         holdReplies = true;
@@ -237,6 +268,8 @@ describe('sender → Account-mode relay framing → daemon STT intake', () => {
       expect(Buffer.concat(received)).toEqual(Buffer.concat(expected));
       expect(received.some(pcm => pcm.byteLength > 640)).toBe(true);
       expect(relayObserved.clientToDaemon.length).toBe(sentDataFrames);
+      expect(acknowledgementWaits).toBe(sentDataFrames);
+      expect(releasedWaits).toBe(sentDataFrames);
       for (const payload of relayObserved.clientToDaemon) {
         // Plain Accounts relay the exact admitted PCM; E2EE Accounts relay only
         // authenticated ciphertext of it (one tag per packet, no install frame).

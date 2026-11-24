@@ -688,6 +688,7 @@ describe('createDaemonStreamingSttController with actual capture and daemon clie
       kind: 'provider_error', phase: 'runtime', presentation: 'notice',
       reason: 'daemon_streaming_stt_pcm_chunk_failed', recoverable: true,
       recoveryAction: 'retry', retryPolicy: 'user_action',
+      failureCause: expect.objectContaining({ errorCode: 'request_timeout' }),
     }));
     const failure: unknown = vi.mocked(params.sink.onError).mock.calls[0]?.[0];
     expect(failure).toHaveProperty('cause');

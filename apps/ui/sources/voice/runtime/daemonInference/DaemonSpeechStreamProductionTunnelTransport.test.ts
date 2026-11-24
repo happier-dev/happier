@@ -750,6 +750,8 @@ describe('DaemonSpeechStreamProductionTunnelTransport real producers', () => {
     expect(receivedPcm.some(pcm => pcm.byteLength > 640)).toBe(true);
     // The Machine RPC owner sealed the start plain, so the stream is plain (never inferred from a key).
     expect(receipt()).toMatchObject({ relayEvidence: 'plain_account', localTransport: 'closed' });
+    expect(grants).toHaveLength(1);
+    expect(network.requests.filter(request => request.method.endsWith('.chunk'))).toHaveLength(0);
     expect(grants[0]).toMatchObject({ scope: caps });
     expect((grants[0] as { scope: unknown }).scope).not.toHaveProperty('maxIdleMs');
   });

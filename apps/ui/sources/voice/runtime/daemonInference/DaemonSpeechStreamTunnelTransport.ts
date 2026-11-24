@@ -102,14 +102,16 @@ function decodeSubstreamResponseBytes(
   return frame.payload;
 }
 
-async function waitForSubstreamResponseBytes(input: Readonly<{
+type SubstreamResponse = Uint8Array | Extract<DaemonVoiceInferenceSttStreamChunkResponse, { ok: false }>;
+
+async function waitForSubstreamResponse(input: Readonly<{
   stream: Pick<PeerTcpTunnelClientStream, 'onSubstreamFrame'> & Partial<Pick<PeerTcpTunnelClientStream, 'onFrame' | 'relaySocketLost'>>;
   substreamId: string;
   seq: number;
   timeoutMs: number;
   waitForRelayReconnect?: (signal: AbortSignal) => Promise<boolean>;
   send: () => Promise<void>;
-}>): Promise<Uint8Array | null> {
+}>): Promise<SubstreamResponse | null> {
   if (!input.stream.onSubstreamFrame) {
     return null;
   }
@@ -119,7 +121,7 @@ async function waitForSubstreamResponseBytes(input: Readonly<{
   let timeout: ReturnType<typeof setTimeout> | null = null;
   let disconnect: DaemonSpeechRelayDisconnectedError | undefined;
   try {
-    const responsePromise = new Promise<Uint8Array>((resolve, reject) => {
+    const responsePromise = new Promise<SubstreamResponse>((resolve, reject) => {
       const rejectTerminal = (frame: PeerTcpTunnelFrame): boolean => {
         if (frame.kind === 'abort') {
           if (input.stream.relaySocketLost) {
@@ -153,20 +155,25 @@ async function waitForSubstreamResponseBytes(input: Readonly<{
       }) ?? (() => {});
       detachTunnel = input.stream.onFrame?.(rejectTerminal) ?? (() => {});
       timeout = setTimeout(() => {
-        reject(new Error('daemon_voice_inference_substream_response_timeout'));
+        resolve({
+          ok: false,
+          error: 'daemon_voice_inference_substream_response_timeout',
+          errorCode: 'request_timeout',
+          retryable: true,
+        });
       }, Math.max(1, Math.trunc(input.timeoutMs)));
     });
     // Attach rejection handling before asynchronous sealing/sending: a terminal
     // can arrive while WebCrypto is pending. Still settle the send before the
     // caller wipes its content key and cancels the daemon stream.
     const outcome = responsePromise.then(
-      bytes => ({ ok: true as const, bytes }),
+      response => ({ ok: true as const, response }),
       (error: unknown) => ({ ok: false as const, error }),
     );
     if (!disconnect) await input.send();
     const response = await outcome;
     if (!response.ok) throw response.error;
-    return response.bytes;
+    return response.response;
   } catch (error) {
     // The socket can leave while an already queued send is preparing its bytes.
     throw disconnect ?? error;
@@ -217,7 +224,7 @@ export function createDaemonSpeechStreamTunnelTransport(
     substreamId: string,
     sequence: number,
     preparePayloadBytes: () => Uint8Array | Promise<Uint8Array>,
-  ): Promise<Uint8Array | null> => {
+  ): Promise<SubstreamResponse | null> => {
     const send = async (payloadBytes: Uint8Array) => {
       if (options.stream.sendSubstreamDataFrame) {
         await options.stream.sendSubstreamDataFrame(substreamId, {
@@ -236,7 +243,7 @@ export function createDaemonSpeechStreamTunnelTransport(
         payloadBytes,
       }));
     };
-    return await waitForSubstreamResponseBytes({
+    return await waitForSubstreamResponse({
       stream: options.stream,
       substreamId,
       seq: sequence,
@@ -321,6 +328,7 @@ export function createDaemonSpeechStreamTunnelTransport(
         if (!responseBytes) {
           return { ok: false, error: 'daemon_voice_inference_substream_response_unavailable', errorCode: 'internal_error' };
         }
+        if ('ok' in responseBytes) return responseBytes;
         try {
           return SttStreamChunkResponseSchema.parse(JSON.parse(new TextDecoder().decode(responseBytes)));
         } catch {
@@ -341,6 +349,7 @@ export function createDaemonSpeechStreamTunnelTransport(
           plaintext: carrierFrame.payloadBytes,
         }));
         if (!responseBytes) throw new Error('daemon_voice_inference_substream_response_unavailable');
+        if ('ok' in responseBytes) return responseBytes;
         step = 'open';
         const plaintext = await openAes256GcmBytes({
           key: key.bytes,
