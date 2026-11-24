@@ -1010,6 +1010,8 @@ const deploymentPromotionTranslations = {
     open: 'Promou a…', title: 'Promou el desplegament', lead: ({ name, version }) => `Tria on desplegar ${version} de ${name}.`,
     destination: 'Destinació', image: 'Artefacte construït', imageBody: 'Reutilitza les imatges d’aquest desplegament de Compose desat en un altre entorn de Compose desat als teus servidors.',
     emptyTitle: 'Tria un altre entorn',
+    emptyProduction: 'No s’ha trobat cap entorn de producció',
+    createProduction: 'Crea un entorn de producció…',
     emptyBody: 'Crea o enllaça un entorn de destinació i torna-ho a provar.', loadFailed: 'No s’han pogut carregar els entorns', refused: 'No s’ha pogut promoure', review: 'Revisa la promoció',
     missingOne: ({ destination, name }) => `${destination} no defineix ${name}`, missingMany: ({ destination, count }) => `${destination} no defineix ${count} variables`,
     missingBodyOne: ({ source, destination }) => `${source} la defineix. Afegeix-la primer a ${destination} si aquesta versió la llegeix.`,

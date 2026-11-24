@@ -998,6 +998,8 @@ const deploymentPromotionTranslations = {
     open: '昇格先…', title: 'デプロイを昇格', lead: ({ name, version }) => `${name} の ${version} をデプロイする先を選んでください。`,
     destination: '昇格先', image: 'ビルド済み', imageBody: '保存済み Compose デプロイのイメージを、自分のサーバー上の別の保存済み Compose 環境で再利用します。',
     emptyTitle: '別の環境を選んでください',
+    emptyProduction: '本番環境が見つかりません',
+    createProduction: '本番環境を作成…',
     emptyBody: '昇格先の環境を作成またはリンクしてから再試行してください。', loadFailed: '環境を読み込めませんでした', refused: '昇格できませんでした', review: '昇格を確認',
     missingOne: ({ destination, name }) => `${destination} には ${name} が設定されていません`, missingMany: ({ destination, count }) => `${destination} には ${count} 個の変数が設定されていません`,
     missingBodyOne: ({ source, destination }) => `${source} では設定されています。このバージョンが使う場合は、先に ${destination} に追加してください。`,

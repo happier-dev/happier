@@ -1010,6 +1010,8 @@ const deploymentPromotionTranslations = {
     open: 'Promouvoir vers…', title: 'Promouvoir le déploiement', lead: ({ name, version }) => `Choisissez où déployer ${version} depuis ${name}.`,
     destination: 'Destination', image: 'Artefact compilé', imageBody: 'Réutilise les images de ce déploiement Compose enregistré dans un autre environnement Compose enregistré sur vos serveurs.',
     emptyTitle: 'Choisir un autre environnement',
+    emptyProduction: 'Aucun environnement de production trouvé',
+    createProduction: 'Créer un environnement de production…',
     emptyBody: 'Créez ou liez un environnement de destination, puis réessayez.', loadFailed: 'Impossible de charger les environnements', refused: 'Promotion impossible', review: 'Vérifier la promotion',
     missingOne: ({ destination, name }) => `${destination} ne définit pas ${name}`, missingMany: ({ destination, count }) => `${destination} ne définit pas ${count} variables`,
     missingBodyOne: ({ source, destination }) => `${source} la définit. Ajoutez-la d’abord à ${destination} si cette version la lit.`,

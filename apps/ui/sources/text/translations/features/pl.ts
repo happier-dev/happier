@@ -1000,6 +1000,8 @@ const deploymentPromotionTranslations = {
     open: 'Promuj do…', title: 'Promuj wdrożenie', lead: ({ name, version }) => `Wybierz, gdzie wdrożyć ${version} z ${name}.`,
     destination: 'Cel', image: 'Gotowy artefakt', imageBody: 'Używa obrazów z tego zapisanego wdrożenia Compose w innym zapisanym środowisku Compose na Twoich serwerach.',
     emptyTitle: 'Wybierz inne środowisko',
+    emptyProduction: 'Nie znaleziono środowiska produkcyjnego',
+    createProduction: 'Utwórz środowisko produkcyjne…',
     emptyBody: 'Utwórz lub połącz środowisko docelowe i spróbuj ponownie.', loadFailed: 'Nie udało się wczytać środowisk', refused: 'Nie udało się promować', review: 'Sprawdź promocję',
     missingOne: ({ destination, name }) => `${destination} nie ustawia ${name}`, missingMany: ({ destination, count }) => `${destination} nie ustawia ${count} zmiennych`,
     missingBodyOne: ({ source, destination }) => `${source} ją ustawia. Najpierw dodaj ją do ${destination}, jeśli ta wersja jej używa.`,

@@ -1009,6 +1009,8 @@ const deploymentPromotionTranslations = {
     open: 'Promover para…', title: 'Promover implantação', lead: ({ name, version }) => `Escolha onde implantar ${version} de ${name}.`,
     destination: 'Destino', image: 'Artefato compilado', imageBody: 'Reutiliza as imagens desta implantação Compose salva em outro ambiente Compose salvo nos seus servidores.',
     emptyTitle: 'Escolha outro ambiente',
+    emptyProduction: 'Nenhum ambiente de produção encontrado',
+    createProduction: 'Criar ambiente de produção…',
     emptyBody: 'Crie ou vincule um ambiente de destino e tente novamente.', loadFailed: 'Não foi possível carregar os ambientes', refused: 'Não foi possível promover', review: 'Revisar promoção',
     missingOne: ({ destination, name }) => `${destination} não define ${name}`, missingMany: ({ destination, count }) => `${destination} não define ${count} variáveis`,
     missingBodyOne: ({ source, destination }) => `${source} a define. Adicione-a primeiro a ${destination} se esta versão a lê.`,

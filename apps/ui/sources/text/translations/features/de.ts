@@ -1004,6 +1004,8 @@ const deploymentPromotionTranslations = {
     open: 'Übernehmen nach…', title: 'Bereitstellung übernehmen', lead: ({ name, version }) => `Wähle, wo ${version} aus ${name} bereitgestellt wird.`,
     destination: 'Ziel', image: 'Erstelltes Artefakt', imageBody: 'Verwendet die Images dieser gespeicherten Compose-Bereitstellung in einer anderen gespeicherten Compose-Umgebung auf deinen Servern.',
     emptyTitle: 'Andere Umgebung wählen',
+    emptyProduction: 'Keine Produktionsumgebung gefunden',
+    createProduction: 'Produktionsumgebung erstellen…',
     emptyBody: 'Erstelle oder verknüpfe eine Zielumgebung und versuche es erneut.', loadFailed: 'Umgebungen konnten nicht geladen werden', refused: 'Übernahme fehlgeschlagen', review: 'Übernahme prüfen',
     missingOne: ({ destination, name }) => `${destination} setzt ${name} nicht`, missingMany: ({ destination, count }) => `${destination} setzt ${count} Variablen nicht`,
     missingBodyOne: ({ source, destination }) => `${source} setzt sie. Füge sie zuerst ${destination} hinzu, wenn diese Version sie liest.`,

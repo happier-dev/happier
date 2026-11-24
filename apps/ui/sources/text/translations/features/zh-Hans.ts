@@ -987,6 +987,8 @@ const deploymentPromotionTranslations = {
     open: '提升至…', title: '提升部署', lead: ({ name, version }) => `选择将 ${name} 的 ${version} 部署到哪里。`,
     destination: '目标环境', image: '已构建产物', imageBody: '在你服务器上的另一个已保存 Compose 环境中，复用此已保存 Compose 部署的镜像。',
     emptyTitle: '选择其他环境',
+    emptyProduction: '未找到生产环境',
+    createProduction: '创建生产环境…',
     emptyBody: '创建或关联目标环境，然后重试。', loadFailed: '无法加载环境', refused: '无法提升部署', review: '检查提升',
     missingOne: ({ destination, name }) => `${destination} 没有设置 ${name}`, missingMany: ({ destination, count }) => `${destination} 有 ${count} 个变量未设置`,
     missingBodyOne: ({ source, destination }) => `${source} 设置了它。如果此版本会读取它，请先添加到 ${destination}。`,

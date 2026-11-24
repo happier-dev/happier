@@ -1002,6 +1002,8 @@ const deploymentPromotionTranslations = {
     open: 'Продвинуть в…', title: 'Продвинуть развёртывание', lead: ({ name, version }) => `Выберите, где развернуть ${version} из ${name}.`,
     destination: 'Назначение', image: 'Готовый артефакт', imageBody: 'Использует образы этого сохранённого развёртывания Compose в другом сохранённом окружении Compose на ваших серверах.',
     emptyTitle: 'Выберите другое окружение',
+    emptyProduction: 'Окружение продакшена не найдено',
+    createProduction: 'Создать окружение продакшена…',
     emptyBody: 'Создайте или подключите целевое окружение и повторите попытку.', loadFailed: 'Не удалось загрузить окружения', refused: 'Не удалось продвинуть', review: 'Проверить продвижение',
     missingOne: ({ destination, name }) => `В ${destination} не задана ${name}`, missingMany: ({ destination, count }) => `В ${destination} не заданы переменные: ${count}`,
     missingBodyOne: ({ source, destination }) => `В ${source} она задана. Сначала добавьте её в ${destination}, если эта версия её читает.`,

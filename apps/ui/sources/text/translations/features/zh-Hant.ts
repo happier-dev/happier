@@ -988,6 +988,8 @@ const deploymentPromotionTranslations = {
     open: '提升至…', title: '提升部署', lead: ({ name, version }) => `選擇將 ${name} 的 ${version} 部署到哪裡。`,
     destination: '目標環境', image: '已建置成品', imageBody: '在你伺服器上的另一個已儲存 Compose 環境中，重複使用此已儲存 Compose 部署的映像檔。',
     emptyTitle: '選擇其他環境',
+    emptyProduction: '找不到正式環境',
+    createProduction: '建立正式環境…',
     emptyBody: '建立或連結目標環境，然後重試。', loadFailed: '無法載入環境', refused: '無法提升部署', review: '檢查提升',
     missingOne: ({ destination, name }) => `${destination} 沒有設定 ${name}`, missingMany: ({ destination, count }) => `${destination} 有 ${count} 個變數未設定`,
     missingBodyOne: ({ source, destination }) => `${source} 設定了它。如果此版本會讀取它，請先新增到 ${destination}。`,
