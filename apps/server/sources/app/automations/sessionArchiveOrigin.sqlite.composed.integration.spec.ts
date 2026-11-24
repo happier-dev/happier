@@ -10,9 +10,9 @@ import { createAutomationSessionLifecycleFixtureFields } from "@/testkit/automat
 import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 import { createCliActionDeps } from "../../../../cli/src/session/actions/createCliActionDeps";
 import { createSessionRecordFixture } from "../../../../cli/src/testkit/backends/sessionFixtures";
+import { runWithServerHttpBaseUrl } from "../../../../cli/src/api/client/serverHttpBaseUrl";
 import { readOrCreateInstallationIdentity } from "../../../../cli/src/daemon/identity/store";
-import { updateSettings } from "../../../../cli/src/persistence";
-import { configuration } from "../../../../cli/src/configuration";
+import { updateMachineRegistration } from "../../../../cli/src/daemon/machineIdentity/machineRegistrationStore";
 import { eventRouter } from "@/app/events/eventRouter";
 import * as archivePublication from "@/app/session/archive/publishSessionArchiveTransition";
 
@@ -30,9 +30,7 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
     const identity = await readOrCreateInstallationIdentity();
     const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: "{}",
         installationId: identity.installationId, installationPublicKey: new Uint8Array(Buffer.from(identity.publicKey, "base64url")) } });
-    await updateSettings(settings => ({ ...settings, machineIdByServerId: {
-        ...settings.machineIdByServerId, [configuration.activeServerId]: machine.id,
-    } }));
+    await updateMachineRegistration(current => ({ ...current, machineId: machine.id, accountId: account.id }));
     const recipe = serializeAutomationStoredWorkflowDefinitionRecipeV2({ v: 2, templateVersion: 1, triggerEvidence: null,
         workflow: { t: "plain", v: { workspace: { directory: "/tmp/archive-origin" }, executionTarget: { kind: "session" } } } });
     if (recipe.kind !== "available") throw new Error("Canonical recipe unavailable");
@@ -65,9 +63,9 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
         try {
             const credentials = { token: "archive-fixture", encryption: null };
             const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: "", mode: "plain", ctx: null });
-            const archive = () => deps.sessionArchiveSet!({ sessionId: session.id, archived: true,
+            const archive = () => runWithServerHttpBaseUrl("http://archive-fixture.local", () => deps.sessionArchiveSet!({ sessionId: session.id, archived: true,
                 context: { surface: "cli", actionCaller: { kind: "workflowRun", runId: run.id,
-                    authorization: { principal: { kind: "host" }, admittedPermissionCeiling: "default" } } } });
+                    authorization: { principal: { kind: "host" }, admittedPermissionCeiling: "default" } } } }));
             await expect(archive()).rejects.toMatchObject({ response: { status: 403 } });
             expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).archivedAt).toBeNull();
             expect(await db.automationRun.count({ where: { triggerId: trigger.id } })).toBe(0);
