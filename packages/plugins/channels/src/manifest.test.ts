@@ -12,6 +12,7 @@ import {
   PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
   PluginTranscriptActivityResourceSnapshotV1Schema,
 } from '@happier-dev/plugin-sdk/resources';
+import { PluginSettingFieldSchemaV2Schema } from '@happier-dev/plugin-sdk/settings';
 import {
   COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
   ComposerControlStateV1Schema,
@@ -94,7 +95,7 @@ it('admits exactly the safe Fix attempt values in the Account watch preference',
   if (!field) throw new Error('Expected the declared Fix attempt limit');
   const admitted = parsePluginManifest(PLUGIN_MANIFEST);
   if (!admitted.ok) throw new Error(admitted.diagnostics.map(diagnostic => diagnostic.message).join('; '));
-  const validate = compilePluginJsonSchema(field.schema);
+  const validate = compilePluginJsonSchema(PluginSettingFieldSchemaV2Schema.parse(field.schema));
   expect(isValidPluginJsonSchemaValue(validate, Number.MAX_SAFE_INTEGER)).toBe(true);
   expect(isValidPluginJsonSchemaValue(validate, null)).toBe(true);
   expect(isValidPluginJsonSchemaValue(validate, Number.MAX_SAFE_INTEGER + 1)).toBe(false);
