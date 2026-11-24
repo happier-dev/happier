@@ -265,5 +265,4 @@ export const createHetznerPlugin = (resolveSshBootstrap?: typeof resolveMachineP
 });
 export const PLUGIN = createHetznerPlugin();
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
-export const activateAccount = (api: Parameters<typeof PLUGIN.activateAccount>[0], plugin = PLUGIN) =>
-  plugin.activateAccount(api, defaults.execution.account);
+export const activateAccount = PLUGIN.activateAccount;

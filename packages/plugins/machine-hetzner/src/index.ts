@@ -4,10 +4,10 @@ export { createHetznerProvider, HETZNER_PLUGIN_ID, HETZNER_PROVISIONER_ID } from
 export { HetznerLaunchV1Schema, HetznerResourceV1Schema } from './machine/schemas.js';
 export type { HetznerLaunchV1, HetznerResourceV1, HetznerAcquireV1 } from './machine/schemas.js';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
-import { activateAccount as activatePortableAccount, createHetznerPlugin } from './manifest.js';
+import { createHetznerPlugin } from './manifest.js';
 export { MACHINE_PROVISIONER, ROLE_SCHEMAS, prepareStoredSchemas } from './manifest.js';
 export const PLUGIN = createHetznerPlugin(resolveMachineProvisionerSshBootstrap);
 export const PLUGIN_MANIFEST = PLUGIN.manifest;
 export { PLUGIN_MANIFEST as manifest };
 export const activate = PLUGIN.activate;
-export const activateAccount = (api: Parameters<typeof activatePortableAccount>[0]) => activatePortableAccount(api, PLUGIN);
+export const activateAccount = PLUGIN.activateAccount;
