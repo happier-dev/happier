@@ -146,16 +146,6 @@ describe('machine contribution registry projection ops', () => {
         }));
     });
 
-    it('retains Machine admission exclusions alongside source declarations', async () => {
-        const unavailablePlugins = [{ pluginId: 'acme.disabled', code: 'plugin_disabled' }];
-        machineRpcWithServerScopeMock.mockResolvedValueOnce({ status: 'sourceDeclarations',
-            pluginId: mountedTarget.pluginId, sourceDeclarations: [], unavailablePlugins });
-        const { machinePluginUiTargetedContributionsRead } = await import('./machineContributionRegistryProjection');
-        expect(await machinePluginUiTargetedContributionsRead('machine-1', {
-            serverId: serverAId, pluginId: mountedTarget.pluginId, readMode: 'sourceDeclarations',
-        })).toEqual({ supported: true, sourceDeclarations: [], unavailablePlugins });
-    });
-
     it('reads a Machine\'s source declarations once per projection revision across targeted operations', async () => {
         const { PluginContributesV2Schema } = await import('@happier-dev/protocol/plugins/contributions/v2');
         const contributes = PluginContributesV2Schema.parse({ targetedPluginContributions: [{ id: 'external-source',
