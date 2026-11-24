@@ -1253,7 +1253,7 @@ describe('WorkflowRunScreen', () => {
         expect(alert).toHaveBeenCalledTimes(1);
     });
 
-    it('opens a per-item wait hold Review in the Run hold card', async () => {
+    it('shows the opened per-item wait hold Review in the Run hold card', async () => {
         const run = createWorkflowRunSummaryFixture({ state: 'running', origin: { kind: 'direct' } });
         const definition = createWorkflowDefinitionFixture({ defaults: {},
             inputs: [{ name: 'items', valueType: 'json', required: true }],
@@ -1269,10 +1269,9 @@ describe('WorkflowRunScreen', () => {
             result: 'Item b result', resultContract: { kind: 'text' },
         }) };
         detailActions.getInvocation.mockResolvedValue({ invocation });
+        routerSpy.push.mockClear();
         const screen = await renderRunScreen({ run, definition, invocations: [held], invocationDetails: [invocation],
             acceptedContext: { ...ACCEPTED_CONTEXT, inputs: { items: ['a', 'b'] } } });
-        routerSpy.push.mockClear();
-        await screen.pressByTestIdAsync(`workflow-run-needs-you-${held.id}`);
         await vi.waitFor(() => expect(screen.findHostByTestId('workflow-review-use')).not.toBeNull());
         // 4dd99c4935: a text Wait leads with its held result as the editable value it will continue with.
         expect(screen.root.findAll(node => node.props.value === 'Item b result')).not.toHaveLength(0);
@@ -2785,6 +2784,8 @@ describe('WorkflowRunScreen', () => {
     });
 
     it('projects an opened participant Session title into Map occurrence names through the real paged read', async () => {
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
         const session = createSessionFixture({ id: 'panel-reviewer', serverId: servedHomeId,
             metadata: { path: '/project', host: 'reviewer', summary: { text: 'Release reviewer', updatedAt: 1 } } });
         getStorage().getState().applySessions([session]);

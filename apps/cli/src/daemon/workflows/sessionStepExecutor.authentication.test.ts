@@ -19,14 +19,14 @@ import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOpti
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
-  runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+  runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: ['happier.agent.claude'] } });
 });
 afterAll(async () => { await runtime?.dispose(); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetInMemoryAccountSettingsContextForTests(); });
 
 it.each(['profile', 'group', 'override', 'native', 'explicit_native'] as const)(
   'spawns Workflow Claude with the resolved %s authentication, not the native inventory state', async (authentication) => {
-    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'workflow-account' })).toString('base64url')}.signature`, encryption: null } as const;
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'workflow-account' })).toString('base64url')}.signature`, encryption: null, credentialProvenance: 'stored_session' as const } as const;
     const serviceId = 'happier.agent.claude/claude-subscription';
     let birthMetadata: ReturnType<typeof buildCommittedLaunchMetadata> | undefined;
     const scope = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({ agentId: 'claude',

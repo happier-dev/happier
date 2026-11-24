@@ -3746,7 +3746,7 @@ describe('workflow Session step executor', () => {
 
   it('resolves fresh Team resource defaults through the current paginated Home catalog', async () => {
     const launches = installSessionCreationTransport();
-    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null, credentialProvenance: 'stored_session' as const };
     // Account identity/currentness and catalog opening stay real; only persisted
     // credentials and Home HTTP responses are supplied at their boundaries.
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
