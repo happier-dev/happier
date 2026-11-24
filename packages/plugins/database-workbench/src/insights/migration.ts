@@ -1,4 +1,4 @@
-import type { DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseRelationV1, DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
 import type { SessionInputHandoffInputV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
@@ -36,7 +36,13 @@ export function createDatabaseBriefHandoffControl(
 }
 
 export function createDatabaseMigrationHandoffControl(
-    options: HandoffOptions & Readonly<{ task: DatabaseMigrationTask }>,
+    options: HandoffOptions & Readonly<{ task: DatabaseMigrationTask; view?: DatabaseRelationV1 }>,
 ): WorkbenchControlBinding {
-    return createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(options.task), options);
+    return createDatabaseBriefHandoffControl(() => {
+        const brief = buildDatabaseFindingBriefV1(options.task);
+        if (!options.view) return brief;
+        const { database, schema, name } = options.view;
+        const identifier = database ? [database, schema, name] : [schema, name];
+        return { ...brief, text: `${brief.text}\n\nSelected view identifier: ${JSON.stringify(identifier)}` };
+    }, options);
 }

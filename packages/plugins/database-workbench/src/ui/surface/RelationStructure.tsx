@@ -1,6 +1,8 @@
 import * as React from 'react';
 import type { DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
+import type { SessionInputHandoffInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
+  Action,
   CodeBlock,
   EmptyState,
   ErrorState,
@@ -11,13 +13,15 @@ import {
   Stack,
   Text,
   usePluginTranslation,
+  useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 import {
   Collection,
   useHappierCollection,
   type CollectionAnatomy,
 } from '@happier-dev/plugin-ui/components';
-import { useStructure, useWorkbenchLocation } from '../hooks.js';
+import { createDatabaseMigrationHandoffControl } from '../../insights/migration.js';
+import { useStructure, useWorkbenchInstance, useWorkbenchLocation } from '../hooks.js';
 
 type StructureColumn = ReturnType<typeof useStructure>['columns'][number];
 const EMPTY_SET: ReadonlySet<string> = new Set();
@@ -111,6 +115,29 @@ function ColumnsTable(
   );
 }
 
+function ViewMigrationAction({ relation, targetKey }: Readonly<{ relation: DatabaseRelationV1; targetKey: string }>) {
+  const translate = usePluginTranslation();
+  const { target, engine, placement: { serverId, machineId } } = useWorkbenchInstance().target(targetKey);
+  const surface = useSurfaceContext();
+  const sourceScope = { serverId, machineId };
+  const session = surface.target.kind === 'session' ? surface.target.sessionId : null;
+  const account = surface.accountScope;
+  const handoff: Omit<SessionInputHandoffInputV1, 'input' | 'idempotencyKey'> = session && account ? {
+    v: 1, delivery: 'compose', sessionChoice: { kind: 'existing',
+      session: { selector: 'sessions', addresses: [{ serverId: account.serverId, sessionId: session }] } },
+  } : {
+    v: 1, delivery: 'compose', sessionChoice: { kind: 'new' },
+    newSession: { kind: 'new', seed: { placement: { kind: 'exactTarget', ...sourceScope,
+      ...(target.kind === 'worktree' ? { directory: target.workspace.rootPath } : {}),
+    } } },
+  };
+  const migration = createDatabaseMigrationHandoffControl({ task: { kind: 'migration', target, sourceScope, engineId: engine },
+    view: relation, handoff, idempotencyKey: () => globalThis.crypto.randomUUID() });
+  return <Action.Control {...migration} variant="secondary" title={translate(
+    'plugins.database.structure.migration', 'Ask an agent to add a migration',
+  )} />;
+}
+
 /** Columns, keys, references and indexes: read once per relation and held for the session. */
 export function RelationStructure(
   props: Readonly<{ relation: DatabaseRelationV1 }>,
@@ -173,6 +200,7 @@ export function RelationStructure(
               'Rows come from this query. To change what it shows, change the view in a migration.',
             )}
           />
+          <ViewMigrationAction relation={props.relation} targetKey={location.targetKey} />
         </Stack>
       ) : null}
       {structure.viewDefinition ? null : (

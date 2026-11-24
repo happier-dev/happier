@@ -981,6 +981,43 @@ describe('Database workbench surfaces', () => {
       await fixture.dispose();
     }
   });
+  it('prepares a scoped migration draft from the mounted view definition', async () => {
+    const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({ ok: true, result: { kind: 'cancelled' } }));
+    const execute = createPluginUiActionControlTestHost(handoff);
+    const response = daemonAnswers([descriptor]);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'view', mountNonce: 'migration' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'structure/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(),
+        replacePageLocation: async ({ subPath }) => subPath,
+        async executeAction(request) {
+          const result = await response(request);
+          if (request.action !== databaseActionLocalIdV1(DATABASE_STRUCTURE_READ_ACTION_ID_V1)) return result;
+          if (!result || typeof result !== 'object' || !('structure' in result)) throw new Error('Missing test structure');
+          return { ...result, structure: { ...(result.structure as Record<string, JsonValue>), kind: 'view', viewDefinition: 'SELECT total FROM ledger' } };
+        },
+        actionControl: execute.handler,
+      },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('Rows come from this query. To change what it shows, change the view in a migration.')).toBeTruthy();
+      await act(async () => execute.press('Ask an agent to add a migration'));
+      const request = handoff.mock.lastCall?.[0];
+      expect(request).toMatchObject({ action: 'session.input.handoff', input: {
+        delivery: 'compose', sessionChoice: { kind: 'new' },
+        newSession: { kind: 'new', seed: { placement: { kind: 'exactTarget', serverId: scope.workspace.serverId,
+          machineId: scope.workspace.machineId, directory: scope.workspace.rootPath } } },
+        input: { text: expect.stringContaining('["public","invoices"]'), forgeEvidence: { items: [expect.objectContaining({
+          text: expect.stringContaining('"kind":"migration"'),
+        })] } },
+      } });
+    } finally { await fixture.dispose(); }
+  });
   it('mounts the database\u2019s Automations on the Overview, on the subject its admitted read projected', async () => {
     const automated = { ...descriptor, automationSubject: readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
     const fixture = await createPluginUiTestkit({
