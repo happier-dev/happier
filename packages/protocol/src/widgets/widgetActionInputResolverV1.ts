@@ -3,6 +3,7 @@ import { resolveEffectiveInputFields } from '../inputs/inputFieldRuntime.js';
 import { readInputPath } from '../inputs/inputPredicates.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import type { WidgetActionInputResolverV1 } from './actionsV1.js';
+import { isUsageMainWidgetSurfaceV1, readUsagePageWidgetFollowBindingsV1 } from './usageWidgetPresetsV1.js';
 import { isWidgetTargetHostableV1, resolveConfiguredWidgetInputs, type WidgetInputDescriptorV1 } from './widgetInputAdmissionV1.js';
 import { WidgetInstanceV1Schema, type WidgetBindingResolutionInputV1, type WidgetInputIssueV1, type WidgetInputBindingsV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
 import { readInputFieldOptionsConstraint, readInputFieldSelectedValues, validateInputFieldSchema, validateInputFieldValue, type ResolvedInputTypeV1 } from '../inputs/inputTypeRuntime.js';
@@ -130,13 +131,20 @@ export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolv
         request.signal?.throwIfAborted();
         const viewerPaths = request.admission === 'configuration'
             ? Object.entries(savedInstance.bindings).filter(([, binding]) => binding.kind === 'viewer').map(([path]) => path) : [];
-        const contextPaths = request.admission === 'configuration' && request.configurationPatch
+        const { configurationPatch } = request;
+        const usagePageFollowers = request.admission === 'configuration' && isUsageMainWidgetSurfaceV1(request.ref.surface)
+            ? readUsagePageWidgetFollowBindingsV1(savedInstance.definition) : null;
+        const contextPaths = request.admission === 'configuration' && (configurationPatch || usagePageFollowers)
             ? Object.entries(savedInstance.bindings).flatMap(([path, binding]) => {
                 const field = descriptor.inputs?.fields.find(field => field.path === path);
-                return binding.kind === 'context' && field && field.contextMode !== 'own'
-                    && !request.configurationPatch!.paths.includes(path)
-                    && sameStrictJsonValue(binding, request.configurationPatch!.previousBindings[path])
-                    && providedContext[binding.slot] === undefined ? [path] : [];
+                if (binding.kind !== 'context' || !field || field.contextMode === 'own' || providedContext[binding.slot] !== undefined) return [];
+                if (configurationPatch) {
+                    return !configurationPatch.paths.includes(path) && sameStrictJsonValue(binding, configurationPatch.previousBindings[path])
+                        ? [path] : [];
+                }
+                // A saved Usage page follower names a declared slot. The mounted page supplies
+                // its value on execution; an independent add or validation has no current page.
+                return sameStrictJsonValue(binding, usagePageFollowers?.[path]) ? [path] : [];
             }) : [];
         const deferredPaths = [...viewerPaths, ...contextPaths];
         const declarations = descriptor.connectedAccountPurposeBindings ?? [];

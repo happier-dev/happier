@@ -29,6 +29,7 @@ import { getWidgetSharedInputIssuesV1 } from './widgetSharedInputAdmissionV1.js'
 import {
   WidgetInstanceV1Schema,
   WidgetSurfaceRefV1Schema,
+  resetWidgetInputBindingsV1,
   type WidgetInstanceV1,
   type WidgetSurfaceRefV1,
 } from './widgetInstanceV1.js';
@@ -46,6 +47,8 @@ import {
 import { projectOverviewDefaultPlacementsV1 } from './builtinWidgetDescriptorV1.js';
 import {
   createUsageWidgetPresets,
+  isUsageMainWidgetSurfaceV1,
+  readUsagePageWidgetFollowBindingsV1,
   type UsageWidgetPresetId,
 } from './usageWidgetPresetsV1.js';
 import { createPublicProfileWidgetAreaPresetsV1 } from './publicProfileWidgetPresetsV1.js';
@@ -204,11 +207,7 @@ export function resolveHostWidgetAreaPresetsV1(
   usageNames?: Readonly<Record<UsageWidgetPresetId, string>>,
 ): readonly WidgetAreaPresetV1[] | undefined {
   if (surface.owner.kind === 'project') return [projectOverviewPresetV1()];
-  if (
-    surface.owner.kind === 'corePage' &&
-    surface.owner.pageId === 'usage' &&
-    surface.owner.area === 'main'
-  )
+  if (isUsageMainWidgetSurfaceV1(surface))
     return createUsageWidgetPresets(usageNames);
   if (
     surface.owner.kind === 'corePage' &&
@@ -442,6 +441,15 @@ export function applyWidgetAreaLayoutIntentV1(
   if ('expectedInstance' in draft) delete draft.expectedInstance;
   if ('expectedPresentation' in draft) delete draft.expectedPresentation;
   let operation = WidgetLayoutItemIntentV1Schema.parse(draft);
+  if (operation.kind === 'inputs_reset' && isUsageMainWidgetSurfaceV1(layout.surface)) {
+    const { instanceId, paths } = operation;
+    const item = findWidgetLayoutItemV1(layout.items, instanceId);
+    const defaults = item?.kind === 'widget' ? readUsagePageWidgetFollowBindingsV1(item.instance.definition) : null;
+    if (item?.kind === 'widget' && defaults) {
+      const restored = paths ? Object.fromEntries(paths.filter(path => Object.hasOwn(defaults, path)).map(path => [path, defaults[path]])) : defaults;
+      operation = { kind: 'inputs', instanceId, bindings: { ...resetWidgetInputBindingsV1(item.instance.bindings, paths), ...restored } };
+    }
+  }
   if (operation.kind === 'add') {
     const size = normalizeWidgetSizeForSurfaceV1(
       layout.surface.owner.kind,

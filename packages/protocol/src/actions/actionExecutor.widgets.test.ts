@@ -19,7 +19,8 @@ import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { flattenWidgetLayoutWidgetsV1 } from '../widgets/widgetLayoutItemV1.js';
 import { WidgetInstanceActionOutputSchemasV1 } from '../widgets/actionsV1.js';
 import { readBuiltinWidgetDescriptorV1 } from '../widgets/builtinWidgetDescriptorV1.js';
-import { readUsagePageWidgetFollowBindingsV1 } from '../widgets/usageWidgetPresetsV1.js';
+import { createUsageWidgetPresets, readUsagePageWidgetFollowBindingsV1 } from '../widgets/usageWidgetPresetsV1.js';
+import { readUsagePeriodOptions } from '../inputs/usageQuery.js';
 
 const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' } } as const;
 
@@ -292,6 +293,71 @@ describe('configured widget Actions', () => {
       ok: false, errorCode: 'widget_inputs_invalid', details: { blockingChildId: child.id, status: 'invalid' },
     });
     expect(await readGroup()).toEqual(saved);
+  });
+
+  it.each([false, true])('validates supplied inputs on a stock Overview copy (mounted: %s)', async mounted => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const base = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
+    const fromSurface = { ...base, owner: { ...base.owner, layoutId: 'overview' } } as const;
+    const copy = { ...base, owner: { ...base.owner, layoutId: 'qa-overview-copy' } } as const;
+    const transport = { ...boundary.forAccount(surface.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    const presets = createUsageWidgetPresets();
+    const layouts = createWidgetAreaLayoutArtifactPortV1(transport, { surface: base, presets, isCurrent: () => true });
+    await layouts.create({ layoutId: copy.owner.layoutId, name: 'QA Overview copy', fromSurface });
+    const artifact = createWidgetSurfaceArtifactPortV1(transport, { surface: copy, presets, isCurrent: () => true });
+    const [group] = (await artifact.read()).items;
+    if (group?.kind !== 'group') throw new Error('Expected the stock Overview group');
+    const child = group.children.find(({ instance }) => instance.definition.kind === 'builtin' && instance.definition.id === 'usage_daily')!.instance;
+    const widgetInputs = createWidgetActionInputResolverV1({
+      readDescriptor: async ({ instance }) => readBuiltinWidgetDescriptorV1(instance.definition),
+      readContext: async () => mounted ? { period: [{ relative: '7days' }], agents: [[]], machines: [[]], projects: [[]],
+        sources: [[]], session: [null], costBasis: ['auto'] } : {},
+      readViewerValues: async () => ({ values: {} }),
+      validateValue: async () => ({ status: 'valid' }),
+      resolveOptions: async (field, input) => field.path === 'period' ? readUsagePeriodOptions(input.period) : [],
+    });
+    const executor = createActionExecutor({ widgetAccountScope: () => surface,
+      widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) }, widgetInputs });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const groupRef = { surface: copy, instanceId: group.id };
+    const childRef = { surface: copy, instanceId: child.id };
+    const validPeriod = { kind: 'value', value: { relative: 'today' } } as const;
+    const invalidPeriod = { kind: 'value', value: { relative: 'qa-invalid-period' } } as const;
+    const missingPeriod = { kind: 'context', slot: 'unprovided-period' } as const;
+    const groupEdit = (period: typeof validPeriod | typeof invalidPeriod | typeof missingPeriod) =>
+      executor.execute('widgets.group.inputs.set', { ref: groupRef, bindings: { period } }, context);
+
+    const before = await artifact.read();
+    const updatesBefore = boundary.updates.length;
+    expect(await groupEdit(invalidPeriod)).toMatchObject({ ok: false, errorCode: 'widget_inputs_invalid',
+      details: { blockingChildId: child.id, status: 'invalid' } });
+    expect(await groupEdit(missingPeriod)).toMatchObject({ ok: false, errorCode: 'widget_inputs_invalid',
+      details: { blockingChildId: child.id, status: 'selection_required' } });
+    expect(boundary.updates).toHaveLength(updatesBefore);
+    expect(await artifact.read()).toEqual(before);
+    expect(await groupEdit(validPeriod)).toMatchObject({ ok: true });
+    const [savedGroup] = (await artifact.read()).items;
+    expect(savedGroup?.kind === 'group' && savedGroup.context).toEqual({ period: validPeriod });
+
+    const singleEdit = (period: typeof validPeriod | typeof invalidPeriod | typeof missingPeriod) =>
+      executor.execute('widgets.item.inputs.set', { ref: childRef, bindings: { ...child.bindings, period } }, context);
+    const beforeSingle = await artifact.read();
+    const updatesBeforeSingle = boundary.updates.length;
+    expect(await singleEdit(invalidPeriod)).toMatchObject({ ok: false, errorCode: 'widget_inputs_invalid', details: { status: 'invalid' } });
+    expect(await singleEdit(missingPeriod)).toMatchObject({ ok: false, errorCode: 'widget_inputs_invalid', details: { status: 'selection_required' } });
+    expect(boundary.updates).toHaveLength(updatesBeforeSingle);
+    expect(await artifact.read()).toEqual(beforeSingle);
+    expect(await singleEdit(validPeriod)).toMatchObject({ ok: true });
+    const after = await artifact.read();
+    expect(flattenWidgetLayoutWidgetsV1(after.items).find(item => item.instance.id === child.id)?.instance.bindings.period).toEqual(validPeriod);
+
+    const execution = { ref: childRef, context };
+    const expectedExecution = mounted
+      ? { status: 'ready', input: { period: validPeriod.value, agents: [] } }
+      : { status: 'selection_required', fields: expect.arrayContaining([{ path: 'agents', status: 'selection_required', reasonCode: 'widget_context_missing' }]) };
+    expect(await widgetInputs.resolve({ ...execution, instance: child, groupBindings: { period: validPeriod } })).toMatchObject(expectedExecution);
+    expect(await widgetInputs.resolve({ ...execution, instance: { ...child, bindings: { ...child.bindings, period: validPeriod } } }))
+      .toMatchObject(expectedExecution);
   });
 
   it.each(['group_inputs', 'group_create', 'group_add'] as const)('admits the same group inputs through Home and widget Actions (%s)', async kind => {

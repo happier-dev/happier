@@ -62,4 +62,20 @@ describe('widget layout items', () => {
     const out = applyWidgetAreaLayoutIntentV1(moved, { kind: 'move', instanceId: 'a', groupId: null, toIndex: 1 });
     expect(out.items.find(item => item.kind === 'widget' && item.instance.id === 'a')).toMatchObject({ area: 'aside' });
   });
+  it('restores selected Usage page inputs to following without changing other pins', () => {
+    const usageSurface: WidgetSurfaceRefV1 = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'named' } };
+    const placement: WidgetLayoutWidgetV1 = { ...widget('cost'), instance: {
+      v: 1, id: 'cost', definition: { kind: 'builtin', id: 'usage_cost_facts' }, bindings: {
+        period: { kind: 'value', value: { relative: 'today' } },
+        costBasis: { kind: 'value', value: 'reported' },
+        agents: { kind: 'value', value: ['claude'] },
+      },
+    } };
+    const intent = { kind: 'inputs_reset' as const, instanceId: 'cost', paths: ['period', 'costBasis'] };
+    const reset = (target: WidgetSurfaceRefV1) => applyWidgetAreaLayoutIntentV1({ v: 1, surface: target, items: [placement] }, intent).items[0];
+    expect(reset(usageSurface)).toEqual({ ...placement, instance: { ...placement.instance, bindings: {
+      period: { kind: 'context', slot: 'period' }, costBasis: { kind: 'context', slot: 'costBasis' }, agents: placement.instance.bindings.agents,
+    } } });
+    expect(reset(surface)).toEqual({ ...placement, instance: { ...placement.instance, bindings: { agents: placement.instance.bindings.agents } } });
+  });
 });

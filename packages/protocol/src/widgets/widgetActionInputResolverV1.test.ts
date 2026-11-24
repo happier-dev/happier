@@ -103,6 +103,30 @@ describe('current Widget field options admission', () => {
             instance: { v: 1, id: 'private', definition: { kind: 'builtin', id: 'usage_cost_facts' }, bindings: {} }, context: {} });
         expect(result).toMatchObject({ status: 'denied', fields: [{ reasonCode: 'widget_public_profile_presentation_unavailable' }] });
     });
+    it('can save Usage page followers before the page supplies their runtime values', async () => {
+        const definition = { kind: 'builtin' as const, id: 'usage_cost_facts' };
+        const descriptor = readBuiltinWidgetDescriptorV1(definition)!;
+        const bindings = Object.fromEntries(descriptor.inputs!.fields.map(field => [
+            field.path, { kind: 'context' as const, slot: field.path },
+        ]));
+        const request = {
+            ref: { surface: { serverId: 'home', accountId: 'viewer',
+                owner: { kind: 'corePage' as const, pageId: 'usage', area: 'main', layoutId: 'qa-cost-facts' } },
+            instanceId: 'cost-facts' },
+            instance: { v: 1 as const, id: 'cost-facts', definition, bindings },
+            context: {},
+        };
+        const resolver = createWidgetActionInputResolverV1({
+            readDescriptor: async () => descriptor, readContext: async () => ({}),
+            readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }),
+            resolveOptions: async () => ({ status: 'unavailable', reasonCode: 'inventory_unavailable' }),
+        });
+        expect(await resolver.resolve({ ...request, admission: 'configuration' })).toMatchObject({ status: 'ready' });
+        expect(await resolver.resolve(request)).toMatchObject({ status: 'selection_required' });
+        expect(await resolver.resolve({ ...request, admission: 'configuration',
+            instance: { ...request.instance, bindings: { ...bindings, period: { kind: 'context', slot: 'unknown' } } } }))
+            .toMatchObject({ status: 'selection_required', fields: [{ path: 'period', reasonCode: 'widget_context_missing' }] });
+    });
     it('admits a scoped own-input patch without a mount, retaining runtime and changed-scope refusals', async () => {
         const descriptor = readBuiltinWidgetDescriptorV1({ kind: 'builtin', id: 'usage_period_summary' })!;
         const query = normalizeUsageQuery({ metric: 'cost' });

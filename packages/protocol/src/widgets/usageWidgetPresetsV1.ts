@@ -2,13 +2,27 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import * as z from '../zodRuntimePolicy.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { instantiateWidgetLayoutFragmentGroupV1, type WidgetLayoutFragmentDraftV1, type WidgetLayoutFragmentGroupV1 } from './widgetLayoutFragmentV1.js';
-import { readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
+import { readBuiltinWidgetDescriptorV1, USAGE_BUILTIN_WIDGET_IDS_V1 } from './builtinWidgetDescriptorV1.js';
 import type { WidgetAreaPresetV1 } from './widgetSurfaceArtifactV1.js';
 import { USAGE_QUERY_INPUT_FIELDS, UsageQuerySchema, type UsageQuery } from '../inputs/usageQuery.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import type { UsageAnalyticsBreakdownDimension } from '../usage/usageAnalyticsContracts.js';
 import type { WidgetSizeV1 } from './widgetPresentationV1.js';
 import { proposeWidgetInputDefaultBindingsV1 } from './widgetInputAdmissionV1.js';
+import type { WidgetDefinitionRefV1, WidgetInputBindingsV1, WidgetSurfaceRefV1 } from './widgetInstanceV1.js';
+
+export function isUsageMainWidgetSurfaceV1(surface: WidgetSurfaceRefV1): boolean {
+    const { owner } = surface;
+    return owner.kind === 'corePage' && owner.pageId === 'usage' && owner.area === 'main';
+}
+
+/** A Usage page copy follows the fields declared by its widget, as its stock placement does. */
+export function readUsagePageWidgetFollowBindingsV1(definition: WidgetDefinitionRefV1): WidgetInputBindingsV1 | null {
+    if (definition.kind !== 'builtin' || !USAGE_BUILTIN_WIDGET_IDS_V1.some(id => id === definition.id)) return null;
+    const fields = readBuiltinWidgetDescriptorV1(definition)?.inputs?.fields ?? [];
+    return Object.fromEntries(fields.filter(field => field.contextMode === 'follow')
+        .map(field => [field.path, { kind: 'context' as const, slot: field.path }]));
+}
 
 export const USAGE_WIDGET_PRESET_IDS = ['overview', 'costs', 'work', 'usage', 'plans', 'coach', 'how-you-work', 'sources', 'agents'] as const;
 export type UsageWidgetPresetId = typeof USAGE_WIDGET_PRESET_IDS[number];
@@ -88,8 +102,7 @@ function usageFragment(name: string, arrangement: Arrangement, overrideMetric?: 
             const metric = overrideMetric ?? widget.metric;
             return { kind: 'widget', size: widget.size,
             frameStyle: 'plain', instance: { v: 1, definition: { kind: 'builtin', id: widget.id }, bindings: {
-                ...Object.fromEntries(descriptor.inputs!.fields
-                    .filter(field => field.contextMode === 'follow').map(field => [field.path, { kind: 'context' as const, slot: field.path }])),
+                ...readUsagePageWidgetFollowBindingsV1(descriptor.definition),
                 // Legacy routes open Overview. Their presentation seed must
                 // not replace the independent defaults of other named views.
                 ...Object.fromEntries(descriptor.inputs!.fields.filter(field => field.contextMode === 'own').flatMap(field => {
