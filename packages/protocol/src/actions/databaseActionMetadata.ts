@@ -7,6 +7,8 @@ type Metadata = Pick<PluginActionContributionV2,
     | 'approvalScope' | 'approvalInputCustody' | 'secretInputPaths' | 'operation'> & Readonly<{
         /** Owner-local operand metadata; the plugin declaration projection strips it. */
         automationSubject?: Readonly<{ kind: 'database'; field: 'target' }>;
+        /** Database privilege for a local preference mutation. */
+        databaseAccess?: 'read';
     }>;
 
 const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [] } satisfies Omit<Metadata, 'title'>;
@@ -111,6 +113,11 @@ const databaseActionDeclarations = {
     },
     [database.DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1]: { ...read, title: 'List database findings' },
     [database.DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1]: { ...read, title: 'Read database finding' },
+    [database.DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1]: {
+        ...read, readOnly: false, dangerLevel: 'writesLocal', databaseAccess: 'read', title: 'Dismiss database finding',
+        confirmationWhen: { presentUserUi: false },
+        confirmation: { title: 'Dismiss this database finding?' },
+    },
     [database.DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1]: { ...read, title: 'Prepare database brief' },
     [database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1]: { ...read, title: 'Read database capture status' },
     [database.DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1]: { ...read, title: 'List captured queries' },
@@ -146,9 +153,9 @@ const databaseActionDeclarations = {
 
 function projectPluginMetadata<T extends Record<string, Metadata>>(declarations: T) {
     return Object.fromEntries(Object.entries(declarations).map(([id, declaration]) => {
-        const { automationSubject: _automationSubject, ...metadata } = declaration;
+        const { automationSubject: _automationSubject, databaseAccess: _databaseAccess, ...metadata } = declaration;
         return [id, metadata];
-    })) as { [K in keyof T]: Omit<T[K], 'automationSubject'> };
+    })) as { [K in keyof T]: Omit<T[K], 'automationSubject' | 'databaseAccess'> };
 }
 
 /** The strict plugin declaration contains only its public authoring fields. */
@@ -168,5 +175,7 @@ export function readDatabaseActionAutomationMetadataV1(actionId: string): Readon
 
 /** Admission and execution consume the declaration's canonical input predicate. */
 export function databaseActionOperationClass(actionId: database.DatabaseActionIdV1, input: unknown): 'read' | 'write' {
+    const declaration = databaseActionDeclarations[actionId];
+    if ('databaseAccess' in declaration) return declaration.databaseAccess;
     return pluginActionDeclarationIsReadOnlyForInput(databaseActionMetadata[actionId], input) ? 'read' : 'write';
 }

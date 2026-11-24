@@ -187,10 +187,12 @@ export const DatabaseTargetsListResultV1Schema: ProtocolComposableSchema<ReturnT
     projectZodProtocolSchema(databaseOperations.DatabaseTargetsListResultV1Schema);
 export { DATABASE_INSIGHT_SOURCES_POINT_ID_V1, DATABASE_INSIGHT_SOURCES_POINT_REF_V1, DATABASE_INSIGHT_SOURCE_PROTOCOL_ID_V1, DatabaseFindingBriefBuildResultV1ProtocolSchema, DatabaseFindingObservationV1ProtocolSchema, DatabaseFindingReadInputV1ProtocolSchema, DatabaseFindingReadResultV1ProtocolSchema, DatabaseFindingSourceScopeV1ProtocolSchema, DatabaseFindingsListInputV1ProtocolSchema, DatabaseFindingsListResultV1ProtocolSchema, DatabaseInsightBriefBuildInputV1ProtocolSchema, DatabaseInsightSourceDescriptorV1ProtocolSchema } from './schemas/databaseFindings.js';
 export { DatabaseInsightSourceOperationSchemasV1 } from './schemas/databaseFindings.js';
+export { DatabaseFindingDismissInputV1ProtocolSchema, DatabaseFindingDismissResultV1ProtocolSchema } from './schemas/databaseFindings.js';
 export type {
     DatabaseFindingBaselineV1,
     DatabaseFindingBriefBuildInputV1,
     DatabaseFindingBriefBuildResultV1,
+    DatabaseFindingDismissInputV1,
     DatabaseFindingObservationV1,
     DatabaseFindingReadInputV1,
     DatabaseFindingReadResultV1,

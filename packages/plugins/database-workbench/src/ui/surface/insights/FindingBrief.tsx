@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import {
   DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
@@ -7,6 +8,7 @@ import {
 import {
   DatabaseFindingBriefBuildResultV1Schema,
   type DatabaseFindingBriefBuildResultV1,
+  type DatabaseStatsReadV1,
   type DatabaseTargetV1,
 } from '@happier-dev/plugin-sdk/database';
 import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
@@ -15,23 +17,34 @@ import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui'
 import { Action, Button, ErrorState, Markdown, Row, Stack, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
 import { createDatabaseBriefHandoffControl } from '../../../insights/migration.js';
+import { useWorkbenchInstance } from '../../hooks.js';
 import { statementByKey } from './statements.js';
 
 const buildAction = databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1);
 type Brief = Extract<DatabaseFindingBriefBuildResultV1, { ok: true }>['brief'];
 
-export function FindingBrief({ target, recordKey, sourceSelection }: Readonly<{
-  target: DatabaseTargetV1; recordKey: string; sourceSelection?: PluginTargetedContributionSelectionV1;
+export function FindingBrief({ target, recordKey, sourceSelection, request }: Readonly<{
+  target: DatabaseTargetV1; recordKey: string; sourceSelection?: PluginTargetedContributionSelectionV1; request?: DatabaseStatsReadV1;
 }>) {
   const t = usePluginTranslation();
   const surface = useSurfaceContext();
+  const { client } = useWorkbenchInstance();
   const build = useExecutePluginAction(buildAction);
   const [brief, setBrief] = React.useState<Brief | null>(null);
   const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
   const missing = t('plugins.database.insights.briefUnavailable', 'The finding brief could not be prepared.');
   const prepare = async () => {
     setError(null);
-    const input = sourceSelection ? { target, recordKey, sourceSelection } : { target, recordKey, request: statementByKey(recordKey) };
+    let subscriptionId: string | undefined;
+    try {
+      if (!sourceSelection) subscriptionId = await client.readDemandSubscriptionId?.(target);
+    } catch (cause) {
+      setError({ title: missing, details: isPluginError(cause) ? `${cause.code} (${cause.message})`
+        : cause instanceof Error ? cause.message : undefined });
+      return;
+    }
+    const input = sourceSelection ? { target, recordKey, sourceSelection } : { target, recordKey,
+      request: request ?? statementByKey(recordKey), ...(subscriptionId === undefined ? {} : { subscriptionId }) };
     const result = await build.execute(projectNativeJsonValueForTransport(input));
     if (result.status === 'pending') return;
     if (result.status !== 'success') {

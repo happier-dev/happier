@@ -1875,6 +1875,12 @@ These are ids and enums only. The Environment header projects them as
 `PrincipalRefV1` ids with no display name; clients resolve names through the
 existing private-label readers, and sealed Group labels stay sealed.
 
+The executing Database Workbench daemon audits committed writes with the
+requester, selected target, and available Session identity. It records
+value-free statement shapes or relation and column identities with affected
+row counts. SQL parameters, row values, and result bodies stay out of the
+audit log.
+
 Group names and descriptions bind ciphertext to the immutable Group id with
 `entity: 'team_group'` and their respective `field: 'name'` or `field: 'description'`.
 Both use the human author's persisted Account mode and the same current Team

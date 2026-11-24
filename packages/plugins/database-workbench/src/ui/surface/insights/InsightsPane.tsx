@@ -21,6 +21,7 @@ import {
 import { ActivityView } from './ActivityView.js';
 import { formatMoment } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
+import { NativeFindings } from './NativeFindings.js';
 import { InsightSources, useInsightSources } from './InsightSources.js';
 import {
   projectStatements,
@@ -30,7 +31,7 @@ import {
 import { StatementsView } from './StatementsView.js';
 import { TablesView } from './TablesView.js';
 
-type InsightsTab = 'statements' | 'tables' | 'activity' | 'sources';
+type InsightsTab = 'statements' | 'tables' | 'activity' | 'sources' | 'findings';
 const NO_KEYS: readonly string[] = Object.freeze([]);
 
 /** Statements read once per open; the comparison is the host's device-local last look (R13). */
@@ -157,7 +158,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         title={translate('plugins.database.insights.title', 'Insights')}
         meta={facts}
         actions={
-          tab === 'activity' || tab === 'sources' ? null : (
+          tab === 'activity' || tab === 'sources' || tab === 'findings' ? null : (
             <IconButton
               accessibilityLabel={translate(
                 'plugins.database.refresh',
@@ -173,7 +174,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         value={tab}
         onValueChange={(value) =>
           setTab(
-            value === 'tables' || value === 'activity' || value === 'sources' ? value : 'statements',
+            value === 'tables' || value === 'activity' || value === 'sources' || value === 'findings' ? value : 'statements',
           )
         }
         ariaLabel={translate('plugins.database.insights.title', 'Insights')}
@@ -212,6 +213,9 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
           title={translate('plugins.database.insights.activity', 'Activity')}
         >
           <ActivityView targetKey={props.targetKey} />
+        </Tabs.Item>
+        <Tabs.Item value="findings" title={translate('plugins.database.insights.findings', 'Findings')}>
+          <NativeFindings key={props.targetKey} target={descriptor.target} targetKey={props.targetKey} />
         </Tabs.Item>
         {sources.length > 0 ? <Tabs.Item value="sources"
           title={translate('plugins.database.insights.sources', 'Insight sources')}>

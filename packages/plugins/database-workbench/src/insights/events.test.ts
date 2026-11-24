@@ -3,9 +3,10 @@ import { PluginEventAutomationDeclarationV1Schema, readAutomationEventSubjectKin
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { decideDatabaseAccessV1 } from '@happier-dev/databases';
 import { createPluginTestkit, createTestResourceInvocationContext, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
-import { DATABASE_STATS_READ_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { createDatabaseActions } from '../actions.js';
-import { createDatabaseRuntime } from '../runtime.js';
+import { createDatabaseRuntime, type DatabaseOperationAdmission } from '../runtime.js';
 import { createDatabaseConnectionResourceRuntime } from '../resources.js';
 import { plugin as nativePlugin } from '../manifest.js';
 import { createDatabaseInsightProducers } from './findings.js';
@@ -19,14 +20,15 @@ async function fixture(native: Awaited<ReturnType<typeof createNativeFindingFixt
         secrets: { readSavedSecret: unusedSecret },
         context: { kind: 'surface', mountInstanceKey: 'fixture', launchInput: { operation: 'describe', target } } });
     const producer = held ? await createDatabaseConnectionResourceRuntime({ resolve }).createProducer!(resourceContext) : undefined;
-    const runtime = createDatabaseRuntime({ resolve, async admit({ access }) {
+    const admit: DatabaseOperationAdmission = async ({ access }) => {
         const decision = decideDatabaseAccessV1({ operation: access, requester: 'person', agentAccess: 'none',
             person: { mayWrite: true, editingOff: false } });
         if (!decision.ok) throw new PluginError({ code: decision.refusal });
         return decision;
-    } });
+    };
+    const runtime = createDatabaseRuntime({ resolve, admit });
     const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', actions: createDatabaseActions({
-        ...runtime, ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation }),
+        ...runtime, ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation, admit }),
     }) });
     const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { ...services,
         ...(producer ? { resources: { ...resourceContext.resources, async invokeDemand(input, options) {

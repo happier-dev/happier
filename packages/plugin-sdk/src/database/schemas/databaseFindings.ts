@@ -25,6 +25,7 @@ export const DATABASE_INSIGHT_SOURCES_POINT_REF_V1 = {
 } as const;
 
 const records = z.number().check(z.int(), z.nonnegative());
+const dismissalKey = z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u));
 const recordKey = z.string().check(z.minLength(1));
 const sourceListInput = z.strictObject({ target: DatabaseTargetV1Schema });
 const sourceDetailInput = z.extend(sourceListInput, { recordKey });
@@ -147,7 +148,12 @@ export type DatabaseInsightBriefBuildInputV1 = z.infer<typeof DatabaseInsightBri
 export const DatabaseFindingListEntryV1Schema = z.strictObject({
     recordKey, summary: DatabaseFindingSummaryV1Schema,
     object: z.optional(findingObject),
+    dismissalKey: z.optional(dismissalKey),
 });
+const findingDismissInput = z.strictObject({ target: DatabaseTargetV1Schema, dismissalKey });
+export type DatabaseFindingDismissInputV1 = z.infer<typeof findingDismissInput>;
+export const DatabaseFindingDismissInputV1ProtocolSchema = projectZodProtocolSchema(findingDismissInput);
+export const DatabaseFindingDismissResultV1ProtocolSchema = projectZodProtocolSchema(z.strictObject({ ok: z.literal(true) }));
 export const DatabaseFindingsListResultV1Schema = z.union([
     DatabaseFailureV1Schema,
     z.strictObject({ ok: z.literal(true), observation: DatabaseFindingObservationV1Schema,

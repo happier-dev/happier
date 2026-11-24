@@ -25,6 +25,7 @@ export { DatabaseFilterV1Schema, type DatabaseFilterV1 } from './projections.js'
 export type { DatabaseFindingBaselineV1 } from './projections.js';
 export type { DatabaseFindingBriefBuildInputV1 } from './projections.js';
 export type { DatabaseFindingBriefBuildResultV1 } from './projections.js';
+export type { DatabaseFindingDismissInputV1 } from './projections.js';
 export type { DatabaseFindingObservationV1 } from './projections.js';
 export type { DatabaseFindingReadInputV1 } from './projections.js';
 export type { DatabaseFindingReadResultV1 } from './projections.js';
@@ -107,6 +108,7 @@ export { DatabaseFindingBaselineV1Schema } from './projections.js';
 export { DatabaseFindingBriefBuildInputV1Schema } from './projections.js';
 export { DatabaseFindingBriefBuildResultV1ProtocolSchema } from './projections.js';
 export { DatabaseFindingBriefBuildResultV1Schema } from './projections.js';
+export { DatabaseFindingDismissInputV1ProtocolSchema, DatabaseFindingDismissResultV1ProtocolSchema } from './projections.js';
 export { DatabaseFindingObservationV1ProtocolSchema } from './projections.js';
 export { DatabaseFindingReadInputV1ProtocolSchema } from './projections.js';
 export { DatabaseFindingReadInputV1Schema } from './projections.js';
@@ -283,6 +285,7 @@ export {
     DATABASE_STATS_ENABLE_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1,
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
     DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
     DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,

@@ -83,6 +83,8 @@ export interface WorkbenchClient {
     machineDisplayName?: import('@happier-dev/plugin-sdk/ui').PluginUiHostApi['readMachineDisplayName'];
     targets(input: DatabaseTargetsListInputV1, signal: AbortSignal): Promise<DatabaseTargetsListResultV1 & { looked?: DatabaseTargets['looked'] }>;
     operation(input: Exclude<DatabaseOperationInputV1, DatabaseStatementRunInputV1 | DatabaseStatementExplainInputV1 | DatabaseEditsApplyInputV1>, signal: AbortSignal): Promise<DatabaseOperationResultV1>;
+    /** Let non-operation read Actions use this instance's selected connection. */
+    readDemandSubscriptionId?(target: DatabaseTargetV1, signal?: AbortSignal): Promise<string | undefined>;
     /** Refresh the connection setup facts only when explicitly requested. */
     releaseReadDemand?(target: DatabaseTargetV1): void;
     access(target: DatabaseTargetV1, signal: AbortSignal): Promise<WorkbenchAccess>;

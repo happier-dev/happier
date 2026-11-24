@@ -136,8 +136,16 @@ export function createHostWorkbenchClient(
     // The SDK admitted the result against DatabaseOperationResultV1ProtocolSchema.
     return result as unknown as DatabaseOperationResultV1;
   }
+  async function readDemandSubscriptionId(target: DatabaseTargetV1, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const held = demand(target);
+    const snapshot = await held.ready;
+    signal?.throwIfAborted();
+    return snapshot ? held.subscriptionId() : undefined;
+  }
   return {
     dispose,
+    readDemandSubscriptionId,
     releaseReadDemand(target) {
       const targetKey = workbenchTargetKey(target);
       const held = demands.get(targetKey);
@@ -164,9 +172,7 @@ export function createHostWorkbenchClient(
       return result as unknown as DatabaseTargetsListResultV1;
     },
     async operation(input, signal) {
-      const held = demand(input.target);
-      const snapshot = await held.ready;
-      return executeOperation(input, signal, snapshot ? held.subscriptionId() : undefined);
+      return executeOperation(input, signal, await readDemandSubscriptionId(input.target, signal));
     },
     async access(target, signal) {
       const result = await hostApi.executeAction(

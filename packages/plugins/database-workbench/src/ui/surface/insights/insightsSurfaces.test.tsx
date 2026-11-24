@@ -4,6 +4,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
     DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
@@ -192,6 +193,76 @@ function pageContext() {
 }
 
 describe('Database Insights surfaces', () => {
+  it('loads native findings on demand and reads only the selected detail', async () => {
+    const nativeRead = daemon(statements);
+    const sample = statements();
+    const observation = { v: 1, sourceRef: { pluginId: 'happier.database',
+      localId: databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1) },
+      sourceScope: { machineId: scope.workspace.machineId, serverId: scope.workspace.serverId },
+      evidenceIdentity: 'observation-a', kind: 'statements',
+      observedWindow: { fromMs: sample.observedAtMs, toMs: sample.observedAtMs },
+      coverage: { status: 'complete' }, summary: { records: 2 } };
+    const listId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1);
+    const readId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1);
+    const dismissId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1);
+    const dismissalKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    const list = vi.fn(async (_call: PluginUiTestkitExecuteActionInput) => projectNativeJsonValueForTransport({ ok: true, observation, findings: [
+      { recordKey: 'q-slow', summary: { records: 1, calls: '18420', totalTimeMs: 758904 } },
+      { recordKey: 'q-lines', dismissalKey, summary: { records: 1, calls: '2100000', totalTimeMs: 441000 } },
+    ] }));
+    const dismiss = vi.fn(async (_call: PluginUiTestkitExecuteActionInput) => ({ ok: true }));
+    const detail = vi.fn(async (_call: PluginUiTestkitExecuteActionInput) =>
+      projectNativeJsonValueForTransport({ ok: true, finding: { ...observation, target: descriptor.target,
+        normalizedShape: LINES, summary: { records: 1, calls: '2100000', totalTimeMs: 441000 },
+        verification: { read: statementByKey('q-lines'), basis } } }));
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'native-findings', mountNonce: 'native-findings' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage, subPath: 'insights',
+      surfaceContext: pageContext(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      handlers: { ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath,
+        executeAction: call => call.action === dismissId ? dismiss(call) : call.action === listId ? list(call)
+          : call.action === readId ? detail(call) : nativeRead(call) },
+    });
+    try {
+      await settle();
+      expect(list).not.toHaveBeenCalled();
+      expect(detail).not.toHaveBeenCalled();
+      await page.press(await page.getByRole('tab', { name: 'Findings' }));
+      await settle();
+      expect(list).toHaveBeenCalledTimes(1);
+      expect(detail).not.toHaveBeenCalled();
+      await page.press(await page.getByRole('button', { name: '2,100,000 calls' }));
+      await settle();
+      expect(detail).toHaveBeenCalledTimes(1);
+      expect(detail.mock.calls[0]?.[0].input).toMatchObject({
+        target: descriptor.target, recordKey: 'q-lines', subscriptionId: expect.any(String),
+      });
+      expect(await page.queryByText(LINES)).toBeTruthy();
+      await page.press(await page.getByRole('button', { name: 'Dismiss finding' }));
+      await settle();
+      expect(dismiss.mock.calls.map(([call]) => call.input)).toEqual([{ target: descriptor.target, dismissalKey }]);
+      expect(await page.queryByRole('button', { name: '2,100,000 calls' })).toBeUndefined();
+      expect(await page.getByRole('button', { name: '18,420 calls' })).toBeTruthy();
+      expect(list).toHaveBeenCalledTimes(1);
+      async function chooseEvidence(label: string) {
+        await page.press(await page.getByRole('radio', { name: label }));
+        await settle();
+      }
+      await chooseEvidence('Tables');
+      expect(list.mock.lastCall?.[0].input).toMatchObject({ request: {
+        kind: 'stats.read', group: 'tables', selection: { schema: 'public', page: { offset: 0 } },
+      } });
+      await chooseEvidence('Indexes');
+      expect(list.mock.lastCall?.[0].input).toMatchObject({ request: {
+        kind: 'stats.read', group: 'indexes', selection: { schema: 'public', page: { offset: 0 } },
+      } });
+      expect(list).toHaveBeenCalledTimes(3);
+      expect(detail).toHaveBeenCalledTimes(1);
+    } finally {
+      await page.dispose();
+    }
+  });
   it('reads only the selected insight source on the open database and drops a disabled occurrence', async () => {
     const { pointId, protocol, pluginId } = DATABASE_INSIGHT_SOURCES_POINT_REF_V1;
     const contributorPluginId = 'acme.database-observations';

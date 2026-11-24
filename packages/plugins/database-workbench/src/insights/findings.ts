@@ -14,6 +14,8 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import type { DatabaseActionProducers } from '../actions.js';
+import type { DatabaseOperationAdmission } from '../runtime.js';
+import { workbenchTargetKey } from '../targetIdentity.js';
 import { buildDatabaseFindingBriefV1 } from './brief.js';
 import { selectDatabaseStatement } from './presentation.js';
 
@@ -23,6 +25,12 @@ type FindingRow = Readonly<{ recordKey: string; summary: Summary;
     object?: DatabaseFindingV1['object'];
     normalizedShape?: string; omittedTextReason?: string; activity?: DatabaseFindingV1['activity'] }>;
 type StatsResult = Extract<DatabaseOperationResultV1, { operation: 'stats.read' }> | Extract<DatabaseOperationResultV1, { ok: false }>;
+
+function dismissalStorageKey(accountId: string, target: DatabaseFindingsListInputV1['target'], evidenceKey: string): string {
+    return `finding-dismissal/${computeCanonicalDomainSeparatedDigest('happier.database.finding-dismissal.v1', [
+        accountId, workbenchTargetKey(target), evidenceKey,
+    ])}`;
+}
 
 type AdmittedSource = {
     contributor: TargetedContributionAdmittedEntry['contributor'];
@@ -156,7 +164,8 @@ export function projectDatabaseFindingObservation(stats: AvailableStats, target:
  * This producer only projects completed evidence and rereads selected keys. */
 export function createDatabaseInsightProducers(options: Readonly<{
     executeOperation: NonNullable<DatabaseActionProducers['executeOperation']>;
-}>): Required<Pick<DatabaseActionProducers, 'listFindings' | 'readFinding' | 'buildInsightBrief'>> {
+    admit: DatabaseOperationAdmission;
+}>): Required<Pick<DatabaseActionProducers, 'listFindings' | 'readFinding' | 'dismissFinding' | 'buildInsightBrief'>> {
     async function read(input: DatabaseFindingsListInputV1, context: PluginInvocationContext) {
         // The existing operation owner pairs this operand with its stats result;
         // its broader union does not express the input/output correspondence.
@@ -189,11 +198,29 @@ export function createDatabaseInsightProducers(options: Readonly<{
         async listFindings(input, context) {
             const result = await read(input, context);
             if (!result.ok) return result;
-            return { ok: true, observation: result.observation,
-                findings: result.rows.map(({ recordKey, summary, object }) => ({ recordKey, summary,
-                    ...(object === undefined ? {} : { object }) })) };
+            const accountId = context.requesterAccount?.accountId;
+            const projected = await Promise.all(result.rows.map(async row => {
+                const { recordKey, summary, object } = row;
+                const entry = { recordKey, summary, ...(object === undefined ? {} : { object }) };
+                if (!accountId) return entry;
+                // Observation events have distinct identities even when the visible evidence is equal.
+                const dismissalKey = computeCanonicalDomainSeparatedDigest('happier.database.finding-content.v1', [
+                    result.stats.intervalBasis.bindingKey, result.stats.group, createCanonicalJsonSigningInput(row),
+                ]);
+                const key = dismissalStorageKey(accountId, input.target, dismissalKey);
+                const dismissed = await context.services.storage.daemon.get(key, { signal: context.signal });
+                return dismissed === true ? null : { ...entry, dismissalKey };
+            }));
+            return { ok: true, observation: result.observation, findings: projected.filter(entry => entry !== null) };
         },
         readFinding,
+        async dismissFinding({ target, dismissalKey }, context) {
+            const accountId = context.requesterAccount?.accountId;
+            if (!accountId) throw new PluginError({ code: 'plugin_service_unavailable' });
+            await options.admit({ input: { operation: 'describe', target }, context, access: 'read' });
+            await context.services.storage.daemon.set(dismissalStorageKey(accountId, target, dismissalKey), true, { signal: context.signal });
+            return { ok: true };
+        },
         async buildInsightBrief(input, context) {
             if ('task' in input) return { ok: true, brief: buildDatabaseFindingBriefV1(input.task) };
             if ('sourceSelection' in input) {

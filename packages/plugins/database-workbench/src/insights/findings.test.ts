@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, type JsonValue } from '@happier-dev/plugin-sdk';
+import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import {
     DatabaseFindingsListResultV1Schema,
@@ -8,6 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import {
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+    DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
@@ -17,12 +19,55 @@ import { createDatabaseInsightProducers } from './findings.js';
 import { createNativeFindingFixture, target, invocation } from './nativeFixture.testkit.js';
 
 describe('selected native finding identity', () => {
+    it('retains only an explicit dismissal across separate samples and isolates the requesting Account', async () => {
+        const native = await createNativeFindingFixture();
+        const entries = new Map<string, JsonValue>();
+        const storage: StorageScopeService = {
+            async get<T extends JsonValue = JsonValue>(key: string) { return (entries.get(key) ?? null) as T | null; },
+            async set(key, value) { entries.set(key, value); },
+            async delete(key) { entries.delete(key); },
+            async list() { return { items: [...entries.keys()].map(key => ({ key })) }; },
+            consistency() { return { kind: 'authoritativeSerializable' }; },
+            async transaction(run) { return run(storage); },
+        };
+        const producers = createDatabaseInsightProducers({ async executeOperation(input) {
+            const { connection } = await native.resolve();
+            try { return await connection.execute(input); } finally { await connection.close(); }
+        }, async admit() {} });
+        const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', actions: createDatabaseActions(producers) });
+        const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { storage: {
+            daemon: { ...storage, async database(): Promise<never> { throw new Error('No daemon database requested'); } },
+            daemonSession: storage, ephemeral: storage,
+        } } });
+        const alice = { ...invocation, requesterAccount: { accountId: 'alice' }, authority: 'present_user' as const };
+        const bob = { ...alice, requesterAccount: { accountId: 'bob' } };
+        const input = { target, request: { kind: 'stats.read', group: 'tables', selection: { schema: 'main', page: { rows: 20 } } } };
+        const listId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1);
+        const dismissId = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1);
+        async function list(caller: typeof alice) {
+            const result = DatabaseFindingsListResultV1Schema.parse(await kit.invokeAction(listId, input, caller));
+            if (!result.ok) throw new Error(result.code);
+            return result.findings;
+        }
+        try {
+            const first = await list(alice);
+            expect(first).toHaveLength(2);
+            expect(entries.size).toBe(0);
+            expect(first[0]).toMatchObject({ dismissalKey: expect.any(String) });
+            await expect(kit.invokeAction(dismissId, { target, dismissalKey: first[0]!.dismissalKey! }, alice))
+                .resolves.toEqual({ ok: true });
+            expect(await list(alice)).toEqual(first.slice(1));
+            expect(await list(bob)).toMatchObject(first.map(({ recordKey }) => ({ recordKey })));
+            expect([...entries.values()]).toEqual([true]);
+        } finally { await kit.dispose(); await native.dispose(); }
+    });
+
     it.each(['tables', 'indexes'] as const)('retains selected %s identity through Action results and brief evidence', async group => {
         const native = await createNativeFindingFixture();
         const producers = createDatabaseInsightProducers({ async executeOperation(input) {
             const { connection } = await native.resolve();
             try { return await connection.execute(input); } finally { await connection.close(); }
-        } });
+        }, async admit() {} });
         const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', actions: createDatabaseActions(producers) });
         const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin });
         try {

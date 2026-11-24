@@ -212,6 +212,15 @@ function UnusedIndexes(props: Readonly<{ rows: readonly IndexRow[] }>) {
 
 /** Table and index health for one schema: catalog facts read on open, no time window. */
 export function TablesView(props: Readonly<{ targetKey: string; onOpenTable?: (relation: DatabaseRelationV1) => void }>) {
+  return <InsightsSchemaSelection targetKey={props.targetKey}>
+    {schema => <SchemaHealth targetKey={props.targetKey} schema={schema}
+      {...(props.onOpenTable ? { onOpenTable: props.onOpenTable } : {})} />}
+  </InsightsSchemaSelection>;
+}
+
+export function InsightsSchemaSelection(props: Readonly<{
+  targetKey: string; children: (schema: string) => React.ReactNode;
+}>) {
   const translate = usePluginTranslation();
   const relations = useDatabaseRelations(props.targetKey);
   const [chosen, setChosen] = React.useState<string | null>(null);
@@ -245,20 +254,19 @@ export function TablesView(props: Readonly<{ targetKey: string; onOpenTable?: (r
           onChange={(value) => { if (typeof value === 'string') setChosen(value); }}
         />
       ) : null}
-      {schema ? (
-        <SchemaHealth targetKey={props.targetKey} schema={schema} {...(props.onOpenTable ? { onOpenTable: props.onOpenTable } : {})} />
-      ) : null}
+      {schema ? props.children(schema) : null}
     </Stack>
   );
+}
+
+export function insightsSchemaStatsSelection(schema: string) {
+  return { schema, page: { rows: WORKBENCH_DISPLAY_PAGE_ROWS, offset: 0 } };
 }
 
 function SchemaHealth(props: Readonly<{ targetKey: string; schema: string; onOpenTable?: (relation: DatabaseRelationV1) => void }>) {
   const translate = usePluginTranslation();
   const selection = React.useMemo(
-    () => ({
-      schema: props.schema,
-      page: { rows: WORKBENCH_DISPLAY_PAGE_ROWS, offset: 0 },
-    }),
+    () => insightsSchemaStatsSelection(props.schema),
     [props.schema],
   );
   const tables = useDatabaseInsights(props.targetKey, {

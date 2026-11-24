@@ -20,6 +20,7 @@ export type DatabaseActionProducers = Readonly<{
         => databaseAbi.DatabaseFindingsListResultV1 | Promise<databaseAbi.DatabaseFindingsListResultV1>;
     readFinding?: (input: databaseAbi.DatabaseFindingReadInputV1, context: PluginInvocationContext)
         => databaseAbi.DatabaseFindingReadResultV1 | Promise<databaseAbi.DatabaseFindingReadResultV1>;
+    dismissFinding?: (input: databaseAbi.DatabaseFindingDismissInputV1, context: PluginInvocationContext) => Promise<{ ok: true }>;
     buildInsightBrief?: (input: databaseAbi.DatabaseInsightBriefBuildInputV1, context: PluginInvocationContext)
         => databaseAbi.DatabaseFindingBriefBuildResultV1 | Promise<databaseAbi.DatabaseFindingBriefBuildResultV1>;
     readAccess?: (input: database.DatabaseAccessReadInputV1, context: PluginInvocationContext)
@@ -138,6 +139,17 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             resultSchema: databaseAbi.DatabaseFindingReadResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
                 await readFinding(input as databaseAbi.DatabaseFindingReadInputV1, context)),
+        };
+    }
+    const dismissFinding = producers.dismissFinding;
+    if (dismissFinding) {
+        const actionId = database.DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1;
+        actions[databaseActionLocalIdV1(actionId)] = {
+            ...common, ...databaseActionMetadata[actionId],
+            inputSchema: databaseAbi.DatabaseFindingDismissInputV1ProtocolSchema,
+            resultSchema: databaseAbi.DatabaseFindingDismissResultV1ProtocolSchema,
+            run: async (input: JsonValue, context: PluginInvocationContext) =>
+                dismissFinding(input as databaseAbi.DatabaseFindingDismissInputV1, context),
         };
     }
     const buildInsightBrief = producers.buildInsightBrief;

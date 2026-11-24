@@ -5,7 +5,7 @@ import { createDatabaseActions } from './actions.js';
 import { createManualDatabaseTargets } from './manualTargets.js';
 import { createWorktreeDatabaseTargets } from './worktreeTargets.js';
 import { createDatabaseConnectionResourceRuntime, DATABASE_CONNECTION_RESOURCE_ID_V1 } from './resources.js';
-import { createDatabaseRuntime } from './runtime.js';
+import { createDatabaseRuntime, type DatabaseOperationAdmission } from './runtime.js';
 import { createDatabaseInsightProducers } from './insights/findings.js';
 import { createDatabaseWorkbenchPlacements } from './ui/placements.js';
 import { openWorkbenchActions } from './ui/surface/openWorkbench.js';
@@ -37,6 +37,13 @@ function deploymentTargets(context: Pick<PluginInvocationContext['services'], 'd
     return service;
 }
 
+const admitDatabaseOperation: DatabaseOperationAdmission = async ({ input, context, access }) => {
+    if (isDeploymentTarget(input.target)) return deploymentTargets(context.services).admit(input, access);
+    if (input.target.kind === 'worktree') return worktreeTargets.admit({ input, access, ...worktreeRequest(context) });
+    return manualTargets(context).admit({ target: input.target, access, requester: resolveDatabaseRequesterKindV1(context),
+        signal: context.signal });
+};
+
 const runtime = createDatabaseRuntime({
     async listTargets(input, context) {
         if (input.scope.kind === 'environment') return deploymentTargets(context.services).listTargets(input);
@@ -50,12 +57,7 @@ const runtime = createDatabaseRuntime({
         return manualTargets(context).resolve({ input, access, requester: resolveDatabaseRequesterKindV1(context),
             secrets: context.services.secrets, signal: context.signal });
     },
-    async admit({ input, context, access }) {
-        if (isDeploymentTarget(input.target)) return deploymentTargets(context.services).admit(input, access);
-        if (input.target.kind === 'worktree') return worktreeTargets.admit({ input, access, ...worktreeRequest(context) });
-        return manualTargets(context).admit({ target: input.target, access, requester: resolveDatabaseRequesterKindV1(context),
-            signal: context.signal });
-    },
+    admit: admitDatabaseOperation,
 });
 
 function isDeploymentTarget(target: DatabaseTargetV1): boolean {
@@ -104,7 +106,7 @@ export const plugin = definePlugin({
     events: { [DATABASE_FINDING_EVENT_REF.localId]: databaseFindingEvent },
     actions: { ...createDatabaseActions({
         ...runtime,
-        ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation }),
+        ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation, admit: admitDatabaseOperation }),
         connectTarget(input, context) {
             return manualTargets(context).connect({ scope: input.scope, savedSecretId: input.savedSecretRef,
                 label: input.label, agentAccess: 'read', secrets: context.services.secrets, signal: context.signal });
