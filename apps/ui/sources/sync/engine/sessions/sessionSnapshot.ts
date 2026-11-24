@@ -1985,17 +1985,21 @@ export async function fetchAndApplySessions(params: {
     });
     // Descriptor demand changes no opened document, tuple, or publication clock.
     if (observedSessions.length) params.applySessions(observedSessions, 'projection');
-    type PendingQueryRow = Readonly<{
-        renderable: SessionListRenderableSession;
-        row?: SessionListRow;
-        previous?: ReturnType<CurrentSessionListRenderableLookup>;
-    }>;
-    const pendingQueryRows = isQuerySource && params.getCurrentSessionListRenderable
-        ? new Map<string, PendingQueryRow>()
+    const queryDisplayBases = isQuerySource && params.getCurrentSessionListRenderable
+        ? new Map<string, Readonly<{
+            renderable: SessionListRenderableSession;
+            previous: ReturnType<CurrentSessionListRenderableLookup>;
+        }>>()
         : undefined;
-    const buildPageRow = (row: SessionListRow, previous: ReturnType<CurrentSessionListRenderableLookup>) =>
-        buildRenderableFromRowAndCache(row, credentials, accountCurrentness, cachedSessionListEntries[row.id],
+    const readPageRow = (row: SessionListRow) => {
+        const previous = params.getCurrentSessionListRenderable?.(row.id);
+        const staged = queryDisplayBases?.get(row.id);
+        if (staged && staged.previous === previous) return staged.renderable;
+        const renderable = buildRenderableFromRowAndCache(row, credentials, accountCurrentness, cachedSessionListEntries[row.id],
             params.getExistingSession?.(row.id), previous, admissionScope);
+        queryDisplayBases?.set(row.id, { renderable, previous });
+        return renderable;
+    };
     const publishRenderablePage = (renderables: SessionListRenderableSession[]) => {
         appliedRenderableCount = renderables.length;
         const staleMetadataPreservedRows = countStaleMetadataPreservedRows(
@@ -2021,31 +2025,26 @@ export async function fetchAndApplySessions(params: {
             serverIdPresent: typeof params.serverId === 'string' && params.serverId.trim().length > 0 ? 1 : 0,
         });
     };
-    if (shouldApplyRenderables) {
-        const renderables = syncPerformanceTelemetry.measure(
-            'sync.sessions.snapshot.renderableBuild',
-            {
-                sessions: sessions.length,
-                cachedEntries: Object.keys(cachedSessionListEntries).length,
-                retainedCachedSessions: retainedCachedSessionIds.length,
-                requiredRows: requiredSnapshotRows,
-                backgroundRows: backgroundSnapshotRows,
-            },
-            () => [
-                ...sessions.map(row => {
-                    const previous = params.getCurrentSessionListRenderable?.(row.id);
-                    const renderable = buildPageRow(row, previous);
-                    pendingQueryRows?.set(row.id, { renderable, row, previous });
-                    return renderable;
-                }),
-                ...retainedCachedSessionIds.map(sessionId => {
-                    const renderable = buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!);
-                    pendingQueryRows?.set(sessionId, { renderable });
-                    return renderable;
-                }),
-            ],
-        );
-        if (!pendingQueryRows) publishRenderablePage(renderables);
+    const buildRenderablePage = (
+        pageRows: SessionListRow[],
+        cachedIds: string[],
+        readRenderable: (row: SessionListRow) => SessionListRenderableSession,
+    ) => syncPerformanceTelemetry.measure(
+        'sync.sessions.snapshot.renderableBuild',
+        {
+            sessions: pageRows.length,
+            cachedEntries: Object.keys(cachedSessionListEntries).length,
+            retainedCachedSessions: cachedIds.length,
+            requiredRows: requiredSnapshotRows,
+            backgroundRows: backgroundSnapshotRows,
+        },
+        () => [
+            ...pageRows.map(readRenderable),
+            ...cachedIds.map(id => buildRenderableFromCachedEntry(cachedSessionListEntries[id]!)),
+        ],
+    );
+    if (shouldApplyRenderables && !queryDisplayBases) {
+        publishRenderablePage(buildRenderablePage(sessions, retainedCachedSessionIds, readPageRow));
     }
 
     if (!shouldContinue()) {
@@ -2069,8 +2068,9 @@ export async function fetchAndApplySessions(params: {
     // Gather before awaiting: compact omissions never enter the full-document opener.
     // The transport owner chunks at the real body boundary and shares pending reads.
     const openedDisplayRows = new Map<string, SessionListRenderableSession>();
-    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? pendingQueryRows?.get(id)?.renderable
-        ?? params.getCurrentSessionListRenderable?.(id);
+    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? params.getCurrentSessionListRenderable?.(id);
+    const readInlineDisplayBase = (row: SessionListRow) =>
+        queryDisplayBases ? readPageRow(row) : readCurrentDisplay(row.id);
     const encryptionScope: EncryptionScopeInput = typeof params.serverId === 'string' && params.serverId.trim().length > 0
         ? { serverId: params.serverId.trim() } : {};
     let capturedEncryptionGeneration = encryption?.getCurrentEncryptionGenerationScope?.(encryptionScope) ?? null;
@@ -2085,7 +2085,7 @@ export async function fetchAndApplySessions(params: {
         if (!shouldApplyRenderables || !isCompactSessionListRow(row) || !isSessionCurrent(row.id)
             || row.displayProjectionV1 == null
             || !needsWarmHydration({ row, cachedEntry: cachedSessionListEntries[row.id],
-                existingSession: params.getExistingSession?.(row.id), currentRenderable: readCurrentDisplay(row.id), admissionScope })) return [];
+                existingSession: params.getExistingSession?.(row.id), currentRenderable: readInlineDisplayBase(row), admissionScope })) return [];
         const admitted = validateSessionDisplayProjectionV1({ projection: row.displayProjectionV1,
             metadataVersion: row.metadataVersion, metadataLayoutVersion: row.metadataLayoutVersion,
             sessionMode: row.encryptionMode === 'plain' ? 'plain' : 'e2ee', accountMode: accountCurrentness?.mode });
@@ -2111,7 +2111,7 @@ export async function fetchAndApplySessions(params: {
         if (!displayDemanded) {
             if (!owner?.ok) continue;
             const descriptor = documentAdmission(row, admissionScope);
-            const incumbent = readCurrentDisplay(row.id);
+            const incumbent = readInlineDisplayBase(row);
             const previous = sameDocumentAdmission(incumbent?.[SESSION_LIST_DOCUMENT_ADMISSION], descriptor) ? incumbent : undefined;
             if (previous && !classifySessionTupleApplyCurrentness(previous, row).metadataCurrent) continue;
             const access = normalizeSessionAccessProjection(row, { allowLegacy: true });
@@ -2137,7 +2137,7 @@ export async function fetchAndApplySessions(params: {
             continue;
         }
         const descriptor = documentAdmission(row, admissionScope);
-        const incumbent = readCurrentDisplay(row.id);
+        const incumbent = readInlineDisplayBase(row);
         const previous = sameDocumentAdmission(incumbent?.[SESSION_LIST_DOCUMENT_ADMISSION], descriptor) ? incumbent : undefined;
         if (previous && !classifySessionTupleApplyCurrentness(previous, row).metadataCurrent) continue;
         const previousAdmission = previous?.[SESSION_LIST_DOCUMENT_ADMISSION];
@@ -2156,21 +2156,20 @@ export async function fetchAndApplySessions(params: {
         openedDisplayRows.set(row.id, buildSessionListRenderableFromSession(source, previous ?? undefined, undefined, undefined,
             { shared: shared.display, ...(owner?.ok ? { owner: owner.display } : {}) }));
     }
-    if (shouldApplyRenderables && pendingQueryRows) {
+    if (shouldApplyRenderables && queryDisplayBases) {
         if (!isDataKeyHydrationCurrent()) return buildFetchResult();
-        const renderables: SessionListRenderableSession[] = [];
-        for (const [id, pending] of pendingQueryRows) {
-            if (!isSessionCurrent(id)) continue;
-            const current = params.getCurrentSessionListRenderable?.(id);
-            // Rebuild only rows whose admitted content changed while the query opened its display keys.
-            const renderable = pending.row && current !== pending.previous
-                ? buildPageRow(pending.row, current)
-                : pending.renderable;
-            const opened = openedDisplayRows.get(id);
-            renderables.push(opened ? applySessionListRenderablePatch(renderable, opened) : renderable);
-        }
-        // Compatibility reads use the admitted store rows after the one query publication.
-        pendingQueryRows.clear();
+        // Only inline displays need a base before this point. Build the remaining rows
+        // against the live store once, after any overlapping reads have been admitted.
+        const renderables = buildRenderablePage(
+            sessions.filter(row => isSessionCurrent(row.id)),
+            retainedCachedSessionIds.filter(isSessionCurrent),
+            (row) => {
+                const base = readPageRow(row);
+                const opened = openedDisplayRows.get(row.id);
+                return opened ? applySessionListRenderablePatch(base, opened) : base;
+            },
+        );
+        queryDisplayBases.clear();
         openedDisplayRows.clear();
         publishRenderablePage(renderables);
     }
