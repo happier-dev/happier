@@ -2511,6 +2511,11 @@ owns declaration defaults, caller cancellation and process-service availability.
 
 ## Managed service custody (0.3 development)
 
+Daemon stop and self-restart retire daemon-owned Provider gateways through the
+managed-service owner. Shutdown joins gateway retirement within its existing
+budget even when independent Project or plugin cleanup fails. The successor
+starts its own Provider gateway when an admitted caller needs one.
+
 The managed CLIProxyAPI companion uses the managed process supervisor's stdin
 pipe as its starter lifeline. When the starter exits, the pipe closes and the
 companion uses its signal shutdown path to close the HTTP listener and exit

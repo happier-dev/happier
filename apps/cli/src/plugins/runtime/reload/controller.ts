@@ -537,7 +537,7 @@ export function createPluginReloadController(params?: Readonly<{
     ): Promise<void> {
         let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
         pendingDisposal.add(registry);
-        const disposePromise = Promise.all([registry.dispose({
+        const disposePromise = registry.dispose({
             ...(timeoutMs === null ? {} : { timeoutMs }),
             onError: (event) => {
                 logger.warn('[PLUGIN RUNTIME] Plugin cleanup failed during daemon shutdown', {
@@ -546,7 +546,7 @@ export function createPluginReloadController(params?: Readonly<{
                     error: projectPluginFailureText(event.error),
                 });
             },
-        }), ...(projectRetirement ? [projectRetirement] : [])]).then(
+        }).finally(async () => await projectRetirement).then(
             () => {
                 pendingDisposal.delete(registry);
                 return 'disposed' as const;
@@ -1047,15 +1047,19 @@ export function createPluginReloadController(params?: Readonly<{
             if (shutdownPromise) return await shutdownPromise;
             shutdownPromise = (async () => {
                 if (!shutdownStarted && projectManagedServicesOwner) {
-                    shutdownProjectRetirement = Promise.all([
+                    shutdownProjectRetirement = Promise.allSettled([
                         projectManagedServicesOwner.retireProjectServices(),
                         projectManagedServicesOwner.retireSharedProviderServices(),
-                    ]).then(() => undefined, (error: unknown) => {
-                        // Preserve this separate owner's existing best-effort
-                        // shutdown semantics; it is not registry child custody.
-                        logger.warn('[PLUGIN RUNTIME] Project service retirement failed during daemon shutdown', {
-                            error: projectPluginFailureText(error),
-                        });
+                    ]).then(results => {
+                        // Independent cleanup failures must still leave the
+                        // other service owner time to settle within shutdown.
+                        for (const result of results) {
+                            if (result.status === 'rejected') {
+                                logger.warn('[PLUGIN RUNTIME] Retained service retirement failed during daemon shutdown', {
+                                    error: projectPluginFailureText(result.reason),
+                                });
+                            }
+                        }
                     });
                 }
                 shutdownStarted = true;

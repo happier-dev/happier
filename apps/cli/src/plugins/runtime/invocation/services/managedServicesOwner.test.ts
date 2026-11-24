@@ -123,6 +123,9 @@ import { associateSupervisedPluginProcessHandleForHost, readSupervisedPluginProc
 import * as processTreeBoundary from '@/processes/terminate/terminateProcessTree';
 import { waitForProcessExit } from '@/testkit/process/spawn';
 import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory } from './factory';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { createSharedManagedProviderSessionAccess, createSharedManagedProviderSessionStart } from '@/daemon/startup/sharedManagedProviderSessionAccess';
 import { listHappierProcessRoots } from '@/daemon/processes/roots/listHappierProcessRoots';
@@ -284,6 +287,85 @@ describe('managed service requester process projection', () => {
 });
 
 describe('shared managed Provider physical Exec custody', () => {
+    it('leaves no proxy after two daemon replacements and waits for the final proxy despite a Project stop failure', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-provider-daemon-shutdown-'));
+        const liveProxies = new Set<number>();
+        const proxyStopping = deferred<void>();
+        const finishProxyStop = deferred<void>();
+        const projectStopAttempted = deferred<void>();
+        let controller: ReturnType<typeof createPluginReloadController> | undefined;
+        let retainedOwner: ReturnType<typeof createManagedServicesOwner> | undefined;
+        try {
+            for (const generation of [1, 2, 3]) {
+                controller = createPluginReloadController();
+                const registry = await resolveExecutablePluginRuntimeRegistry({
+                    contributes: createResolvedContributionRegistry({}), pluginIds: [], happyHomeDir: directory,
+                });
+                const lease = await controller.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () => registry });
+                await lease.release();
+                const owner = registry.retainProjectManagedServicesOwner!(undefined, () => true);
+                retainedOwner = owner;
+                const pid = 4_500 + generation;
+                const proxy = createLifecycleProcess(pid, async () => {
+                    if (generation === 3) {
+                        proxyStopping.resolve();
+                        await finishProxyStop.promise;
+                    }
+                    liveProxies.delete(pid);
+                });
+                const processBoundary = createLifecycleExec([proxy]);
+                const service = await owner.bindScope(
+                    lifecycleScope({ occurrenceId: 'provider-occurrence', operationId: 'broker-operation' }),
+                    processBoundary,
+                    {
+                        managedProvider: { realm: 'managedProviderStart', providerLocalId: 'gateway', isCurrent: () => true,
+                            isPhysicalOccurrenceCurrent: () => true, sharedGateway: { homeId: 'home', accountId: 'account',
+                                connectionId: 'connection', machineId: 'machine', consumerId: 'broker' } },
+                        requestAuth: { realm: 'managedProviderStart', capabilityPath: join(directory, 'broker.capability'),
+                            isCurrent: () => true, ...gatewayRequestAuthUses() },
+                    },
+                ).supervise({
+                    ...lifecycleSpec({ id: 'daemon-owned-proxy' }),
+                    requestAuth: { kind: 'connectedAccountConsumerAccessPath', injectEnvironmentKey: 'CONSUMER_ACCESS_PATH' },
+                    clientAccess: { kind: 'hostBearer', injectEnvironmentKey: 'MANAGEMENT_TOKEN', headerName: 'authorization', scheme: 'Bearer' },
+                });
+                liveProxies.add(pid);
+                expect(service.snapshot().state).toBe('healthy');
+                expect([...liveProxies]).toEqual([pid]);
+                if (generation === 3) {
+                    const project = createProjectLifecycleInput();
+                    let projectRunning = true;
+                    await owner.superviseProject({ ...project, processSpec: { mode: { kind: 'native', builtinLifecycle: {
+                        inspect: async () => ({ phase: projectRunning ? 'running' : 'stopped', readiness: 'ready', endpoint: null }),
+                        stop: async () => {
+                            if (projectRunning) {
+                                projectRunning = false;
+                                projectStopAttempted.resolve();
+                                throw new Error('Native Project stop failed');
+                            }
+                            return { status: 'stopped' };
+                        },
+                    } } } });
+                    let proxyLiveAtShutdown: boolean | undefined;
+                    const shutdown = controller.shutdown().then(() => { proxyLiveAtShutdown = liveProxies.has(pid); });
+                    await Promise.all([proxyStopping.promise, projectStopAttempted.promise]);
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    finishProxyStop.resolve();
+                    await shutdown;
+                    expect(proxyLiveAtShutdown).toBe(false);
+                } else {
+                    await controller.shutdown();
+                }
+                expect(liveProxies.size).toBe(0);
+            }
+        } finally {
+            finishProxyStop.resolve();
+            await controller?.shutdown().catch(() => undefined);
+            await retainedOwner?.dispose().catch(() => undefined);
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it.each(['running', 'establishing'] as const)('keeps a real shared child serving the remaining consumer after the first invocation closes (%s)', async stage => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-shared-exec-custody-'));
         const firstInvocation = new AbortController();
