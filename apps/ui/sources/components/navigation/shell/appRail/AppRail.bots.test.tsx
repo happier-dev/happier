@@ -1,13 +1,14 @@
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { View, type LayoutChangeEvent } from 'react-native';
-import { act } from 'react-test-renderer';
+import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createSessionFixture,
   createSessionListRenderableSessionFixture,
   createRootLayoutFeaturesResponse,
+  flattenTestStyle,
   flushHookEffects,
   renderScreen,
   standardCleanup,
@@ -25,11 +26,13 @@ import {
   buildSessionOrganizationSessionKey,
 } from '@/sync/domains/session/organization';
 import { getStorage } from '@/sync/domains/state/storage';
+import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 import { AppRailSurface } from './AppRail';
+import { useAppRailBotHomes } from './AppRailBots';
 import { buildAppRailEntries } from './appRailModel';
 import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
@@ -160,7 +163,72 @@ function railBotFaceOpacity(screen: Awaited<ReturnType<typeof renderScreen>>): n
   return styles.reduce<number>((opacity, style) => (style && typeof style.opacity === 'number' ? style.opacity : opacity), 1);
 }
 
+/** Sum the real rail slot and separator extents above More, using its rendered flow order. */
+function readMoreTop(screen: Awaited<ReturnType<typeof renderScreen>>): number {
+  const top = screen.findHostByTestId('app-rail-destinations');
+  if (!top) throw new Error('Missing app rail destinations');
+
+  function height(node: ReactTestInstance): number {
+    const style = flattenTestStyle(node.props.style);
+    return typeof node.type === 'string' && typeof style.height === 'number'
+      ? style.height + 2 * (typeof style.marginVertical === 'number' ? style.marginVertical : 0)
+      : node.children.reduce<number>((sum, child) => sum + (typeof child === 'string' ? 0 : height(child)), 0);
+  }
+
+  let more: ReactTestInstance | null = screen.findHostByTestId('app-rail-more.trigger');
+  while (more && more.parent !== top) more = more.parent;
+  if (!more) throw new Error('Missing More slot in app rail destinations');
+  const index = top.children.indexOf(more);
+  return top.children.slice(0, index)
+    .reduce<number>((sum, child) => sum + (typeof child === 'string' ? 0 : height(child)), 0);
+}
+
 describe('AppRail Bots', () => {
+  it('holds More at the same height while four persisted Bot pins wait for their Session rows', async () => {
+    const accountId = 'rail-pins-first-frame';
+    const home = createHomeHubArtifactHttpBoundary(accountId);
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://rail-pin-frame.test', accountId,
+      request: (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/features') return Promise.resolve(Response.json(createRootLayoutFeaturesResponse()));
+        return Promise.resolve(createEmptyAccountBootstrapHttpResponse(path, init) ?? home.request(url, init));
+      },
+    });
+    await flushHookEffects({ cycles: 3 });
+    const { serverId, credentials } = connection;
+    const bots = ['scout', 'scribe', 'porter', 'pilot'].map(id => createSessionListRenderableSessionFixture({
+      id, metadata: { path: '/repo', host: 'host', bot: { kind: 'bot' } },
+    }));
+    const state = getStorage().getState();
+    state.applySessionOrganizationSnapshot(serverId, {
+      schemaVersion: 1, version: 1,
+      pins: bots.map((bot, index) => ({ sessionId: bot.id, sortKey: String(index), pinnedAt: 1, listPinned: false, railPinned: true })),
+      folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [],
+    });
+    const catalog = resolveCompactAppDestinations({
+      builtins: { externalSessions: true, inbox: true, workflows: true, friends: true, bots: true, botsRoster: true },
+      pages: [],
+    });
+    function ConnectedRail() {
+      const botHomes = useAppRailBotHomes();
+      return <AppRailSurface entries={buildAppRailEntries(catalog, { botHomes })}
+        activeId={null} onOpen={() => {}} renderFooter={item => <View testID={item.id} />} />;
+    }
+    const screen = await renderScreen(
+      <InjectedAuthProvider credentials={credentials}>
+        <InboxSummaryProvider><ConnectedRail /></InboxSummaryProvider>
+      </InjectedAuthProvider>,
+    );
+    const firstTop = readMoreTop(screen);
+    const buttons = () => bots.map(bot => screen.findHostByTestId(
+      `app-rail:bot:${sessionAddressKey({ serverId, sessionId: bot.id })}`,
+    ));
+    expect(buttons().filter(Boolean)).toHaveLength(0);
+    await act(async () => state.applyServerScopedSessionListRows(serverId, bots, { source: 'ordinary', mode: 'replace' }));
+    expect(buttons().filter(Boolean)).toHaveLength(4);
+    expect(readMoreTop(screen)).toBe(firstTop);
+  });
+
   it('selects the pinned Bot from the workspace before Expo mirrors navigation and clears it on Search return', async () => {
     const entries = railWithPinnedBot();
     const bot = entries.bots[0]!;

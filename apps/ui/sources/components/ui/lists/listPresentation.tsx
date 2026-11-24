@@ -180,6 +180,9 @@ export function usePageListInsets(): PageListInsets {
  */
 const PageColumnContext = React.createContext<PageColumn>('reading');
 
+/** The enclosing PageFrame's content width available before its rows lay out. */
+export const PageColumnWidthContext = React.createContext<number | null>(null);
+
 /**
  * A contained surface (a card modal's body) is its page lists' column: a page list inside it takes the
  * container's width and text edge instead of the page reading column (R-APP-7). Lists keep the scope

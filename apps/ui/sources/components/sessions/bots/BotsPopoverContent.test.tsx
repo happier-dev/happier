@@ -642,7 +642,7 @@ describe('Bots roster', () => {
     const { BotsPopoverContent } = await import('./BotsPopoverContent');
     function Rail() {
       const homes = useAppRailBotHomes();
-      return <>{buildAppRailEntries([], { botHomes: homes }).bots.map(entry =>
+      return <>{buildAppRailEntries([], { botHomes: homes }).bots.map(entry => entry.session === null ? null :
         <AppRailBotPin key={entry.id} bot={entry} animateEntry={false} />)}</>;
     }
     const commits = { rail: 0, roster: 0 };

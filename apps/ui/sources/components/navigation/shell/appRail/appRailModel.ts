@@ -68,17 +68,26 @@ export function builtinAppShellColumn(id: BuiltinAppShellColumnId): Extract<AppS
 /** A rail entry is a catalog destination placed on the rail. */
 export type AppRailEntry = CompactAppDestination;
 
-export type AppRailBotEntry = Readonly<{
+type AppRailBotAddress = Readonly<{
     id: string;
     serverId: string;
     sessionId: string;
+}>;
+
+export type AppRailBotEntry = AppRailBotAddress & Readonly<{
     /** The Bot's face, read once by the Session face owner. */
     face: SessionBotFaceFacts;
     session: SessionListRenderableSession;
 }>;
 
+export type AppRailBotSlot = AppRailBotEntry | (AppRailBotAddress & Readonly<{
+    face: null;
+    session: null;
+}>);
+
 export type AppRailBotHome = Readonly<{
     serverId: string;
+    /** Visible pins own a key even while their Session row is pending. */
     rowsBySessionId: Readonly<Record<string, SessionListRenderableSession | undefined>>;
     organization: SessionOrganizationProjection;
 }>;
@@ -90,8 +99,8 @@ export type AppRailEntries = Readonly<{
     plugins: readonly AppRailEntry[];
     /** The bottom of the rail: Settings. */
     account: readonly AppRailEntry[];
-    /** Explicit rail membership, projected only while the current authorized row is a Bot. */
-    bots: readonly AppRailBotEntry[];
+    /** In pin order, including slots whose visible Session row is still pending. */
+    bots: readonly AppRailBotSlot[];
 }>;
 
 export type AppRailFooterItemId = 'app-rail-usage' | 'app-rail-machines' | 'app-rail-updates' | 'app-rail-account';
@@ -143,12 +152,17 @@ export function buildAppRailEntries(catalog: readonly CompactAppDestination[], o
         app: region('app'),
         plugins: region('plugins'),
         account: region('account'),
-        bots: (options?.botHomes ?? []).flatMap(home => home.organization.railPinnedSessionIds.flatMap(sessionId => {
+        bots: (options?.botHomes ?? []).flatMap(home => home.organization.railPinnedSessionIds.flatMap<AppRailBotSlot>(sessionId => {
+            if (!Object.hasOwn(home.rowsBySessionId, sessionId)) return [];
+            const address = {
+                id: `bot:${sessionAddressKey({ serverId: home.serverId, sessionId })}`,
+                serverId: home.serverId,
+                sessionId,
+            };
             const session = home.rowsBySessionId[sessionId];
-            const face = session ? readSessionBotFaceFacts(session, home.serverId) : null;
-            if (!session || !face) return [];
-            return [{ id: `bot:${sessionAddressKey({ serverId: home.serverId, sessionId })}`,
-                serverId: home.serverId, sessionId, face, session }];
+            if (!session) return [{ ...address, face: null, session: null }];
+            const face = readSessionBotFaceFacts(session, home.serverId);
+            return face ? [{ ...address, face, session }] : [];
         })),
     };
 }

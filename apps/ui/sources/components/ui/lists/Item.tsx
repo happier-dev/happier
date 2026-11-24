@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, StyleSheet as RNStyleSheet, type AccessibilityRole, type TextProps, type ViewProps, type LayoutChangeEvent } from 'react-native';
+import { Dimensions, View, Pressable, StyleProp, ViewStyle, TextStyle, Platform, StyleSheet as RNStyleSheet, type AccessibilityRole, type TextProps, type ViewProps, type LayoutChangeEvent } from 'react-native';
 import { Typography } from '@/constants/Typography';
 import { ListOptionPressable } from './listOptionSetPosition';
 import { Modal } from '@/modal';
@@ -56,7 +56,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from './DisclosureCaret';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
 import { SectionRowBleedContext, useSectionRowBleedStyle } from './bareRowBleed';
-import { BareSectionRowsContext, MenuSectionRowsContext, PageDirectoryRowsContext, useListPresentation, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, PageDirectoryRowsContext, PageColumnWidthContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { GROUPED_SURFACE_RADIUS_PX, PAGE_LIST_METRICS } from './pageListMetrics';
 import { HAPPIER_RADIUS_V1 } from '@happier-dev/plugin-ui/environment';
@@ -1237,8 +1237,9 @@ function ItemRow(props: ItemProps & Readonly<{
     const titleColor = dimmedInk && !destructive ? styles.titleDimmed : factRow ? styles.titleFact : titleColorBase;
     // Subtitle and meta step down with the title, so a dimmed row keeps its title over its quiet line.
     const subtitleInkStyle = dimmedInk ? styles.subtitleDimmed : null;
-    const [isNarrowRow, setIsNarrowRow] = React.useState(false);
-    const [rowWidthPx, setRowWidthPx] = React.useState<number | null>(null);
+    const [measuredRowWidthPx, setMeasuredRowWidthPx] = React.useState<number | null>(null);
+    const floatingList = useFloatingListSurface();
+    const containedList = usePageListInsets() === 'contained';
     const [accessoryWidthPx, setAccessoryWidthPx] = React.useState<number | null>(null);
     const pageSheetContext = useHappierPageSection();
     const pageSheet = isMenuRow || isCatalogRow ? null : pageSheetContext;
@@ -1258,13 +1259,19 @@ function ItemRow(props: ItemProps & Readonly<{
     const adaptiveAccessory = accessoryLayout === 'adaptive' || pageOperation;
     const hasAdaptiveDetail = isPageRow && Boolean(detail) && !wrapDetail;
     const measuresRowWidth = adaptiveAccessory || hasAdaptiveDetail;
+    // Use the page column before the first row layout. Floating lists start in their own surface,
+    // and an unframed list can still use the window width known to the shell before paint.
+    const initialColumnWidthPx = accessoryLayout === 'adaptive' && !isMenuRow && !isCatalogRow && measuredRowWidthPx === null
+        ? (floatingList ? null : React.use(PageColumnWidthContext)) ?? Dimensions.get('window').width
+        : null;
+    const initialSheetInsetsPx = pageSheet?.framed === true && !containedList ? 2 * PAGE_LIST_METRICS.sheetInsetPx : 0;
+    const rowWidthPx = measuredRowWidthPx
+        ?? (initialColumnWidthPx === null ? null : initialColumnWidthPx - initialSheetInsetsPx);
+    const isNarrowRow = isHappierPageRowNarrow(rowWidthPx);
     const handleRowLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
         if (!Number.isFinite(widthPx) || widthPx <= 0) return;
-        // The shared row rule: narrower than the label's column beside an inline field (a phone sheet).
-        const next = isHappierPageRowNarrow(widthPx);
-        setIsNarrowRow((current) => (current === next ? current : next));
-        setRowWidthPx((current) => (current === widthPx ? current : widthPx));
+        setMeasuredRowWidthPx((current) => (current === widthPx ? current : widthPx));
     }, []);
     // The one row-accessory rule (`isHappierPageRowAccessoryStacked`): an operation (a button) stays on
     // its label's line while the label keeps its column; an adaptive control moves beneath on a narrow

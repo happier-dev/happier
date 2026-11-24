@@ -1,5 +1,6 @@
 import React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
+import { Dimensions } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installUiListsCommonModuleMocks } from '../uiListsTestHelpers';
@@ -106,6 +107,52 @@ describe('Item adaptive accessory', () => {
     function layoutEvent(width: number) {
         return { nativeEvent: { layout: { x: 0, y: 0, width, height: 48 } } };
     }
+
+    it.each([
+        { viewportWidth: 390, contentWidth: null },
+        { viewportWidth: 1440, contentWidth: 390 },
+    ])('stacks a $viewportWidth px page control before layout when its column is narrow', async ({ viewportWidth, contentWidth }) => {
+        const { Item } = await import('../Item');
+        const { ItemGroup } = await import('../ItemGroup');
+        const { PageFrame } = await import('@/components/ui/layout/PageFrame');
+        const { ListPresentationProvider } = await import('../listPresentation');
+        const { View } = await import('react-native');
+        const { act } = await import('react-test-renderer');
+        const { AppShellTailContext } = await import('@/components/navigation/shell/appShellTail');
+        const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: viewportWidth, height: 844, scale: 1, fontScale: 1 });
+        try {
+            const screen = await renderScreen(
+                <AppShellTailContext.Provider value={contentWidth === null ? null : {
+                    placement: 'sheet', divider: 'line', railOnCanvas: true, railHost: null, rightHost: null,
+                    railMoreHost: null, containerWidthPx: contentWidth,
+                }}>
+                    <ListPresentationProvider value="page">
+                        <PageFrame content="sections">
+                            <ItemGroup title="Retention">
+                                <Item title="Provider usage history" accessoryLayout="adaptive"
+                                    rightElement={<View testID="retention-control" />} />
+                            </ItemGroup>
+                        </PageFrame>
+                    </ListPresentationProvider>
+                </AppShellTailContext.Provider>,
+            );
+            const control = hostByTestID(screen, 'retention-control');
+            const placement = () => flattenTestStyle(accessorySection(hostByTestID(screen, 'retention-control')).props.style);
+            const first = placement();
+            const measurements: ReactTestInstance[] = [];
+            for (let node: ReactTestInstance | null = control; node; node = node.parent) {
+                if (typeof node.type === 'string' && typeof node.props.onLayout === 'function') measurements.push(node);
+            }
+            const row = measurements.at(-1)!;
+            await act(async () => row.props.onLayout(layoutEvent(358)));
+            expect(first).toMatchObject({ flexDirection: 'column', alignSelf: 'stretch' });
+            expect(layoutOf(placement())).toEqual(layoutOf(first));
+            await act(async () => row.props.onLayout(layoutEvent(700)));
+            expect(placement()).toMatchObject({ flexDirection: 'row' });
+        } finally {
+            viewport.mockRestore();
+        }
+    });
 
     it('recomposes a page operation below its label on phones while keeping the action reachable', async () => {
         const { Item } = await import('../Item');

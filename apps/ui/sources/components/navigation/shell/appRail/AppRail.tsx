@@ -57,6 +57,7 @@ import {
     buildAppRailPlacementItems,
     resolveAppRailEntryColumn,
     type AppRailBotEntry,
+    type AppRailBotSlot,
     type AppRailEntry,
     type AppRailEntries,
     type AppRailPlacementItem,
@@ -71,7 +72,7 @@ import { usePaneRegionFocusBoundary } from '@/components/appShell/panes/paneRegi
 /** The top of the rail: destinations and, right under the Bots entry, the rail-pinned Bots. */
 type AppRailTopItem =
     | AppRailPlacementItem
-    | Readonly<{ kind: 'botPin'; id: string; group: 'app'; bot: AppRailBotEntry }>;
+    | Readonly<{ kind: 'botPin'; id: string; group: 'app'; bot: AppRailBotSlot }>;
 
 const APP_RAIL_BAND_TITLE_KEYS = {
     work: 'navigationPlacement.railBandWork',
@@ -156,7 +157,7 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const { entries, activeId, onOpen: open } = props;
     const botNeighbors = React.useMemo(() => {
-        const byHome = new Map<string, AppRailBotEntry[]>();
+        const byHome = new Map<string, AppRailBotSlot[]>();
         for (const bot of entries.bots) byHome.set(bot.serverId, [...(byHome.get(bot.serverId) ?? []), bot]);
         const neighbors = new Map<string, { previous?: string; next?: string }>();
         for (const bots of byHome.values()) bots.forEach((bot, index) => neighbors.set(bot.id, {
@@ -197,7 +198,8 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     const overflowIds = new Set(fitted.overflow.map(item => item.id));
     const overflow = placements.ordered.filter(item => overflowIds.has(item.id));
     // A measured overflow keeps every rail-pinned Bot reachable in More.
-    const overflowBots = entries.bots.filter(bot => overflowIds.has(bot.id));
+    const overflowBotSlots = entries.bots.filter(bot => overflowIds.has(bot.id));
+    const overflowBots = overflowBotSlots.filter((bot): bot is AppRailBotEntry => bot.session !== null);
     // Pins already there when the rail mounts stand still; only a newly accepted pin lands.
     const seenBotIdsRef = React.useRef<ReadonlySet<string> | null>(null);
     const seenBotIds = seenBotIdsRef.current;
@@ -220,14 +222,16 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
                     {index > 0 && appRailItemBand(shownTop[index - 1]!) !== appRailItemBand(item)
                         ? <View testID="app-rail-band-separator" style={styles.separator} /> : null}
                     {item.kind === 'botPin'
-                        ? <AppRailBotPin bot={item.bot}
-                            previousBotSessionId={botNeighbors.get(item.id)?.previous}
-                            nextBotSessionId={botNeighbors.get(item.id)?.next}
-                            animateEntry={seenBotIds !== null && !seenBotIds.has(item.id)} />
+                        ? item.bot.session === null
+                            ? <AppRailSlot>{null}</AppRailSlot>
+                            : <AppRailBotPin bot={item.bot}
+                                previousBotSessionId={botNeighbors.get(item.id)?.previous}
+                                nextBotSessionId={botNeighbors.get(item.id)?.next}
+                                animateEntry={seenBotIds !== null && !seenBotIds.has(item.id)} />
                         : item.kind === 'destination' ? <AppRailItem entry={item.entry} active={activeId === item.id} onOpen={open}
                             onCustomize={props.onCustomize} /> : null}
                 </React.Fragment>)}
-                {overflow.length > 0 || overflowBots.length > 0 || (fitted.shown.length === 0 && items.length > 0 && props.onCustomize) ? (
+                {overflow.length > 0 || overflowBotSlots.length > 0 || (fitted.shown.length === 0 && items.length > 0 && props.onCustomize) ? (
                     <AppRailMore
                         entries={overflow}
                         bots={overflowBots}
