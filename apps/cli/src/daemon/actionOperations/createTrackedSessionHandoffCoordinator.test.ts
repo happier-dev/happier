@@ -55,6 +55,7 @@ import {
   type WorkspaceSyncStatusV1,
 } from '@/workspaces/sync/workspaceSyncTypes';
 import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 
 type MachineCallInput = Parameters<NonNullable<Parameters<typeof createTrackedSessionHandoffCoordinator>[0]['callMachine']>>[0];
 
@@ -1064,6 +1065,52 @@ describe('createTrackedSessionHandoffCoordinator', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'workspace_sync_update_required' });
     expect(captures.at(-1)).toMatchObject({ operationId: 'operation-1', release: true });
     expect(captures).toHaveLength(2);
+  });
+
+  // HANDOFF-SYNC-CHILD-1124: workspace preparation observes the other endpoint with the admitted requester's
+  // custody, so the coordinator hands it that admitted context; without a requester the call is unchanged.
+  it.each(['admitted requester', 'no requester'] as const)('hands workspace preparation the admitted requester context (%s)', async scenario => {
+    const policyInput = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const action = { kind: 'copy_once' as const,
+      contentPolicy: { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) } };
+    const prepare = vi.fn(async (_input: unknown, _authority?: unknown, _context?: unknown) => {
+      throw Object.assign(new Error('Workspace preparation reached'), { code: 'workspace_preparation_reached' });
+    });
+    const workspaceSyncAdapter = { prepareBetween: vi.fn(), prepare, finalize: vi.fn(), commit: vi.fn(), abort: vi.fn(async () => undefined) };
+    const callMachine = vi.fn(async (input: MachineCallInput) => {
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET) return transferCapability;
+      if (input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3) {
+        const request = input.request as { input: { release?: true } };
+        return request.input.release ? { ok: true, capture: 'released' } : { ok: true, capture: 'member',
+          sourceWorkspaceRefId: 'source-ref', targetRootPath: '/members/member-a/workspace', targetWorkspaceRefId: 'workspace' };
+      }
+      throw Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
+    });
+    // The ingress-admitted requester (a person with Manage on this SOURCE): its owner is the requester bootstrap.
+    const machineAdmission = { actorAccountId: 'member-a', custodianAccountId: 'owner', machineId: 'source-1',
+      installationId: 'source-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const requester = { credentials: { token: 'member-a-token', encryption: null }, serverHttpBaseUrl: 'https://home.test',
+      attribution: { serverId: 'server-1', accountId: 'member-a', machineId: 'source-1', installationId: 'source-installation' },
+      getBoundSessionId: () => 'session-1', isCurrent: async () => true } as unknown as AdmittedRequesterSessionBootstrap;
+    const coordinate = createTrackedSessionHandoffCoordinator({
+      expectedAccountServerId: 'server-1',
+      readCredentials: async () => ({ token: 'token', encryption: null }),
+      resolveSource: async () => ({ ok: true, sourceMachineId: 'source-1', sourceRootPath: '/source/workspace', sessionStorageMode: 'persisted' }),
+      callMachine,
+      workspaceSyncAdapter,
+    });
+    const result = await coordinate({ operationId: 'operation-1', actionInput: { sessionId: 'session-1', targetMachineId: 'target-1',
+      targetPath: '/members/member-a/workspace', accountServerId: 'server-1', workspaceAction: action },
+      start: vi.fn(), signal: new AbortController().signal, publishOwnerUpdate: vi.fn(),
+      ...(scenario === 'admitted requester' ? { context: { surface: 'rpc' as const, requesterSessionBootstrap: requester, machineAdmission } } : {}) });
+    expect(result).toMatchObject({ ok: false, errorCode: 'workspace_preparation_reached' });
+    expect(prepare).toHaveBeenCalledTimes(1);
+    if (scenario === 'no requester') {
+      expect(prepare.mock.calls[0]).toHaveLength(1);
+      return;
+    }
+    expect(prepare.mock.calls[0]).toEqual([expect.objectContaining({ operationId: 'operation-1' }), undefined,
+      expect.objectContaining({ requesterSessionBootstrap: requester, machineAdmission })]);
   });
 
   it('routes the accepted handoff through the existing source and target daemon primitives', async () => {

@@ -663,6 +663,9 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
       },
       publishOwnerUpdate: hostInput.publishOwnerUpdate,
       workspaceSyncAdapter: deps.workspaceSyncAdapter,
+      // Only the requester this ingress admitted above; no requester keeps today's call.
+      ...(requester ? { workspaceSyncContext: { signal: hostInput.signal, requesterSessionBootstrap: requester,
+        ...(admission ? { machineAdmission: admission } : {}) } } : {}),
       ...(hostInput.localPreparation && targetMachineId === hostInput.localPreparation.machineId
         && !hostInput.context?.externalActionExecutionAuthorization
         ? { wait: (signal: AbortSignal, status: SessionHandoffStatus) => hostInput.localPreparation!.waitForChange(status, signal) }

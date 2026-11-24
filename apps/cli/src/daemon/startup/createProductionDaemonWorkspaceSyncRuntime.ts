@@ -1339,6 +1339,21 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     }
     const requester = context?.workspaceSyncSourceRouting && isProjectPreparation(context)
       ? readRequesterAccountActionContext(authorization) : null;
+    // A handoff admitted for a requester (HANDOFF-SYNC-CHILD-1124): this daemon's bound Machine is
+    // read with its own custody and every other endpoint with the requester's, never this owner's.
+    const handoffRequester = !authorization && !physicalSourceAuthority ? context?.requesterSessionBootstrap : undefined;
+    if (handoffRequester) {
+      const readWith = async (ids: readonly string[], credentials: StoredCredentials, serverHttpBaseUrl: string) => ids.length === 0
+        ? [] : await readWorkspaceSyncChildMachineFacts({ serverId: semanticServerId, credentials, serverHttpBaseUrl,
+          localProfileId, ...(input.homeTarget ? { homeTarget: input.homeTarget } : {}), machineIds: ids, signal });
+      const [own, requested] = await Promise.allSettled([
+        readWith(machineIds.filter(id => id === input.localMachineId), input.credentials, readServerHttpBaseUrl()),
+        readWith(machineIds.filter(id => id !== input.localMachineId), handoffRequester.credentials, handoffRequester.serverHttpBaseUrl),
+      ]);
+      if (own.status === 'rejected') throw own.reason;
+      if (requested.status === 'rejected') throw requested.reason;
+      return [...new Set(machineIds)].flatMap(id => [...own.value, ...requested.value].filter(fact => fact.machineId === id));
+    }
     return await readWorkspaceSyncChildMachineFacts({ serverId: semanticServerId,
       ...(authorization?.binding.workspaceSyncAdmission ? { authorization, effectActionId: authorization.binding.actionId,
         purpose: 'admitted_mapping' as const, relationshipId: authorization.binding.workspaceSyncAdmission.relationshipId }

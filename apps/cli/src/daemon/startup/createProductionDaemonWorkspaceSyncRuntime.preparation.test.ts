@@ -28,6 +28,8 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { AxiosError } from 'axios';
+import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { composeBindChildSourcePhaseTestRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 
 const socketIo = vi.hoisted(() => vi.fn());
@@ -394,6 +396,78 @@ describe('signed Project clean preparation', () => {
     expect(result, JSON.stringify({ settlement: settlement.mock.calls, targetResults }))
       .toMatchObject({ kind: 'refused', code: 'target_prepare_refused' });
     expect(signed).toEqual([{ phase: 'preflight' }, { phase: 'prepare' }, { phase: 'release', reason: 'abort' }]);
+  });
+
+  // HANDOFF-SYNC-CHILD-1124: a person with Manage on another Account's SOURCE hands a Session to their own
+  // TARGET. Home shows that TARGET row only to Accounts that can see it, so the SOURCE owner's custody reads 404.
+  it.each(['own TARGET', "another Account's TARGET", 'no admitted requester'] as const)(
+    'observes the handoff TARGET with the admitted requester custody and the bound SOURCE with its own (%s)', async scenario => {
+    const person = 'target-owner';
+    const personCredentials = { token: [
+      Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub: person })).toString('base64url'), 'fixture-signature',
+    ].join('.'), encryption: null };
+    const targetVisibleTo = scenario === "another Account's TARGET" ? 'third-account' : person;
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const machineReads: Array<Readonly<{ machineId: string; accountId: string | null }>> = [];
+    let observing = false;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
+      separateTargetParent: true, targetCredentials: personCredentials,
+      readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? http(url, body) : undefined,
+      // Home's Machine row read: the TARGET row exists only for an Account that can see it.
+      readAdditionalHttpResponse: async (url, config) => {
+        const machineId = /\/v1\/machines\/([^/]+)$/u.exec(new URL(url).pathname)?.[1];
+        if (!observing || !machineId) return undefined;
+        const bearer = config?.headers?.Authorization;
+        const accountId = typeof bearer === 'string' ? readAccountIdFromToken(bearer.replace(/^Bearer /u, '')) : null;
+        machineReads.push({ machineId, accountId });
+        if (machineId === 'target-parent' && accountId !== targetVisibleTo) {
+          throw new AxiosError('Not Found', 'ERR_BAD_REQUEST', undefined, undefined,
+            { status: 404, statusText: 'Not Found', headers: {}, config: { headers: {} } as never, data: {} });
+        }
+        return undefined;
+      },
+    });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
+      credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    await fixture.settleProjects();
+    const input = { operationId: 'manage-member-handoff', accountServerId: fixture.serverId,
+      action: { kind: 'create_relationship' as const, mode: 'keep_both_in_sync' as const, contentPolicy, flushBeforeCommit: true as const },
+      sourceMachineId: fixture.sourceRef.machineId, sourceWorkspaceRefId: fixture.sourceRef.id, sourceRootPath: fixture.sourceRef.rootPath,
+      targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetPath };
+    // The handoff coordinator's admitted requester: the person, on the bound SOURCE they hold Manage on.
+    const requesterSessionBootstrap = { credentials: personCredentials, serverHttpBaseUrl: 'https://bind-child-home.invalid',
+      attribution: { serverId: fixture.serverId, accountId: person, machineId: fixture.sourceRef.machineId,
+        installationId: fixture.controller.installationId } } as unknown as AdmittedRequesterSessionBootstrap;
+    const context: RpcHandlerContext | undefined = scenario === 'no admitted requester' ? undefined
+      : { signal: new AbortController().signal, requesterSessionBootstrap };
+    observing = true;
+    const settled = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
+      () => fixture.parent.handoffAdapter.prepare(input, undefined, context)).then(value => ({ value }), (error: unknown) => ({ error }));
+    observing = false;
+    const refusal = 'error' in settled && settled.error && typeof settled.error === 'object' ? settled.error : undefined;
+    // The bound SOURCE is read with its own custody in every case.
+    expect(machineReads.filter(read => read.machineId === 'source-parent').map(read => read.accountId)).toEqual(['owner']);
+    if (scenario === 'no admitted requester') {
+      // Parity: today's path reads both rows with the SOURCE custody, and the TARGET row is not there for it.
+      expect(machineReads.filter(read => read.machineId === 'target-parent').map(read => read.accountId)).toEqual(['owner']);
+    } else {
+      // The person's TARGET is never read with the SOURCE owner's custody.
+      expect(machineReads.filter(read => read.machineId === 'target-parent').map(read => read.accountId)).toEqual([person]);
+    }
+    if (scenario === 'own TARGET') {
+      // Past the Machine read: whatever settles next is not this read's refusal.
+      const next = { code: refusal && 'code' in refusal ? refusal.code : null, message: refusal instanceof Error ? refusal.message : null };
+      console.info('[handoff-next-settlement]', JSON.stringify(next));
+      expect(next.code, JSON.stringify(next)).not.toBe('workspace_sync_child_unavailable');
+      return;
+    }
+    expect(refusal).toMatchObject({ code: 'workspace_sync_child_unavailable',
+      failureCause: { phase: 'workspace_sync.endpoint_machine.read', errorCode: 'workspace_sync_child_unavailable' } });
   });
 
   it.each(['requester', 'owner'] as const)('keeps persistent Script preparation in its requester Account (%s)', async requesterAccountId => {

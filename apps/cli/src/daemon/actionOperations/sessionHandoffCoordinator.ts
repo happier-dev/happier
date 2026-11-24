@@ -4,6 +4,7 @@ import { HandoffWorkspaceOutcomeV1Schema } from '@happier-dev/protocol/sessions/
 import type { ActionExecuteResult, HandoffWorkspaceOutcomeV1, WorkspaceSyncCleanupWarningV1, SessionHandoffPrepareTargetResponse, SessionHandoffStatus, SessionHandoffStorageMode, HandoffWorkspaceActionV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 
 import type { ActionOperationOwnerUpdate } from './actionOperationTypes';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import type {
   PrepareWorkspaceSyncHandoffInput,
   WorkspaceSyncHandoffCommitted,
@@ -73,6 +74,8 @@ type CoordinatorInput = Readonly<{
   publishOwnerUpdate: (update: ActionOperationOwnerUpdate) => void;
   wait?: (signal: AbortSignal, observedStatus: SessionHandoffStatus) => Promise<void>;
   workspaceSyncAdapter: WorkspaceSyncHandoffAdapter;
+  /** The ingress-admitted requester; workspace preparation observes the other endpoint with its custody. */
+  workspaceSyncContext?: RpcHandlerContext;
   callWorkspaceSourcePhase?: PrepareWorkspaceSyncHandoffInput['callWorkspaceSourcePhase'];
 }>;
 
@@ -399,7 +402,9 @@ export async function coordinateTrackedSessionHandoff(
       if (workspaceSyncAction.kind === 'linked_workspace') {
         publishPhase(input.publishOwnerUpdate, 'preparing_linked_workspace', 'Updating linked workspace');
       }
-      preparedWorkspace = await input.workspaceSyncAdapter.prepare(workspaceInput);
+      preparedWorkspace = input.workspaceSyncContext
+        ? await input.workspaceSyncAdapter.prepare(workspaceInput, undefined, input.workspaceSyncContext)
+        : await input.workspaceSyncAdapter.prepare(workspaceInput);
     } catch (error) {
       return readThrownFailure(error, 'workspace_sync_prepare_failed');
     }

@@ -1,6 +1,7 @@
 import { areWorkspaceSyncRelationshipDefinitionsEqual, deriveWorkspaceSyncConflictOperationId, HandoffTargetReplacementPreflightResultV1Schema, HandoffTargetReplacementPreflightV1Schema, ReadWorkspaceSyncFileResultV1Schema, WorkspaceSyncEntryExpectationV1Schema, WorkspaceSyncTargetEntryObserveV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapReleaseResultV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema, WorkspaceSyncTargetConflictStageV1Schema, WorkspaceSyncConflictCaptureReleaseV1Schema, WorkspaceSyncTargetConflictApplyV1Schema, WorkspaceSyncTargetConflictApplyResultV1Schema, WorkspaceSyncTargetConflictRecoverV1Schema, WorkspaceSyncTargetConflictRecoverResultV1Schema, WorkspaceSyncTargetFileReadV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncExecutionMachineIdV1, resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncRelationshipEndpointRoles, resolveWorkspaceSyncRelationshipTransferDirection } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { areWorkspaceSyncWorkerCopyProvenancesEqual, getWorkspaceSyncWorkerCopyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeWorkspaceRootPathV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { isWorkspaceSyncLocalNamespace, type WorkspaceSyncLocalManagedTarget } from './workspaceSyncExecutionNamespace';
 export { isWorkspaceSyncLocalNamespace, type WorkspaceSyncLocalManagedTarget } from './workspaceSyncExecutionNamespace';
@@ -396,7 +397,7 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
 }>): Promise<readonly WorkspaceSyncChildMachineFacts[]> {
   return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
     const { ApiClient } = await import('@/api/api');
-    if (!input.authorization && !input.credentials) throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
+    if (!input.authorization && !input.credentials) throw endpointMachineUnavailable('Requester content custody is unavailable');
     // Native physical preparation holds the admitted requester's credentials.
     // Its unchanged original Action is not a generic requester HTTP grant.
     const api = !input.authorization || input.purpose === 'physical_sync' ? await ApiClient.create(input.credentials!) : null;
@@ -415,7 +416,7 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
     const ownerAccountId = input.credentials ? readAccountIdFromToken(input.credentials.token) : null;
     const useOwnedRow = owned !== undefined && ownerAccountId !== null && owned.admission.custodianAccountId !== ownerAccountId;
     const ownedRows = useOwnedRow ? await (async () => {
-      if (!input.credentials || !await owned.verifyCurrent()) throw authorityError('workspace_sync_child_unavailable', 'Current child admission is unavailable');
+      if (!input.credentials || !await owned.verifyCurrent()) throw endpointMachineUnavailable('Current child admission is unavailable');
       const rows = await readManagedMachineReads({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
         homeId: input.serverId, enrolledMachineId: owned.admission.machineId, ...(input.signal ? { signal: input.signal } : {}) });
       return rows.map(read => ({ read, machine: unwrapManagedMachineReadV1(read) }))
@@ -424,7 +425,7 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
           && machine.controller?.machineId === owned.controllerMachineId && machine.enrolledMachineId === owned.admission.machineId
           && machine.enrollmentAccountId === owned.admission.custodianAccountId);
     })() : [];
-    if (useOwnedRow && ownedRows.length !== 1) throw authorityError('workspace_sync_child_unavailable', 'Exact controller-owned enrollment is unavailable');
+    if (useOwnedRow && ownedRows.length !== 1) throw endpointMachineUnavailable('Exact controller-owned enrollment is unavailable');
     // Start the endpoint reads together, but consume settled results in input
     // order so per-read admission and the existing refusal precedence remain.
     const reads = [...new Set(input.machineIds)].map(machineId => ({ machineId,
@@ -464,13 +465,13 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       }
       const { machine, retainedManaged } = settled.value;
       if (!retainedManaged && (!machine || machine.revokedAt != null || machine.replacedByMachineId)) {
-        throw authorityError('workspace_sync_child_unavailable', 'Current Machine is unavailable');
+        throw endpointMachineUnavailable('Current Machine is unavailable');
       }
       // The controller-owned list carries Home's exact recipient projection;
       // open that selected carrier before deriving the private child facts.
       let managedMachine: ManagedMachineV1 | undefined = retainedManaged ? await (async () => {
         if (!input.credentials) {
-          throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
+          throw endpointMachineUnavailable('Requester content custody is unavailable');
         }
         return await openManagedMachineRead({ credentials: input.credentials,
           serverHttpBaseUrl: input.serverHttpBaseUrl, read: retainedManaged.read, signal: input.signal });
@@ -481,13 +482,13 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       if (!projection) continue;
       const installationId = retainedManaged ? owned!.admission.installationId : machine?.installationId;
       if (!installationId || !retainedManaged && machine?.metadata?.username !== projection.observation.user) {
-        throw authorityError('workspace_sync_child_unavailable', 'Child installation or native user is unavailable');
+        throw endpointMachineUnavailable('Child installation or native user is unavailable');
       }
       // Devcontainer projection validation consumes the private resource
       // snapshot. The public GET/LIST union is deliberately structural, so
       // this path must use the already captured Account custody to open it.
       if (!input.credentials) {
-        throw authorityError('workspace_sync_child_unavailable', 'Requester content custody is unavailable');
+        throw endpointMachineUnavailable('Requester content custody is unavailable');
       }
       if (!managedMachine) {
         managedMachine = await readManagedMachineFull({ credentials: input.credentials,
@@ -497,17 +498,24 @@ export async function readWorkspaceSyncChildMachineFacts(input: Readonly<{
       }
       if (input.purpose !== 'child_namespace' && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: input.serverId, machineId,
         projection, managedMachine })) {
-        throw authorityError('workspace_sync_child_unavailable', 'Child enrollment is no longer current');
+        throw endpointMachineUnavailable('Child enrollment is no longer current');
       }
       const nativeController = managedMachine.controller;
-      if (!nativeController) throw authorityError('workspace_sync_child_unavailable', 'The physical child controller is unavailable');
+      if (!nativeController) throw endpointMachineUnavailable('The physical child controller is unavailable');
       const controller: WorkspaceSyncChildMachineFacts['controller'] = { ...nativeController, available: false };
-      if (retainedManaged && !await owned!.verifyCurrent()) throw authorityError('workspace_sync_child_unavailable', 'Current child admission is unavailable');
+      if (retainedManaged && !await owned!.verifyCurrent()) throw endpointMachineUnavailable('Current child admission is unavailable');
       facts.push({ serverId: input.serverId, machineId, installationId,
         projection, managedMachine, controller });
     }
     return facts;
   });
+}
+
+/** This reader's own refusal: the generic code with the step that produced it (HANDOFF-SYNC-CHILD-1124). */
+function endpointMachineUnavailable(message: string): Error {
+  return Object.assign(authorityError('workspace_sync_child_unavailable', message), { failureCause: {
+    phase: 'workspace_sync.endpoint_machine.read', errorClass: 'Error', errorCode: 'workspace_sync_child_unavailable', httpStatus: null,
+  } satisfies ActionFailureCauseV1 });
 }
 
 function authorityError(code: string, message: string, workspaceSyncIngressRefusal?:
