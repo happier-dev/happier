@@ -1895,14 +1895,16 @@ function projectPublicNativeAgentRuntimeEvent(
     }
 }
 
+const NATIVE_AGENT_RUNTIME_ENDED_CODE = 'native_agent_runtime_ended';
+
 function createNativeAgentRuntimeEndedError(issue: SessionRuntimeIssueV1 | null): Error {
-    if (!issue) {
-        return new Error('Native Agent runtime is ended, disposing, or disposed');
-    }
-    const preview = issue.sanitizedPreview?.trim();
-    return new Error(
-        `Native Agent runtime ended (${issue.code})${preview ? `: ${preview}` : ''}`,
-    );
+    const preview = issue?.sanitizedPreview?.trim();
+    return Object.assign(new Error(issue
+        ? `Native Agent runtime ended (${issue.code})${preview ? `: ${preview}` : ''}`
+        : 'Native Agent runtime is ended, disposing, or disposed'), {
+        code: issue?.code ?? NATIVE_AGENT_RUNTIME_ENDED_CODE,
+        ...(issue?.failureCause ? { failureCause: issue.failureCause } : {}),
+    });
 }
 
 export function readConfiguredExternalSessionProviderOps(
@@ -2629,6 +2631,16 @@ export function createNativeAgentSessionOperations(
             // Queue settlement owns retry/recovery. A consumer callback cannot corrupt runtime observation.
         }
     };
+    const retireUndispatchedInput = (correlation: NativeInputCorrelation, reason: Error): void => {
+        rejectedInputIds.add(correlation.inputId);
+        emitDeliveryOutcome({ type: 'input-rejected-before-provider', localInputId: correlation.inputId,
+            userMessageSeq: correlation.userMessageSeq,
+            ...(correlation.userMessageSeqs ? { userMessageSeqs: correlation.userMessageSeqs } : {}),
+            reason: 'host_retired_before_dispatch',
+            diagnostic: { code: 'host_retired_before_dispatch', severity: 'warning' },
+            retryable: true, retireLocalCustodyAfterDurableBlock: true });
+        correlation.admissionAbortController?.abort(reason);
+    };
     const observeInputEvidence = (
         event: Extract<AgentSessionRuntimeEvent, {
             kind: 'input-accepted' | 'input-rejected' | 'input-custody-unknown' | 'input-delivery-failed';
@@ -2855,13 +2867,19 @@ export function createNativeAgentSessionOperations(
                 });
             }
         }
-        if (event.kind === 'runtime-ended' && event.diagnostic) {
-            runtimeEndedIssue = buildNativeAgentSessionRuntimeIssue({
-                diagnostic: event.diagnostic,
-                emittedAtMs: event.emittedAtMs,
-            });
+        if (event.kind === 'runtime-ended') {
+            if (event.diagnostic) {
+                runtimeEndedIssue = buildNativeAgentSessionRuntimeIssue({
+                    diagnostic: event.diagnostic,
+                    emittedAtMs: event.emittedAtMs,
+                });
+            }
+            const reason = createNativeAgentRuntimeEndedError(runtimeEndedIssue);
+            for (const correlation of inputCorrelations.values()) {
+                if (correlation.admissionAbortController) retireUndispatchedInput(correlation, reason);
+            }
+            nativeRealtimeInput?.dispose();
         }
-        if (event.kind === 'runtime-ended') nativeRealtimeInput?.dispose();
         if (toolExecutionLifecycle && event.kind === 'tool-call' && isForegroundTurnRuntimeTranscriptEvent(event)) {
             pendingToolExecutions.set(
                 toolExecutionKey(event.turnId, event.toolCallId),
@@ -3752,6 +3770,8 @@ export function createNativeAgentSessionOperations(
                 pendingCorrelation,
             );
             return await inputDispatch.inLock(async () => {
+                const phaseIdentity = { sessionId: expectedSessionId, localId: correlation.inputId };
+                logger.infoFile('[NativeAgentSession] Turn phase', { ...phaseIdentity, phase: 'input_dispatch_lock_acquired' });
                 try {
                     const binding = publications?.readActiveInputBinding();
                     // A turn-neutral control may acknowledge before its native
@@ -3785,13 +3805,26 @@ export function createNativeAgentSessionOperations(
                         throw admissionAbortController.signal.reason
                             ?? new Error('Native Agent runtime delivery was retired before dispatch');
                     }
+                    logger.infoFile('[NativeAgentSession] Turn phase', { ...phaseIdentity, phase: 'input_readiness_resolved' });
                     ensureTurnCompletion();
                     if (authorizeNewTurn) {
-                        await authorizeNewTurn(
-                            createNativeAgentTurnAdmissionWitness(correlation),
-                            Object.freeze({ signal: admissionAbortController.signal }),
-                        );
-                        admissionAbortController.signal.throwIfAborted();
+                        const signal = admissionAbortController.signal;
+                        logger.infoFile('[NativeAgentSession] Turn phase', { ...phaseIdentity, phase: 'turn_authorization_requested' });
+                        try {
+                            const result = await authorizeNewTurn(
+                                createNativeAgentTurnAdmissionWitness(correlation),
+                                Object.freeze({ signal }),
+                            );
+                            signal.throwIfAborted();
+                            logger.infoFile('[NativeAgentSession] Turn phase', { ...phaseIdentity,
+                                phase: 'turn_authorization_settled', outcomeCode: result.status });
+                        } catch (error) {
+                            const cause = readSessionRuntimeFailureCause(error, 'turn_start');
+                            logger.infoFile('[NativeAgentSession] Turn phase', { ...phaseIdentity,
+                                phase: 'turn_authorization_settled', outcomeCode: cause?.code ?? cause?.actionCause?.errorCode
+                                    ?? readActionErrorCodeV1(error) ?? (signal.aborted ? 'aborted' : 'action_failed') });
+                            throw error;
+                        }
                     }
                     // A provider continuation can start while host authorization awaits.
                     // Keep its admitted witness intact and leave this input retryable.
@@ -4164,8 +4197,8 @@ export function createNativeAgentSessionOperations(
             if (disposeStarted || invariant.read().runtimeEnded) {
                 return reportOutcome({
                     status: 'failed',
-                    reason: 'native_agent_runtime_ended',
-                }, 'native_agent_runtime_ended');
+                    reason: NATIVE_AGENT_RUNTIME_ENDED_CODE,
+                }, NATIVE_AGENT_RUNTIME_ENDED_CODE);
             }
             if (directFacets.configuration.declared === false || !configuration) {
                 return reportOutcome({
@@ -4257,14 +4290,7 @@ export function createNativeAgentSessionOperations(
                     if (rejectedInputIds.has(correlation.inputId)) continue;
                     if (uncertainInputIds.has(correlation.inputId)) continue;
                     if (correlation.admissionAbortController) {
-                        rejectedInputIds.add(correlation.inputId);
-                        emitDeliveryOutcome({ type: 'input-rejected-before-provider', localInputId: correlation.inputId,
-                            userMessageSeq: correlation.userMessageSeq,
-                            ...(correlation.userMessageSeqs ? { userMessageSeqs: correlation.userMessageSeqs } : {}),
-                            reason: 'host_retired_before_dispatch',
-                            diagnostic: { code: 'host_retired_before_dispatch', severity: 'warning' },
-                            retryable: true, retireLocalCustodyAfterDurableBlock: true });
-                        correlation.admissionAbortController.abort(
+                        retireUndispatchedInput(correlation,
                             new Error('Native Agent runtime delivery was retired before dispatch'),
                         );
                         continue;

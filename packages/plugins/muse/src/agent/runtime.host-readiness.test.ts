@@ -1,10 +1,11 @@
 // OS activity injection is a schema-derived ordering of captured Muse1.4.14 status frames.
 // Socket/HTTP/native-child boundaries are fixtures; host custody and Muse logic stay real.
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createNativeAgentSessionOperations, type NativeAgentNewTurnAdmissionWitness } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
+import { createSessionProviderInputOutcomeNormalizer, type SessionProviderInputOutcome } from '@/agent/runtime/session/input/providerInputOutcome';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -85,6 +86,86 @@ it.each(['release', 'cancel-before-ready'] as const)('keeps native input in host
   } finally {
     await operations?.resetOrDisposeRuntime('session_closed');
     await pendingDelivery?.catch(() => undefined);
+    await disposeFixture?.();
+    await rm(scratch, { recursive: true, force: true });
+  }
+});
+
+it('settles a later send when Muse closes before the daemon replies to admission', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'happier-muse-admission-'));
+  const nativeNotificationPath = join(scratch, 'native-notification.json');
+  let disposeFixture: (() => Promise<void>) | undefined;
+  let operations: Operations | undefined;
+  let pendingDelivery: Promise<unknown> | undefined;
+  try {
+    const fixture = await createAdmittedMuseSessionFixture({ native: { nativeNotificationPath } });
+    disposeFixture = fixture.dispose;
+    const sessionId = 'host-admitted-muse';
+    const opened = await fixture.open({ kind: 'create', sessionId, cwd: process.cwd() });
+    const capabilities = readAgentSessionCapabilities(PLUGIN_MANIFEST.contributes.agents?.find(agent => agent.id === 'muse'));
+    const nativeId = opened.runtimeDescriptorV1?.agent.providerSessionId;
+    if (!capabilities || !nativeId) throw new Error('Expected admitted Muse Session');
+    const admissionEntered = Promise.withResolvers<void>();
+    const runtimeEnded = Promise.withResolvers<void>();
+    const attemptedSettlement = Promise.withResolvers<void>();
+    const settlements: SessionProviderInputOutcome[] = [];
+    operations = createNativeAgentSessionOperations(
+      opened, sessionId, undefined, nativeId, undefined, undefined, undefined,
+      { context: fixture.context, cwd: process.cwd(), connectedAccounts: [], capabilities,
+        cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null } },
+      fixture.publications, [], undefined, undefined,
+      async (witness, { signal }) => {
+        if (witness.inputId === 'first-input') return { status: 'admitted' };
+        // The daemon has taken the request but its response remains open.
+        admissionEntered.resolve();
+        return await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    );
+    operations.subscribeRuntimeEvents(event => {
+      if (event.kind === 'runtime-ended') runtimeEnded.resolve();
+    });
+    operations.setOnPromptDeliveryOutcome?.(createSessionProviderInputOutcomeNormalizer({
+      getTarget: () => ({ sessionId, hasPendingProviderInput: () => true,
+        async observeProviderInputSettlement(outcome) {
+          settlements.push(outcome);
+          if (outcome.localId === 'first-input') {
+            attemptedSettlement.resolve();
+            throw new Error('Pending settlement response lost');
+          }
+        },
+      }),
+    }));
+    const host = operations;
+    await fixture.run(() => host.sendTurnPrompt('Reply with exactly PEBBLE. Do not use tools.', {
+      localId: 'first-input', turnId: 'first-turn', userMessageSeq: 7,
+    }));
+    await attemptedSettlement.promise;
+    await host.waitForTurnCompletion();
+    expect(settlements).toMatchObject([{ kind: 'accepted', localId: 'first-input' }]);
+
+    let outcome: unknown = 'pending';
+    pendingDelivery = fixture.run(() => host.sendTurnPrompt('Reply with exactly QUARTZ. Do not use tools.', {
+      localId: 'second-input', turnId: 'second-turn', userMessageSeq: 8,
+    })).then(() => { outcome = 'sent'; }, error => { outcome = error; });
+    await admissionEntered.promise;
+    expect(outcome).toBe('pending');
+
+    const completeNotificationPath = `${nativeNotificationPath}.complete`;
+    await writeFile(completeNotificationPath, JSON.stringify({ jsonrpc: '2.0', method: 'session/closed', params: { sessionId: nativeId } }));
+    await rename(completeNotificationPath, nativeNotificationPath);
+    await runtimeEnded.promise;
+    await vi.waitFor(() => expect(outcome).toMatchObject({ code: 'native_agent_runtime_ended' }));
+    expect(settlements).toMatchObject([
+      { kind: 'accepted', localId: 'first-input' },
+      { kind: 'rejected_before_effect', localId: 'second-input', reason: 'host_retired_before_dispatch',
+        retryable: true, retireLocalCustodyAfterDurableBlock: true },
+    ]);
+    expect((await fixture.readAudit()).methods.filter(method => method === 'turn/start')).toHaveLength(1);
+  } finally {
+    await operations?.resetOrDisposeRuntime('session_closed');
+    await pendingDelivery;
     await disposeFixture?.();
     await rm(scratch, { recursive: true, force: true });
   }
