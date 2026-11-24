@@ -868,7 +868,7 @@ it.each(['vercel', 'pages'] as const)('opens the %s existing-project choices thr
   if (!target || target.role !== 'runtime') throw new Error('Expected the runtime target declaration');
   // Vercel names are from the successful Action capture. Vendor envelopes use the provider test fixtures' shapes.
   const projects = (isVercel ? ['qa-sweep-177-traffic-1118', 'qa-sweep-176-r4-observe-1118', 'qa-fid-1115-acme-site',
-    'happier-qa-deploy', 'v0-react-native-design'] : ['saved-pages']).map((name, index) => ({ id: `project-${index}`, name }));
+    'happier-qa-deploy', 'v0-react-native-design'] : ['saved-pages', 'another-pages-project']).map((name, index) => ({ id: `project-${index}`, name }));
   const httpReads: URL[] = [];
   const http = createPluginHttpFixture({ async request(request) {
     const url = new URL(request.url);
