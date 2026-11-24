@@ -35,6 +35,60 @@ import { actionOperationPresentationCoordinator } from '@/components/inbox/actio
 const terminalExitReads = new WeakMap<ActiveServerAccountScopeLifetime, Map<string, Promise<void>>>();
 
 /** Exit wakes the same daemon reader as a push, including for a Stop on another device. */
+type SharedMachineOperationRead = (params: Readonly<{ serverId: string; accountId: string; machineId: string; operationId: string;
+    waitForTerminal: true; sinceRevision: number; signal: AbortSignal }>) => Promise<import('@happier-dev/protocol/actions/operations/v1').ActionOperationGetV1Response>;
+
+/**
+ * A request on another Account's Machine gets no Account push (the host never publishes into the requester's
+ * Account). The requester holds its own read of the next revision instead: one held read per open operation it
+ * requested there, asked again after each answer until the operation is terminal. A refused or failed read ends
+ * that loop (a withdrawn grant stops at its next read); owner-Account operations keep the push untouched.
+ */
+export function followSharedMachineActionOperations(params: Readonly<{
+    scope: Readonly<{ serverId: string; accountId: string }>;
+    sharedMachineIds: ReadonlySet<string>;
+    store?: ActionOperationStore;
+    read?: SharedMachineOperationRead;
+}>): Readonly<{ dispose(): void }> {
+    const store = params.store ?? actionOperationStore;
+    const read = params.read ?? getActionOperation;
+    const controller = new AbortController();
+    const following = new Set<string>();
+    const ended = new Set<string>();
+    const follow = async (key: string) => {
+        following.add(key);
+        try {
+            for (;;) {
+                const current = store.getSnapshot().operationsByKey.get(key);
+                if (!current || controller.signal.aborted || isActionOperationTerminal(current.snapshot.state)) return;
+                const { machineId } = current.snapshot.scope;
+                const seen = current.snapshot.revision;
+                await refreshActionOperationSnapshot({ operation: current, store,
+                    shouldContinue: () => !controller.signal.aborted,
+                    readSnapshot: operationId => read({ serverId: current.serverId, accountId: params.scope.accountId, machineId,
+                        operationId, waitForTerminal: true, sinceRevision: seen, signal: controller.signal }),
+                    onSnapshot: value => actionOperationPresentationCoordinator.observe(value) });
+                const next = store.getSnapshot().operationsByKey.get(key);
+                // No newer revision means the read was refused, unavailable or not found: stop until a new request.
+                if (!next || next.snapshot.revision <= seen) { ended.add(key); return; }
+            }
+        } finally { following.delete(key); }
+    };
+    const inspect = () => {
+        if (controller.signal.aborted) return;
+        for (const [key, entry] of store.getSnapshot().operationsByKey) {
+            if (following.has(key) || ended.has(key) || isActionOperationTerminal(entry.snapshot.state)
+                || entry.snapshot.scope.accountId !== params.scope.accountId
+                || !params.sharedMachineIds.has(entry.snapshot.scope.machineId)
+                || !areServerProfileIdentifiersEquivalent(entry.serverId, params.scope.serverId)) continue;
+            void follow(key);
+        }
+    };
+    const unsubscribe = store.subscribe(inspect);
+    inspect();
+    return { dispose() { controller.abort(); unsubscribe(); } };
+}
+
 export function refreshTerminalActionOperation(query: TerminalActionOperationQuery, lifetime: ActiveServerAccountScopeLifetime): Promise<void> {
     if (!lifetime.isCurrent() || lifetime.scope.accountId !== query.accountId || lifetime.scope.serverId !== query.serverId) return Promise.resolve();
     const operation = selectTerminalActionOperation(actionOperationStore.getSnapshot(), query);
@@ -324,6 +378,9 @@ export function ActionOperationRuntime(): null {
     const isMachineListSettled = useIsMachineListSettled(accountScope?.serverId ?? null);
     const membership = useMachinePresenceMembership(accountScope?.serverId ?? null);
     const machineIds = useAllMachines(machines => machines.map(machine => machine.id).sort());
+    // Machines held by another Account: this Account's requests there get no push, so they hold their own read.
+    const sharedMachineIds = useAllMachines(machines => machines.flatMap(machine => machine.isShared ? [machine.id] : []).sort());
+    const sharedMachineIdsKey = sharedMachineIds.join('\u0001');
     const socket = useSocketStatus();
     const coordinator = React.useMemo(() => createActionOperationRuntimeCoordinator(), []);
     const accountLifetimeRef = React.useRef<ActiveServerAccountScopeLifetime | null>(null);
@@ -355,6 +412,13 @@ export function ActionOperationRuntime(): null {
         coordinator.reconcile(scopes);
         return () => retirement.dispose();
     }, [accountId, coordinator, scopes, serverId]);
+
+    React.useEffect(() => {
+        if (!accountId || !serverId || sharedMachineIds.length === 0) return;
+        const follower = followSharedMachineActionOperations({ scope: { serverId, accountId },
+            sharedMachineIds: new Set(sharedMachineIds) });
+        return () => follower.dispose();
+    }, [accountId, serverId, sharedMachineIdsKey]);
 
     React.useEffect(() => {
         if (!accountId || !serverId || !isMachineListSettled) return;

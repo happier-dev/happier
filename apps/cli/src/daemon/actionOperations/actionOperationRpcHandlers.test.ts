@@ -662,6 +662,34 @@ describe('action operation observation RPC handlers', () => {
       await expect(handlers.getV2({ operationId: 'managed-question', includeManagedPrompt: true })).rejects.toBeDefined();
     } finally { observer.abort(); release(); await runner.waitForTerminal(scope, 'managed-question'); }
   });
+  it('returns a held read at the next revision for a requester on another Account\'s Machine, without settling the operation', async () => {
+    const store = createActionOperationStore();
+    const scope = { accountId: 'requester', machineId: 'shared' };
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'held-run',
+      resolveAction: actionId => ({ actionId, title: 'Hold', operation: { version: 1,
+        visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
+    let publish!: Parameters<Parameters<typeof runner.observe>[0]['execute']>[0]['publishOwnerUpdate'];
+    let release!: () => void;
+    await runner.observe({ actionId: 'projects.script.run', scope, response: 'admission', execute: async context => {
+      publish = context.publishOwnerUpdate;
+      context.operationAcceptance?.accept({ operation: { operationId: 'held-run' } });
+      await new Promise<void>(resolve => { release = resolve; });
+      return { ok: true, result: {} };
+    } });
+    const handlers = createActionOperationRpcHandlers({ store, runner, machineId: scope.machineId,
+      resolveAccountId: async () => scope.accountId });
+    const observer = new AbortController();
+    try {
+      const seen = store.get(scope, 'held-run')!.revision;
+      const waiting = handlers.getV2({ operationId: 'held-run', waitForTerminal: true, sinceRevision: seen },
+        { signal: observer.signal });
+      publish({ state: 'running', progress: { kind: 'phase', phase: 'running', label: 'Holding' } });
+      const answer = await waiting;
+      expect(answer).toMatchObject({ kind: 'found', operation: { state: 'running', progress: { label: 'Holding' } } });
+      expect(answer.kind === 'found' && answer.operation.revision).toBeGreaterThan(seen);
+      expect(store.get(scope, 'held-run')).not.toHaveProperty('settledAt');
+    } finally { observer.abort(); release(); await runner.waitForTerminal(scope, 'held-run'); }
+  });
   it('joins terminal observation at get without replay or cancellation when the observer leaves', async () => {
     const store = createActionOperationStore();
     const scope = { accountId: 'account-1', machineId: 'machine-1' };

@@ -848,8 +848,15 @@ export const ActionOperationGetV2RequestSchema = lazyZodSchema(() => (<T extends
   refreshSetupReview: z.optional(z.literal(true)),
   /** Join the existing installer owner until its nonsecret question or settlement. */
   includeManagedPrompt: z.optional(z.literal(true)),
+  /**
+   * A requester on another Account's Machine has no Account push: return as soon as the operation
+   * passes this revision (or settles) instead of only at settlement.
+   */
+  sinceRevision: z.optional(z.number().check(z.int(), z.nonnegative())),
 })).check(z.refine(request => !request.includeManagedPrompt || request.waitForTerminal === true, {
   path: ['includeManagedPrompt'], message: 'Managed prompt observation requires the existing wait owner.',
+}), z.refine(request => request.sinceRevision === undefined || request.waitForTerminal === true, {
+  path: ['sinceRevision'], message: 'Next-revision observation requires the existing wait owner.',
 })));
 export type ActionOperationGetV2Request = z.infer<typeof ActionOperationGetV2RequestSchema>;
 

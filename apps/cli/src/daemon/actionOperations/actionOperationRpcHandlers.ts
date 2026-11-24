@@ -174,7 +174,8 @@ export function createActionOperationRpcHandlers(deps: Readonly<{
       const operation = request.waitForTerminal && waitForTerminal
         ? await waitForTerminal(scope, request.operationId, context?.signal,
           { ...(request.includeSetupReview ? { includeSetupReview: true } : {}),
-            ...('includeManagedPrompt' in request && request.includeManagedPrompt ? { includeManagedPrompt: true } : {}) })
+            ...('includeManagedPrompt' in request && request.includeManagedPrompt ? { includeManagedPrompt: true } : {}),
+            ...('sinceRevision' in request && request.sinceRevision !== undefined ? { sinceRevision: request.sinceRevision } : {}) })
           .catch(error => {
             if (context?.signal?.aborted && error === context.signal.reason) {
               if (error instanceof RpcError) throw error;

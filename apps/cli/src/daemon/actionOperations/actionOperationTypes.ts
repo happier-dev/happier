@@ -102,7 +102,7 @@ export interface ActionOperationDomainOwner {
     workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1,
     phase: 'setup' | 'teardown', decision: ActionOperationSetupDecision): Promise<ActionOperationSnapshotV1 | null>;
   waitForTerminal?(scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
-    options?: Readonly<{ includeSetupReview?: true; includeManagedPrompt?: true }>): Promise<ActionOperationSnapshotV1 | null>;
+    options?: Readonly<{ includeSetupReview?: true; includeManagedPrompt?: true; sinceRevision?: number }>): Promise<ActionOperationSnapshotV1 | null>;
   subscribe(input: Readonly<{
     resolveScope(): Promise<ActionOperationQueryScope | null>;
     publishSnapshot(snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): void;

@@ -115,11 +115,15 @@ export async function getActionOperation(
         refreshSetupReview?: true;
         /** Join the canonical runner; requester operations have no custodian push stream. */
         waitForTerminal?: true;
+        /** With `waitForTerminal`: return at the first revision after this one instead of only at settlement. */
+        sinceRevision?: number;
     }>,
 ): Promise<ActionOperationGetV1Response> {
     return await readActionOperationObservation(params, { operationId: params.operationId,
         ...(params.refreshSetupReview ? { refreshSetupReview: true } : {}),
-        ...(params.waitForTerminal ? { waitForTerminal: true } : {}) }, ActionOperationGetV1ResponseSchema, {
+        ...(params.waitForTerminal ? { waitForTerminal: true } : {}),
+        ...(params.waitForTerminal && params.sinceRevision !== undefined ? { sinceRevision: params.sinceRevision } : {}) },
+        ActionOperationGetV1ResponseSchema, {
         current: ACTION_OPERATION_RPC_METHODS_V2.get, predecessor: ACTION_OPERATION_RPC_METHODS_V1.get,
     }, params.requireCurrentDomainFacts === true || params.refreshSetupReview === true || params.waitForTerminal === true);
 }

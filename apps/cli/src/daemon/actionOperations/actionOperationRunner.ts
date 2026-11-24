@@ -790,14 +790,17 @@ export function createActionOperationRunner(deps: Readonly<{
   };
 
   const waitForTerminal = async (scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
-    requireSettlement = false, includeSetupReview = false, includeManagedPrompt = false) => {
+    requireSettlement = false, includeSetupReview = false, includeManagedPrompt = false, sinceRevision?: number) => {
+    // A requester without an Account push asks for the next revision, not only settlement.
+    const isNewer = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => sinceRevision !== undefined
+      && snapshot.revision > sinceRevision;
     const hasManagedPrompt = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeManagedPrompt
       && (snapshot.domainRef?.kind === 'systemTask' && Boolean(snapshot.domainRef.prompt)
         || snapshot.domainRef?.kind === 'managedMachine' && Boolean(snapshot.domainRef.bootstrapTask?.prompt));
     const hasApprovalHold = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeSetupReview
       && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'waiting_for_approval';
     const snapshot = deps.store.get(scope, operationId);
-    if (!snapshot || readActionOperationTerminalResultV1(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview || hasManagedPrompt(snapshot) || hasApprovalHold(snapshot)) return snapshot;
+    if (!snapshot || readActionOperationTerminalResultV1(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview || hasManagedPrompt(snapshot) || hasApprovalHold(snapshot) || isNewer(snapshot)) return snapshot;
     const invocation = active.get(operationId);
     if (!invocation && !requireSettlement && !deps.store.isRecoveringSetupRestart(operationId)) return snapshot;
     // Cancelling observation is not a request to stop the admitted command.
@@ -808,7 +811,7 @@ export function createActionOperationRunner(deps: Readonly<{
       const completion = new Promise<ReturnType<typeof deps.store.get>>(resolve => {
           const inspect = () => {
             const current = deps.store.get(scope, operationId);
-            if (current && (readActionOperationTerminalResultV1(current) || !requireSettlement && current.observation || includeSetupReview && current.setupReview || hasManagedPrompt(current) || hasApprovalHold(current))) resolve(current);
+            if (current && (readActionOperationTerminalResultV1(current) || !requireSettlement && current.observation || includeSetupReview && current.setupReview || hasManagedPrompt(current) || hasApprovalHold(current) || isNewer(current))) resolve(current);
           };
           unsubscribe = deps.store.subscribe(inspect);
           inspect();
@@ -909,8 +912,9 @@ export function createActionOperationRunner(deps: Readonly<{
       });
     },
     async waitForTerminal(scope: ActionOperationQueryScope, operationId: string, signal?: AbortSignal,
-      options?: Readonly<{ includeSetupReview?: true; includeManagedPrompt?: true }>) {
-      return await waitForTerminal(scope, operationId, signal, false, options?.includeSetupReview === true, options?.includeManagedPrompt === true);
+      options?: Readonly<{ includeSetupReview?: true; includeManagedPrompt?: true; sinceRevision?: number }>) {
+      return await waitForTerminal(scope, operationId, signal, false, options?.includeSetupReview === true, options?.includeManagedPrompt === true,
+        options?.sinceRevision);
     },
   });
 }
