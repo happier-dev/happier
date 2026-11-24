@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1, DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_STATS_ENABLE_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import {
@@ -171,7 +171,9 @@ export function AddTelemetrySetup({ scope }: Readonly<{
   scope: Extract<WorkbenchLaunchInput['scope'], { kind: 'worktree' }>;
 }>) {
   const t = usePluginTranslation();
-  const { serverId, machineId, rootPath } = scope.workspace;
+  const workspace = ProtocolWorkspaceAddressV1Schema.safeParse(scope.workspace);
+  if (!workspace.success) return null;
+  const { serverId, machineId, rootPath } = workspace.data;
   return <SetupTaskControl
     task={{ kind: 'add_telemetry', sourceScope: { serverId, machineId }, scope }}
     directory={rootPath}
@@ -197,6 +199,7 @@ export function InsightsSetup(
     && descriptor.capabilities.some(capability => capability.operation === 'stats.enable' && capability.available);
   const target = descriptor?.target;
   const worktree = target?.kind === 'worktree' ? target : undefined;
+  const machineWorkspace = worktree ? ProtocolWorkspaceAddressV1Schema.safeParse(worktree.workspace) : undefined;
   const askForStatistics = target && setup && !canEnable && props.observation.engineId === 'postgresql';
   const sourceScope = descriptor && { serverId: descriptor.placement.serverId, machineId: descriptor.placement.machineId };
   const remediation = props.observation.remediation;
@@ -236,7 +239,7 @@ export function InsightsSetup(
                   {askForStatistics && sourceScope ? <SetupTaskControl
                     task={{ kind: 'enable_pg_stat_statements', engineId: 'postgresql', target, sourceScope,
                       stats: { request: STATEMENTS_BY_TOTAL_TIME, reason: props.observation.reason } }}
-                    {...(worktree ? { directory: worktree.workspace.rootPath } : {})}
+                    {...(machineWorkspace?.success ? { directory: machineWorkspace.data.rootPath } : {})}
                     title={translate('plugins.database.insights.setup.askAgent', 'Ask an agent to enable pg_stat_statements')} /> : null}
                   {props.onRetry ? <Button variant="plain" size="small" onPress={props.onRetry}
                     title={translate('plugins.database.retry', 'Try again')} /> : null}

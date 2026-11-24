@@ -535,7 +535,9 @@ describe('Database Insights surfaces', () => {
       }
       return nativeRead(call);
     });
-    const handoff = vi.fn(async () => ({ ok: true as const, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } } }));
+    const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({
+      ok: true, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } },
+    }));
     const actionControl = createPluginUiActionControlTestHost(handoff);
     const openSurface = vi.fn(async () => {});
     const details = await createPluginUiTestkit({
@@ -572,13 +574,13 @@ describe('Database Insights surfaces', () => {
       }));
       await act(async () => { await actionControl.press('Ask for investigation'); });
       expect(handoff).toHaveBeenCalledTimes(2);
+      const newDraft = SessionInputHandoffInputV1Schema.parse(handoff.mock.lastCall?.[0].input);
+      expect(newDraft.newSession?.seed.placement).toEqual({
+        kind: 'exactTarget', serverId: 'home', machineId: 'machine', directory: '/project',
+      });
       expect(handoff).toHaveBeenLastCalledWith(expect.objectContaining({
         action: 'session.input.handoff',
         input: expect.objectContaining({ delivery: 'compose', sessionChoice: { kind: 'new' },
-          newSession: { kind: 'new', seed: { placement: {
-            kind: 'exactTarget', serverId: scope.workspace.serverId, machineId: scope.workspace.machineId,
-            directory: scope.workspace.rootPath,
-          } } },
           input: expect.objectContaining({ text: 'Investigate the selected statement', forgeEvidence: expect.any(Object) }) }),
       }));
       await act(async () => { await details.press(await details.getByRole('button', { name: 'Open in Console' })); });

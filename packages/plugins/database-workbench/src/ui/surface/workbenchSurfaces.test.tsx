@@ -293,7 +293,7 @@ describe('Database workbench surfaces', () => {
             renderIcon: () => null,
             renderMarkdown: () => null,
             renderPopover: input => input.content({
-              presentation: 'popover', maxHeight: 240, requestClose: input.onRequestClose,
+              presentation: 'sheet', maxHeight: 240, requestClose: input.onRequestClose,
             }),
           }}
         >
