@@ -441,6 +441,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             diagnosticsTitle: "Diagnostic",
             diagnosticsDescription: "La version de Happier et le journal récent depuis l’intérieur de cette machine.",
             readLog: "Lire le journal",
+            runCommand: "Exécuter une commande",
+            outputTruncated: "Sortie tronquée",
         },
         actions: {
             rebuild: "Reconstruire",
@@ -530,9 +532,6 @@ export const managedMachines: ManagedMachinesTranslations = {
         prepareSectionHelpLocal: "Facultatif : les nouvelles machines démarrent plus vite.",
         prepareKeep: "Garder une image prête",
         prepareKeepHelp: "Crée une image contenant Happier et cette configuration, pour que les nouvelles machines sautent l’installation et la configuration.",
-        prepareNotBuilt: "Pas encore créée",
-        prepareReady: "Image prête",
-        prepareStorageKept: ({ size }: { size: string }) => `${size}, conservé jusqu’à ce que vous archiviez ce préréglage`,
         prepareUpdates: "Quand Happier se met à jour",
         prepareUpdateAtStart: "Mettre à jour au démarrage",
         prepareRebuildAutomatically: "Reconstruire automatiquement",

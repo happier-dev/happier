@@ -441,6 +441,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             diagnosticsTitle: "診斷",
             diagnosticsDescription: "這台機器內 Happier 的版本與最近的日誌。",
             readLog: "讀取日誌",
+            runCommand: "執行命令",
+            outputTruncated: "輸出已截斷",
         },
         actions: {
             rebuild: "重新建構",
@@ -530,9 +532,6 @@ export const managedMachines: ManagedMachinesTranslations = {
         prepareSectionHelpLocal: "選用：新機器啟動更快。",
         prepareKeep: "保持映像就緒",
         prepareKeepHelp: "建置包含 Happier 與此設定的映像，讓新機器略過安裝與設定。",
-        prepareNotBuilt: "尚未建置",
-        prepareReady: "映像已就緒",
-        prepareStorageKept: ({ size }: { size: string }) => `${size}，保留到你封存此預設集為止`,
         prepareUpdates: "Happier 更新時",
         prepareUpdateAtStart: "啟動時更新",
         prepareRebuildAutomatically: "自動重建",

@@ -441,6 +441,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             diagnosticsTitle: "診断",
             diagnosticsDescription: "このマシン内の Happier のバージョンと最近のログ。",
             readLog: "ログを読む",
+            runCommand: "コマンドを実行",
+            outputTruncated: "出力は切り詰められました",
         },
         actions: {
             rebuild: "再構築",
@@ -530,9 +532,6 @@ export const managedMachines: ManagedMachinesTranslations = {
         prepareSectionHelpLocal: "任意：新しいマシンが速く起動します。",
         prepareKeep: "イメージを用意しておく",
         prepareKeepHelp: "Happier とこのセットアップを含むイメージを作成し、新しいマシンがインストールとセットアップを省略できるようにします。",
-        prepareNotBuilt: "まだ作成されていません",
-        prepareReady: "イメージの準備完了",
-        prepareStorageKept: ({ size }: { size: string }) => `${size}、このプリセットをアーカイブするまで保持`,
         prepareUpdates: "Happier の更新時",
         prepareUpdateAtStart: "起動時に更新",
         prepareRebuildAutomatically: "自動で再ビルド",

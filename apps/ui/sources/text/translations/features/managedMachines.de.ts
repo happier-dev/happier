@@ -441,6 +441,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             diagnosticsTitle: "Diagnose",
             diagnosticsDescription: "Die Happier-Version und das aktuelle Protokoll aus dieser Maschine.",
             readLog: "Protokoll lesen",
+            runCommand: "Befehl ausführen",
+            outputTruncated: "Ausgabe gekürzt",
         },
         actions: {
             rebuild: "Neu erstellen",
@@ -530,9 +532,6 @@ export const managedMachines: ManagedMachinesTranslations = {
         prepareSectionHelpLocal: "Optional: Neue Maschinen starten schneller.",
         prepareKeep: "Image bereithalten",
         prepareKeepHelp: "Erstellt ein Image mit Happier und diesem Setup, sodass neue Maschinen Installation und Setup überspringen.",
-        prepareNotBuilt: "Noch nicht erstellt",
-        prepareReady: "Image bereit",
-        prepareStorageKept: ({ size }: { size: string }) => `${size}, bleibt, bis du dieses Preset archivierst`,
         prepareUpdates: "Wenn Happier aktualisiert wird",
         prepareUpdateAtStart: "Beim Start aktualisieren",
         prepareRebuildAutomatically: "Automatisch neu erstellen",
