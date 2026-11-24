@@ -130,7 +130,7 @@ import { MachineSetupPlanInputV1Schema, ManagedEnrollmentInstallationV1Schema, r
   type MachineSetupApplyInputV1, type MachineSetupPlanInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectManagedMachineSetupCreationSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext, rebindRequesterAccountActionContext, requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeaders } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { refuseExternalActionPhase, traceExternalActionInnerStage, runTracedExternalActionInnerStage, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
+import { isExternalActionRequestAbort, refuseExternalActionPhase, traceExternalActionInnerStage, runTracedExternalActionInnerStage, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 import { projectExternalActionHandoffAdmissionV1, projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
   type RequesterCurrentnessRefusalBranch } from "@/daemon/sessionEncryption/requesterCurrentness";
@@ -3105,6 +3105,7 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
       }
       throw error;
     }
+    if (isExternalActionRequestAbort(error, input.signal)) throw error;
     refuseExternalActionPhase('signed_root_http_request', input.authorization.binding.machineId, error);
     rethrowRequesterHomeReadFailure(error);
     return false;

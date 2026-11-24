@@ -1,3 +1,4 @@
+import { isCancel } from 'axios';
 import { logger } from '@/ui/logger';
 import { isWebLatencyTraceEnabled, timeApprovalPhase } from './webLatencyTrace';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -138,7 +139,7 @@ export type ExternalActionPhaseFailure = Readonly<{
   phase: string;
   errorClass: string;
   message: string;
-  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' | 'action_forbidden' }>;
+  executionFailure?: ActionExecuteFailure & Readonly<{ errorCode: 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' | 'action_forbidden' | 'cancelled' }>;
 }>;
 
 type ModuleSourceLocation = Readonly<{ file: string; line: number; column?: number }>;
@@ -242,14 +243,26 @@ export function refuseExternalActionPhase(phase: string, machineId: string | und
   return failure;
 }
 
+/** Match the local lifetime or an abort reported by a transport using that lifetime. */
+export function isExternalActionRequestAbort(error: unknown, signal?: AbortSignal): boolean {
+  return signal?.aborted === true && (error === signal.reason || isCancel(error)
+    || (error instanceof Error && error.name === 'AbortError'));
+}
+
 /** Keep a masked boundary failure typed until its owner maps it to the public result. */
-export async function runExternalActionPhase<T>(phase: string, machineId: string, operation: () => T | Promise<T>): Promise<
+export async function runExternalActionPhase<T>(phase: string, machineId: string, operation: () => T | Promise<T>, signal?: AbortSignal): Promise<
   Readonly<{ ok: true; value: NonNullable<T> }> | ExternalActionPhaseFailure
 > {
   try {
+    signal?.throwIfAborted();
     const value = await timeApprovalPhase(`approval.external.${phase}`, operation);
     return value === null || value === undefined || value === false
       ? refuseExternalActionPhase(phase, machineId)
       : { ok: true, value };
-  } catch (error) { return refuseExternalActionPhase(phase, machineId, error); }
+  } catch (error) {
+    const cancelled = isExternalActionRequestAbort(error, signal);
+    const failure = refuseExternalActionPhase(phase, machineId, error);
+    if (failure.executionFailure || !cancelled) return failure;
+    return { ...failure, executionFailure: { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false } };
+  }
 }

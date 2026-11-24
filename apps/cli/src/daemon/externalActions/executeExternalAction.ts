@@ -164,7 +164,7 @@ export type PrepareExternalActionRequesterAccountContext = (input: Readonly<{
 export type ExecuteExternalActionResult = Readonly<
   | {
     kind: 'invalid_request';
-    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token';
+    errorCode: 'invalid_action' | 'invalid_envelope' | 'invalid_encrypted_envelope' | 'encrypted_action_unsupported' | 'request_too_large' | 'target_required' | 'target_unavailable' | 'project_requester_home_unavailable' | 'internal_error' | 'credential_scope_denied' | 'invalid_token' | 'cancelled';
     requestId?: string;
     failureCause?: ActionFailureCauseV1;
   }
@@ -347,6 +347,8 @@ async function executeExternalActionRequest(input: Readonly<{
     };
   }
 
+  const cancelledBeforeOpen = () => ({ kind: 'invalid_request', errorCode: 'cancelled',
+    ...(envelope.data.requestId === undefined ? {} : { requestId: envelope.data.requestId }) } as const);
   let requesterContext: Awaited<ReturnType<PrepareExternalActionRequesterAccountContext>> = null;
   const managedControllerCodec = executionAuthorization?.success
     && (executionAuthorization.data.binding.accountId !== executionAuthorization.data.binding.custodianAccountId
@@ -371,8 +373,9 @@ async function executeExternalActionRequest(input: Readonly<{
     }
     const current = await runExternalActionPhase('managed_controller_codec_currentness', input.currentMachineId, () =>
       input.verifyExecutionAuthorization!({ authorization, effectActionId: actionId.data,
-        target: authorization.binding.target, ...(input.signal ? { signal: input.signal } : {}) }));
-    const opened = current.ok && current.value && !input.signal?.aborted ? openManagedControllerActionCodecV1({
+        target: authorization.binding.target, ...(input.signal ? { signal: input.signal } : {}) }), input.signal);
+    if (current.ok && input.signal?.aborted) return cancelledBeforeOpen();
+    const opened = current.ok && current.value ? openManagedControllerActionCodecV1({
       authorization, machineId: input.currentMachineId, installationId: input.currentInstallationId!,
       includeInvocation: true,
       serverIdentityId: authorization.binding.serverIdentityId,
@@ -393,8 +396,9 @@ async function executeExternalActionRequest(input: Readonly<{
     const authorization = executionAuthorization?.success ? executionAuthorization.data : undefined;
     const current = authorization && await runExternalActionPhase('managed_creation_codec_currentness', input.currentMachineId, () =>
       input.verifyExecutionAuthorization!({ authorization, effectActionId: actionId.data,
-        target: authorization.binding.target, ...(input.signal ? { signal: input.signal } : {}) }));
-    const opened = authorization && current && current.ok && current.value && !input.signal?.aborted
+        target: authorization.binding.target, ...(input.signal ? { signal: input.signal } : {}) }), input.signal);
+    if (current?.ok && input.signal?.aborted) return cancelledBeforeOpen();
+    const opened = authorization && current && current.ok && current.value
       ? openManagedCreationActionCodecV1({ authorization, envelope: envelope.data, includeInvocation: true,
         machineId: input.currentMachineId, installationId: input.currentInstallationId!,
         serverIdentityId: authorization.binding.serverIdentityId,
@@ -437,13 +441,13 @@ async function executeExternalActionRequest(input: Readonly<{
     && (executionAuthorization.data.requesterAccountContext || prepareOwnAccount)) {
     const authorization = executionAuthorization.data;
     diagnoseSessionInput('requester_prepare', 'started');
-    if (input.signal?.aborted || !input.prepareRequesterAccountContext) return { kind: 'invalid_request',
+    if (!input.prepareRequesterAccountContext) return { kind: 'invalid_request',
       errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
       ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
     trace('requester_prepare.begin');
     const preparedRequester = await runExternalActionPhase('requester_prepare', input.currentMachineId, () =>
       input.prepareRequesterAccountContext!({ authorization,
-        ...(input.signal ? { signal: input.signal } : {}) }));
+        ...(input.signal ? { signal: input.signal } : {}) }), input.signal);
     trace('requester_prepare.end');
     requesterContext = preparedRequester.ok ? preparedRequester.value : null;
     // A Run hosted on another Machine leaves no custody here: the leaf stays
@@ -468,6 +472,7 @@ async function executeExternalActionRequest(input: Readonly<{
   let releaseTokenContentAccess: (() => void) | undefined;
   let releaseTokenAccountProjection: (() => void) | undefined;
   try {
+  if (input.signal?.aborted) return cancelledBeforeOpen();
   let decodedInput: unknown;
   let decodedWorkflowPreparation: ActionExecutorContext['workflowPreparation'];
   let registryThemeContent: ActionExecutorContext['registryThemeContent'];
@@ -491,8 +496,11 @@ async function executeExternalActionRequest(input: Readonly<{
     const encryptionPhase = await runExternalActionPhase('encryption_resolution', input.currentMachineId, () => resolveEncryption(
       input.signal,
       executionAuthorization?.success ? executionAuthorization.data : undefined,
-    ));
+    ), input.signal);
     trace('encryption_resolution.end');
+    if (encryptionPhase.ok ? input.signal?.aborted : encryptionPhase.executionFailure?.errorCode === 'cancelled') {
+      return cancelledBeforeOpen();
+    }
     const encryption = encryptionPhase.ok ? encryptionPhase.value : null;
     diagnoseSessionInput('encryption_resolution', encryption ? 'resolved' : 'unavailable');
     if (!encryption) return {
@@ -780,21 +788,21 @@ async function executeExternalActionRequest(input: Readonly<{
 
   if (executionAuthorization?.success && !(rootAdmittedTarget && externalActionTargetsEqualV1(rootAdmittedTarget, target))) {
     trace('effect_root_currentness.begin');
-    const current = await runExternalActionPhase('effect_root_currentness', input.currentMachineId, async () =>
-      !input.signal?.aborted && await input.verifyExecutionAuthorization!({
-      authorization: executionAuthorization.data,
-      effectActionId: actionId.data,
-      target,
-      ...(input.signal ? { signal: input.signal } : {}),
-    }));
+    const current = await runExternalActionPhase('effect_root_currentness', input.currentMachineId, () =>
+      input.verifyExecutionAuthorization!({
+        authorization: executionAuthorization.data,
+        effectActionId: actionId.data,
+        target,
+        ...(input.signal ? { signal: input.signal } : {}),
+      }), input.signal);
     trace('effect_root_currentness.end');
     if (!current.ok || input.signal?.aborted) {
       return prepare({
         v: 1,
         actionId: actionId.data,
         ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
-        execution: !current.ok && current.executionFailure
-          ? current.executionFailure : { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
+        execution: current.ok ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
+          : current.executionFailure ?? { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
       });
     }
   }

@@ -1,4 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
+import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecutor, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResult } from '@happier-dev/protocol/actions/externalActionApi';
+import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
+import { readSignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
+import { logger as fileLogger } from '@/ui/logger';
 
 import { RpcHandlerManager } from './RpcHandlerManager';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
@@ -13,7 +20,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
 import type { Socket } from 'socket.io-client';
 import type { RpcHandlerContext } from './types';
-import { computeExternalActionSocketRpcRequestDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, computeExternalActionSocketRpcRequestDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent, readMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
@@ -24,7 +31,7 @@ import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRout
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
-import axios from 'axios';
+import axios, { CanceledError } from 'axios';
 import tweetnacl from 'tweetnacl';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -2603,6 +2610,114 @@ describe('RpcHandlerManager in-flight request tracking', () => {
     } finally { authorization.resolve(); await request; await idle; }
     expect(handler).toHaveBeenCalledTimes(1);
     expect(settled).toBe(true);
+  });
+});
+
+describe('RpcHandlerManager external Action cancellation', () => {
+  it.each([
+    { scenario: 'projects caller cancellation while signed Home verification is pending', outcome: 'cancelled' },
+    { scenario: 'preserves a signed Home refusal determined before caller cancellation', outcome: 'credential_scope_denied' },
+    { scenario: 'preserves an invalid encrypted envelope determined before caller cancellation', outcome: 'invalid_encrypted_envelope' },
+    { scenario: 'opens a valid Action after signed Home verification', outcome: 'ok' },
+  ])('$scenario', async ({ outcome }) => {
+    const accountId = 'requester';
+    const target = { kind: 'machine' as const, machineId: 'receiver' };
+    const installationId = 'test-installation';
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(21));
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(19) };
+    const credentials = { token: 'test-credential', encryption: { ...material,
+      publicKey: tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey } };
+    const binding = { actionId: 'browser.diagnostics.snapshot', target, accountId,
+      requestId: 'external-action-request', serverIdentityId: 'srv_requester',
+      authentication: { kind: 'account' as const, tokenEpoch: 3 } };
+    const envelope = sealExternalActionRequestV2({ binding, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      material: outcome === 'invalid_encrypted_envelope' ? { ...material, machineKey: new Uint8Array(32).fill(20) } : material,
+      input: { browserSessionId: 'browser-session', viewId: 'browser-view' }, randomBytes: tweetnacl.randomBytes });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'test-root', binding: { ...binding,
+      custodianAccountId: accountId, machineId: target.machineId, installationId, accountEncryptionMode: 'e2ee',
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+    const completion = vi.fn();
+    const rpc = new RpcHandlerManager({ scopePrefix: target.machineId, encryptionKey: material.machineKey,
+      encryptionVariant: 'dataKey', logger: completion });
+    const boundary = createSocketEventBoundary();
+    rpc.onSocketConnect(boundary.socket);
+    const requestId = '11111111-1111-4111-8111-111111111111';
+    const cancel = vi.fn(() => boundary.trigger(SOCKET_RPC_EVENTS.CANCEL, { requestId }));
+    const verifying = createDeferredVoid();
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, _body, options) => {
+      expect(new URL(String(url)).pathname).toContain('/execution-authorization/verify');
+      if (outcome === 'credential_scope_denied') {
+        throw readSignedHomeAuthorizationHttpError(403, { error: 'credential_scope_denied' }, String(url));
+      }
+      if (outcome === 'cancelled') {
+        const signal = options?.signal;
+        if (!(signal instanceof AbortSignal)) throw new Error('Missing verification cancellation signal');
+        const waiting = new Promise<never>((_, reject) =>
+          signal.addEventListener('abort', () => reject(new CanceledError()), { once: true }));
+        verifying.resolve();
+        return await waiting;
+      }
+      return { status: 200, data: { ok: true } };
+    });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      switch (new URL(String(url)).pathname) {
+        case '/v1/account/profile': return { status: 200, data: { id: accountId } };
+        case '/v1/account/encryption/currentness': return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+          signingKeyFingerprint: null,
+          contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(credentials.encryption.publicKey), updatedAt: 1 } };
+        case '/v2/account/settings': return { status: 200, data: { version: 1,
+          content: prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: 'encrypted' }) } };
+        default: throw new Error('Unexpected requester read');
+      }
+    });
+    const diagnostic = vi.spyOn(fileLogger, 'warnLocalFile').mockImplementation((_message, data) => {
+      // Strict open and the verifier report the refusal before projecting the reply.
+      if (data && typeof data === 'object' && 'phase' in data &&
+        ((outcome === 'invalid_encrypted_envelope' && 'refusalBranch' in data && data.refusalBranch === 'strict_open')
+          || (outcome === 'credential_scope_denied' && data.phase === 'signed_root_http_status'))) cancel();
+    });
+    const serverHttpBaseUrl = 'https://requester-home.invalid';
+    const verify = (request: Parameters<typeof verifyExternalActionExecutionAuthorizationCurrent>[0]['signal']) =>
+      verifyExternalActionExecutionAuthorizationCurrent({ authorization, effectActionId: binding.actionId, target,
+        installationId, privateKey: installation.secretKey, serverHttpBaseUrl, signal: request });
+    const executor = createActionExecutor(createUnavailableActionTransportDeps());
+    registerExternalActionRpcHandler(rpc, { machineId: target.machineId, currentServerId: 'home-profile',
+      currentServerHttpBaseUrl: serverHttpBaseUrl, resolveAccountId: async () => accountId,
+      resolveInstallationId: () => installationId, externalActionMachineRequestPrivateKey: installation.secretKey,
+      verifyExecutionAuthorization: request => verify(request.signal), resolveTarget: async () => target, executor,
+      prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ ...request,
+        purpose: { kind: 'external_action' }, machineId: target.machineId, installationId,
+        installationPrivateKey: installation.secretKey, serverId: 'home-profile', serverIdentityId: binding.serverIdentityId,
+        serverHttpBaseUrl, ownCredentials: credentials, isCurrent: () => verify(request.signal),
+        createExecutor: () => executor }),
+    });
+    const channel = await createRequesterCurrentnessSocketHarness();
+    try {
+      const pending: Promise<unknown> = rpc.handleRequest({ method: `${target.machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+        requestId, authorization: { kind: 'action.api.serverOrigin' }, params: {
+          actionId: binding.actionId, envelope, principal: { accountId, authentication: binding.authentication, authority: 'present_user' },
+          placement: { machineId: target.machineId, target }, executionAuthorization: authorization,
+        } }, undefined, 'authenticated_home_socket');
+      if (outcome === 'cancelled') {
+        await Promise.race([verifying.promise, pending]);
+        cancel();
+      }
+      const result = parseExternalActionDaemonDispatchResult(await pending);
+      const phases = diagnostic.mock.calls.flatMap(([, data]) =>
+        data && typeof data === 'object' && 'phase' in data && typeof data.phase === 'string' ? [data.phase] : []);
+      if (outcome === 'ok') expect(result?.kind, phases.join(', ')).toBe('response');
+      else {
+        expect(cancel, phases.join(', ')).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({ kind: 'invalid_request', errorCode: outcome, requestId: binding.requestId });
+      }
+      expect(completion).toHaveBeenCalledWith('[RPC] Request completed', expect.objectContaining({ outcomeCode: outcome,
+        ...(outcome === 'cancelled' ? { effectAttempted: false } : {}) }));
+    } finally {
+      post.mockRestore();
+      get.mockRestore();
+      diagnostic.mockRestore();
+      await channel.close();
+    }
   });
 });
 

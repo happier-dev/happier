@@ -483,7 +483,11 @@ export class RpcHandlerManager {
         const cause = ActionFailureCauseV1Schema.safeParse(Reflect.get(value, 'failureCause'));
         if (cause.success) diagnostic.failureCause = { phase: cause.data.phase };
         const attempted = Reflect.get(value, 'effectAttempted');
-        diagnostic.effectAttempted = typeof attempted === 'boolean' ? attempted : null;
+        // The reserved Action pre-open response has no execution body. Its
+        // correlated cancellation was settled before the Action was dispatched.
+        diagnostic.effectAttempted = typeof attempted === 'boolean' ? attempted
+            : diagnostic.method === EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1
+                && diagnostic.outcomeCode === 'cancelled' && Reflect.get(value, 'kind') === 'invalid_request' ? false : null;
     }
 
     private reportAdmissionDenial(diagnostic: RequestDiagnostic, predicate: RpcAdmissionPredicate): void {
