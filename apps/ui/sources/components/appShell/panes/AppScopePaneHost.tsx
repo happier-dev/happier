@@ -3,6 +3,8 @@ import * as React from 'react';
 import { AppScopeRightSidebar, AppScopeRightSidebarActionRail, AppScopeRightSidebarProvider } from '@/components/appShell/rightSidebar/AppScopeRightSidebar';
 import { APP_PANE_SCOPE_ID } from '@/components/appShell/rightSidebar/appScopeRightSidebarNavigation';
 import { useAppRightSidebarTabs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { isAppShellPluginCatalogPending } from '@/components/appShell/plugins/projectionAvailability';
 
 import { AppPaneScopeHost, type AppPaneDestinationDetails } from './AppPaneScopeHost';
 import type { PaneRightSidebarAdapter } from './types';
@@ -40,9 +42,10 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
     onMainColumnControlsChange?: React.ComponentProps<typeof AppPaneScopeHost>['onMainColumnControlsChange'];
 }>) {
     const tabs = useAppRightSidebarTabs();
-    // A detail can publish a companion independently of the App-wide tab catalog.
+    const catalogPending = useAppShellPluginUiProjection(isAppShellPluginCatalogPending);
+    // The slot stands while the catalog is pending or a detail can publish its own companion.
     const rightSidebarAdapter = tabs.length > 0 ? APP_RIGHT_SIDEBAR_RAIL_ADAPTER
-        : props.destinationDetails ? APP_DETAIL_RAIL_ADAPTER : APP_RIGHT_SIDEBAR_ADAPTER;
+        : (catalogPending || props.destinationDetails) ? APP_DETAIL_RAIL_ADAPTER : APP_RIGHT_SIDEBAR_ADAPTER;
     const destinationScopeId = useDestinationPaneScopeId(APP_PANE_SCOPE_ID);
     const scopeId = props.paneScopeId ?? destinationScopeId;
     const wrapAppScopeContent = React.useCallback((content: React.ReactElement) => (

@@ -27,6 +27,7 @@ import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projecti
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { isAppShellPluginCatalogPending } from '@/components/appShell/plugins/projectionAvailability';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { AppRightSidebarTabSurface } from './appRightSidebarTabs';
 import { RightSidebarIconTabBar } from './RightSidebarIconTabBar';
@@ -353,13 +354,14 @@ function AppScopeRightSidebarActionRailContent(): React.ReactElement {
 function AppScopeWorkspaceRail(): React.ReactElement {
     const model = React.useContext(AppScopeRightSidebarModelContext)!;
     const { pane, tabs, selection, selectTab } = model;
+    const actionsPending = isAppShellPluginCatalogPending({ phase: model.projectionPhase, hasEstablishingMembers: model.hasEstablishingMembers });
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     usePublishRightSidebarActions({
         tabs: tabs.filter(tab => !tab.disabledReason).map(tab => tab.id),
         activeTab: selection.kind === 'available' ? selection.tab.id : undefined,
         selectTab,
     });
-    return <RightSidebarActionRail surfaceId="workspaceRail" testID="app-scope-right-sidebar-action-rail" testIDPrefix="app-scope-right-sidebar-rail" actions={tabs.map((tab) => ({
+    return <RightSidebarActionRail surfaceId="workspaceRail" testID="app-scope-right-sidebar-action-rail" testIDPrefix="app-scope-right-sidebar-rail" actionsPending={actionsPending} actions={tabs.map((tab) => ({
         id: tab.id,
         label: getRightSidebarTabLabel(tab),
         icon: tab.icon,

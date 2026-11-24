@@ -95,6 +95,8 @@ const styles = StyleSheet.create((theme) => ({
 
 type RightSidebarActionRailProps = Readonly<{
     actions: readonly RightSidebarRailAction[];
+    /** The action catalog can still add actions, so the rail cannot report vacancy yet. */
+    actionsPending?: boolean;
     surfaceId: 'sessionRail' | 'workspaceRail' | DetailNavigationAddress;
     testID?: string;
     testIDPrefix?: string;
@@ -407,7 +409,7 @@ export function RightSidebarActionRailView(props: RightSidebarActionRailProps & 
     const presence = useRailCellPresence(props.actions, visible.shown, props.preferences, availableSize);
     // Read from placement, not fit: a short window that folds its pinned actions into More keeps its More. A signal
     // More could carry keeps the rail too, so a count is never lost with the column.
-    const vacant = placements.pinned.length === 0 && presence.ghosts.length === 0
+    const vacant = !props.actionsPending && placements.pinned.length === 0 && presence.ghosts.length === 0
         && !props.actions.some(action => action.active || action.pluginCount?.tab.countResourceId || action.pluginCount?.tab.counts
             || action.renderBadgeSignal || staticBadgeSignal(action));
     const onVacantChange = railContext?.onVacantChange;

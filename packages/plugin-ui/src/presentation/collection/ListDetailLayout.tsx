@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { Platform, View, type ViewStyle } from 'react-native';
 import { HappierResizeHandle } from '../layout/resize/HappierResizeHandle.js';
 import { useResizableListDetailGeometry, type HappierCollectionRailSizingProps } from './useResizableListDetailGeometry.js';
@@ -77,10 +77,16 @@ export function HappierListDetailLayout({
   labels,
   ...sizing
 }: HappierListDetailLayoutProps): ReactElement {
+  const viewportRef = useRef<View>(null);
   const [availableWidth, setAvailableWidth] = useState<number | null>(null);
+  // RNW's onLayout follows ResizeObserver. Read the same layout width before the first paint.
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const width = (viewportRef.current as (View & Pick<HTMLElement, 'offsetWidth'>) | null)?.offsetWidth;
+    if (width) setAvailableWidth(width);
+  }, []);
   const onLayout = useCallback((event: HappierLayoutChangeEvent) => {
-    const width = event.nativeEvent.layout.width;
-    setAvailableWidth((current) => current === width ? current : width);
+    setAvailableWidth(event.nativeEvent.layout.width);
   }, []);
   const { layout, resize } = useResizableListDetailGeometry({
     ...sizing, availableWidth, minListWidth, minDetailWidth, preferredListRatio, gap,
@@ -93,7 +99,7 @@ export function HappierListDetailLayout({
 
   return (
     <HappierCollectionLayoutContext.Provider value={collectionLayout}>
-      <View testID={testID} onLayout={onLayout} style={[fillStyle, { flexDirection: 'row', gap }, style]}>
+      <View ref={viewportRef} testID={testID} onLayout={onLayout} style={[fillStyle, { flexDirection: 'row', gap }, style]}>
         <View
           testID={listTestID}
           aria-hidden={!listVisible || undefined}

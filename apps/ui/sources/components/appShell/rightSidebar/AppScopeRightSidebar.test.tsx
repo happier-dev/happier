@@ -6,7 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { createMachineFixture, flattenTestStyle, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -301,6 +301,49 @@ describe('AppScopeRightSidebar', () => {
         accountLifetimeState.lifetime = captureActiveServerAccountScopeLifetime();
         ({ PluginSurfacePlacementHost: ActualSurfaceHost } = await import('@/components/plugins/surfaces'));
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', activeAt: Date.now() })]);
+    });
+
+    it('reserves the in-page rail while the catalog establishes and keeps its width when More arrives', async () => {
+        const { AppScopePaneHost } = await import('@/components/appShell/panes/AppScopePaneHost');
+        const { PANE_ACTION_RAIL_WIDTH } = await import('@/components/appShell/panes/PaneActionRailContext');
+        const settledProjection = projectionWith(appSidebarPlacement);
+        const scene = (state: 'pending' | 'partial' | 'filled' | 'empty') => (
+            <AppShellPluginUiProjectionValueProvider value={{
+                pluginUiProjection: state === 'filled' ? settledProjection : null,
+                pluginBrowserProjection: null,
+                phase: state === 'pending' ? 'establishing' : 'current',
+                hasEstablishingMembers: state === 'partial',
+                interactionEnabled: state === 'filled',
+                machineId: 'machine-a',
+                serverId: runtime.serverId,
+                platform: 'web',
+                accountLifetime: accountLifetimeState.lifetime,
+                clientExecutableActivation: { status: 'ready' },
+                reloadClientExecutables() {},
+                reloadConnectedAccountProjection() {},
+            }}>
+                <AppScopePaneHost paneScopeId={APP_PANE_SCOPE_ID} main={<div data-testid="team-detail" />} />
+            </AppShellPluginUiProjectionValueProvider>
+        );
+        const screen = await renderScreen(scene('pending'));
+        try {
+            const readRailWidth = () => {
+                const rail = screen.findHostByTestId('pane-action-rail-column');
+                if (!rail) return 0;
+                const style = flattenTestStyle(rail.props.style);
+                return style.display === 'none' ? 0 : style.width;
+            };
+            const pendingWidth = readRailWidth();
+            await screen.update(scene('partial'));
+            const partialWidth = readRailWidth();
+            await screen.update(scene('filled'));
+            expect(screen.findByTestId('app-scope-right-sidebar-rail:more')).not.toBeNull();
+            expect([pendingWidth, partialWidth, readRailWidth()]).toEqual([
+                PANE_ACTION_RAIL_WIDTH, PANE_ACTION_RAIL_WIDTH, PANE_ACTION_RAIL_WIDTH,
+            ]);
+            await screen.update(scene('empty'));
+            expect(readRailWidth()).toBe(0);
+        } finally { await screen.unmount(); }
     });
 
     it('keeps the shell destination owners idle while file state changes inside the active pane', async () => {

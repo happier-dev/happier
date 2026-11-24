@@ -52,16 +52,21 @@ describe('a rail with nothing standing on it', () => {
         id: 'inspector', label: 'Inspector', icon: 'folder', active: false, defaultPlacement: 'overflow', onPress: () => {}, ...overrides,
     });
     const preferences: NavigationPlacementPreferences = { orderedIds: [], placements: {} };
-    async function reports(actions: readonly RightSidebarRailAction[]) {
+    async function reports(actions: readonly RightSidebarRailAction[], actionsPending = false) {
         const onVacantChange = vi.fn();
         await renderScreen(
             <PaneActionRailContext.Provider value={{ visible: true, contentWidthPx: 1000, onVacantChange }}>
-                <RightSidebarActionRailView surfaceId="workspaceRail" testIDPrefix="rail" actions={actions}
+                <RightSidebarActionRailView surfaceId="workspaceRail" testIDPrefix="rail" actions={actions} actionsPending={actionsPending}
                     preferences={preferences} onCustomize={() => {}} />
             </PaneActionRailContext.Provider>,
         );
         return onVacantChange.mock.lastCall?.[0];
     }
+
+    it('reports vacancy only after the action catalog settles', async () => {
+        expect(await reports([], true)).toBe(false);
+        expect(await reports([], false)).toBe(true);
+    });
 
     it('reports itself vacant when every action rests in More', async () => {
         expect(await reports([tab()])).toBe(true);
