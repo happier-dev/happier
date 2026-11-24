@@ -56,6 +56,9 @@ import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from 
 import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema,
   WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema,
   WorkspaceSyncTargetConflictRecoverV1Schema, WorkspaceSyncTargetConflictRecoverResultV1Schema,
+  ReadWorkspaceSyncFileResultV1Schema, WorkspaceSyncEntryExpectationV1Schema,
+  WorkspaceSyncTargetEntryObserveV1Schema, WorkspaceSyncTargetFileReadV1Schema,
+  type WorkspaceSyncTargetEntryObserveV1, type WorkspaceSyncTargetFileReadV1,
   type WorkspaceSyncRelationshipCreateRpcRequestV1,
   type HandoffTargetReplacementPreflightResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -1757,6 +1760,26 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         targetMachineId: target.machineId, targetRootPath: workspace.rootPath,
         ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) }, ...(signal ? { signal } : {}) }) };
   };
+  const readRetainedSyncTarget = async (method: typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE
+    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ,
+    request: WorkspaceSyncTargetEntryObserveV1 | WorkspaceSyncTargetFileReadV1, machineId: string, signal?: AbortSignal) => {
+    const holder = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: request.relationshipId });
+    if (!holder || machineId === input.localMachineId) return null;
+    const snapshot = holder.execution.getSnapshot?.() ?? null;
+    const relationship = snapshot?.relationships.find(value => value.relationshipId === request.relationshipId);
+    if (!relationship || !holder.execution.callTargetPhase) {
+      throw compositionError('workspace_sync_unavailable', 'The retained Sync target transport is unavailable');
+    }
+    const target = resolveRelationshipBootstrapTarget(snapshot, relationship, semanticServerId);
+    if (target.machineId !== machineId || target.workspaceRefId !== request.workspaceRefId) {
+      throw compositionError('relationship_not_owned', 'The retained Sync target changed');
+    }
+    return { result: await holder.execution.callTargetPhase({ machineId, method, request,
+      routing: { v: 1, phase: 'inspect', operationId: holder.input.operationId, accountServerId: semanticServerId,
+        targetMachineId: target.machineId, targetRootPath: target.rootPath,
+        ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) }, ...(signal ? { signal } : {}) }) };
+  };
+
   const removeCommittedCopy = async (relationship: WorkspaceSyncRelationshipV1, approval: WorkspaceSyncCommittedCopyTargetV1,
     retirePreparedWorkspaceCopy: () => Promise<void>, signal: AbortSignal | undefined, retirementContext?: RpcHandlerContext) => {
     if (!retirementContext?.localActionContext) throw compositionError('project_setup_operation_unavailable', 'Retirement operation is unavailable');
@@ -2510,13 +2533,22 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     },
     readFileAtTarget: async request => {
       const native = await managedNative(request.relationshipId, request.targetWorkspaceRefId);
-      return native ? native.readFileHere({ relationshipId: request.relationshipId, workspaceRefId: request.targetWorkspaceRefId,
-        path: request.path, maxBytes: request.maxBytes, ...(request.expectedDigest === undefined ? {} : { expectedDigest: request.expectedDigest }) }, request.signal) : targetAuthority.readFileAtTarget(request);
+      const wire = WorkspaceSyncTargetFileReadV1Schema.parse({ relationshipId: request.relationshipId,
+        workspaceRefId: request.targetWorkspaceRefId, path: request.path, maxBytes: request.maxBytes,
+        ...(request.expectedDigest === undefined ? {} : { expectedDigest: request.expectedDigest }) });
+      if (native) return native.readFileHere(wire, request.signal);
+      const retained = await readRetainedSyncTarget(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ,
+        wire, request.targetMachineId, request.signal);
+      return retained ? ReadWorkspaceSyncFileResultV1Schema.parse(retained.result) : targetAuthority.readFileAtTarget(request);
     },
     observeEntryAtTarget: async request => {
       const native = await managedNative(request.relationshipId, request.targetWorkspaceRefId);
-      return native ? native.observeEntryHere({ relationshipId: request.relationshipId, workspaceRefId: request.targetWorkspaceRefId,
-        path: request.path }, request.signal) : targetAuthority.observeEntryAtTarget(request);
+      const wire = WorkspaceSyncTargetEntryObserveV1Schema.parse({ relationshipId: request.relationshipId,
+        workspaceRefId: request.targetWorkspaceRefId, path: request.path });
+      if (native) return native.observeEntryHere(wire, request.signal);
+      const retained = await readRetainedSyncTarget(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE,
+        wire, request.targetMachineId, request.signal);
+      return retained ? WorkspaceSyncEntryExpectationV1Schema.parse(retained.result) : targetAuthority.observeEntryAtTarget(request);
     },
     assertConflictResolutionAuthorized,
     getProjectSnapshot: factories.getProjectSnapshot,
@@ -3377,13 +3409,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       return native ? native.recoverConflictResolutionHere(request, signal) : targetAuthority.recoverConflictResolutionHere(request, signal);
     },
     hasRetainedRecoveryAdmission: targetAuthority.hasRetainedRecoveryAdmission,
-    readFileAtTarget: async (request, signal) => {
-      const native = await managedNative(request.relationshipId, request.workspaceRefId);
-      return (native ?? targetAuthority).readFileHere(request, signal);
+    readFileAtTarget: async (request, signal, context) => {
+      const native = context?.workspaceSyncSourceWriterTargetRouting ? null : await managedNative(request.relationshipId, request.workspaceRefId);
+      return native ? native.readFileHere(request, signal) : targetAuthority.readFileHere(request, signal, context);
     },
-    observeEntryAtTarget: async (request, signal) => {
-      const native = await managedNative(request.relationshipId, request.workspaceRefId);
-      return (native ?? targetAuthority).observeEntryHere(request, signal);
+    observeEntryAtTarget: async (request, signal, context) => {
+      const native = context?.workspaceSyncSourceWriterTargetRouting ? null : await managedNative(request.relationshipId, request.workspaceRefId);
+      return native ? native.observeEntryHere(request, signal) : targetAuthority.observeEntryHere(request, signal, context);
     },
     preflightHandoffTargetReplacement: targetAuthority.preflightHandoffTargetReplacementHere,
     preflightRelationshipTarget: async (request, context) => {

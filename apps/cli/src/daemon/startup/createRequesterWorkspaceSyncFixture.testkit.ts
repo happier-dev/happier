@@ -995,6 +995,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           ...(confirmation ? { presentUserConfirmation: confirmation } : {}) },
         });
     const review = await dispatch();
+    if (review.ok && invocation.request.actionInput.mode !== 'mirror_exactly') return review;
     expect(review, JSON.stringify({ review, diagnostics: rpcDiagnostics, target: targetRpcDiagnostics }))
       .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     if (review.ok || !review.details || typeof review.details !== 'object'

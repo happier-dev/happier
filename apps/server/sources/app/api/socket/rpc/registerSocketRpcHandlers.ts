@@ -70,6 +70,7 @@ import {
     WorkspaceSyncSeedRoutingV1Schema,
     isWorkspaceSyncSourceWriterCleanupPhaseV1,
     readWorkspaceSyncTargetMethodV1,
+    isWorkspaceSyncSourceWriterTargetMethodV1,
     isSessionActionRpcMethodV1,
     readOriginalActionEnvelopeMachineRpcKindV1,
     type SessionActionRpcOriginV1,
@@ -1366,7 +1367,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             if (rawWriterRouting !== undefined && (!parsedWriterRouting?.success || workspaceSyncSourceRouting
                 || workspaceSyncTargetRouting && isWorkspaceSyncSourceWriterCleanupPhaseV1(parsedWriterRouting.data.target.phase)
                 || transferRouting || viewer || !readMachineIdPrefix(method)
-                || method.slice(method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(parsedWriterRouting.data.target.phase))) {
+                || !isWorkspaceSyncSourceWriterTargetMethodV1(parsedWriterRouting.data.target.phase, method.slice(method.indexOf(':') + 1)))) {
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }

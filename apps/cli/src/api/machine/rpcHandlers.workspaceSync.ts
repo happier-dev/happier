@@ -83,10 +83,12 @@ export type MachineWorkspaceSyncRpcService = Readonly<{
   readFileAtTarget(
     request: WorkspaceSyncTargetFileReadV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<ReadWorkspaceSyncFileResultV1>;
   observeEntryAtTarget(
     request: WorkspaceSyncTargetEntryObserveV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<WorkspaceSyncEntryExpectationV1>;
   preflightHandoffTargetReplacement(
     request: HandoffTargetReplacementPreflightV1,
@@ -444,13 +446,13 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ, async (raw, context) => {
     const request = WorkspaceSyncTargetFileReadV1Schema.parse(raw);
     return ReadWorkspaceSyncFileResultV1Schema.parse(
-      await service().readFileAtTarget(request, signal(context?.signal)),
+      await service().readFileAtTarget(request, signal(context?.signal), context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE, async (raw, context) => {
     const request = WorkspaceSyncTargetEntryObserveV1Schema.parse(raw);
     return WorkspaceSyncEntryExpectationV1Schema.parse(
-      await service().observeEntryAtTarget(request, signal(context?.signal)),
+      await service().observeEntryAtTarget(request, signal(context?.signal), context),
     );
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, async (raw, context) => {

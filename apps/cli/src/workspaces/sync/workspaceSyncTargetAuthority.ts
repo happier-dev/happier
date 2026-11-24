@@ -114,6 +114,8 @@ export type WorkspaceSyncTargetPhaseDescriptor = Readonly<{
     | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
     | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
     | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE
+    | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ
     | typeof RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE
     | typeof RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES;
   request: unknown;
@@ -226,8 +228,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   recoverConflictResolutionHere(request: WorkspaceSyncTargetConflictRecoverV1, signal?: AbortSignal,
     context?: WorkspaceSyncConflictRecoveryContext): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
   recoverConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictRecoverV1 & Readonly<{ signal?: AbortSignal }>): Promise<WorkspaceSyncTargetConflictRecoverResultV1>;
-  readFileHere(request: WorkspaceSyncTargetFileReadV1, signal?: AbortSignal): Promise<ReadWorkspaceSyncFileResultV1>;
-  observeEntryHere(request: WorkspaceSyncTargetEntryObserveV1, signal?: AbortSignal): Promise<WorkspaceSyncEntryExpectationV1>;
+  readFileHere(request: WorkspaceSyncTargetFileReadV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<ReadWorkspaceSyncFileResultV1>;
+  observeEntryHere(request: WorkspaceSyncTargetEntryObserveV1, signal?: AbortSignal, context?: RpcHandlerContext): Promise<WorkspaceSyncEntryExpectationV1>;
   stageConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictStageV1 & Readonly<{ signal?: AbortSignal }>): Promise<void>;
   applyStagedConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictApplyV1 & Readonly<{ signal?: AbortSignal }>): Promise<WorkspaceSyncTargetConflictApplyResultV1>;
   discardStagedConflictResolutionAtTarget(request: WorkspaceSyncTargetConflictApplyV1 & Readonly<{ signal?: AbortSignal }>): Promise<void>;
@@ -1746,14 +1748,30 @@ export function createWorkspaceSyncTargetAuthority(
     });
   };
 
-  const findRetainedRecoveryTarget = (request: WorkspaceSyncTargetConflictRecoverV1) => {
+  const findRetainedTarget = (request: WorkspaceSyncTargetConflictRecoverV1) => {
     for (const endpointRole of ['alpha', 'beta'] as const) {
       const authorityKey = retainedAuthorityKey({ ...request, operationId: request.relationshipId, endpointRole });
-      const entry = physicalRetained.get(authorityKey);
+      const entry = retained.get(authorityKey);
       if (entry?.targetMachineId === request.targetMachineId && entry.sourceWriterTargetRouting
-        && entry.transientAuthority && entry.relationshipDefinition) return { authorityKey, entry };
+        && entry.relationshipDefinition) return { authorityKey, entry };
     }
     return null;
+  };
+
+  const findRetainedRecoveryTarget = (request: WorkspaceSyncTargetConflictRecoverV1) => {
+    const match = findRetainedTarget(request);
+    return match && !('kind' in match.entry) && match.entry.transientAuthority
+      ? { authorityKey: match.authorityKey, entry: match.entry } : null;
+  };
+
+  const readRetainedTargetRoot = async (authorityKey: string, entry: RetainedBootstrap, rootPath = entry.targetRootPath) => {
+    const canonicalRoot = await assertRetainedRootIdentity({ authorityKey, entry, rootPath });
+    return { canonicalRoot, assertCurrentAuthority: async () => {
+      if (physicalRetained.get(authorityKey) !== entry) {
+        throw authorityError('relationship_not_ready', 'The admitted Sync target loan is unavailable');
+      }
+      await assertRetainedRootIdentity({ authorityKey, entry, rootPath });
+    } };
   };
 
   const resolveRecoveryWorkspace = async (request: WorkspaceSyncTargetConflictRecoverV1,
@@ -1768,13 +1786,7 @@ export function createWorkspaceSyncTargetAuthority(
         ? resolveWorkspaceRef(getSnapshot(entry.operationId), entry.targetWorkspaceRefId, localServerId)
         : { id: entry.targetWorkspaceRefId, serverId: localServerId, machineId: entry.targetMachineId, rootPath: entry.targetRootPath, createdAtMs: relationship.createdAtMs };
       assertLocalWorkspacePlacement(workspace, localServerId, localMachineId, dependencies.localManagedTarget);
-      const canonicalRoot = await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
-      return { relationship, workspace, transientAccess: { canonicalRoot, assertCurrentAuthority: async () => {
-        if (physicalRetained.get(authorityKey) !== entry) {
-          throw authorityError('relationship_not_ready', 'The admitted Sync target loan is unavailable');
-        }
-        await assertRetainedRootIdentity({ authorityKey, entry, rootPath: workspace.rootPath });
-      } } };
+      return { relationship, workspace, transientAccess: await readRetainedTargetRoot(authorityKey, entry, workspace.rootPath) };
     }
     const localResolutionEndpoint = context?.localResolutionEndpoint;
     const readRecoverySnapshot = context?.getProjectSnapshot;
@@ -2271,54 +2283,60 @@ export function createWorkspaceSyncTargetAuthority(
     stagedResolutions.delete(stagedKey);
   };
 
+  const resolveTargetRead = async (request: Pick<WorkspaceSyncTargetEntryObserveV1, 'relationshipId' | 'workspaceRefId'>,
+    context?: RpcHandlerContext) => {
+    const routing = await readSourceWriterTargetRouting(context, 'inspect');
+    if (routing) {
+      const match = findRetainedTarget({ relationshipId: request.relationshipId,
+        targetMachineId: localMachineId, targetWorkspaceRefId: request.workspaceRefId });
+      if (!match || !isAdmittedBySourceWriter(match.entry, routing)) {
+        throw authorityError('forbidden', 'Workspace Sync read does not match retained target custody');
+      }
+      if ('kind' in match.entry) return { native: match.entry.execution };
+      if (!match.entry.readyPublished) throw authorityError('relationship_not_ready', 'Workspace Sync target is not ready');
+      return await readRetainedTargetRoot(match.authorityKey, match.entry);
+    }
+    const native = await nativeExecutionForEndpoint(request.workspaceRefId, request.relationshipId, request.relationshipId);
+    if (native) return { native };
+    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(request.relationshipId), request.relationshipId, request.workspaceRefId, localServerId);
+    assertLocalWorkspacePlacement(workspace, localServerId, localMachineId, dependencies.localManagedTarget);
+    const { authorityKey, entry, canonicalRoot } = await requireRetainedRelationshipEndpoint({ relationship, workspace });
+    return { canonicalRoot, assertCurrentAuthority: () => assertRetainedRelationshipEndpointCurrent({ authorityKey, entry, workspace }) };
+  };
+
   const readFileHere = async (
     rawRequest: WorkspaceSyncTargetFileReadV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<ReadWorkspaceSyncFileResultV1> => {
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetFileReadV1Schema.parse(rawRequest);
-    const native = await nativeExecutionForEndpoint(request.workspaceRefId, request.relationshipId, request.relationshipId);
-    if (native) return await native.readFileHere(request, signal);
-    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(request.relationshipId), request.relationshipId, request.workspaceRefId, localServerId);
-    assertLocalWorkspacePlacement(workspace, localServerId, localMachineId, dependencies.localManagedTarget);
-    // Disclosure uses the same retained relationship/root object authority as
-    // conflict deletion. A replacement root at the granted pathname is not the
-    // root the relationship was granted, so it must yield no bytes.
-    const retainedEndpoint = await requireRetainedRelationshipEndpoint({ relationship, workspace });
+    const access = await resolveTargetRead(request, context);
+    if (access.native) return await access.native.readFileHere(request, signal);
     signal?.throwIfAborted();
     return ReadWorkspaceSyncFileResultV1Schema.parse(await readWorkspaceSyncFileAtRoot({
-      rootPath: retainedEndpoint.canonicalRoot,
+      rootPath: access.canonicalRoot,
       relativePath: request.path,
       maxBytes: request.maxBytes,
       ...(request.expectedDigest === undefined ? {} : { expectedDigest: request.expectedDigest }),
-      assertCurrentAuthority: async () => await assertRetainedRelationshipEndpointCurrent({
-        authorityKey: retainedEndpoint.authorityKey,
-        entry: retainedEndpoint.entry,
-        workspace,
-      }),
+      assertCurrentAuthority: access.assertCurrentAuthority,
     }));
   };
 
   const observeEntryHere = async (
     rawRequest: WorkspaceSyncTargetEntryObserveV1,
     signal?: AbortSignal,
+    context?: RpcHandlerContext,
   ): Promise<WorkspaceSyncEntryExpectationV1> => {
     signal?.throwIfAborted();
     const request = WorkspaceSyncTargetEntryObserveV1Schema.parse(rawRequest);
-    const native = await nativeExecutionForEndpoint(request.workspaceRefId, request.relationshipId, request.relationshipId);
-    if (native) return await native.observeEntryHere(request, signal);
-    const { relationship, workspace } = resolveOwnedWorkspace(getSnapshot(request.relationshipId), request.relationshipId, request.workspaceRefId, localServerId);
-    assertLocalWorkspacePlacement(workspace, localServerId, localMachineId, dependencies.localManagedTarget);
-    const retainedEndpoint = await requireRetainedRelationshipEndpoint({ relationship, workspace });
+    const access = await resolveTargetRead(request, context);
+    if (access.native) return await access.native.observeEntryHere(request, signal);
     signal?.throwIfAborted();
     return WorkspaceSyncEntryExpectationV1Schema.parse(await observeWorkspaceSyncEntryAtRoot({
-      rootPath: retainedEndpoint.canonicalRoot,
+      rootPath: access.canonicalRoot,
       relativePath: request.path,
-      assertCurrentAuthority: async () => await assertRetainedRelationshipEndpointCurrent({
-        authorityKey: retainedEndpoint.authorityKey,
-        entry: retainedEndpoint.entry,
-        workspace,
-      }),
+      assertCurrentAuthority: access.assertCurrentAuthority,
     }));
   };
 
@@ -2448,7 +2466,7 @@ export function createWorkspaceSyncTargetAuthority(
 
   // A retained TARGET loan is this admitted work only for the same SOURCE writer,
   // requester Account and placement its stored signed admission names.
-  const isAdmittedBySourceWriter = (entry: RetainedBootstrap, routing: Pick<RetainedSourceWriterTargetRouting, 'sourceWriter' | 'source'>
+  const isAdmittedBySourceWriter = (entry: RetainedBootstrap | RetainedNativeBootstrap, routing: Pick<RetainedSourceWriterTargetRouting, 'sourceWriter' | 'source'>
     & Readonly<{ target: Pick<RetainedSourceWriterTargetRouting['target'], 'targetMachineId' | 'targetRootPath'> }>) => {
     const admitted = entry.sourceWriterTargetRouting;
     return admitted !== undefined && isDeepStrictEqual(routing.sourceWriter, admitted.sourceWriter)

@@ -295,6 +295,20 @@ export function readWorkspaceSyncTargetMethodV1(phase: WorkspaceSyncTargetRoutin
   return workspaceSyncTargetMethodsV1()[phase];
 }
 
+export function isWorkspaceSyncTargetReadMethodV1(method: string): boolean {
+  return method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE
+    || method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ;
+}
+
+/** Installed writers can inspect the exact retained Sync endpoint as well as a Worker copy. */
+export function isWorkspaceSyncSourceWriterTargetMethodV1(
+  phase: WorkspaceSyncTargetRoutingV1['phase'], method: string, machineId?: string,
+): boolean {
+  const prefix = machineId === undefined ? '' : `${machineId}:`;
+  return method === `${prefix}${readWorkspaceSyncTargetMethodV1(phase)}`
+    || phase === 'inspect' && method.startsWith(prefix) && isWorkspaceSyncTargetReadMethodV1(method.slice(prefix.length));
+}
+
 export function isWorkspaceSyncTargetMethodV1(method: string): boolean {
   return Object.values(workspaceSyncTargetMethodsV1()).some(value => value === method);
 }

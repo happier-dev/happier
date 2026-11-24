@@ -72,6 +72,8 @@ import {
   type WorkspaceSyncSourceWriterTargetRoutingV1,
   isWorkspaceSyncSourceWriterCleanupPhaseV1,
   readWorkspaceSyncTargetMethodV1 as readWorkspaceSyncTargetMethod,
+  isWorkspaceSyncSourceWriterTargetMethodV1,
+  isWorkspaceSyncTargetReadMethodV1,
 } from '@happier-dev/protocol/socketRpc';
 import {
   WorkspaceSyncHandoffSourcePhaseRequestV1Schema,
@@ -79,6 +81,8 @@ import {
   WorkspaceSyncTargetBootstrapPrepareV1Schema,
   WorkspaceSyncTargetBootstrapReleaseV1Schema,
   WorkspaceSyncTargetConflictRecoverV1Schema,
+  WorkspaceSyncTargetEntryObserveV1Schema,
+  WorkspaceSyncTargetFileReadV1Schema,
   type WorkspaceSyncTargetConflictRecoverV1,
   WorkspaceSyncSeedExportPrepareV1Schema,
   WorkspaceSyncPrepareBetweenRequestV1Schema,
@@ -913,8 +917,8 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
                 writerTarget,
               ))) ||
           (!targetRouting && targetReceiver) ||
-          input.method !==
-            `${targetMethodMachineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId}:${readWorkspaceSyncTargetMethod(writerTarget.target.phase)}` ||
+          !isWorkspaceSyncSourceWriterTargetMethodV1(writerTarget.target.phase, input.method,
+            targetMethodMachineId ?? writerTargetReceiver?.destinationMachineId ?? writerTargetReceiver?.machineId ?? context.machineId) ||
           (isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) && writerTarget.target.phase !== 'release' &&
             (Boolean(targetRouting || sourceExecution)
               || (originalRoot ? !doesWorkspaceSyncCopyRetirementRootMatchV1(originalRoot, writerTarget)
@@ -1194,6 +1198,7 @@ export function admitSameMachineWorkspaceSyncTargetPhase(input: Readonly<{
 export function doesWorkspaceSyncTargetRequestMatchRouting(
   params: unknown,
   routing: WorkspaceSyncTargetRoutingV1,
+  method?: string,
 ): boolean {
   if (routing.phase === 'preflight') {
     const body = HandoffTargetReplacementPreflightV1Schema.safeParse(params);
@@ -1207,6 +1212,11 @@ export function doesWorkspaceSyncTargetRequestMatchRouting(
   }
   const matchesRelationship = (relationshipId: string) => relationshipId === routing.operationId
     || relationshipId === deriveWorkspaceSyncRelationshipId(routing.operationId);
+  if (routing.phase === 'inspect' && method !== undefined && isWorkspaceSyncTargetReadMethodV1(method)) {
+    const body = (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ
+      ? WorkspaceSyncTargetFileReadV1Schema : WorkspaceSyncTargetEntryObserveV1Schema).safeParse(params);
+    return body.success && matchesRelationship(body.data.relationshipId);
+  }
   if (routing.phase === 'dependencies') {
     const body = ProjectWorkerDependencyQueryV1Schema.safeParse(params);
     return body.success && body.data.serverId === routing.accountServerId
@@ -1528,12 +1538,11 @@ export async function authorizeMachineRpcRequest(
       !request.machineAdmission ||
       !routing.success ||
       request.workspaceSyncSourceRouting ||
-      request.method !==
-        `${machine.machineId}:${readWorkspaceSyncTargetMethod(routing.data.target.phase)}` ||
+      !isWorkspaceSyncSourceWriterTargetMethodV1(routing.data.target.phase, request.method, machine.machineId) ||
       !doesWorkspaceSyncTargetRequestMatchRouting(request.params, {
         ...routing.data.target,
         targetContext: routing.data.source.sourceContext,
-      }) ||
+      }, request.method.slice(machine.machineId.length + 1)) ||
       (!isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) &&
         (!request.callerInputAuthorization ||
           !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
@@ -1859,7 +1868,7 @@ export async function authorizeMachineRpcRequest(
         // routing/body and Home admission above. The retained TARGET owner
         // alone matches operation, WorkspaceRef and writer before cleanup.
         (writerTargetRouting && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTargetRouting.target.phase) &&
-          rpcMethod === readWorkspaceSyncTargetMethod(writerTargetRouting.target.phase) &&
+          isWorkspaceSyncSourceWriterTargetMethodV1(writerTargetRouting.target.phase, rpcMethod) &&
           !targetRouting && !seedRouting) ||
         (context.machineId === machine.machineId &&
         !sourceRouting &&

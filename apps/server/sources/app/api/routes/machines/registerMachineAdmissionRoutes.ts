@@ -7,7 +7,7 @@ import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
     WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
-    isWorkspaceSyncSourceWriterCleanupPhaseV1, readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
+    isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1, readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
     readCurrentWorkspaceSyncCopyRetirementAuthorization,
     verifyWorkspaceSyncProjectSourceAuthorization, readCurrentWorkspaceSyncProjectSourceAuthorization,
@@ -227,7 +227,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 ? await readCurrentWorkspaceSyncCopyRetirementAuthorization(callerInputAuthorization, writerRouting, app.resolveCurrentSessionMachine) : null;
             if (purpose || custodySubjectAccountId || workspaceSyncSourceRouting
                 || writerRouting.source.accountServerId !== await getOrCreateServerIdentityId()
-                || method.slice(method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)
+                || !isWorkspaceSyncSourceWriterTargetMethodV1(writerRouting.target.phase, method.slice(method.indexOf(':') + 1))
                 || (cleanup ? Boolean(workspaceSyncTargetRouting || workspaceSyncSourceExecution)
                     || (callerInputAuthorization ? !retirement : writerRouting.target.phase === 'remove') : !callerInputAuthorization)) {
                 return reply.code(403).send({ error: 'access_denied' });
@@ -268,7 +268,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
                         installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
                 }
-                if (method !== `${receiver.id}:${readWorkspaceSyncTargetMethodV1(writerRouting.target.phase)}`) {
+                if (!method.startsWith(`${receiver.id}:`)) {
                     return reply.code(403).send({ error: 'access_denied' });
                 }
                 return reply.send({ v: 1, ok: true });

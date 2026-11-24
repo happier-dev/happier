@@ -87,7 +87,7 @@ import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/act
 import { createAuthenticatedFakeSocket, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
 import { MachineInstallationProofPayloadV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncConflictInspectRpcResultV1Schema, type WorkspaceSyncEntryExpectationV1, WorkspaceSyncRelationshipCreateRpcRequestV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, buildProjectAccountRowPhysicalKeyV1, ProjectAccountRelationshipGraphV1Schema,
     type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { callExactMachineRpc } from '../../../../cli/src/session/transport/rpc/machineRpc';
@@ -433,13 +433,17 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         { foreignSource: true, previewOnly: false, scenario: 'previews and retires the retained requester copy through MCP and real Home with a shared SOURCE' },
         { foreignSource: false, previewOnly: true, scenario: 'uses requester custody for preview on an owned SOURCE without a retained capture' },
         { foreignSource: true, previewOnly: true, scenario: 'uses requester custody for preview instead of sending a share holder down a custodian-only route' },
-    ])('$scenario', async ({ foreignSource, previewOnly }) => {
+        { foreignSource: true, previewOnly: false, conflictInspect: true, scenario: 'admits retained Sync conflict Inspect for the Manage share holder through real Home' },
+    ])('$scenario', async ({ foreignSource, previewOnly, conflictInspect }) => {
         await db.machine.deleteMany({ where: { id: { in: ['machine', 'target-parent'] } } });
         await db.account.deleteMany({ where: { id: { in: ['requester', 'member-a'] } } });
         const requester = await db.account.create({ data: { id: 'member-a', publicKey: null, encryptionMode: 'plain' } });
         const custodian = await db.account.create({ data: { id: 'requester', publicKey: null, encryptionMode: 'plain' } });
+        const targetCustodian = conflictInspect ? await db.account.create({ data: { encryptionMode: 'plain' } }) : custodian;
         const requesterToken = await createAccountTokenForTests(requester.id, { kind: 'account', authority: 'present_user' });
         const custodianToken = await createAccountTokenForTests(custodian.id, { kind: 'account', authority: 'present_user' });
+        const targetCustodianToken = conflictInspect
+            ? await createAccountTokenForTests(targetCustodian.id, { kind: 'account', authority: 'present_user' }) : custodianToken;
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         machinesRoutes(app);
         registerProjectAccountRowRoutes(app);
@@ -470,8 +474,8 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo: syncSocketIo,
             installedCredentials: { token: installedToken, encryption: null },
             requesterCredentials: { token: requesterToken, encryption: null },
-            sourceCustodianAccountId: foreignSource ? custodian.id : requester.id, targetCustodianAccountId: custodian.id,
-            remoteTarget: true, workerCleanCopy: true, remoteSeed: true,
+            sourceCustodianAccountId: foreignSource ? custodian.id : requester.id, targetCustodianAccountId: targetCustodian.id,
+            remoteTarget: true, workerCleanCopy: !conflictInspect, remoteSeed: true,
             prepareActiveServerDirectory: async activeServerDir => {
                 if (activeServerDir.includes('/target-parent/')) targetMaterializationDirectory = join(activeServerDir, 'workspace-sync', 'materialization');
             },
@@ -506,12 +510,16 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                 } }) });
                 const io = createSocketRoomDiscoveryHarness(async room => room === daemon.id
                     || room === `rpc:${destination.accountId}:${payload.method}` ? [daemon] : []);
-                const actor = authenticatedToken ? authenticatedToken === custodianToken ? custodian : requester
-                    : source.accountId === custodian.id ? custodian : requester;
-                const callerToken = actor === custodian ? custodianToken : requesterToken;
+                const actor = authenticatedToken ? authenticatedToken === custodianToken || conflictInspect && authenticatedToken === installedToken
+                    ? custodian : requester
+                    : conflictInspect && 'workspaceSyncSeedRouting' in payload ? targetCustodian
+                        : source.accountId === custodian.id ? custodian : requester;
+                const callerToken = actor === custodian ? custodianToken : actor === targetCustodian ? targetCustodianToken : requesterToken;
                 const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'preview-source', data: {
                     clientType: authenticatedToken ? 'user-scoped' : 'machine-scoped', userId: actor.id,
-                    ...(!authenticatedToken ? { machineId: source.id, verifiedMachineInstallationId: source.installationId } : {}),
+                    ...(!authenticatedToken ? conflictInspect && actor === targetCustodian
+                        ? { machineId: target.id, verifiedMachineInstallationId: target.installationId }
+                        : { machineId: source.id, verifiedMachineInstallationId: source.installationId } : {}),
                     authTokenKind: 'account', authAuthority: 'present_user',
                     accountStoredContentCompatibility: compatibility,
                 } }), { handshake: { auth: { token: callerToken } } });
@@ -532,7 +540,7 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                 if (!path.endsWith('/admission/verify') && !path.startsWith('/v1/actions/')
                     && !(projectRowsAtHome && path.startsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`))) return undefined;
                 const headers = path.endsWith('/admission/verify')
-                    ? { authorization: `Bearer ${path.includes('/target-parent/') || foreignSource ? custodianToken : requesterToken}` }
+                    ? { authorization: `Bearer ${path.includes('/target-parent/') ? targetCustodianToken : foreignSource ? custodianToken : requesterToken}` }
                     : Object.fromEntries(Object.entries(config?.headers ?? {})
                         .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
                 const response = await app.inject({ method: 'POST', url: path, headers, payload: body });
@@ -576,7 +584,7 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         const source = await db.machine.create({ data: { ...machineData, id: setup.installed.machineId,
             accountId: foreignSource ? custodian.id : requester.id, installationId: setup.installed.installation.installationId,
             installationPublicKey: decodeBase64(setup.installed.installation.publicKey, 'base64url') } });
-        const target = await db.machine.create({ data: { ...machineData, id: 'target-parent', accountId: custodian.id,
+        const target = await db.machine.create({ data: { ...machineData, id: 'target-parent', accountId: targetCustodian.id,
             installationId: setup.targetInstallation.installationId,
             installationPublicKey: decodeBase64(setup.targetInstallation.publicKey, 'base64url') } });
         // Only the socket transport is substituted: Home's real dispatcher and
@@ -588,8 +596,12 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             forwarded.push(packet);
             return setup.installed.rpcHandlerManager.handleRequest(packet, undefined, 'authenticated_home_socket');
         } }) });
-        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id,
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
             principal: { kind: 'account', accountId: requester.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+        if (conflictInspect) expect(await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: targetCustodian.id, machineId: target.id,
+            principal: { kind: 'account', accountId: custodian.id }, level: 'admin',
+        }))).toMatchObject({ kind: 'saved' });
         if (foreignSource) expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: source.id,
             principal: { kind: 'account', accountId: requester.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
         // This scenario creates a new owned copy. The general Sync fixture
@@ -624,6 +636,47 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         if (!graphRow || graphRow.content.t !== 'plain') throw new Error('Missing committed requester relationship');
         const graph = ProjectAccountRelationshipGraphV1Schema.parse(graphRow.content.v.value);
         if (!graph.relationships[0]) throw new Error('Missing committed relationship');
+        if (conflictInspect) {
+            const inspectConflict = (preview?: Readonly<{ workspaceRefId: string; expected: WorkspaceSyncEntryExpectationV1 }>) =>
+                callExactMachineRpc({ machineId: source.id, credentials: { token: requesterToken, encryption: null },
+                    serverUrl: setup.installed.serverHttpBaseUrl, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICT_INSPECT,
+                    request: { workspaceRefId: setup.sourceRef.id, path: 'payload.txt', ...(preview ? { preview } : {}) } });
+            const beforeInspect = forwarded.length;
+            await filesystem.writeFile(join(setup.targetPath, 'payload.txt'), 'different target version');
+            recordPreviewRows = true;
+            const observation = await inspectConflict();
+            expect(observation).toMatchObject({ path: 'payload.txt', coverage: { complete: true } });
+            const inspected = WorkspaceSyncConflictInspectRpcResultV1Schema.parse(observation);
+            expect(inspected.versions).toHaveLength(2);
+            const targetVersion = inspected.versions.find(version => version.endpointWorkspaceRefIds.includes(setup.targetRef.id));
+            expect(targetVersion?.entry).toMatchObject({ kind: 'file' });
+            const preview = WorkspaceSyncConflictInspectRpcResultV1Schema.parse(await inspectConflict({
+                workspaceRefId: setup.targetRef.id, expected: targetVersion!.entry,
+            }));
+            expect(preview.versions).toEqual(expect.arrayContaining([expect.objectContaining({
+                preview: { workspaceRefId: setup.targetRef.id,
+                    preview: expect.objectContaining({ status: 'text', text: 'different target version' }) },
+            })]));
+            expect([...new Set(previewRowReaders)]).toEqual(['requester']);
+            recordPreviewRows = false;
+            expect(forwarded.slice(beforeInspect)).toEqual(expect.arrayContaining([
+                RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE, RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_FILE_READ,
+            ].map(method => expect.objectContaining({ method: `target-parent:${method}`,
+                workspaceSyncSourceWriterTargetRouting: expect.objectContaining({ target: expect.objectContaining({ phase: 'inspect' }) }),
+            }))));
+            const beforeRawRead = forwarded.length;
+            await expect(callExactMachineRpc({ machineId: target.id, credentials: { token: requesterToken, encryption: null },
+                serverUrl: setup.installed.serverHttpBaseUrl, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE,
+                request: { relationshipId: graph.relationships[0].relationshipId, workspaceRefId: setup.targetRef.id, path: 'payload.txt' },
+            })).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN', failureCause: { phase: 'rpc.admission.machine' } });
+            expect(forwarded).toHaveLength(beforeRawRead);
+            await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: source.id,
+                principal: { kind: 'account', accountId: requester.id } }));
+            const beforeRefusal = forwarded.length;
+            await expect(inspectConflict()).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+            expect(forwarded).toHaveLength(beforeRefusal);
+            return;
+        }
         if (!targetMaterializationDirectory) throw new Error('Missing actual WORKER materialization directory');
         const receiptPath = workspaceSyncMaterializationReceiptPath(targetMaterializationDirectory,
             graph.relationships[0].relationshipId, graph.relationships[0].alphaWorkspaceRefId === setup.targetRef.id ? 'alpha' : 'beta');

@@ -163,6 +163,7 @@ import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/execut
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
     WorkspaceSyncSeedRoutingV1Schema, type WorkspaceSyncSeedRoutingV1,
     WorkspaceSyncSourceWriterTargetRoutingV1Schema, type WorkspaceSyncSourceWriterTargetRoutingV1,
+    isWorkspaceSyncSourceWriterTargetMethodV1, isWorkspaceSyncTargetReadMethodV1,
     type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import { createWorkspaceSyncTargetContent } from './rpc/workspaceSyncTargetContent';
 import { createWorkspaceSyncSourceOperationContinuation } from './rpc/workspaceSyncOperationContinuation';
@@ -4998,7 +4999,7 @@ export class ApiMachineClient {
             && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
         const retainedWriterCopyPhase = !forwardWork && writerTarget !== undefined
             && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) && writerTarget.target.phase !== 'release' && !targetRouting
-            && input.method === readWorkspaceSyncTargetMethod(writerTarget.target.phase);
+            && isWorkspaceSyncSourceWriterTargetMethodV1(writerTarget.target.phase, input.method);
         const signedBinding = signedAuthorization?.binding;
         const admittedWriterSource = forwardWork && writerTarget && !jointTarget && signedBinding
             ? readWorkspaceSyncSourceAdmissionV1(signedBinding, { serverId: writerTarget.source.accountServerId,
@@ -5200,8 +5201,11 @@ export class ApiMachineClient {
             if (writerTarget.target.phase === 'release') return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
             if (writerTarget.target.phase === 'dependencies') return z.array(ProjectWorkerDependencyV1Schema).parse(result);
             if (writerTarget.target.phase === 'remove') return WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
-            if (writerTarget.target.phase === 'inspect') return 'kind' in WorkspaceSyncCommittedCopyInspectV1Schema.parse(input.request)
-                ? WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(result) : WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
+            if (writerTarget.target.phase === 'inspect') {
+                if (isWorkspaceSyncTargetReadMethodV1(input.method)) return result;
+                return 'kind' in WorkspaceSyncCommittedCopyInspectV1Schema.parse(input.request)
+                    ? WorkspaceSyncCommittedCopyPreviewResultV1Schema.parse(result) : WorkspaceSyncCommittedCopyTargetResultV1Schema.parse(result);
+            }
             const parsed = writerTarget.target.phase === 'preflight'
                 ? HandoffTargetReplacementPreflightResultV1Schema.parse(result)
                 : WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(result);

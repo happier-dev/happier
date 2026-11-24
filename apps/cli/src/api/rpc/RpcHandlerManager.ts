@@ -53,7 +53,7 @@ import { computeExternalActionSocketRpcRequestDigestV1, isExternalActionAuthoriz
 import { isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
 import { isSocketRpcMachineReadServerOriginAuthorizationContext, SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
-    WorkspaceSyncSeedRoutingV1Schema, isWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
+    WorkspaceSyncSeedRoutingV1Schema, isWorkspaceSyncSourceWriterTargetMethodV1, isWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
@@ -583,7 +583,8 @@ export class RpcHandlerManager {
             || !isWorkspaceSyncTargetInstalledContent(request.params))) {
             return await deny('workspace_seed_routing');
         }
-        if (workspaceSyncSourceWriterTargetRouting && (!workspaceSyncSourceWriterTargetRouting.success || !isWorkspaceTargetPhase
+        if (workspaceSyncSourceWriterTargetRouting && (!workspaceSyncSourceWriterTargetRouting.success
+            || !isWorkspaceSyncSourceWriterTargetMethodV1(workspaceSyncSourceWriterTargetRouting.data.target.phase, targetMethod)
             || !machineAdmission?.success || !this.authorizeRequest || workspaceSyncSourceRouting
             || workspaceSyncTargetRouting && (!workspaceSyncTargetRouting.success
                 || !doesWorkspaceSyncTargetRoutingMatchWriterTarget(workspaceSyncTargetRouting.data, workspaceSyncSourceWriterTargetRouting.data))
