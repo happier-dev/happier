@@ -74,3 +74,39 @@ it.each(['SIGTERM', 'SIGKILL'] as const)('reclaims a %s-ended runner profile at 
     }
   });
 });
+
+it('keeps startup reattachment whole when one ended Session profile cannot be purged', async () => {
+  await withConfiguredDaemonTestHome({ prefix: 'browser-unclean-purge-failure-' }, async () => {
+    const child = spawn(process.execPath, ['-e', "process.send('ready'); setInterval(() => {}, 1000)"],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+    const exited = once(child, 'exit');
+    try {
+      await once(child, 'message');
+      if (!child.pid) throw new Error('Missing owned fixture PID');
+      const brokenSessionId = 'browser-ended-broken';
+      const endedSessionId = 'browser-ended-clean';
+      for (const happySessionId of [brokenSessionId, endedSessionId]) {
+        await writeSessionMarker({ trackingKey: mintSessionTrackingKey(), pid: child.pid, happySessionId, startedBy: 'daemon' });
+      }
+      const store = createConfiguredBrowserProfileStore();
+      // A file where the default Session profile directory belongs makes that one purge throw.
+      const brokenPath = store.resolveProfileDirectory(deriveSessionBrowserProfileId(brokenSessionId));
+      await mkdir(join(brokenPath, '..'), { recursive: true });
+      await writeFile(brokenPath, 'not a directory');
+      const endedPath = store.resolveProfileDirectory(deriveSessionBrowserProfileId(endedSessionId));
+      await mkdir(endedPath, { recursive: true });
+      await writeFile(join(endedPath, 'Cookies'), 'fixture');
+      child.kill('SIGKILL');
+      await exited;
+      const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
+      expect(result.inventoryReliable).toBe(true);
+      expect(result.orphanedDeadDaemonSessions).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sessionId: brokenSessionId }), expect.objectContaining({ sessionId: endedSessionId }),
+      ]));
+      await expect(stat(endedPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await exited;
+    }
+  });
+});

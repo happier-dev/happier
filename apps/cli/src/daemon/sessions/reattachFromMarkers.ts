@@ -909,7 +909,13 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       const profiles = createConfiguredBrowserProfileStore({ emitAudit: record => {
         logger.infoFile('[DAEMON RUN] Browser profile startup purge', record);
       } });
-      for (const sessionId of endedSessionIds) await profiles.purgeForSessionDeleted({ sessionId });
+      // One unreadable profile must not cost the rest of startup reattachment (as at Session exit).
+      for (const sessionId of endedSessionIds) {
+        await profiles.purgeForSessionDeleted({ sessionId }).catch((error: unknown) => {
+          logger.infoFile('[DAEMON RUN] Browser profile startup purge', { sessionId, outcome: 'failed',
+            error: error instanceof Error ? error.message : String(error) });
+        });
+      }
     }
     for (const marker of aliveMarkers) {
       const restartIntent = readConnectedServiceRestartIntent(marker);

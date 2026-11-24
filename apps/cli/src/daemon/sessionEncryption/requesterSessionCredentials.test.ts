@@ -563,6 +563,33 @@ describe('requester Session lifecycle custody', () => {
       legacy: await make(guestBase, 'csm_3_legacy'), owner: await make(base, 'csm_4_owner') };
   }
 
+  it('retires the bearer and settles the deletion when the deleted guest home cannot be removed', async () => {
+    await home();
+    const homes = await guestHomes(directory!);
+    const locked = join(homes.deleted, 'codex', 'locked');
+    await mkdir(locked, { recursive: true });
+    await writeFile(join(locked, 'held.txt'), 'held');
+    await chmod(locked, 0o555);
+    const custody = await createRequesterSessionCredentialCustody({ happyHomeDir: directory!, sessionId: 'deleted',
+      attribution, credentials, materializationKey: 'csm_1_deleted' });
+    const warn = vi.spyOn(logger, 'warn');
+    let deleted: ((change: { sessionId: string }) => void | Promise<void>) | undefined;
+    const dispose = await subscribeManagedSessionDirectoryRemoval({
+      directories: createManagedSessionDirectories({ activeServerDir: directory! }), token: 'custodian-fixture',
+      stopSession: async () => ({ status: 'not_found' }),
+      onSessionDeletedChange: listener => { deleted = listener; return () => { deleted = undefined; }; },
+      onSessionAccessReset: () => () => {},
+      requesterCustody: { happyHomeDir: directory!, serverId: attribution.serverId },
+    });
+    try {
+      if (!deleted) throw new Error('Missing existing deletion subscription');
+      await expect(deleted({ sessionId: 'deleted' })).resolves.toBeUndefined();
+      await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(join(locked, 'held.txt'))).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Agent home'), expect.objectContaining({ sessionId: 'deleted' }));
+    } finally { dispose(); warn.mockRestore(); await chmod(locked, 0o755); }
+  });
+
   it.each(['identity-root', 'requester-accounts'] as const)('refuses to remove through a symlinked %s when the Session is deleted', async link => {
     await home();
     const outside = await mkdtemp(join(tmpdir(), 'guest-home-outside-'));

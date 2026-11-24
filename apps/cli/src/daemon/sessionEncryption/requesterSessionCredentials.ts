@@ -1228,11 +1228,15 @@ export async function retireRequesterSessionCredentialCustody(input: RequesterCr
         serverId: input.serverId } };
     const stored = await readBoundCustody(path, binding);
     if (!stored) return false;
+    // Credential retirement never waits on a directory removal; a leftover home is removable by hand.
+    await removePrivateBearerFile(path);
     if (cause === 'session_deleted' && stored.materializationKey) {
       await removeRequesterSessionMaterializedHome({ happyHomeDir: binding.happyHomeDir,
-        attribution: binding.attribution, materializationKey: stored.materializationKey });
+        attribution: binding.attribution, materializationKey: stored.materializationKey }).catch((error: unknown) => {
+        logger.warn('[REQUESTER CUSTODY] Deleted Session Agent home was not removed', { sessionId: binding.sessionId,
+          code: error && typeof error === 'object' && 'code' in error ? error.code : undefined });
+      });
     }
-    await removePrivateBearerFile(path);
     return true;
   } catch (error) {
     return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT');
