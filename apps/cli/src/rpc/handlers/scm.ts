@@ -121,7 +121,7 @@ import { createHostScmCommandRunner, isRequesterScmCommandRunnerSelected, resolv
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { FilesystemEffectAdmission, FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { ApiMachineClient } from '@/api/apiMachine';
-import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryReadRpcMethod, isScmLocalRepositoryRpcMethod, supportsManagedWorkspaceScmRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryRpcMethod, isScmMemberFolderRpcMethod, supportsManagedWorkspaceScmRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { isScmActionId } from '@happier-dev/protocol/actions/executor/actionFamilies';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
@@ -232,7 +232,7 @@ export function registerScmHandlers(
     };
     // Manage is full control of this Machine (owner ruling 2026-10-31): an admitted Manage
     // requester's Project SCM runs as the daemon user, like its file effects and shell.
-    // Ingress admits anyone else only to a local repository read; closed host calls keep their runner.
+    // Ingress admits anyone else only to local repository work in their own member folder; closed host calls keep their runner.
     const runAsAdmittedRequester = async (context: RpcHandlerContext | undefined, method: string,
         projectRoot: string | undefined, input: unknown, selected: WorkspaceSource, run: () => unknown,
         observeAsMember?: (context: RpcHandlerContext, identity: IsolatedRequester) => Promise<unknown>): Promise<unknown> => {
@@ -271,7 +271,7 @@ export function registerScmHandlers(
                     ? await executeAsMember(member) : await run();
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
-            if (!comparisons && !isScmLocalRepositoryReadRpcMethod(method)) return await run();
+            if (!comparisons && !isScmMemberFolderRpcMethod(method)) return await run();
             if (identity.kind !== 'isolated') return refuseRequesterPlacement(method, 'scm.requester.identity', undefined, false);
             // The member's own placed Session already selected its target: their read runs there, never
             // on this Machine as them (SEC1116I item 1). Another person's placed root stays in the

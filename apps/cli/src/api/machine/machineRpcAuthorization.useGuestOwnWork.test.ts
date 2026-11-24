@@ -80,9 +80,11 @@ describe('Use guest own work on an isolation-off Machine', () => {
     );
     // Isolation off: the same admission refuses none of those routes.
     expect(await refusedAtIsolation(() => ({ enabled: false }))).toEqual([]);
-    // Source control in the guest's own repository no longer needs Manage there.
+    // With isolation on, a local commit is admitted to run in the guest's member child ("Use works
+    // inside isolation"); network source control keeps the Manage refusal.
+    expect(enabled.find((row) => row.method === RPC_METHODS.SCM_COMMIT_CREATE)).toBeUndefined();
     expect(
-      enabled.find((row) => row.method === RPC_METHODS.SCM_COMMIT_CREATE)
+      enabled.find((row) => row.method === RPC_METHODS.SCM_REMOTE_PUSH)
         ?.errorCode,
     ).toBe('machine_manage_required');
   });

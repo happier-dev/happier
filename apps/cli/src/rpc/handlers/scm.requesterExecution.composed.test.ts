@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -147,6 +147,10 @@ async function repository(parent: string, name: string): Promise<string> {
 
 async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   sourceRuntimeIsolation?: 'disabled' | 'required';
+  /** The member has no member binding on this Machine, so no member child can run their work. */
+  memberIdentityUnavailable?: true;
+  /** Home's answer for this person's Machine grant (false: withdrawn). */
+  admissionCurrent?: boolean;
   resolveProjectRuntime?: NonNullable<Parameters<typeof registerScmHandlers>[2]>['resolveProjectRuntime'] }> = {}) {
   const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
     runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
@@ -173,6 +177,8 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   // The member binding is native OS state: its folder is a real directory of this fixture.
   const prepareNativeOperation = (async (request: Readonly<{ requesterIdentity: HostRequesterExecutionIdentity }>) => {
     if (request.requesterIdentity.kind !== 'isolated') throw Object.assign(new Error('not a member'), { code: 'agent_isolation_unavailable' });
+    if (options.memberIdentityUnavailable) return { requesterIdentity: request.requesterIdentity, workingDirectory: memberRoot,
+      agentIsolation: { requesterIdentity: request.requesterIdentity, read: () => daemonIsolation }, dispose: async () => {} };
     const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...request.requesterIdentity, homeServerIdentityId: home }),
       workspaceRoot: memberRoot, home: memberHome, agentUid: 2401, agentGid: 2401 };
     const snapshot = { ...daemonIsolation, workspaceRoots: [memberRoot], memberIdentity, localTransport: { agentUid: 2401, agentGid: 2401 },
@@ -202,7 +208,7 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
       readAgentIsolation: () => daemonIsolation,
       resolveHomeServerIdentityId: async () => home,
       // Authentication/currentness are the Home network boundary.
-      verifyMachineAdmission: async () => true,
+      verifyMachineAdmission: async () => options.admissionCurrent ?? true,
     }),
   });
   const effectAdmission = createFilesystemEffectAdmission({
@@ -717,10 +723,18 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(await direct.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: direct.memberRepository, message: 'not mine' },
       'other-account', 'use')).toMatchObject({ success: false });
     expect(git(direct.memberRepository, 'rev-parse', 'HEAD')).toBe(memberHead);
+    // Isolation expected but unavailable: the local commit is admitted only into the member child, which cannot
+    // start, so it is refused before any Git (network source control keeps the Manage refusal there).
     const unavailable = await fixture({ sourceRuntimeIsolation: 'required' });
     const unavailableRepository = await repository(unavailable.directory, 'guest-project');
-    expect(await unavailable.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: unavailableRepository, message: 'refused' }, 'member-account', 'use'))
-      .toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
+    const before = gitLaunches().length;
+    const refusedCommit = await unavailable.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: unavailableRepository, message: 'refused' },
+      'member-account', 'use');
+    expect(refusedCommit, JSON.stringify(refusedCommit)).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE' });
+    expect(gitLaunches().length).toBe(before);
+    expect(git(unavailableRepository, 'log', '-1', '--format=%s')).toBe('initial\n');
+    expect(await unavailable.invoke(RPC_METHODS.SCM_REMOTE_PUSH, { cwd: unavailableRepository, remote: 'origin', branch: 'main' },
+      'member-account', 'use')).toMatchObject({ errorCode: 'machine_manage_required', effectAttempted: false });
   });
 
   // F-B follow-up: blame is a local repository read (an Action-spec RPC); in the member child it runs
@@ -817,14 +831,96 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.runAs).toEqual([]);
   });
 
-  it('refuses a Git write in a member folder for a Team member without Manage, before any Git', async () => {
+  // Owner ruling 2026-11-23 ~15:10Z (option B, "yes i agree"): "On Machines with isolation on, Use works inside
+  // isolation." A Can use member's own local repository writes run whole in their member child, as them.
+  // Real: ingress admission, requester selection, SCM handlers, Workspace effect bridge and Git; replaced: RunAs (OS boundary).
+  it('runs a Can use member’s local repository writes in their own member folder in their member child', async () => {
     const f = await fixture();
-    await writeFile(join(f.memberRepository, 'notes.txt'), 'from use\n');
-    for (const accountId of ['member-account', 'team-member-account']) {
-      expect(await f.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: f.memberRepository, message: 'refused' }, accountId, 'use'))
+    const cwd = f.memberRepository;
+    git(cwd, 'config', 'user.name', 'Member test');
+    git(cwd, 'config', 'user.email', 'member@example.invalid');
+    await writeFile(join(cwd, 'notes.txt'), 'from use\n');
+    await writeFile(join(cwd, 'scratch.txt'), 'thrown away\n');
+    const writes = [
+      [RPC_METHODS.SCM_CHANGE_INCLUDE, { cwd, paths: ['notes.txt', 'scratch.txt'] }],
+      [RPC_METHODS.SCM_CHANGE_EXCLUDE, { cwd, paths: ['scratch.txt'] }],
+      [RPC_METHODS.SCM_COMMIT_CREATE, { cwd, message: 'use commit' }],
+      [RPC_METHODS.SCM_CHANGE_DISCARD, { cwd, entries: [{ path: 'scratch.txt', kind: 'untracked' }] }],
+      [RPC_METHODS.SCM_BRANCH_CREATE, { cwd, name: 'feature', checkout: true }],
+      [RPC_METHODS.SCM_BRANCH_CHECKOUT, { cwd, name: 'main', strategy: 'bring_changes' }],
+    ] as const;
+    for (const [method, params] of writes) {
+      const response = await f.invoke(method, params, 'member-account', 'use');
+      expect(response, `${method} ${JSON.stringify(response)}`).toMatchObject({ success: true });
+    }
+    await writeFile(join(cwd, 'notes.txt'), 'stashed\n');
+    expect(await f.invoke(RPC_METHODS.SCM_STASH_CREATE, { cwd }, 'member-account', 'use')).toMatchObject({ success: true });
+    expect(await f.invoke(RPC_METHODS.SCM_STASH_POP, { cwd, stashRef: 'stash@{0}' }, 'member-account', 'use'))
+      .toMatchObject({ success: true });
+    expect(git(cwd, 'log', '-1', '--format=%s|%an')).toBe('use commit|Member test\n');
+    expect(git(cwd, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main\n');
+    expect(git(cwd, 'branch', '--list', 'feature')).toContain('feature');
+    expect(git(cwd, 'status', '--porcelain')).toBe(' M notes.txt\n');
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual(Array(writes.length + 2).fill(['workspace-effect', 2401]));
+    expect(gitLaunches().length).toBeGreaterThan(0);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  it('refuses a Can use member’s local write outside their own member folder', async () => {
+    const f = await fixture();
+    await writeFile(join(f.ownerRepository, 'owner.txt'), 'owner work\n');
+    git(f.ownerRepository, 'add', 'owner.txt');
+    const ownerHead = git(f.ownerRepository, 'rev-parse', 'HEAD');
+    const link = join(f.memberRoot, 'outside-link');
+    await symlink(f.ownerRepository, link);
+    for (const cwd of [f.ownerRepository, link, join(f.memberRepository, '..', '..', 'owner-project')]) {
+      expect(await f.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd, message: 'not mine' }, 'member-account', 'use'), cwd)
+        .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    }
+    // A Project root outside the member folder is refused by the daemon's lexical check before any member child.
+    const before = os.runAs.length;
+    expect(await f.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { v: 1, kind: 'targeted_action_rpc', input: { message: 'not mine' },
+      target: { kind: 'machine', machineId: f.machineId, project: { machineId: f.machineId, directory: f.ownerRepository } } },
+    'member-account', 'use')).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    expect(os.runAs.length).toBe(before);
+    expect(git(f.ownerRepository, 'rev-parse', 'HEAD')).toBe(ownerHead);
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
+  it('refuses a Can use member’s local write that has no member child, and one whose grant was withdrawn, before any Git', async () => {
+    for (const [options, refusal] of [
+      // Admitted, but no member child can run it: refused by the SCM owner, never run by the daemon.
+      [{ memberIdentityUnavailable: true }, { success: false, actionErrorCode: 'agent_isolation_unavailable' }],
+      // Home no longer admits this person on the Machine.
+      [{ admissionCurrent: false }, { errorCode: RPC_ERROR_CODES.FORBIDDEN }],
+    ] as const) {
+      const f = await fixture(options);
+      await writeFile(join(f.memberRepository, 'notes.txt'), 'from use\n');
+      git(f.memberRepository, 'add', 'notes.txt');
+      expect(await f.invoke(RPC_METHODS.SCM_COMMIT_CREATE, { cwd: f.memberRepository, message: 'refused' }, 'member-account', 'use'),
+        JSON.stringify(options)).toMatchObject(refusal);
+      expect(git(f.memberRepository, 'log', '-1', '--format=%s')).toBe('initial\n');
+      expect(daemonGit()).toEqual([]);
+      expect(os.runAs).toEqual([]);
+    }
+  });
+
+  // Network, remote configuration, saved-result and Agent-starting methods are not local repository writes of the
+  // member folder: they keep the Manage refusal pending the owner.
+  it('keeps Can use remote, network and comparison methods on the Manage refusal, before any Git', async () => {
+    const f = await fixture();
+    const cwd = f.memberRepository;
+    for (const [method, params] of [
+      [RPC_METHODS.SCM_REMOTE_ADD, { cwd, name: 'origin', fetchUrl: 'https://example.invalid/repo.git' }],
+      [RPC_METHODS.SCM_REMOTE_FETCH, { cwd, remote: 'origin' }],
+      [RPC_METHODS.SCM_REMOTE_PUSH, { cwd, remote: 'origin', branch: 'main' }],
+      [RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, { cwd, source: { kind: 'workingTree' } }],
+    ] as const) {
+      expect(await f.invoke(method, params, 'member-account', 'use'), method)
         .toMatchObject({ errorCode: 'machine_manage_required' });
     }
-    expect(git(f.memberRepository, 'log', '-1', '--format=%s')).toBe('initial\n');
     expect(gitLaunches()).toEqual([]);
     expect(os.runAs).toEqual([]);
   });

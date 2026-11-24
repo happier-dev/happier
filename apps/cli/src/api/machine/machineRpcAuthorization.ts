@@ -51,7 +51,7 @@ import {
 } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceAdmissionSchema } from '@happier-dev/protocol/scm';
-import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import { getScmRpcSideEffectClass, isScmLocalRepositoryReadRpcMethod, isScmMemberFolderRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import {
   PreparedTransferRpcRequestV1Schema,
   resolvePreparedTransferRpcPhaseV1,
@@ -2003,10 +2003,10 @@ export async function authorizeMachineRpcRequest(
         if (installationId !== machine.resolveInstallationId())
           return forbidden('machine_installation');
         // Home-admitted Manage on this physical receiver permits raw work.
-        // A person (or their own Account automation) reading a local repository: the SCM owner
-        // runs the whole read in their member process, only inside their own folder.
+        // A person (or their own Account automation) reading or locally changing a repository: the SCM
+        // owner runs the whole operation in their member process, only inside their own folder.
         const personLocalRepositoryRead = identity.kind === 'isolated' && (identity.presentPerson || identity.accountAutomation)
-          && isScmLocalRepositoryReadRpcMethod(rpcMethod);
+          && isScmMemberFolderRpcMethod(rpcMethod);
         const unrestricted = isHostRequesterUnrestrictedOwner(identity);
         // Home admitted this grantee (Use or Manage) for this method. Where the owner turned
         // isolation off, their own work runs on the daemon (owner ruling 2026-11-23 ~15:10Z);

@@ -112,10 +112,17 @@ export type ScmActionSpecDefinition<
    * Works only on the local repository at the input's folder, with Git alone, so it can run as the OS user who
    * owns that folder. `read` (status, history, diffs, file content) may also run as a requesting person with Can
    * use. `write` (stage, commit, branch, stash, remotes, including fetch/pull/push with that user's own Git
-   * credentials) needs Manage. Never set on forge, hosting, saved-result or Agent-starting methods: those run on
-   * this Machine's own credentials or services.
+   * credentials) needs Manage unless it is a `memberFolderWrite`. Never set on forge, hosting, saved-result or
+   * Agent-starting methods: those run on this Machine's own credentials or services.
    */
   localRepository?: 'read' | 'write';
+  /**
+   * A `localRepository: 'write'` whose whole effect stays in the repository at the input's folder (index, working
+   * tree, branches, stash): no remote, no network, no other folder. A Can use person runs it as their member user
+   * in their own member folder, as their own Agent already can there (owner, 2026-11-23: "On Machines with
+   * isolation on, Use works inside isolation").
+   */
+  memberFolderWrite?: true;
   /**
    * Writes into the input's folder with this Machine's SCM hosting credentials (clone). In a member's folder it is
    * refused `credential_scope_denied`: those credentials are not that member's, and Git's ownership check does not
@@ -382,7 +389,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.change.include' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmChangeApplyRequestSchema,
     outputSchema: scm.ScmChangeApplyResponseSchema,
     inputHints: {
@@ -405,7 +412,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.change.exclude' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: scm.ScmChangeApplyRequestSchema,
     outputSchema: scm.ScmChangeApplyResponseSchema,
     inputHints: {
@@ -431,7 +438,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.change.discard' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'danger', localRepository: 'write',
+    sideEffectClass: 'danger', localRepository: 'write', memberFolderWrite: true,
     approvalPresentation: { summary: describeScmChangeDiscardApprovalSummary },
     inputSchema: scm.ScmChangeDiscardRequestSchema,
     outputSchema: scm.ScmChangeDiscardResponseSchema,
@@ -454,7 +461,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.commit.create' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: ScmCommitCreateActionInputSchema,
     outputSchema: scm.ScmCommitCreateResponseSchema,
     inputHints: {
@@ -604,7 +611,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.create' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: branches.ScmBranchCreateRequestSchema,
     outputSchema: branches.ScmBranchCreateResponseSchema,
     inputHints: {
@@ -628,7 +635,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.branch.checkout' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: branches.ScmBranchCheckoutRequestSchema,
     outputSchema: branches.ScmBranchCheckoutResponseSchema,
     inputHints: {
@@ -1098,7 +1105,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.stash.create' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: stash.ScmStashCreateRequestSchema,
     outputSchema: stash.ScmStashCreateResponseSchema,
     inputHints: {
@@ -1119,7 +1126,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.stash.apply' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: stash.ScmStashApplyRequestSchema,
     outputSchema: stash.ScmStashApplyResponseSchema,
     inputHints: {
@@ -1140,7 +1147,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.stash.pop' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'write', localRepository: 'write',
+    sideEffectClass: 'write', localRepository: 'write', memberFolderWrite: true,
     inputSchema: stash.ScmStashPopRequestSchema,
     outputSchema: stash.ScmStashPopResponseSchema,
     inputHints: {
@@ -1161,7 +1168,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     placements: [],
     bindings: { rpcMethod: 'scm.stash.drop' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
-    sideEffectClass: 'danger', localRepository: 'write',
+    sideEffectClass: 'danger', localRepository: 'write', memberFolderWrite: true,
     inputSchema: stash.ScmStashDropRequestSchema,
     outputSchema: stash.ScmStashDropResponseSchema,
     inputHints: {
@@ -2163,6 +2170,11 @@ function readScmLocalRepositoryAccess(method: string) {
 /** Local repository reads a Can use person may run, including internal observation. */
 export function isScmLocalRepositoryReadRpcMethod(method: string): boolean {
   return readScmLocalRepositoryAccess(method) === 'read';
+}
+
+/** Local repository work a Can use person runs as their member user, only in their own member folder. */
+export function isScmMemberFolderRpcMethod(method: string): boolean {
+  return isScmLocalRepositoryReadRpcMethod(method) || findScmRpcSpec(method)?.memberFolderWrite === true;
 }
 
 /** The managed workspace carries its exact placement through these RPCs. */
