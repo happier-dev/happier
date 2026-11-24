@@ -21,7 +21,10 @@ import { databaseActionSettlement } from './actionSettlement.js';
 export type ConsoleExecution = Readonly<{
     mode: 'read' | 'write'; running: boolean;
     result?: DatabaseOperationResultV1;
-    error?: Readonly<{ message: string; code?: string; range?: ConsoleSelection; positionedIn?: string; statementRange?: ConsoleSelection }>;
+    error?: Readonly<{
+        message: string; code?: string; phase?: string; requestId?: string; outcomeUnknown?: true;
+        range?: ConsoleSelection; positionedIn?: string; statementRange?: ConsoleSelection;
+    }>;
 }>;
 export type WorkbenchConsoleHost = Readonly<{
     consoleState(targetKey: string): ReturnType<typeof createConsoleState>;
@@ -84,7 +87,15 @@ export function createConsole(instance: WorkbenchConsoleHost, targetKey: string)
                                 range: { start: offset, end: offset + (characters[(cause?.position ?? 1) - 1]?.length ?? 0) } }) } });
                     }
                 } else if (settled.status === 'error' || settled.status === 'outcomeUnknown') {
-                    execution.set('run', { mode, running: false, error: { code: settled.code, message: settled.message } });
+                    const details = settled.details;
+                    const detailPhase = details && typeof details === 'object' && 'phase' in details ? details.phase : undefined;
+                    const phase = settled.failureCause?.phase ?? (typeof detailPhase === 'string' ? detailPhase : undefined);
+                    execution.set('run', { mode, running: false, error: {
+                        code: settled.code, message: settled.message,
+                        ...(phase ? { phase } : {}),
+                        ...(settled.requestId ? { requestId: settled.requestId } : {}),
+                        ...(settled.status === 'outcomeUnknown' ? { outcomeUnknown: true } : {}),
+                    } });
                 } else execution.set('run', { mode, running: false });
                 submitted = [];
                 submittedSql = undefined;

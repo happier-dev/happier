@@ -365,14 +365,12 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
             value={translate('plugins.database.console.stopped', 'Stopped. Nothing was changed.')}
           />
         ) : sql.error ? (
-          // The database's own words lead; a read, or a write in its transaction, changed nothing. MySQL keeps the
-          // schema changes before a failed statement (D22), so it says nothing of the kind.
           <ErrorState
             layout="line"
             kind="error"
             title={sql.error.message}
-            details={nativeErrorCode ?? sql.error.code}
-            {...(sql.mode === 'write' && engineIsMysql ? {} : {
+            details={[nativeErrorCode ?? sql.error.code, sql.error.phase, sql.error.requestId].filter(Boolean).join(' · ') || undefined}
+            {...(sql.mode === 'write' && (engineIsMysql || sql.error.outcomeUnknown) ? {} : {
               description: translate('plugins.database.console.nothingChanged', 'Nothing was changed.'),
             })}
           />

@@ -46,6 +46,24 @@ it('explains the caret statement with read access and projects Unicode engine po
     expect(text.get().history).toEqual([]);
 });
 
+it('keeps the typed phase and request of a failed mounted Console write without claiming rollback', async () => {
+    const text = createConsoleState({ read: async () => null, write: async () => {} });
+    const console = createConsole({ consoleState: () => text, target: () => descriptor,
+        statementRanges: sql => [{ start: 0, end: sql.length }],
+        client: { presentDeviceStorageError(error) { throw error; } } }, 'target');
+    await console.setText('update selected set flag = 1');
+    console.setMode('write');
+    const binding = console.run();
+    await binding.controller.prepare({ signal: new AbortController().signal });
+    binding.controller.onSettled({ ok: false, errorCode: 'action_outcome_unknown', error: 'The Machine lost the receipt.',
+        requestId: 'console-receipt', effectAttempted: true, details: { layer: 'transport', phase: 'settlement' } });
+    expect(console.execution.get('run')).toMatchObject({ running: false, error: {
+        code: 'action_outcome_unknown', message: 'The Machine lost the receipt.',
+        requestId: 'console-receipt', phase: 'settlement', outcomeUnknown: true,
+    } });
+    expect(text.get().history).toEqual([]);
+});
+
 it('stops the exact host control signal and leaves the same console ready for another deliberate run', async () => {
     const text = createConsoleState({ read: async () => null, write: async () => {} });
     const console = createConsole({ consoleState: () => text, target: () => descriptor,
