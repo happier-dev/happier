@@ -2480,9 +2480,45 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
       surfaceState: 'error', statusWord: t('voice.readiness.short.machineUnreachable'),
       failureMessage: t('voice.readiness.execution_machine_incompatible'),
       captionLabel: t('voice.readiness.execution_machine_incompatible'),
-      recoveryLabel: t('voicePresence.recovery.setUp'),
+      // The machine may come back: Retry leads, choosing another machine is the alternate (lab ST).
+      recoveryLabel: t('common.retry'), recoveryIcon: 'arrow-clockwise',
+      alternateRecoveryLabel: t('voice.readiness.actions.select_execution_machine'),
     });
     expect(hook.getCurrent().statusWord).not.toBe(hook.getCurrent().captionLabel);
+    await hook.unmount();
+  });
+
+  it('names the unreachable Home through its label owner and leaves its Retry to the Home', async () => {
+    const { resolveHomeDisplayLabel } = await import('@/components/settings/server/homeDisplayName');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+    const serverId = getActiveServerSnapshot().serverId;
+    const home = resolveHomeDisplayLabel(getServerProfileById(serverId), serverId, serverId);
+    const hook = await renderControl({
+      adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle', canStop: false,
+      errorCode: 'provider_error', errorMessage: 'server_unreachable',
+      errorPresentation: 'error', errorRecoveryAction: 'retry',
+    });
+    expect(hook.getCurrent()).toMatchObject({
+      surfaceState: 'error',
+      // The page and the sidebar say it in these words, with the Home's own Retry.
+      captionLabel: t('sidebarFooter.homeUnreachableTitle', { home }),
+      recoveryOwnedByHome: true,
+    });
+    await hook.unmount();
+  });
+
+  it('names the offline Machine the attempt was admitted on in the short reason', async () => {
+    const hook = await renderControl({
+      adapterId: 'local_conversation', sessionId: 'control-1', status: 'error', mode: 'idle', canStop: false,
+      errorCode: 'execution_machine_unavailable', errorMessage: 'voice_agent_target_machine_offline',
+      errorPresentation: 'error', errorRecoveryAction: 'select_execution_machine',
+      recoveryTarget: { serverId: 'server-1', machineId: 'machine-studio', machineLabel: 'Studio', agentRuntime: null },
+    });
+    expect(hook.getCurrent()).toMatchObject({
+      failureMessage: t('voice.readiness.execution_machine_offline', { machine: 'Studio' }),
+      captionLabel: t('voice.readiness.execution_machine_offline', { machine: 'Studio' }),
+    });
     await hook.unmount();
   });
 

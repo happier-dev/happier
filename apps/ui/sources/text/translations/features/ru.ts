@@ -18315,6 +18315,7 @@ const voiceReadinessTranslations = { ru: defineVoiceReadinessTranslation({
     execution_machine_missing: 'Выберите машину, на которой может работать этот голосовой провайдер.',
     execution_machine_installing: 'Выбранная машина для голосового режима ещё подготавливается.',
     execution_machine_incompatible: 'Выбранная машина сейчас недоступна.',
+    execution_machine_offline: ({ machine }) => `${machine} не в сети.`,
     execution_machine_unknown: 'Не удалось проверить машину для голосового режима.',
     daemon_unreachable: 'Для выбранной машины нет доступного маршрута голосового аудио.',
     daemon_relay_disabled: 'Выбранной машине требуется ретранслятор голосового аудио, но его использование отключено.',

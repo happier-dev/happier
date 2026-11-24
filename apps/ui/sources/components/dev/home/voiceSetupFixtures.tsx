@@ -24,10 +24,10 @@ export const LAB_BRIEF: Pick<VoiceBrief, 'items' | 'incomplete' | 'caughtUp'> = 
     incomplete: false,
     caughtUp: false,
     items: [
-        { key: 'review', category: 'needs_you', title: 'Review #2481', subtitle: 'Wants to run yarn test:e2e · Studio', destination: { kind: 'workflow', runId: 'dev-review' } },
-        { key: 'nightly', category: 'failed', title: 'Nightly release · run 214', subtitle: 'Failed at Publish: npm can’t publish over 0.3.0-preview.14 · 07:12', destination: { kind: 'workflow', runId: 'dev-nightly' } },
-        { key: 'relay', category: 'ready', title: 'Relay retry with backoff', subtitle: 'Backoff with jitter, 18 tests pass · devbox', destination: { kind: 'workflow', runId: 'dev-relay' } },
-        { key: 'settings', category: 'ready', title: 'Fix settings modal remount', subtitle: 'Keyed by route; 24 tests pass · MacBook Pro', destination: { kind: 'workflow', runId: 'dev-settings' } },
+        { key: 'review', category: 'needs_you', title: 'Review #2481', place: 'Studio', subtitle: 'Wants to run yarn test:e2e', destination: { kind: 'workflow', runId: 'dev-review' } },
+        { key: 'nightly', category: 'failed', title: 'Nightly release · run 214', subtitle: 'Failed at Publish: npm can’t publish over 0.3.0-preview.14', destination: { kind: 'workflow', runId: 'dev-nightly' } },
+        { key: 'relay', category: 'ready', title: 'Relay retry with backoff', place: 'devbox', subtitle: 'Backoff with jitter, 18 tests pass', destination: { kind: 'workflow', runId: 'dev-relay' } },
+        { key: 'settings', category: 'ready', title: 'Fix settings modal remount', place: 'MacBook Pro', subtitle: 'Keyed by route; 24 tests pass', destination: { kind: 'workflow', runId: 'dev-settings' } },
     ],
 };
 

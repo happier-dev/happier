@@ -17952,6 +17952,7 @@ const voiceReadinessTranslations = { de: defineVoiceReadinessTranslation({
     execution_machine_missing: 'Wähl einen Rechner, der diesen Voice-Provider ausführen kann.',
     execution_machine_installing: 'Der gewählte Voice-Ausführungsrechner wird noch vorbereitet.',
     execution_machine_incompatible: 'Der gewählte Rechner ist gerade nicht erreichbar.',
+    execution_machine_offline: ({ machine }) => `${machine} ist offline.`,
     execution_machine_unknown: 'Der Voice-Ausführungsrechner ließ sich nicht prüfen.',
     daemon_unreachable: 'Der gewählte Rechner hat keinen verfügbaren Weg für Voice-Audio.',
     daemon_relay_disabled: 'Der gewählte Rechner braucht das Voice-Audio-Relay, aber die Relay-Nutzung ist deaktiviert.',

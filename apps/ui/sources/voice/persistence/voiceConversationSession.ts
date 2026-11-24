@@ -36,6 +36,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { storage } from '@/sync/domains/state/storage';
+import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
@@ -337,6 +338,11 @@ async function resolveVoiceConversationDefaultBindings(params: Readonly<{
         }
         const catalog = await readAdmittedConnectedAccountCatalogInContext(account, 'purposes', params.signal);
         assertVoiceConversationAccountCurrent(params.accountLifetime);
+        // The catalog owner's typed "the Home did not answer" passes through as that cause, so Voice
+        // states it in the Home's words instead of naming the account row that could not be read.
+        if (catalog.status === 'unavailable' && catalog.reason === 'unreachable') {
+            throw Object.assign(new Error(SERVER_UNREACHABLE_ERROR_CODE), { code: SERVER_UNREACHABLE_ERROR_CODE });
+        }
         if (catalog.status !== 'ready' || catalog.record.key !== 'purposes') {
             throw Object.assign(new Error('connected_account_purpose_catalog_unavailable'), {
                 code: 'connected_account_purpose_catalog_unavailable',

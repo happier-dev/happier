@@ -8,7 +8,7 @@ import { buildVoiceBrief as buildBrief, type VoiceBriefSource } from './buildVoi
 import { createWorkflowRunSummaryFixture, createAutomationRunFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
-import { buildInboxSessionContextLine, buildInboxSessionReasonLine } from '@/components/inbox/workGroups/inboxSessionContextLine';
+import { buildInboxSessionContextLine, buildInboxSessionReasonLine, readInboxSessionNeed } from '@/components/inbox/workGroups/inboxSessionContextLine';
 import { t } from '@/text';
 import { WorkflowRunPrivateMetadataV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
@@ -244,11 +244,10 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.context).not.toContain('pending_blocked-');
         expect(brief.context).not.toContain('/home/alice');
     });
-    it.each([undefined, true, false])('carries current delegated-approval guidance with the native exception (enabled=%s)', (canApproveRequests) => {
+    it.each([undefined, true, false])('carries current delegated-approval guidance (enabled=%s)', (canApproveRequests) => {
         const brief = buildBriefFromInboxFixture({ inbox: source(), settings: { voice: { canApproveRequests } } });
         const guidance: unknown = JSON.parse(brief.context).approval;
         expect(guidance).toEqual(expect.stringContaining(canApproveRequests === false ? 'Voice approvals are off' : 'Voice approvals are enabled'));
-        expect(guidance).toEqual(expect.stringContaining('Native Codex Realtime cannot decide requests'));
         if (canApproveRequests === false) {
             expect(guidance).toEqual(expect.stringContaining('A tap in the request UI is required'));
             expect(guidance).not.toEqual(expect.stringContaining('Use the canonical request tools to approve or deny'));
@@ -317,7 +316,9 @@ describe('Voice brief from the mounted Inbox', () => {
                 .toBe(readInboxSessionTitle(session, session.serverId ?? null));
             const candidate = [...sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate), ...sessionPresentation.readySessions]
                 .find(candidate => candidate.sessionId === session.id)!;
-            expect(item?.subtitle).toBe(buildInboxSessionReasonLine(candidate) || t('common.unavailable'));
+            expect(item?.subtitle).toBe(item?.category === 'ready'
+                ? buildInboxSessionReasonLine(candidate, { underReadyHeading: true })
+                : buildInboxSessionReasonLine(candidate) || t('common.unavailable'));
         }
         // Notification previews do not override the Account's Voice disclosure policy.
         expect(JSON.parse(brief.context).items.map((item: { title?: string }) => item.title)).toEqual([
@@ -353,6 +354,23 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(brief.freshness.sessionHomes).toEqual({ 'home-a': { phase: 'ready', lastSuccessAt: 900 } });
     });
 
+    it('names where a ready session runs beside its title and never repeats its heading as the reason', () => {
+        const base = source();
+        const ready0 = base.sessionPresentation.readySessions[0]!;
+        // The Session context owner's workspace segment (the project the Inbox row names).
+        const candidate = { ...ready0, context: { ...ready0.context!, segments: [...(ready0.context?.segments ?? []), { kind: 'workspace' as const, label: 'relay-service' }] } };
+        const inbox = { ...base, sessionPresentation: { ...base.sessionPresentation, readySessions: [candidate] } };
+        const brief = buildBriefFromInboxFixture({ inbox, settings: { voice: { privacy: { shareSessionSummary: true } } } });
+        const ready = brief.items.find((item) => item.category === 'ready')!;
+        // The Inbox row says "Unread"; under a "Ready" heading that only repeats it (review D1).
+        const need = readInboxSessionNeed(candidate);
+        expect(need).toBeTruthy();
+        expect(ready.subtitle ?? '').not.toContain(need!);
+        expect(ready.place).toBe('relay-service');
+        // Drawn beside the name only: speech never carries where the session runs.
+        expect(brief.context).not.toContain('relay-service');
+    });
+
     it('says why each session needs the person, never where it runs', () => {
         const inbox = source();
         const brief = buildBriefFromInboxFixture({ inbox, settings: {} });
@@ -362,7 +380,9 @@ describe('Voice brief from the mounted Inbox', () => {
         ];
         for (const item of brief.items) {
             const candidate = candidates.find((entry) => item.destination.kind === 'session' && entry.sessionId === item.destination.address.sessionId)!;
-            expect(item.subtitle).toBe(buildInboxSessionReasonLine(candidate) || t('common.unavailable'));
+            expect(item.subtitle).toBe(item.category === 'ready'
+                ? buildInboxSessionReasonLine(candidate, { underReadyHeading: true })
+                : buildInboxSessionReasonLine(candidate) || t('common.unavailable'));
             // The Inbox row's "where" (Home, folder) is the context line's job; it is not a reason.
             const place = buildInboxSessionContextLine(candidate, { showHome: true, showNeed: false });
             if (place) expect(item.subtitle ?? '').not.toContain(place);

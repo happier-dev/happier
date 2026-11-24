@@ -110,6 +110,7 @@ const unarchiveResponse = vi.fn<(sessionId: string) => Promise<Response>>();
 let runnerObservedAtMs = 2000;
 let purposeBindings: ConnectedPurposeCatalogV1 = { v: 1, bindings: [] };
 let purposeCatalogUnavailable = false;
+let purposeCatalogNetworkDown = false;
 let purposeCatalogReads = 0;
 const globalVoiceStartupInstructionsMarker = Object.freeze({
   v: 1 as const,
@@ -218,6 +219,7 @@ async function respondToServerRequest(input: RequestInfo | URL, init?: RequestIn
   if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
   if (path === '/v1/account/entity-rows/connected-accounts/purposes') {
     purposeCatalogReads += 1;
+    if (purposeCatalogNetworkDown) throw new TypeError('Failed to fetch');
     return purposeCatalogUnavailable ? new Response('{}', { status: 503 })
       : json(ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
         content: { t: 'plain', v: { key: 'purposes', value: purposeBindings } } }));
@@ -418,6 +420,7 @@ async function restoreAccount(account: Partial<Pick<Parameters<typeof restoreSer
   unarchiveResponse.mockImplementation(async () => Response.json({ success: true, archivedAt: null }));
   purposeBindings = { v: 1, bindings: [] };
   purposeCatalogUnavailable = false;
+  purposeCatalogNetworkDown = false;
   purposeCatalogReads = 0;
   sessionRecords.clear();
   spawnHttpBoundaries.clear();
@@ -1025,9 +1028,18 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     state.settings.voice.providers.local_conversation.config.agent.agentId = 'codex';
     purposeCatalogUnavailable = true;
     const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
-    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({
-      code: 'connected_account_purpose_catalog_unavailable',
-    });
+    // The storage-read owner classifies a Home answering 503 as unreachable; that typed cause passes through.
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({ code: 'server_unreachable' });
+    expect(spawnRequests).not.toHaveBeenCalled();
+  });
+
+  it('passes the catalog owner\'s unreachable Home through as the Home-unreachable cause', async () => {
+    state.settings.voice.providers.local_conversation.config.agent.agentSource = 'agent';
+    state.settings.voice.providers.local_conversation.config.agent.agentId = 'codex';
+    purposeCatalogNetworkDown = true;
+    const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
+    // The Home did not answer: the Voice surfaces say so in the Home's words, not "accounts unavailable".
+    await expect(ensureVoiceConversationSessionForVoiceHome()).rejects.toMatchObject({ code: 'server_unreachable' });
     expect(spawnRequests).not.toHaveBeenCalled();
   });
 

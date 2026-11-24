@@ -32,6 +32,8 @@ export type VoiceReadinessCopy = {
   execution_machine_missing: string;
   execution_machine_installing: string;
   execution_machine_incompatible: string;
+  /** The admitted machine, named: the short reason a Voice capsule can read whole. */
+  execution_machine_offline: (params: { machine: string }) => string;
   execution_machine_unknown: string;
   daemon_unreachable: string;
   daemon_relay_disabled: string;
@@ -128,6 +130,7 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
     execution_machine_missing: 'Choose a machine that can run this service.',
     execution_machine_installing: 'The selected Voice execution machine is still being prepared.',
     execution_machine_incompatible: 'The selected machine isn’t reachable right now.',
+    execution_machine_offline: ({ machine }) => `${machine} is offline.`,
     execution_machine_unknown: 'The Voice execution machine could not be checked.',
     daemon_unreachable: 'The selected machine has no available route for Voice audio.',
     daemon_relay_disabled: 'The selected machine needs the Voice audio relay, but relay use is disabled.',

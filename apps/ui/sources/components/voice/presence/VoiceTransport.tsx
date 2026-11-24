@@ -93,7 +93,9 @@ export const VoiceTransport = React.memo(function VoiceTransport(props: Readonly
     const geometry = GEOMETRY[size];
     const filled = size !== 'pill';
 
-    const recovery = controls.recovery
+    // A Home that does not answer is stated and retried by the Home's own line and page; the capsule
+    // says what it means for Voice without a second filled Retry (the mark and the glance still retry).
+    const recovery = controls.recovery && voice.recoveryOwnedByHome !== true
         ? (
             <RoundButton
                 testID={`${testID}-recover`}
@@ -209,7 +211,8 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
     const hasSend = voice.canCommitInput === true && Boolean(voice.commitInputLabel) && Boolean(voice.onCommitInput);
     // The sheet shares its row three-up; a fourth control (the reading's Stop beside Mute, Send and End)
     // steps Mute down to its named well so the others keep their words.
-    const labelledCount = [reading, controls.recovery !== null, controls.mute, hasSend, turn?.canBargeIn === true,
+    const alternateLabel = controls.recovery !== null && voice.onAlternateRecovery ? voice.alternateRecoveryLabel ?? null : null;
+    const labelledCount = [reading, controls.recovery !== null, alternateLabel !== null, controls.mute, hasSend, turn?.canBargeIn === true,
         turn?.canCancelTurn === true && !turn.canBargeIn, controls.end, controls.dismiss !== undefined].filter(Boolean).length;
     const compact = sheet
         ? labelledCount > 3
@@ -240,6 +243,10 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
             leading={voice.recoveryIcon ? glyph(voice.recoveryIcon, theme.colors.button.primary.tint) : undefined}
         />
     ) : null;
+    // The cause's second remedy sits beside the leading one, quieter (lab ST: Retry · Choose a machine).
+    const alternate = alternateLabel && voice.onAlternateRecovery
+        ? secondary('recover-alternate', alternateLabel, voice.alternateRecoveryIcon ?? 'gear', voice.onAlternateRecovery)
+        : null;
     const mute = !controls.mute ? null : compact ? (
         // The same icon-only Mute the island and pill draw: a labelled well with a tooltip.
         <IconButton
@@ -308,6 +315,7 @@ const VoiceTransportLabelled = React.memo(function VoiceTransportLabelled(props:
         <View testID={testID} onLayout={onRowLayout} style={[styles.labelled, sheet ? styles.labelledSheet : null]}>
             {readAloudStop}
             {recovery}
+            {alternate}
             {mute}
             {send}
             {interrupt}

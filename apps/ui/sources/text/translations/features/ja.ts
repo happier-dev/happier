@@ -18225,6 +18225,7 @@ const voiceReadinessTranslations = { ja: defineVoiceReadinessTranslation({
     execution_machine_missing: 'この音声プロバイダーを実行できるマシンを選択してください。',
     execution_machine_installing: '選択した音声実行マシンはまだ準備中です。',
     execution_machine_incompatible: '選択したマシンに現在接続できません。',
+    execution_machine_offline: ({ machine }) => `${machine} はオフラインです。`,
     execution_machine_unknown: '音声実行マシンを確認できませんでした。',
     daemon_unreachable: '選択したマシンには音声オーディオに利用できる経路がありません。',
     daemon_relay_disabled: '選択したマシンには音声オーディオリレーが必要ですが、リレーの使用は無効です。',

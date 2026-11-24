@@ -512,7 +512,9 @@ const HomeHubContent = React.memo(function HomeHubContent({ launchPathname }: Re
     // Home's atmosphere (plan R-1/R-2): any source but None gives Home its hero on berthd's seam.
     const { theme } = useUnistyles();
     const atmosphere = useAtmosphere('home');
-    const heroActive = atmosphere.source !== 'none';
+    // While the brief is open the greeting turns into the brief, in place (lab B1): the hero steps back so
+    // the greeting heads the brief instead of a full-height stage pushing it, or why it is silent, below the fold.
+    const heroActive = atmosphere.source !== 'none' && !briefOpen;
     const backdrop = useAtmosphereBackdrop(atmosphere);
     const heroFrame = useHomeHeroFrame({ active: heroActive, focused, phone, backdrop });
     const fieldHost = heroFrame.paneRef;
@@ -615,7 +617,11 @@ const HomeHubContent = React.memo(function HomeHubContent({ launchPathname }: Re
     useVoiceBriefHomeRequest({
         available: focused && hubShown,
         // Keep the greeting and its current Inbox preview visible while the brief loads.
-        onOpen: () => React.startTransition(() => setBriefOpen(true)),
+        onOpen: () => {
+            // The brief opens under the greeting (lab B1); bring the head of the page into view, as Customize does.
+            listRef.current?.scrollTo({ y: 0, animated: false });
+            React.startTransition(() => setBriefOpen(true));
+        },
     });
     const surface = React.useMemo(() => accountScope ? { ...accountScope, owner: { kind: 'home' as const } } : null, [accountScope]);
     const movement = useWidgetMovementAdmission(focused ? surface : null, layout.sections);

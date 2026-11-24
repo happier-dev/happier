@@ -57,6 +57,7 @@ export function resolveVoiceAttemptRecoveryAvailable(
             return context.runtimeRecoveryTarget !== null;
         case 'retry':
         case 'reconnect':
+        case 'select_execution_machine':
             return normalizeNonEmptyString(context.attemptSessionId) !== null
                 || normalizeNonEmptyString(context.startSessionId) !== null
                 || context.globalStartAuthorized;
@@ -92,6 +93,8 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
     isCurrent?: () => boolean;
     recoveryAction: VoiceMachineRecoveryAction | null;
     errorReason?: string | null;
+    /** The cause's second remedy (its `alternate`), not its leading one. */
+    choice?: 'primary' | 'alternate';
     /**
      * A provider the user selected but has not finished connecting: the same
      * problem as a failed attempt, before it has had a chance to fail. Voice
@@ -106,6 +109,11 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
     if ('expectedAttempt' in params && !voiceSessionManager.matchesAttempt(params.expectedAttempt ?? null)) return false;
     const retrySessionId = resolveVoiceAttemptRetrySessionId(context);
     const retry = retrySessionId === null ? undefined : async () => { await voiceSessionManager.retry(retrySessionId); };
+    if (params.choice === 'alternate') {
+        if (recoveryAction !== 'select_execution_machine') return false;
+        await navigate(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
+        return true;
+    }
     const providerError = context.providerError;
     if (providerError && recoveryAction !== 'connect_agent') return await dispatchProviderRecoveryAction({
         error: providerError,
@@ -145,10 +153,6 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
             await navigate(VOICE_SETTINGS_PROVIDER_FOCUS_TARGET);
             return true;
         }
-        if (recoveryAction === 'select_execution_machine') {
-            await navigate(VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET);
-            return true;
-        }
         if (recoveryAction === 'select_speech_engine') {
             await navigate(buildSettingHref(SETTINGS_ROUTES.voiceConversations, VOICE_CONVERSATIONS_SETTINGS.settings.sttProvider));
             return true;
@@ -167,7 +171,7 @@ export async function executeVoiceAttemptRecovery(params: Readonly<{
             });
             return params.isCurrent?.() !== false;
         }
-        if (recoveryAction === 'retry' || recoveryAction === 'reconnect') {
+        if (recoveryAction === 'retry' || recoveryAction === 'reconnect' || recoveryAction === 'select_execution_machine') {
             /*
              * The running attempt first, then the caller's stated target. A retry
              * that fell back to the global start whenever no attempt was running

@@ -18347,6 +18347,7 @@ const voiceReadinessTranslations = { fr: defineVoiceReadinessTranslation({
     execution_machine_missing: 'Choisis une machine capable d’exécuter ce provider Voice.',
     execution_machine_installing: 'La machine d’exécution Voice sélectionnée est encore en préparation.',
     execution_machine_incompatible: 'La machine sélectionnée est injoignable pour le moment.',
+    execution_machine_offline: ({ machine }) => `${machine} est hors ligne.`,
     execution_machine_unknown: 'La machine d’exécution Voice n’a pas pu être vérifiée.',
     daemon_unreachable: 'La machine sélectionnée n’a aucune route disponible pour l’audio Voice.',
     daemon_relay_disabled: 'La machine sélectionnée a besoin du relay audio Voice, mais l’usage du relay est désactivé.',

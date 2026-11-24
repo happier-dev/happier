@@ -35,6 +35,8 @@ export type VoiceBriefItem = Readonly<{
     title: string;
     /** Why this row is here (the request it asks, else the Inbox's own reason), drawn only; never where it runs. */
     subtitle?: string;
+    /** Where it runs (the Session's workspace), a quiet qualifier beside the name; drawn only, never spoken. */
+    place?: string;
     hasRequestControls?: boolean;
     destination: Readonly<{ kind: 'session'; address: SessionAddress }>
         | Readonly<{ kind: 'workflow'; runId: string }>
@@ -92,7 +94,17 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     const sessionSubtitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], request: string | null = null) => {
         if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)) return {};
         const subtitle = joinHappierFacts(request, buildInboxSessionReasonLine(candidate, { showNeed: request === null }));
-        return { subtitle: subtitle || t('common.unavailable') };
+        return { subtitle: subtitle || t('common.unavailable'), ...sessionPlace(candidate) };
+    };
+    // A ready row says what came of the work (its authored line), not "Unread" under a heading that says Ready.
+    const readySubtitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number]) => {
+        if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)) return {};
+        const subtitle = buildInboxSessionReasonLine(candidate, { underReadyHeading: true });
+        return { ...(subtitle ? { subtitle } : {}), ...sessionPlace(candidate) };
+    };
+    const sessionPlace = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number]) => {
+        const place = candidate.context?.segments.find(segment => segment.kind === 'workspace')?.label.trim();
+        return place ? { place } : {};
     };
     const projectSessionSpeech = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = []) => {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
@@ -124,7 +136,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
         const title = sessionTitle(candidate);
         if (!address || !title) continue;
-        items.push({ key: sessionAddressKey(address), category: 'ready', title, ...sessionSubtitle(candidate), destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
+        items.push({ key: sessionAddressKey(address), category: 'ready', title, ...readySubtitle(candidate), destination: { kind: 'session', address }, ...(candidate.route ? { route: candidate.route } : {}) });
         projectSessionSpeech(candidate);
     }
     // These rows are already members of the Inbox's server-owned attention window,

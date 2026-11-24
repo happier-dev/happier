@@ -68,7 +68,11 @@ function readRunningWork(candidate: InboxSessionAttentionEntry['candidate']): st
  */
 export function buildInboxSessionReasonLine(
   candidate: InboxSessionAttentionEntry['candidate'],
-  options: Readonly<{ showNeed?: boolean }> = {},
+  options: Readonly<{
+    showNeed?: boolean;
+    /** Drawn under a heading that already says the work is ready: "Unread" would only repeat it. */
+    underReadyHeading?: boolean;
+  }> = {},
 ): string | undefined {
   let reason: string | null = null;
   if (options.showNeed !== false) {
@@ -78,7 +82,8 @@ export function buildInboxSessionReasonLine(
       reason = presentSessionRuntimeIssue(issue).summary;
     }
     if (!reason && candidate.reasons.hasBlockedPendingDelivery) reason = t('session.pendingMessages.deliveryBlockedReasons.unknown');
-    reason ??= readInboxSessionNeed(candidate);
+    const { state } = candidate.workStatus;
+    if (!options.underReadyHeading || (state !== 'finished_unseen' && state !== 'unread')) reason ??= readInboxSessionNeed(candidate);
   }
   return joinHappierFacts(reason, readRunningWork(candidate)) || undefined;
 }

@@ -73,6 +73,8 @@ function VoiceBriefContent(props: Readonly<{ onClose: () => void }>) {
                         <RoundButton
                             testID="voice-brief.recover"
                             size="small"
+                            // The presence states the same failure with its own filled recovery; here it is quiet (lab B1 Failed).
+                            display="secondary"
                             title={(voice.recoveryAvailable ? voice.recoveryLabel : voice.primaryActionLabel) ?? t('common.retry')}
                             // The hint is for assistive technology: what the button opens, not body copy.
                             accessibilityHint={voice.primaryActionHint ?? undefined}
@@ -80,7 +82,7 @@ function VoiceBriefContent(props: Readonly<{ onClose: () => void }>) {
                             disabled={!actionReady}
                         />
                     ) : waitingUnavailable && voice.primaryAction === 'start' ? (
-                        <RoundButton testID="voice-brief.retry" size="small" title={t('common.retry')} onPress={retry} disabled={!actionReady} />
+                        <RoundButton testID="voice-brief.retry" size="small" display="secondary" title={t('common.retry')} onPress={retry} disabled={!actionReady} />
                     ) : null}
                     {canStopReply && stopReply ? (
                         <RoundButton testID="voice-brief.stop" size="small" display="secondary" title={t('voiceMoments.briefStop')} onPress={stopReply} disabled={!actionReady} />
@@ -130,7 +132,7 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
             // belongs in one counted fold, using the list owner's lazy disclosure.
             const occurrences = new Map<string, VoiceBriefItem[]>();
             for (const item of group.items) {
-                const key = JSON.stringify([item.destination.kind, item.title, item.subtitle ?? null]);
+                const key = JSON.stringify([item.destination.kind, item.title, item.place ?? null, item.subtitle ?? null]);
                 const rows = occurrences.get(key);
                 if (rows) rows.push(item);
                 else occurrences.set(key, [item]);
@@ -144,11 +146,10 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
     return (
         <>
             {/* The head and its notes read in Home's column, on the same edge as the sheet below (lab B1). */}
-            {props.head || brief.incomplete || brief.caughtUp ? (
+            {props.head || brief.caughtUp ? (
                 <ItemGroup surface="none">
                     <View style={styles.root}>
                         {props.head}
-                        {brief.incomplete ? <Text style={styles.note}>{t('voiceMoments.briefIncomplete')}</Text> : null}
                         {brief.caughtUp ? <Text style={styles.note}>{t('voiceMoments.briefCaughtUp')}</Text> : null}
                     </View>
                 </ItemGroup>
@@ -171,6 +172,12 @@ export const VoiceBriefList = React.memo(function VoiceBriefList(props: Readonly
                             ))}
                         </React.Fragment>
                     ))}
+                </ItemGroup>
+            ) : null}
+            {/* What may be missing is on-demand detail: a quiet line at the foot, not the brief's lead. */}
+            {brief.incomplete ? (
+                <ItemGroup surface="none">
+                    <Text testID="voice-brief.incomplete" style={styles.footNote}>{t('voiceMoments.briefIncomplete')}</Text>
                 </ItemGroup>
             ) : null}
         </>
@@ -232,6 +239,7 @@ const VoiceBriefRow = React.memo(function VoiceBriefRow(props: Readonly<{
             <Item
                 testID={`voice-brief.item.${item.key}`}
                 title={item.title || props.fallbackTitle}
+                titleQualifier={item.place}
                 titleLines={1}
                 subtitle={item.subtitle}
                 icon={glyph}
@@ -269,6 +277,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     note: {
         ...Typography.variant('body'),
         color: theme.colors.text.secondary,
+        paddingHorizontal: theme.space.s4,
+    },
+    footNote: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
         paddingHorizontal: theme.space.s4,
     },
     groupTitle: {

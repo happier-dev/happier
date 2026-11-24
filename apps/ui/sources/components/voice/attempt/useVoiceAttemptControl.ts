@@ -68,7 +68,9 @@ import { SERVER_UNREACHABLE_ERROR_CODE } from '@/sync/runtime/connectivity/trans
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { VoiceConversationActionOutputSchemas, type VoiceConversationActionId } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { createFrontDoorUiActionExecutor, type UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { projectVoiceAttemptPresentation } from './projectVoiceAttemptPresentation';
+import { isVoiceAttemptHomeUnreachable, projectVoiceAttemptPresentation } from './projectVoiceAttemptPresentation';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { resolveVoiceMachineErrorKind } from '@/voice/runtime/machine/voiceMachineError';
 import type { VoiceAttemptPresentation } from '@happier-dev/protocol/voice/attemptPresentation';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
@@ -145,6 +147,15 @@ export type VoiceAttemptControlProjection = VoiceAttemptControl & Readonly<{
     recoveryLabel: string | null;
     /** The recovery's glyph, chosen with its label: microphone to allow, gear to set up, arrow to retry. */
     recoveryIcon: VoiceRecoveryIcon | null;
+    /** The same cause's second remedy ("Choose a machine"), drawn only where two actions fit (glance, sheet). */
+    alternateRecoveryLabel?: string | null;
+    alternateRecoveryIcon?: VoiceRecoveryIcon | null;
+    onAlternateRecovery?: () => void | Promise<boolean>;
+    /**
+     * The failure is its Home not answering: the Home's own surfaces state it and own its Retry, so
+     * the capsule states the Voice consequence without a second filled Retry (the glance keeps one).
+     */
+    recoveryOwnedByHome?: boolean;
     /** Display-only label of the active input track, when known by capture. */
     inputDeviceLabel?: string;
     /** Placement-neutral, privacy-safe microphone status copy. */
@@ -754,6 +765,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         context: recoveryContext,
         navigate: (href: unknown) => navigateWithFocusReturn(() => router.push(href as never)),
     }), [expectedAttempt, navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete, snap.errorMessage]);
+    const onAlternateRecovery = React.useMemo(() => createVoiceAttemptRecoveryDispatch({
+        expectedAttempt,
+        recoveryAction,
+        choice: 'alternate',
+        setupIncomplete,
+        context: recoveryContext,
+        navigate: (href: unknown) => navigateWithFocusReturn(() => router.push(href as never)),
+    }), [expectedAttempt, navigateWithFocusReturn, recoveryAction, recoveryContext, router, setupIncomplete]);
     const onRecover = React.useCallback(() => expectedAttempt
         ? executeControl('ui.voice_global.recover', { expectedAttempt }, 'VoiceAttemptControl.recover')
         : recoverBeforeAttempt(), [executeControl, expectedAttempt, recoverBeforeAttempt]);
@@ -770,7 +789,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         () => agentRuntimeIdentity ? resolveAgentCatalogTitle(agentRuntimeIdentity.localId) : null,
         [agentRuntimeIdentity],
     );
-    const agentMachineLabel = expectedAttempt ? snap.recoveryTarget?.machineLabel ?? null : runtimeRecoveryTarget?.machineId === voiceExecutionMachine.machineId
+    // A start refused before its target was captured (its Session's machine offline) still names that
+    // machine, through the machine-label owner; nothing is read unless that is the failure.
+    const unreachableSessionMachineId = expectedAttempt && !snap.recoveryTarget?.machineLabel && snap.errorCode
+        && resolveVoiceMachineErrorKind(snap.errorCode) === 'execution_machine_unavailable'
+        ? recoverySessionOwnerMetadata?.machineId ?? null : null;
+    const unreachableSessionMachineLabel = useServerScopedMachineLabel(
+        unreachableSessionMachineId ? recoverySessionServerId : null, unreachableSessionMachineId);
+    const agentMachineLabel = expectedAttempt ? snap.recoveryTarget?.machineLabel ?? unreachableSessionMachineLabel : runtimeRecoveryTarget?.machineId === voiceExecutionMachine.machineId
         ? voiceExecutionMachine.machineLabel
         : null;
     /*
@@ -787,7 +813,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
         errorUsageLimit: snap.errorUsageLimit,
         errorFailureCause: snap.errorFailureCause,
         serviceTitle, agentTitle, agentMachineLabel,
-    }), [control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorUsageLimit, snap.errorFailureCause, snap.errorConnectedServiceDiagnostic, recoveryAction,
+        homeServerId: snap.recoveryTarget?.serverId ?? activeServerSnapshot.serverId,
+    }), [activeServerSnapshot.serverId, snap.recoveryTarget?.serverId, control, expectedAttempt, presentedEnded, snap.errorCode, snap.errorMessage, snap.errorProviderMessage, snap.errorProviderError, snap.errorUsageLimit, snap.errorFailureCause, snap.errorConnectedServiceDiagnostic, recoveryAction,
         recoveryContext, serviceTitle, agentTitle, agentMachineLabel]);
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(surfaceState);
     const statusOverride = presentedEnded
@@ -806,7 +833,14 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             : statusOverride ?? t(statusPresentation.wordKey ?? statusPresentation.labelKey)
     );
     const recoveryLabel = publicPresentation.recovery?.label ?? null;
+    const recoveryOwnedByHome = isVoiceAttemptHomeUnreachable(snap);
     const recoveryIcon = publicPresentation.recovery?.icon ?? null;
+    // Offered only beside the cause's own leading remedy, never under a provider's or permission's.
+    const alternate = recoveryLabel !== null && publicPresentation.recovery?.action === recoveryAction
+        && control.surfaceState !== 'permission_required' && !publicPresentation.providerError
+        ? recovery?.alternate ?? null : null;
+    const alternateRecoveryLabel = alternate ? t(alternate.labelKey) : null;
+    const alternateRecoveryIcon = alternate?.icon ?? null;
     const micStateLabel = surfaceState === 'permission_required' ? statusLabel : t(
         control.muted
             ? 'voiceSurface.a11y.microphoneMuted'
@@ -882,6 +916,8 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             primaryActionHint,
             recoveryLabel,
             recoveryIcon,
+            ...(alternateRecoveryLabel ? { alternateRecoveryLabel, alternateRecoveryIcon, onAlternateRecovery } : {}),
+            recoveryOwnedByHome,
             micStateLabel,
             inputDeviceLabel: snap.inputDeviceLabel,
             captionLabel,
@@ -936,6 +972,10 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             primaryActionLabel,
             recoveryLabel,
             recoveryIcon,
+            alternateRecoveryLabel,
+            alternateRecoveryIcon,
+            onAlternateRecovery,
+            recoveryOwnedByHome,
             micStateLabel,
             captionLabel,
             failureMessage,

@@ -18165,6 +18165,7 @@ const voiceReadinessTranslations = { 'zh-Hant': defineVoiceReadinessTranslation(
     execution_machine_missing: '請選擇一台可以執行此語音提供者的機器。',
     execution_machine_installing: '所選語音執行機器仍在準備中。',
     execution_machine_incompatible: '目前無法連線到所選機器。',
+    execution_machine_offline: ({ machine }) => `${machine} 已離線。`,
     execution_machine_unknown: '無法檢查語音執行機器。',
     daemon_unreachable: '所選機器沒有可用的語音音訊路由。',
     daemon_relay_disabled: '所選機器需要語音音訊中繼，但中繼已停用。',

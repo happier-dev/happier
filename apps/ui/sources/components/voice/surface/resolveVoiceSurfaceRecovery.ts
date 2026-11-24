@@ -24,6 +24,11 @@ export type VoiceSurfaceRecovery = Readonly<{
     | 'common.retry';
   /** Its glyph: microphone to allow, gear to set something up, arrow to try again. */
   icon: VoiceRecoveryIcon;
+  /**
+   * The second remedy for the same cause, offered where there is room for two (the glance and the
+   * Voice section), never in the capsule: an unreachable machine is retried first, then replaced.
+   */
+  alternate?: Readonly<{ labelKey: 'voice.readiness.actions.select_execution_machine'; icon: VoiceRecoveryIcon }>;
 }>;
 
 export function resolveVoiceSurfaceRecovery(
@@ -32,10 +37,13 @@ export function resolveVoiceSurfaceRecovery(
   switch (action) {
     case 'review_credentials':
       return { kind: 'review_credentials', labelKey: 'voicePresence.recovery.setUp', icon: 'gear' };
-    // The lab's three short verbs (Allow · Retry · Set up): "Choose a machine" took the floating
-    // capsule's room and cut the failure itself to "Machine u…"; the caption names the machine problem.
+    // The lab's short verbs (Allow · Retry · Set up): an unreachable machine may come back, so Retry
+    // leads; "Choose a machine" is the alternate where there is room for it (lab ST, review C2).
     case 'select_execution_machine':
-      return { kind: 'select_execution_machine', labelKey: 'voicePresence.recovery.setUp', icon: 'gear' };
+      return {
+        kind: 'select_execution_machine', labelKey: 'common.retry', icon: 'arrow-clockwise',
+        alternate: { labelKey: 'voice.readiness.actions.select_execution_machine', icon: 'gear' },
+      };
     case 'select_speech_engine':
       return { kind: 'select_speech_engine', labelKey: 'voicePresence.recovery.setUp', icon: 'gear' };
     case 'open_settings':

@@ -18165,6 +18165,7 @@ const voiceReadinessTranslations = { 'zh-Hans': defineVoiceReadinessTranslation(
     execution_machine_missing: '请选择一台可以运行此语音提供商的机器。',
     execution_machine_installing: '所选语音执行机器仍在准备中。',
     execution_machine_incompatible: '目前无法连接到所选机器。',
+    execution_machine_offline: ({ machine }) => `${machine} 已离线。`,
     execution_machine_unknown: '无法检查语音执行机器。',
     daemon_unreachable: '所选机器没有可用的语音音频路由。',
     daemon_relay_disabled: '所选机器需要语音音频中继，但中继已被禁用。',

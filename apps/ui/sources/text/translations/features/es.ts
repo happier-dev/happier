@@ -18226,6 +18226,7 @@ const voiceReadinessTranslations = { es: defineVoiceReadinessTranslation({
     execution_machine_missing: 'Elige una máquina que pueda ejecutar este proveedor de voz.',
     execution_machine_installing: 'La máquina de ejecución de voz seleccionada aún se está preparando.',
     execution_machine_incompatible: 'La máquina seleccionada no está disponible en este momento.',
+    execution_machine_offline: ({ machine }) => `${machine} está sin conexión.`,
     execution_machine_unknown: 'No se ha podido comprobar la máquina de ejecución de voz.',
     daemon_unreachable: 'La máquina seleccionada no tiene una ruta disponible para el audio de voz.',
     daemon_relay_disabled: 'La máquina seleccionada necesita el relé de audio de voz, pero su uso está desactivado.',

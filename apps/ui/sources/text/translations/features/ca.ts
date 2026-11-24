@@ -18304,6 +18304,7 @@ const voiceReadinessTranslations = { ca: defineVoiceReadinessTranslation({
     execution_machine_missing: 'Tria una màquina que pugui executar aquest proveïdor de veu.',
     execution_machine_installing: 'La màquina d’execució de veu seleccionada encara s’està preparant.',
     execution_machine_incompatible: 'La màquina seleccionada no està disponible ara mateix.',
+    execution_machine_offline: ({ machine }) => `${machine} està fora de línia.`,
     execution_machine_unknown: 'No s’ha pogut comprovar la màquina d’execució de veu.',
     daemon_unreachable: 'La màquina seleccionada no té cap ruta disponible per a l’àudio de veu.',
     daemon_relay_disabled: 'La màquina seleccionada necessita el relé d’àudio de veu, però el seu ús està desactivat.',

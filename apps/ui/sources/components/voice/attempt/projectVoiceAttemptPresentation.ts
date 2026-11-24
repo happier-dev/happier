@@ -16,6 +16,23 @@ import { presentProviderError, presentProviderRecoveryAction } from '@/providers
 import { redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { presentExecutionRunTurnFailure, presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import type { VoiceRuntimeFailureCause } from '@/voice/runtime/voiceRuntimeFailureCode';
+import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+
+/**
+ * Whether the attempt failed because its Home did not answer: one cause the Home's own surfaces
+ * (sidebar line, page empty state) already state and repair with their Retry.
+ */
+export function isVoiceAttemptHomeUnreachable(input: Readonly<{
+    errorCode?: string | null;
+    errorMessage?: string | null;
+    errorFailureCause?: VoiceRuntimeFailureCause;
+}>): boolean {
+    if (!input.errorCode || resolveVoiceMachineErrorKind(input.errorCode) !== 'provider_error') return false;
+    const cause = input.errorFailureCause;
+    return (cause !== undefined && 'errorCode' in cause && cause.errorCode === SERVER_UNREACHABLE_ERROR_CODE)
+        || input.errorMessage?.toLowerCase() === SERVER_UNREACHABLE_ERROR_CODE;
+}
 
 /** One sanitized presenter for host surfaces, public Plugin UI, and the Action read. */
 export function projectVoiceAttemptPresentation(input: Readonly<{
@@ -34,6 +51,8 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     serviceTitle: string;
     agentTitle: string | null;
     agentMachineLabel: string | null;
+    /** The Home the attempt talks to, named through the Home label owner when it is unreachable. */
+    homeServerId?: string | null;
 }>): VoiceAttemptPresentation {
     const { control, recoveryAction, recoveryContext, agentTitle, agentMachineLabel } = input;
     const recovery = resolveVoiceSurfaceRecovery(recoveryAction);
@@ -62,9 +81,18 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause, input.errorProviderMessage) : null;
     const turnMessage = presentExecutionRunTurnFailure(sessionCause);
     const providerMessage = turnMessage ? redactVoicePathLikeString(turnMessage) : input.errorProviderMessage;
+    const homeUnreachable = isVoiceAttemptHomeUnreachable(input);
     const failureMessage = provider ? t(provider.descriptionKey) : connectedService ? t(connectedService.bodyKey)
+        // The Home's own words for the same cause, with its name ("Can't reach This Home"), as the page says it.
+        : homeUnreachable && input.homeServerId
+            ? t('sidebarFooter.homeUnreachableTitle', {
+                home: resolveHomeDisplayLabel(getServerProfileById(input.homeServerId), input.homeServerId, input.homeServerId),
+            })
         : failureKind === 'authentication_required' && input.errorMessage === 'agent_signed_out' && agentTitle && agentMachineLabel
             ? t('settingsVoice.local.machineErrors.agent_signed_out', { agent: agentTitle, machine: agentMachineLabel })
+        // The machine the attempt was admitted on, by name: the short reason a capsule can read whole.
+        : failureKind === 'execution_machine_unavailable' && input.errorMessage?.toLowerCase() === 'voice_agent_target_machine_offline' && agentMachineLabel
+            ? t('voice.readiness.execution_machine_offline', { machine: agentMachineLabel })
         : startupMessage ?? (failureKind === null ? null
         : failureKind === 'provider_error' && providerMessage && !unreachable ? providerMessage
         : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)

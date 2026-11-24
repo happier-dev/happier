@@ -179,10 +179,22 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.provider' } });
   });
 
-  it('opens the canonical Machine picker destination for an unavailable machine', async () => {
+  it('retries the same conversation when its machine was unreachable, without leaving the page', async () => {
+    await admitFailedConversation('s1');
     const navigate = vi.fn();
-    (await dispatch('select_execution_machine', navigate))();
-    expect(navigate).toHaveBeenCalledWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.executionMachine', focus: 'execution_machine' } });
+    await (await dispatch('select_execution_machine', navigate))();
+    await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.status === 'connected');
+    expect(lifecycle.getSnapshot()).toMatchObject({ sessionId: 's1', status: 'connected' });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it('opens the canonical Machine picker destination as the unreachable machine\'s alternate', async () => {
+    const navigate = vi.fn();
+    const { executeVoiceAttemptRecovery } = await import('./voiceAttemptRecovery');
+    expect(await executeVoiceAttemptRecovery({ recoveryAction: 'select_execution_machine', choice: 'alternate',
+      setupIncomplete: false, context: context(), navigate })).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({ pathname: '/settings/voice/conversations', params: { setting: 'voiceConversations.executionMachine', focus: 'execution_machine' } });
+    expect(lifecycle.getSnapshot().status).toBe('disconnected');
   });
 
   it('reveals the Conversations speech engine without opening system microphone settings or retrying', async () => {
@@ -388,6 +400,12 @@ describe('whether an offered Voice recovery can reach a remedy', () => {
       startSessionId: null,
       globalStartAuthorized: false,
     })).toBe(false);
+  });
+
+  it('withholds an unreachable machine\'s Retry when there is no conversation to retry', async () => {
+    const recovery = resolveVoiceSurfaceRecovery('select_execution_machine');
+    expect(await available(recovery)).toBe(true);
+    expect(await available(recovery, { attemptSessionId: null, startSessionId: null, globalStartAuthorized: false })).toBe(false);
   });
 
   it('keeps settings-shaped recoveries available', async () => {
