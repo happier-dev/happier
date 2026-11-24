@@ -208,7 +208,8 @@ export type WorkspaceSyncTargetAuthority = Readonly<{
   }>): boolean;
   /** Host-admitted personal read; public ingress must validate current receiving authority. */
   previewCommittedCopyHere(request: WorkspaceSyncCommittedCopyPreviewRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
-  previewCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyPreviewRequest, context?: RpcHandlerContext): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
+  previewCommittedCopyAtTarget(request: WorkspaceSyncCommittedCopyPreviewRequest, context?: RpcHandlerContext,
+    snapshot?: ActiveProjectAccountRowsSnapshot): Promise<WorkspaceSyncCommittedCopyPreviewResultV1>;
   inspectCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   removeCommittedCopyHere(request: WorkspaceSyncCommittedCopyRequest, context?: RpcHandlerContext): Promise<void>;
   assertRetainedCopyDependencyAdmission(request: ProjectWorkerDependencyQueryV1, context: RpcHandlerContext): Promise<void>;
@@ -301,7 +302,7 @@ export type WorkspaceSyncTargetAuthorityDependencies = Readonly<{
   localWorkspaceRefId?: string;
   getProjectSnapshot?: (operationId?: string) => ActiveProjectAccountRowsSnapshot | null;
   /** Passive preview reads current Home rows, never the daemon's retained row cache. */
-  refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext, relationshipId?: string): Promise<ActiveProjectAccountRowsSnapshot>;
+  refreshProjectSnapshot?(signal?: AbortSignal, context?: RpcHandlerContext): Promise<ActiveProjectAccountRowsSnapshot>;
   /** Current ordinary/managed/native facts, supplied by the real daemon composition. */
   readChildMachineFacts?(machineIds: readonly string[], signal?: AbortSignal, context?: RpcHandlerContext): Promise<readonly WorkspaceSyncChildMachineFacts[]>;
   /** Host-private installed-child sender. Context and callbacks are never wire input. */
@@ -1295,8 +1296,7 @@ export function createWorkspaceSyncTargetAuthority(
     if (!dependencies.refreshProjectSnapshot) {
       throw authorityError('workspace_copy_preview_unavailable', 'Current Home rows for workspace copy preview are unavailable');
     }
-    return resolveCommittedCopyPreview(request, await dependencies.refreshProjectSnapshot(request.signal, context,
-      request.expectedRelationship.relationshipId));
+    return resolveCommittedCopyPreview(request, await dependencies.refreshProjectSnapshot(request.signal, context));
   };
 
   const inspectCommittedCopyPreviewHere = async (
@@ -2566,8 +2566,8 @@ export function createWorkspaceSyncTargetAuthority(
       return inspectCommittedCopyPreviewHere(request, { parsed: WorkspaceSyncCommittedCopyPreviewV1Schema.parse(wire),
         relationship, workspace, sourceWorkspace, endpointRole: entry.endpointRole });
     },
-    previewCommittedCopyAtTarget: async (request, context) => {
-      const resolved = await refreshCommittedCopyPreview(request, context);
+    previewCommittedCopyAtTarget: async (request, context, snapshot) => {
+      const resolved = snapshot ? resolveCommittedCopyPreview(request, snapshot) : await refreshCommittedCopyPreview(request, context);
       const { parsed, workspace } = resolved;
       if (isLocalWorkspace(workspace)) return await inspectCommittedCopyPreviewHere(request, resolved);
       const admission = context?.machineAdmission;

@@ -428,7 +428,12 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         expect(setup.custodianRows).toEqual(setup.custodianBefore);
     });
 
-    it.skipIf(process.platform !== 'linux').each([false, true])('previews and retires the retained requester copy through MCP, person approval and real Home after a cross-Account native create (foreign SOURCE=%s)', async foreignSource => {
+    it.skipIf(process.platform !== 'linux').each([
+        { foreignSource: false, previewOnly: false, scenario: 'previews and retires the retained requester copy through MCP and real Home with an owned SOURCE' },
+        { foreignSource: true, previewOnly: false, scenario: 'previews and retires the retained requester copy through MCP and real Home with a shared SOURCE' },
+        { foreignSource: false, previewOnly: true, scenario: 'uses requester custody for preview on an owned SOURCE without a retained capture' },
+        { foreignSource: true, previewOnly: true, scenario: 'uses requester custody for preview instead of sending a share holder down a custodian-only route' },
+    ])('$scenario', async ({ foreignSource, previewOnly }) => {
         await db.machine.deleteMany({ where: { id: { in: ['machine', 'target-parent'] } } });
         await db.account.deleteMany({ where: { id: { in: ['requester', 'member-a'] } } });
         const requester = await db.account.create({ data: { id: 'member-a', publicKey: null, encryptionMode: 'plain' } });
@@ -453,6 +458,8 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
         let approvedCopyAttackForwarded = false;
         let approvedCopyAttackOutcome: Readonly<{ errorCode?: unknown; forwarded: number; bytesPreserved: boolean }> | undefined;
         const httpPosts: string[] = [];
+        const previewRowReaders: string[] = [];
+        let recordPreviewRows = false;
         const homeVerifications: { path: string; status: number; method?: string; writerPhase?: string; errorCode?: string; code?: string;
             effectAction?: string; rowKey?: unknown; rootAction?: string; approvalDecision?: string }[] = [];
         const compatibility = evaluateAccountStoredContentCompatibility(parseAccountStoredContentCompatibilitySocketAuthV1({
@@ -517,6 +524,11 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             readHomePost: async (url, body, config) => {
                 const path = new URL(url).pathname;
                 httpPosts.push(path);
+                if (recordPreviewRows && path.startsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`)) {
+                    const bearer = config?.headers?.Authorization;
+                    previewRowReaders.push(config?.headers?.[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] ? 'action'
+                        : bearer === `Bearer ${requesterToken}` || (!foreignSource && bearer === `Bearer ${installedToken}`) ? 'requester' : 'other');
+                }
                 if (!path.endsWith('/admission/verify') && !path.startsWith('/v1/actions/')
                     && !(projectRowsAtHome && path.startsWith(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/`))) return undefined;
                 const headers = path.endsWith('/admission/verify')
@@ -636,7 +648,19 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
                 .rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
         }
         const beforePositive = forwarded.length;
-        const executePreviewViaMcp = async (): Promise<unknown> => {
+        if (previewOnly && foreignSource) {
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const token = await createAccountTokenForTests(outsider.id, { kind: 'account', authority: 'present_user' });
+            const refused = await dispatchOriginalAccountAction({ actionId: 'projects.worker.copy.inspect', input: preview,
+                requestId: randomUUID(), target: { kind: 'machine', machineId: source.id }, credentials: { token, encryption: null },
+                serverHttpBaseUrl: setup.installed.serverHttpBaseUrl, serverIdentityId: setup.installed.homeServerIdentityId,
+                authority: 'present_user' });
+            expect(refused).toMatchObject({ ok: false });
+            expect(forwarded.slice(beforePositive)).toEqual([]);
+            // Regression control for a share holder sent down a custodian-only route.
+            await expect(inspect(preview)).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+        }
+        const executePreviewViaMcp = async (input = preview): Promise<unknown> => {
             const { mcp } = runWithServerHttpBaseUrl(setup.installed.serverHttpBaseUrl, () => createExternalMcpServer({
                 credentials: requesterCredentials, machineId: source.id, daemonControlTarget: null,
                 serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {},
@@ -648,19 +672,31 @@ describe('Machine grant withdrawal through requester runtime custody', () => {
             try {
                 await client.connect(clientTransport);
                 const reply = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
-                    actionId: 'projects.worker.copy.inspect', input: preview,
+                    actionId: 'projects.worker.copy.inspect', input,
                 } }));
                 const content = reply.content.find(entry => entry.type === 'text');
                 if (content?.type !== 'text') throw new Error('Missing MCP copy preview result');
                 return JSON.parse(content.text);
             } finally { await client.close(); await mcp.close(); }
         };
+        recordPreviewRows = previewOnly;
+        if (previewOnly && !foreignSource) {
+            await executePreviewViaMcp({ ...preview, expectedRelationship: { ...preview.expectedRelationship,
+                relationshipId: 'no-retained-capture' } });
+            expect([...new Set(previewRowReaders)]).toEqual(['requester']);
+            return;
+        }
         const result = await executePreviewViaMcp();
+        recordPreviewRows = false;
         expect(result).toMatchObject({ ok: true, preview: { targetMachineId: target.id, workspaceRefId: setup.targetRef.id } });
         expect(forwarded.slice(beforePositive).map(packet => packet.method)).toEqual([
             `${source.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
             `${target.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT}`,
         ]);
+        if (previewOnly) {
+            expect([...new Set(previewRowReaders)]).toEqual(['requester']);
+            return;
+        }
         const workerPreview = forwarded.at(-1);
         if (!workerPreview) throw new Error('Missing retained-copy WORKER receipt');
         const writerRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(workerPreview.workspaceSyncSourceWriterTargetRouting);

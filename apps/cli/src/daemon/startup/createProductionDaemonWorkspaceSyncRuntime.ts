@@ -756,9 +756,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       return { stream, stop: async () => { stream.destroy(); await finished(stream).catch(() => undefined); } };
     },
     ...(input.callWorkspaceTargetPhase ? { callWorkspaceTargetPhase: input.callWorkspaceTargetPhase } : {}),
-    refreshProjectSnapshot: async (signal, context, relationshipId) => {
-      const retained = relationshipId ? readRequesterPrivateExecution(relationshipId, context) : null;
-      if (retained) return await refreshPrivateRows(retained.execution, signal);
+    refreshProjectSnapshot: async (signal, context) => {
       if (context?.sessionProjectOpenRows) return await readSessionProjectOpenRows(context.sessionProjectOpenRows, signal);
       // A Sync relationship-write root verifies only its own effect; Home's
       // Account row family refuses it. Its requester's rows come through the
@@ -3476,7 +3474,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           ...(retained ? { requesterAccountId: retained.execution.accountRowsCustody.accountId } : {}),
           machineId: input.localMachineId, credentials: input.credentials, isCurrent: input.isCurrent };
         await assertCurrentWorkspaceCopyPreview(current);
-        return await targetAuthority.previewCommittedCopyAtTarget({ ...request, ...(signal ? { signal } : {}) }, context);
+        const snapshot = retained ? await refreshPrivateRows(retained.execution, signal) : await refreshInstalledProjectRows(signal);
+        return await targetAuthority.previewCommittedCopyAtTarget({ ...request, ...(signal ? { signal } : {}) }, context, snapshot);
       }
       await targetAuthority.inspectCommittedCopyHere({ ...request, ...(signal ? { signal } : {}) }, context);
       return { ok: true };

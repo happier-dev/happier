@@ -14,35 +14,6 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 afterEach(async () => { await home?.dispose(); home = undefined; remote.mockReset(); storage.getState().clearProjectAccountRowsScope(); });
 
-describe('UI worker refusals through the Action front door', () => {
-  it('preserves serialized and explicit refusals from committed-copy inspection', async () => {
-    home = await createPlainArtifactHomeFixture('https://worker-refusal.test', {
-      handleRequest: async path => path === '/v1/machines?includeRevoked=true'
-        ? new Response(JSON.stringify([
-          createPlainMachineRowFixture({ id: 'controller', accountId: 'artifact-account' }),
-          createPlainMachineRowFixture({ id: 'worker', accountId: 'artifact-account' }),
-        ])) : null,
-    });
-    const workspace = { serverId: home.home.id, refId: 'source' };
-    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const expectedRelationship = {
-      v: 1 as const, relationshipId: 'worker-copy', controllerMachineId: 'controller',
-      alphaWorkspaceRefId: 'source', betaWorkspaceRefId: 'copy', mode: 'keep_synced' as const,
-      enabled: true, createdAtMs: 1, updatedAtMs: 1,
-      contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
-    };
-    const input = { kind: 'preview' as const, workspace, machineId: 'controller', expectedRelationship,
-      targetMachineId: 'worker', targetWorkspaceRefId: 'copy' };
-    const refusal = { error: 'Workspace sync runtime is unavailable', errorCode: 'workspace_sync_unavailable',
-      details: { reason: 'runtime_unavailable' } };
-    // The network returns the RpcHandlerManager's serialized exception, then an explicit Action refusal.
-    remote.mockResolvedValueOnce(refusal).mockResolvedValueOnce({ ...refusal, ok: false });
-    const execute = () => executeProjectWorkerActionV1('projects.worker.copy.inspect', input, { expectedAccountId: 'artifact-account' });
-    await expect(execute()).rejects.toMatchObject({ errorCode: refusal.errorCode, details: refusal.details });
-    await expect(execute()).rejects.toMatchObject({ errorCode: refusal.errorCode, details: refusal.details });
-  });
-});
-
 describe('UI service placement Get through the Action front door', () => {
   it('observes a linked native declaration using source identity and refuses failed or withdrawn owner reads', async () => {
     home = await createPlainArtifactHomeFixture('https://service-placement.test', {

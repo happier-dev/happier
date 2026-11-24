@@ -1,6 +1,4 @@
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -15,8 +13,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
 import { fetchLocalServiceLauncherSnapshotViaMachineRpc } from '@/sync/domains/local/services/launch/machineRpc';
 import { machineWorkerPolicyGet, machineWorkerPolicySet } from '@/sync/ops/machineFinitePolicy';
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
+import type { LazyActionAccountContext } from './actionAccountContext';
 import { createUiAccountAction } from './accountActionDeps';
 import { readUiWorkspaceSyncChildMachineFacts } from '../workspaceSyncChildMachineFacts';
 
@@ -35,23 +32,9 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
                 || context.externalActionTarget.machineId !== machineId)) {
                 return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
             }
-            let raw: unknown;
-            if (actionId !== 'projects.worker.copy.inspect') {
-                // These Actions consume the Account's signed authority on the addressed daemon.
-                raw = await executeAccountAction({ actionId, input: request, signal, context: {
-                    ...context, externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId },
-                } });
-            } else {
-                const spec = getActionSpec(actionId);
-                const method = spec.bindings?.rpcMethod;
-                if (!method) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-                const result = await withActionAccountRequestSignal(account, signal, ownedSignal => machineRpcWithServerScope({
-                    serverId: account.serverId, machineId, accountId: account.accountId, method, payload: request,
-                    operationTimeoutMs: null, signal: ownedSignal,
-                }));
-                account.assertResultCurrent(spec.sideEffectClass);
-                raw = readMachineActionRpcResult(result);
-            }
+            const raw = await executeAccountAction({ actionId, input: request, signal, context: {
+                ...context, externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId },
+            } });
             const failure = ActionExecuteFailureSchema.safeParse(raw);
             if (failure.success) return failure.data;
             const approval = ActionApprovalRequestCreatedResultSchema.safeParse(raw);

@@ -15,7 +15,8 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture,
+  createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import tweetnacl from 'tweetnacl';
 
@@ -40,6 +41,54 @@ beforeEach(async () => {
 afterEach(async () => { await homes.reset(); });
 
 describe('worker Actions through the captured UI Home', () => {
+  it('inspects a retained copy for Can manage and refuses no grant, catching a share holder sent down a custodian-only route', async () => {
+    const actionId = 'projects.worker.copy.inspect';
+    const homeId = 'srv_worker_actions';
+    const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(13));
+    const machine = createMachineFixture({ id: 'shared-controller', installationId: 'source-installation',
+      installationPublicKey: encodeBase64(keys.publicKey), activeAt: Date.now() });
+    const source = createPlainSharedMachineRowFixture({ id: machine.id, custodianAccountId: 'custodian', role: 'manage', machine });
+    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+      body: await createMachineReadBatchResponseFixture(body, id => id === source.id ? source : null).json(),
+    }) });
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const input = { kind: 'preview', workspace: { serverId: homeId, refId: 'source' }, machineId: source.id,
+      targetMachineId: 'worker', targetWorkspaceRefId: 'copy', expectedRelationship: {
+        v: 1, relationshipId: 'retained-copy', controllerMachineId: source.id, alphaWorkspaceRefId: 'source',
+        betaWorkspaceRefId: 'copy', mode: 'keep_synced', enabled: true, createdAtMs: 1, updatedAtMs: 1,
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
+      } } as const;
+    const result = { ok: true, preview: { targetMachineId: 'worker', workspaceRefId: 'copy', rootFingerprint: 'a'.repeat(64) } };
+    const refusal = { ok: false as const, error: 'Workspace sync runtime is unavailable', errorCode: 'workspace_sync_unavailable',
+      details: { reason: 'runtime_unavailable' } };
+    let hasGrant = true;
+    let execution: { ok: true; result: typeof result } | typeof refusal = { ok: true, result };
+    homes.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
+      if (!hasGrant) return { status: 403, body: { error: 'credential_scope_denied' } };
+      const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'retained-copy-root', binding: {
+        accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
+        machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+        admittedMachineRole: 'manage',
+        actionId, requestId: envelope.requestId, target: envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      } }) };
+    } });
+    homes.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
+      const { envelope, executionAuthorization } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      expect(executionAuthorization?.binding.admittedMachineRole).toBe('manage');
+      return { body: { v: 1, actionId, requestId: envelope.requestId, execution } };
+    } });
+    rpc.machine.mockRejectedValue(Object.assign(new Error('custodian_only'), { rpcErrorCode: 'RPC_FORBIDDEN' }));
+    const inspect = () => executeProjectWorkerActionV1(actionId, input, { expectedAccountId: 'owner' });
+    await expect(inspect()).resolves.toEqual(result);
+    execution = refusal;
+    await expect(inspect()).rejects.toMatchObject({ errorCode: refusal.errorCode, details: refusal.details });
+    hasGrant = false;
+    await expect(inspect()).rejects.toMatchObject({ errorCode: 'credential_scope_denied' });
+    expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(2);
+  });
+
   it('opens a Workspace through its pushed row before the first Sync create admission', async () => {
     const { sync } = await import('@/sync/sync');
     const { storage } = await import('@/sync/domains/state/storage');
