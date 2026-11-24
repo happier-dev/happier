@@ -2338,14 +2338,9 @@ publications and target registrations wake the existing loop. Credential/configu
 replacements rearm health work, but metadata-only health changes and notification
 preference changes do not discard an existing failure deadline.
 
-Accepted quota freshness remains readable from the exact usage record's
-`fetchedAt` metadata. The existing bodyless Account hint can update the separate
-stored clocks of a retained plaintext reading when its content cursor matches
-the cursor the admitted GET returned alongside that body. A sealed wake carries
-the accepted fetch metadata. The client opens the addressed record to verify
-the sealed snapshot and its bound metadata. Equal material fingerprints can still accompany different authenticated
-clocks. The history comparison and mode and credential admission remain at
-their existing owners.
+Readers obtain accepted quota freshness from the admitted usage record's
+`fetchedAt` metadata. A named Account wake identifies the record to open.
+Account-mode and credential admission apply to that read.
 
 Manual quota Refresh commits its existing record marker and an exact,
 credential-free `provider-account-usage-refresh:<recordId>` Account change in the

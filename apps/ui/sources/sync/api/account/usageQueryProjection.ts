@@ -9,7 +9,6 @@ import { admitUsageCoachRemedies, applyUsageCoachPreferences } from '@happier-de
 import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { isConnectedPresentationCatalogUsableV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import { projectProviderAccountUsageEnteredPriceV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
-import { bindUsageContentCursor, readUsageContentCursor } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
@@ -143,8 +142,7 @@ export function projectUsageEnteredPrices(quota: OpenedQuotaRead, scope: ServerA
             if (!current || read.source.bindingKind !== 'account') return read;
             const enteredMonthlyPrice = readConnectedSubscriptionMonthlyPriceV1(presentation, read.source.ref) ?? undefined;
             if (sameStrictJsonValue(current.subscription?.enteredMonthlyPrice, enteredMonthlyPrice)) return read;
-            return { ...read, current: bindUsageContentCursor(projectProviderAccountUsageEnteredPriceV1(current, enteredMonthlyPrice),
-                readUsageContentCursor(current)) };
+            return { ...read, current: projectProviderAccountUsageEnteredPriceV1(current, enteredMonthlyPrice) };
         });
         return value.every((read, index) => read === snapshot.value![index]) ? snapshot : { ...snapshot, value };
     };

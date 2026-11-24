@@ -18,7 +18,6 @@ import {
     resolveConnectedServiceSettingsErrorMessage,
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
-import { applyUsageObservationTime, readUsageContentCursor } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readQuotaProfileChanges } from './quotaProfileChanges';
@@ -56,7 +55,6 @@ type InternalEntry = {
     loading: boolean;
     refreshing: boolean;
     error: string | null;
-    openedContent: NonNullable<Awaited<ReturnType<typeof readQualifiedConnectedAccountQuota>>>['openedContent'];
     /** Credential scope this entry was last retained for; drives eviction. */
     credentialScope: string | null;
     producerRefreshPending: boolean;
@@ -92,7 +90,6 @@ let detachProfileChanges: (() => void) | null = null;
 function clearSnapshot(entry: InternalEntry): void {
     entry.snapshot = null;
     entry.usageRecordId = null;
-    entry.openedContent = undefined;
 }
 
 function retirePendingReads(entry: InternalEntry): void {
@@ -172,7 +169,6 @@ function getOrCreateEntry(key: string): InternalEntry {
         loading: false,
         refreshing: false,
         error: null,
-        openedContent: undefined,
         credentialScope: null,
         producerRefreshPending: false,
         loadAttempted: false,
@@ -193,8 +189,7 @@ function getOrCreateEntry(key: string): InternalEntry {
 
 function publish(key: string, entry: InternalEntry): void {
     const nowMs = Date.now();
-    if (readUsageContentCursor(entry.snapshot) === readUsageContentCursor(entry.view.snapshot)
-        && sameStrictJsonValue(entry.snapshot, entry.view.snapshot)) entry.snapshot = entry.view.snapshot;
+    if (sameStrictJsonValue(entry.snapshot, entry.view.snapshot)) entry.snapshot = entry.view.snapshot;
     const next = {
         snapshot: entry.snapshot,
         usageRecordId: entry.usageRecordId,
@@ -236,19 +231,9 @@ function reconcilePolling(key: string, initialReadCompleted?: boolean): void {
             && entry.error === null && !entry.producerRefreshPending
             && Date.now() <= entry.snapshot.fetchedAt + entry.snapshot.staleAfterMs),
         readRecordId: () => entry.usageRecordId,
-        applyObservation(observation) {
-            if (!entry.snapshot || entry.openedContent !== 'plain' || entry.error !== null || entry.producerRefreshPending) return false;
-            const next = applyUsageObservationTime(entry.snapshot, observation);
-            if (!next) return false;
-            if (next !== entry.snapshot) {
-                entry.snapshot = next;
-                publish(key, entry);
-            }
-            return true;
-        },
-        read: observation => {
+        read: recordId => {
             entry.loadAttempted = true;
-            return runLoad(key, context, false, observation?.recordId);
+            return runLoad(key, context, false, recordId);
         },
         busy: () => Boolean(entry.loadPromise || entry.refreshPromise),
         nextReadAtMs: () => entry.nextFetchAtMs,
@@ -337,7 +322,6 @@ async function runLoad(
                 clearSnapshot(entry);
             }
             entry.snapshot = snapshot ?? (entry.refreshing ? entry.snapshot : null);
-            entry.openedContent = snapshot ? read?.openedContent : entry.refreshing ? entry.openedContent : undefined;
             entry.usageRecordId = admitted ? read?.recordId ?? (entry.refreshing ? entry.usageRecordId : null) : null;
             const diagnostic = read?.diagnostics?.find((value) => value.kind === 'provider_http');
             // The producer removes this fact when acquisition settles, including

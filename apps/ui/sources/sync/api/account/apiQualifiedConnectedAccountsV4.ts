@@ -16,8 +16,6 @@ import {
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 import { throwConnectedServiceApiError } from './connectedServiceApiError';
-import { PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER, readProviderAccountUsageContentCursorHeaderV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
-import { bindUsageContentCursor } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 
 function headers(credentials: AuthCredentials): HeadersInit {
   return {
@@ -36,7 +34,7 @@ export type QualifiedConnectedAccountReadOptions = Readonly<{
 async function readQualifiedSnapshot<T>(params: Readonly<{
   credentials: AuthCredentials;
   path: string;
-  parse(value: unknown, response: Response): T;
+  parse(value: unknown): T;
   expectedActiveServer?: ExpectedActiveServerFetchBasis;
 }> & QualifiedConnectedAccountReadOptions): Promise<T> {
   const request = params.request ?? createServerFetchForActiveServer(params.expectedActiveServer);
@@ -63,7 +61,7 @@ async function readQualifiedSnapshot<T>(params: Readonly<{
     }
     const json: unknown = await response.json().catch(() => null);
     try {
-      return params.parse(json, response);
+      return params.parse(json);
     } catch {
       throw new HappyError(
         'invalid response',
@@ -311,12 +309,8 @@ export async function getQualifiedConnectedAccountQuotaV4(
         ref,
       )}`,
       requestPurpose: 'connected-accounts:quota-qualification',
-      parse: (value, response) => {
-        const quota = QualifiedConnectedAccountQuotaResponseV4Schema.parse(value);
-        return bindUsageContentCursor(quota, quota.content.t === 'plain'
-          ? readProviderAccountUsageContentCursorHeaderV1(response.headers.get(PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER))
-          : undefined);
-      },
+      parse: (value) =>
+        QualifiedConnectedAccountQuotaResponseV4Schema.parse(value),
       ...(opts?.expectedActiveServer
         ? { expectedActiveServer: opts.expectedActiveServer }
         : {}),

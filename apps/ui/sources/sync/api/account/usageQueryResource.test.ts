@@ -4469,10 +4469,8 @@ describe('usage query captured Resource adapter', () => {
   ] as const)('counts mounted allowance requests over ten minutes (%s)', async scenario => {
     const start = Math.floor(Date.now() / 60_000) * 60_000;
     const minute = 60_000;
-    const typedObservation = scenario.endsWith('-observation-only') || scenario.endsWith('-content-change');
+    const addressedWake = scenario.endsWith('-observation-only') || scenario.endsWith('-content-change');
     const contentChanged = scenario.endsWith('-content-change');
-    const { readProviderAccountUsageObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
-    let cursor = 2;
     const rows = Array.from({ length: 15 }, (_, index) => {
       const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `quota-count-${index}` };
       const source = { bindingKind: 'account' as const, ref };
@@ -4489,7 +4487,7 @@ describe('usage query captured Resource adapter', () => {
         meters: [{ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
           unit: 'requests', status: 'ok', resetsAt: start + 2 * minute, details: {} }],
       });
-      return { source, snapshot, resolves: 0, records: 0, contentCursor: 2 };
+      return { source, snapshot, resolves: 0, records: 0 };
     });
     const rowsByAccountId = new Map(rows.map(row => [row.source.ref.accountId, row]));
     const rowsByRecordId = new Map<string, typeof rows[number]>(rows.map(row => [row.snapshot.recordId, row]));
@@ -4513,8 +4511,7 @@ describe('usage query captured Resource adapter', () => {
         // just one key, with delay to measure repeated work over a finite span.
         if (scenario === 'feed-after-read' && row === rows[0]) setTimeout(() => publish([row]), 5_000);
         return Response.json({ content: { t: 'plain', v: row.snapshot },
-          metadata: { fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: minute, status: 'ok' }, sources: [row.source] },
-          { headers: { 'x-happier-usage-content-cursor': String(row.contentCursor) } });
+          metadata: { fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: minute, status: 'ok' }, sources: [row.source] });
       }
       return undefined;
     }, { connectedAccountsV4: rows.map(({ source: { ref } }) => ({
@@ -4523,35 +4520,19 @@ describe('usage query captured Resource adapter', () => {
     })) });
     publish = selected => {
       const recordIds = selected.map(row => row.snapshot.recordId);
-      if (typedObservation) {
-        const afterCursor = cursor;
-        const changes = selected.flatMap(row => {
-          const { snapshot, contentCursor } = row;
-          const observation = { recordId: snapshot.recordId, observedAtMs: snapshot.observedAtMs,
-            fetchedAtMs: snapshot.fetchedAtMs, subscriptionObservedAtMs: snapshot.subscription!.observedAtMs, contentChanged,
-            contentCursor: contentChanged ? cursor + 2 : contentCursor };
-          row.contentCursor = observation.contentCursor;
-          return buildProviderAccountUsageMaterialChangesV1(observation.recordId, undefined, { observation, previousContentCursor: contentCursor })
-            .map(change => ({ ...change, cursor: ++cursor }));
-        });
-        const exact = changes.filter((change, index) => index % 2 === 1 || index === changes.length - 2);
-        const observations = readProviderAccountUsageObservationsV1(exact, afterCursor);
-        const { serverId } = captured.accountLifetime.scope;
+      const { serverId } = captured.accountLifetime.scope;
+      if (addressedWake || scenario === 'feed-after-read') {
+        const entityIds = recordIds.flatMap(id => buildProviderAccountUsageMaterialChangesV1(id).map(change => change.entityId));
         if (scenario.startsWith('secondary')) {
-          const wake = { t: 'account-change' as const, changeKinds: ['account' as const],
-            entityIds: ['provider-account-usage', ...recordIds.map(id => `provider-account-usage-record:${id}`)], sessionSystemRecords: [] };
-          publishHomeAccountChangeWake(serverId, wake, 'socket', undefined, undefined, observations);
+          publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['account'], entityIds, sessionSystemRecords: [] }, 'socket');
         } else {
-          publishHomeAccountChange(serverId, exact.map(change => change.entityId), { feedPageConsumed: true, changeKinds: ['account'],
-            usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(exact),
-            providerAccountUsageObservations: readProviderAccountUsageObservationsV1(exact, afterCursor) });
+          publishHomeAccountChange(serverId, entityIds, { feedPageConsumed: true, changeKinds: ['account'],
+            usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: recordIds });
         }
-        return;
+      } else {
+        publishHomeAccountChange(serverId, ['provider-account-usage'], {
+          changeKinds: ['account'], feedPageConsumed: true, usageQueryAffects: true, usageAccountingAffects: false });
       }
-      // The real Account-change ingress receives the committed record keys.
-      publishHomeAccountChange(captured.accountLifetime.scope.serverId, recordIds.map(id => `provider-account-usage-record:${id}`),
-        { changeKinds: ['account'], providerAccountUsageRecordIds: recordIds, feedPageConsumed: true,
-          usageQueryAffects: true, usageAccountingAffects: false });
     };
     const query = normalizeUsageQuery({ includeQuotaHistory: false, includeAccounting: false, includeCoach: false,
       includeSessionEvidence: false, includeWorkEvidence: false });
@@ -4568,7 +4549,9 @@ describe('usage query captured Resource adapter', () => {
         await flushHookEffects({ cycles: 70 });
         await vi.advanceTimersByTimeAsync(0);
       };
+      const beforeMountHttp = home!.requests.length;
       await advance(20_000);
+      const mountRoutes = home!.requests.slice(beforeMountHttp).map(request => `${request.method} ${request.path}`);
       const cold = readCounts();
       const { serverId } = captured.accountLifetime.scope;
       if (scenario === 'primary-reconnect') {
@@ -4584,7 +4567,7 @@ describe('usage query captured Resource adapter', () => {
       }
       await advance(40_000);
       const feedScenarios = ['unchanged', 'changed', 'resolve-503', 'record-503', 'slow'];
-      const hasPublication = typedObservation || feedScenarios.includes(scenario);
+      const hasPublication = addressedWake || feedScenarios.includes(scenario);
       const afterFirstMinute = readCounts();
       const recordsPerResolve = scenario === 'resolve-503' ? 0 : 1;
       const explicitWake = scenario === 'snapshot-recovery' || scenario === 'explicit-refresh';
@@ -4614,26 +4597,26 @@ describe('usage query captured Resource adapter', () => {
       const counts = readCounts();
       const summarize = (values: number[][]) => [...new Set(values.map(value => value.join('/')))];
       console.info('quota-cadence', scenario, JSON.stringify({
-        cold: summarize(cold), minuteOne: summarize(afterFirstMinute), tenMinutes: summarize(counts),
+        cold: summarize(cold), mountRoutes: [...new Set(mountRoutes)].map(route => [route, mountRoutes.filter(value => value === route).length]), minuteOne: summarize(afterFirstMinute), tenMinutes: summarize(counts),
       }));
       if (scenario === 'feed-after-read') {
         expect(counts.slice(1)).toEqual(rows.slice(1).map(() => [1, 1]));
-        expect(counts[0]![0]).toBeGreaterThan(2);
+        expect(counts[0]![0]).toBe(1);
         expect(counts[0]![1]).toBeGreaterThan(2);
-      } else if (typedObservation) {
+      } else if (addressedWake) {
         const routes = home!.requests.slice(afterMountHttp).map(request => `${request.method} ${request.path}`);
         const afterMount = counts.map(([resolves, records], index) => [resolves! - cold[index]![0]!, records! - cold[index]![1]!]);
-        expect(routes).toEqual(Array.from({ length: contentChanged ? 9 : 0 }, () => 'GET /v4/connect/qualified/provider-account-usage/record'));
+        expect(routes).toEqual(Array.from({ length: contentChanged ? 9 : 135 }, () => 'GET /v4/connect/qualified/provider-account-usage/record'));
         for (const openUIs of [1, 16]) {
           expect(afterMount.map(count => count.map(requests => requests * openUIs)),
-            `only changed bodies for ${openUIs} independently mounted UIs`)
-            .toEqual(rows.map((_, index) => [0, contentChanged && index === 0 ? 9 * openUIs : 0]));
+            `one addressed GET per publication for ${openUIs} independently mounted UIs`)
+            .toEqual(rows.map((_, index) => [0, !contentChanged || index === 0 ? 9 * openUIs : 0]));
         }
       } else {
         const attempts = hasPublication ? 10 : explicitWake ? 2 : 1;
         expect(counts).toEqual(rows.map(() => [attempts, attempts * recordsPerResolve]));
       }
-      if (typedObservation || scenario === 'unchanged' || scenario === 'changed' || scenario === 'slow') {
+      if (addressedWake || scenario === 'unchanged' || scenario === 'changed' || scenario === 'slow') {
         for (const entry of entries) {
           expect(entry.getSnapshot().pending).toBe('idle');
           const quota = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota!;
@@ -4680,7 +4663,6 @@ describe('usage query captured Resource adapter', () => {
         unit: 'requests', status: 'ok', resetsAt: start + 60_000, details: {} }],
     });
     let reading = sample(0, 40);
-    let bodyCursor = 2;
     const recordResponse = () => ({
       content: { t: 'plain' as const, v: reading },
       metadata: { fetchedAt: reading.fetchedAtMs, staleAfterMs: reading.staleAfterMs, status: 'ok' as const },
@@ -4693,12 +4675,11 @@ describe('usage query captured Resource adapter', () => {
       }
       if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
         expect(request.url.searchParams.get('recordId')).toBe(recordId);
-        return Response.json(recordResponse(), { headers: { 'x-happier-usage-content-cursor': String(bodyCursor) } });
+        return Response.json(recordResponse());
       }
       return undefined;
     }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
       credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
-    const { readProviderAccountUsageObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
     const { openProviderAccountUsageRecordV4, projectProviderAccountUsageQuotaReadV1 } =
       await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
     const { projectProviderAccountSubscriptionMonetaryFacts } = await import('@happier-dev/protocol/connect/accountSubscription');
@@ -4720,36 +4701,20 @@ describe('usage query captured Resource adapter', () => {
       expect(mounted().current?.meters[0]?.used).toBe(40);
       vi.setSystemTime(start + 3_100);
       reading = sample(3_000, 70);
-      bodyCursor = 6;
-      const observations = [
-        { reading: sample(2_000, 70), cursor: 6, previousContentCursor: 2, contentCursor: 6, contentChanged: true },
-        { reading, cursor: 8, previousContentCursor: 6, contentCursor: 6, contentChanged: false },
-        { reading: sample(1_000, 40), cursor: 4, previousContentCursor: 2, contentCursor: 2, contentChanged: false },
-      ];
-      let checkpoint = 2;
+      const entityIds = buildProviderAccountUsageMaterialChangesV1(recordId).map(row => row.entityId);
+      const { serverId } = captured.accountLifetime.scope;
       for (const index of delivery) {
-        const sample = observations[index]!;
-        const observation = { recordId, observedAtMs: sample.reading.observedAtMs, fetchedAtMs: sample.reading.fetchedAtMs,
-          subscriptionObservedAtMs: sample.reading.subscription!.observedAtMs,
-          contentChanged: sample.contentChanged, contentCursor: sample.contentCursor };
-        const rows = buildProviderAccountUsageMaterialChangesV1(recordId, undefined, { observation,
-          previousContentCursor: sample.previousContentCursor }).map((row, index) => ({ ...row, cursor: sample.cursor - 1 + index }));
-        const { serverId } = captured.accountLifetime.scope;
-        const entityIds = rows.map(row => row.entityId);
         const precedingRequests = home!.requests.length;
         if (homeKind === 'secondary') {
           publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['account'], entityIds, sessionSystemRecords: [] },
-            'socket', undefined, undefined, [observation]);
+            'socket');
         } else {
           publishHomeAccountChange(serverId, entityIds, { feedPageConsumed: true, changeKinds: ['account'],
-            usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: [recordId],
-            providerAccountUsageObservations: readProviderAccountUsageObservationsV1(rows, checkpoint) });
-          checkpoint = Math.max(checkpoint, sample.cursor);
+            usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: [recordId] });
         }
         await settle();
         const routes = home!.requests.slice(precedingRequests).map(request => `${request.method} ${request.path}`);
-        expect(routes.length).toBeLessThanOrEqual(1);
-        if (routes.length) expect(routes).toEqual(['GET /v4/connect/qualified/provider-account-usage/record']);
+        expect(routes).toEqual(['GET /v4/connect/qualified/provider-account-usage/record']);
         if (index === 1) expect(mounted().current?.meters[0]?.used).toBe(70);
       }
       const current = openProviderAccountUsageRecordV4({ recordId, accountMode: 'plain', record: recordResponse() });
@@ -4761,6 +4726,96 @@ describe('usage query captured Resource adapter', () => {
       }).paid;
       expect(price(cold)).toMatchObject({ amount: 20, currency: 'USD' });
       expect(price(mounted())).toEqual(price(cold));
+    } finally {
+      release();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps mounted exact-history Pace equal to cold after consecutive quota observations (J-A29)', async () => {
+    const { buildProviderAccountUsagePageProjectionV1, packProviderAccountUsagePageProjectionV1 } =
+      await import('@happier-dev/protocol/connect/providerAccountUsagePageProjection');
+    const day = 86_400_000;
+    const start = Date.UTC(2026, 10, 24, 12);
+    const startOfDay = Math.floor(start / day) * day;
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'exact-pace-account' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const recordId = buildProviderAccountUsageRecordId(recordKey);
+    const sample = (observedAtMs: number, resetsAt: number) => ProviderAccountUsageSnapshotV1Schema.parse({
+      v: 1, recordId, recordKey, providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId },
+      observedAtMs, fetchedAtMs: observedAtMs, staleAfterMs: 60_000,
+      source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'live', label: 'Live', used: 40, limit: 100, remaining: 60, utilizationPct: 40,
+        unit: 'requests', status: 'ok', resetsAt, windowDurationMs: 60_000, details: {} }],
+    });
+    let current = sample(start + 1_100, start + 60_000);
+    const prior = sample(startOfDay - 30_000, startOfDay);
+    const record = (snapshot: typeof current) => ({ content: { t: 'plain' as const, v: snapshot },
+      metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' as const }, sources: [source] });
+    const frontier = { id: 'earlier-study-point', observedAtMs: prior.observedAtMs };
+    let exactReads = 0;
+    const captured = await context(request => {
+      if (request.path.endsWith('/sources/resolve')) return Response.json({ source, recordId, providerAccountId: ref.accountId,
+        fetchedAt: current.fetchedAtMs, staleAfterMs: current.staleAfterMs });
+      if (request.path.endsWith('/record')) return Response.json(record(current));
+      if (request.path.endsWith('/day-summaries')) return Response.json({ summaries: [], missingDays: [] });
+      if (request.path.endsWith('/history')) {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        if (request.method === 'GET' && 'projection' in query) {
+          exactReads++;
+          const demand = query.projection;
+          const projection = buildProviderAccountUsagePageProjectionV1({ recordId, range: demand.range,
+            history: { entries: [{ ...frontier, snapshot: prior }], nextCursor: null } });
+          return Response.json({ projection: { recordId, demand, frontier, observationCount: 1,
+            content: { t: 'plain', v: packProviderAccountUsagePageProjectionV1(projection) } }, complete: true },
+          { headers: { etag: '"settled-exact-pace"' } });
+        }
+      }
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    const query = normalizeUsageQuery({ period: { startMs: startOfDay - day, endMs: startOfDay }, includeQuota: true,
+      includeQuotaHistory: true, includeQuotaExactHistory: true, includeAccounting: false, includeCoach: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const input = { queries: [query] };
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
+    vi.useFakeTimers();
+    vi.setSystemTime(start + 3_500);
+    const release = entry.subscribe(() => {}, true);
+    const settle = async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await flushHookEffects({ cycles: 150 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(entry.getSnapshot().pending).toBe('idle');
+    };
+    try {
+      await settle();
+      const mounted = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota![0]!;
+      expect(mounted().current?.observedAtMs).toBe(start + 1_100);
+      expect(exactReads).toBeGreaterThan(0);
+      expect(mounted().pace[0]?.value).toMatchObject({ status: 'available', elapsedFraction: 1_100 / 60_000 });
+      const { serverId } = captured.accountLifetime.scope;
+      const entityIds = buildProviderAccountUsageMaterialChangesV1(recordId).map(change => change.entityId);
+      for (const at of [2_100, 3_100]) {
+        const beforeWake = home!.requests.length;
+        current = sample(start + at, start + 60_000);
+        publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['account'], entityIds, sessionSystemRecords: [] },
+          'socket');
+        await settle();
+        const routes = home!.requests.slice(beforeWake).map(request => `${request.method} ${request.path}`);
+        expect(routes.filter(route => route.endsWith('/provider-account-usage/record')))
+          .toEqual(['GET /v4/connect/qualified/provider-account-usage/record']);
+        expect(routes).not.toContain('GET /v4/connect/qualified/provider-account-usage/sources/resolve');
+        console.info('quota-exact-wake-routes', JSON.stringify(routes));
+        expect(mounted().current?.observedAtMs).toBe(current.observedAtMs);
+      }
+      const cold = (await readUiUsageQueryBatch(captured, input)).results[0]!.quota![0]!;
+      expect(cold.pace[0]?.value).toMatchObject({ status: 'available', elapsedFraction: 3_100 / 60_000 });
+      expect(cold.current).toEqual(mounted().current);
+      expect(mounted().pace).toEqual(cold.pace);
     } finally {
       release();
       vi.useRealTimers();
@@ -4863,7 +4918,7 @@ describe('usage query captured Resource adapter', () => {
       await sync.resumeSync('socket-reconnect');
       await expect.poll(() => quota().find(row => row.source.bindingKind === 'account' && row.source.ref.accountId === 'two')?.current?.meters[0]?.used).toBe(30);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-      expect(counts()).toEqual(before.map((count, index) => ({ resolves: count.resolves + (index === 1 ? 1 : 0), records: count.records + (index === 1 ? 1 : 0) })));
+      expect(counts()).toEqual(before.map((count, index) => ({ resolves: count.resolves, records: count.records + (index === 1 ? 1 : 0) })));
       expect(quota()).toHaveLength(3);
       before = counts();
       const providerScope = buildProviderAccountUsageScopeKey({ serverId: basis.serverId,
@@ -4880,7 +4935,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => quota().find(row => row.source.bindingKind === 'account' && row.source.ref.accountId === 'two')?.current?.observedAtMs).toBe(now + 1);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(counts(), 'A local cache change reacquires only its admitted record').toEqual(before.map((count, index) => ({
-        resolves: count.resolves + (index === 1 ? 1 : 0), records: count.records + (index === 1 ? 1 : 0),
+        resolves: count.resolves, records: count.records + (index === 1 ? 1 : 0),
       })));
       expect(chartChanges, 'provider read status and observation clocks change no accounting chart facts').toBe(0);
       expect(privateChartChanges, 'an allowance read changes no admitted Session chart facts').toBe(0);
@@ -4892,7 +4947,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => quota().find(row => row.source.bindingKind === 'account' && row.source.ref.accountId === 'two')?.current?.recordId).toBe(snapshots[1]!.recordId);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(counts(), 'A local admission remap preserves both record identities without reacquiring its siblings').toEqual(before.map((count, index) => ({
-        resolves: count.resolves + (index === 1 ? 1 : 0), records: count.records + (index === 1 ? 1 : 0),
+        resolves: count.resolves, records: count.records + (index === 1 ? 1 : 0),
       })));
       before = counts();
       for (const index of [0, 2]) snapshots[index] = { ...snapshots[index]!,
@@ -4907,7 +4962,7 @@ describe('usage query captured Resource adapter', () => {
       await sync.resumeSync('socket-reconnect');
       await expect.poll(() => quota().filter(row => row.current?.meters[0]?.used === 50).length).toBe(2);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
-      expect(counts()).toEqual(before.map((count, index) => ({ resolves: count.resolves + (index !== 1 ? 1 : 0), records: count.records + (index !== 1 ? 1 : 0) })));
+      expect(counts()).toEqual(before.map((count, index) => ({ resolves: count.resolves, records: count.records + (index !== 1 ? 1 : 0) })));
       before = counts();
       for (let arrival = 0; arrival < 30; arrival++) publishHomeAccountChange(captured.accountLifetime.scope.serverId,
         ['unrelated-session'], { changeKinds: ['session'], usageAccountingAffects: false });

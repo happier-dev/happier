@@ -22,7 +22,6 @@ import {
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
 import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
-import { applyUsageObservationTime } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 import {
     buildProviderAccountUsageScopeKey,
     readProviderAccountUsageSnapshotForMode,
@@ -129,21 +128,11 @@ function createUsageRowObserver(input: Readonly<{
         let disposed = false;
         let controller: AbortController | null = null;
         let reading: Promise<void> | null = null;
-        let snapshotMode: CredentialScopedAccountMode | undefined;
         const readEntry = () => getProviderAccountUsageCacheState().entriesByCredentialScope[input.credentialScope]?.[recordId];
         const current = () => !disposed && input.isCurrent();
         const observation = observeUsageProjection({
             serverId: input.serverBasis.serverId,
             readRecordId: () => recordId,
-            applyObservation(observation) {
-                const retained = readEntry();
-                if (!current() || !retained?.snapshot || retained.hadError || snapshotMode !== 'plain') return false;
-                const snapshot = applyUsageObservationTime(retained.snapshot, observation);
-                if (!snapshot) return false;
-                if (snapshot !== retained.snapshot) updateProviderAccountUsageCacheEntries(input.credentialScope,
-                    entries => ({ ...entries, [recordId]: { ...retained, snapshot } }), 'account-observation');
-                return true;
-            },
             busy: () => reading !== null || !current(),
             nextReadAtMs: () => readEntry()?.nextFetchAtMs ?? Number.POSITIVE_INFINITY,
             presentationDeadlineMs: () => {
@@ -151,7 +140,7 @@ function createUsageRowObserver(input: Readonly<{
                 return snapshot ? snapshot.fetchedAtMs + snapshot.staleAfterMs + 1 : undefined;
             },
             publish: () => { if (current()) updateProviderAccountUsageCacheEntries(input.credentialScope, entries => entries); },
-            read(observation) {
+            read(addressedRecordId) {
                 if (reading) return reading;
                 if (!current()) return Promise.resolve();
                 const previous = readEntry();
@@ -164,8 +153,7 @@ function createUsageRowObserver(input: Readonly<{
                     let entry: Outcome['entry'];
                     try {
                         let opened: ProviderAccountUsageSnapshotV1 | null;
-                        let admittedMode: CredentialScopedAccountMode;
-                        if (observation) {
+                        if (addressedRecordId) {
                             // Join the wake's raw acquisition before awaiting Account mode.
                             const [record, mode] = await Promise.all([
                                 getAddressedProviderAccountUsageRecord(input.credentials, recordId, {
@@ -175,14 +163,12 @@ function createUsageRowObserver(input: Readonly<{
                             ]);
                             if (!current()) return;
                             opened = record ? openAddressedProviderAccountUsageRecord(input.credentials, recordId, mode, record) : null;
-                            admittedMode = mode;
                         } else {
-                            admittedMode = await input.resolveAccountMode();
+                            const mode = await input.resolveAccountMode();
                             if (!current()) return;
-                            opened = await readProviderAccountUsageSnapshot({ ...input, mode: admittedMode, recordId, signal: requestController.signal });
+                            opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId, signal: requestController.signal });
                         }
                         if (!current()) return;
-                        snapshotMode = opened ? admittedMode : undefined;
                         entry = { snapshot: opened, nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: false, emptyRead: opened ? undefined : 'missing' };
                     } catch (error) {
@@ -196,7 +182,7 @@ function createUsageRowObserver(input: Readonly<{
                         controller = null;
                     }
                     if (!current()) return;
-                    if (observation) {
+                    if (addressedRecordId) {
                         updateProviderAccountUsageCacheEntries(input.credentialScope,
                             entries => ({ ...entries, [recordId]: entry }), 'account-observation');
                     } else enqueue({ recordId, entry, current });

@@ -142,42 +142,41 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(boundary.usageRead).toHaveBeenCalledTimes(1);
         expect(connectionReads()).toHaveLength(0);
         const changed = { ...snapshot, fetchedAtMs: snapshot.fetchedAtMs + 1, planLabel: 'Changed allowance plan' };
-        const contentCursor = 10;
-        const headers = { 'x-happier-usage-content-cursor': String(contentCursor) };
         boundary.read.mockImplementation(async () => Response.json(quotaTestResponse({ ...quotaTestSnapshot,
-            fetchedAt: changed.fetchedAtMs, planLabel: changed.planLabel ?? null, meters: changed.meters }), { headers }));
-        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(changed), { headers }));
+            fetchedAt: changed.fetchedAtMs, planLabel: changed.planLabel ?? null, meters: changed.meters })));
+        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(changed)));
         await act(async () => { wake(); });
         await flushHookEffects({ cycles: 16, turns: 16 });
         expect(meter.snapshotsByRecordId[snapshot.recordId]).toEqual(changed);
         expect(boundary.read).toHaveBeenCalledTimes(2);
         expect(boundary.usageRead).toHaveBeenCalledTimes(2);
-        const wakeObservation = (fetchedAtMs: number, contentChanged: boolean) =>
+        const wakeObservation = () =>
             publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs, observedAtMs: fetchedAtMs,
-                    subscriptionObservedAtMs: null, contentChanged, contentCursor }],
             });
         const later = changed.fetchedAtMs + 30_000;
-        await act(async () => { wakeObservation(later, false); });
+        boundary.usageRead.mockImplementation(async () => Response.json({ ...quotaTestProviderUsageResponse({
+            ...changed, fetchedAtMs: later, observedAtMs: later,
+        }), sources: [{ bindingKind: 'account', ref: quotaTestRef }] }));
+        await act(async () => { wakeObservation(); });
         await flushHookEffects({ cycles: 16, turns: 16 });
         expect(home.asOf, 'Home presentation uses the newer observation').toBe(later);
         expect(meter.snapshotsByRecordId[snapshot.recordId]?.fetchedAtMs).toBe(later);
         expect(boundary.read).toHaveBeenCalledTimes(2);
-        expect(boundary.usageRead).toHaveBeenCalledTimes(2);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(3);
 
         const newer = { ...changed, observedAtMs: later + 1, fetchedAtMs: later + 1, planLabel: 'Another allowance plan' };
         boundary.usageRead.mockImplementation(async () => Response.json({ ...quotaTestProviderUsageResponse(newer),
             sources: [{ bindingKind: 'account', ref: quotaTestRef }] }));
-        await act(async () => { wakeObservation(newer.fetchedAtMs, true); });
+        await act(async () => { wakeObservation(); });
         await flushHookEffects({ cycles: 16, turns: 16 });
         expect(home.asOf).toBe(newer.fetchedAtMs);
         expect(meter.snapshotsByRecordId[snapshot.recordId]).toEqual(newer);
         expect(boundary.read).toHaveBeenCalledTimes(2);
-        expect(boundary.usageRead, 'Home and both meters share the changed record').toHaveBeenCalledTimes(3);
+        expect(boundary.usageRead, 'Home and both meters share the changed record').toHaveBeenCalledTimes(4);
         await act(async () => { await vi.advanceTimersByTimeAsync(10 * 60_000); });
         expect(boundary.read).toHaveBeenCalledTimes(2);
-        expect(boundary.usageRead).toHaveBeenCalledTimes(3);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(4);
         expect(connectionReads()).toHaveLength(0);
         await screen.update(page(false, false));
         boundary.read.mockClear(); boundary.usageRead.mockClear();
@@ -207,14 +206,12 @@ describe('useProviderAccountUsageSnapshots', () => {
         const record = () => ({ ...quotaTestProviderUsageResponse(reading), sources: [{ bindingKind: 'account', ref: quotaTestRef }] });
         const { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4 } =
             await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
-        let contentCursor = 10;
-        const headers = () => ({ 'x-happier-usage-content-cursor': String(contentCursor) });
-        boundary.usageRead.mockImplementation(async () => Response.json(record(), { headers: headers() }));
+        boundary.usageRead.mockImplementation(async () => Response.json(record()));
         const cold = () => openProviderAccountUsageRecordV4({ accountMode: 'plain', recordId, record: record() });
         const coldQualified = () => projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({
             ref: quotaTestRef, snapshot: cold(),
         });
-        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(coldQualified()), { headers: headers() }));
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(coldQualified())));
         const mounted = await renderHook(() => ({
             raw: useProviderAccountUsageSnapshots([recordId]),
             qualified: useQualifiedConnectedAccountQuota(quotaTestRef),
@@ -226,89 +223,70 @@ describe('useProviderAccountUsageSnapshots', () => {
                 expect.soft(mounted.getCurrent().qualified.snapshot).toEqual(coldQualified());
             };
             assertCold();
-            const wake = async (fact: { fetchedAtMs: number; observedAtMs: number; subscriptionObservedAtMs: number;
-                contentChanged: boolean; contentCursor?: number }) => {
+            const wake = async () => {
                 await act(async () => {
                     publishHomeAccountChangeWake(getActiveServerSnapshot().serverId, {
                         t: 'account-change', changeKinds: ['account'],
                         entityIds: [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1, `provider-account-usage-record:${recordId}`],
                         sessionSystemRecords: [],
-                    }, 'socket', undefined, undefined, [{ recordId, ...fact }]);
+                    }, 'socket');
                 });
                 await flushHookEffects({ cycles: 16, turns: 16 });
             };
             const requests = boundary.requests.length;
             reading = { ...reading, fetchedAtMs: start + 5_500, observedAtMs: start + 5_500,
                 subscription: { ...subscription, observedAtMs: start + 5_500 } };
-            const fact = { fetchedAtMs: reading.fetchedAtMs, observedAtMs: reading.observedAtMs,
-                subscriptionObservedAtMs: reading.subscription.observedAtMs, contentChanged: false, contentCursor };
-            await wake(fact);
+            await wake();
             const price = (snapshot: Pick<ReturnType<typeof coldQualified>, 'subscription'> | null | undefined) =>
                 projectProviderAccountSubscriptionMonetaryFacts({ subscription: snapshot?.subscription, nowMs: start + 6_500 }).paid;
             expect(price(cold())).toMatchObject({ amount: 20, currency: 'USD' });
             expect.soft(price(mounted.getCurrent().qualified.snapshot)).toEqual(price(coldQualified()));
             assertCold();
-            expect.soft(boundary.requests.slice(requests)).toEqual([]);
             const readRoute = { method: 'GET', path: '/v4/connect/qualified/provider-account-usage/record' };
-            const observationForReading = (contentChanged: boolean) => ({ ...fact, fetchedAtMs: reading.fetchedAtMs,
-                observedAtMs: reading.observedAtMs, subscriptionObservedAtMs: reading.subscription.observedAtMs, contentChanged, contentCursor });
+            expect.soft(boundary.requests.slice(requests)).toEqual([readRoute]);
 
             for (const [fetch, observed] of [[5_600, 5_500], [5_700, 2_300]] as const) {
                 reading = { ...reading, fetchedAtMs: start + fetch, observedAtMs: start + observed };
                 const before = boundary.requests.length;
-                await wake(observationForReading(false));
-                await wake(fact);
+                await wake();
+                await wake();
                 assertCold();
-                expect.soft(boundary.requests.slice(before)).toEqual([]);
+                expect.soft(boundary.requests.slice(before)).toEqual([readRoute, readRoute]);
             }
 
             reading = { ...reading, subscription: { ...reading.subscription, observedAtMs: start + 5_750 } };
-            contentCursor = 15;
             const beforeIndependentSubscription = boundary.requests.length;
-            await wake(observationForReading(true));
+            await wake();
             assertCold();
             expect.soft(boundary.requests.slice(beforeIndependentSubscription)).toEqual([readRoute]);
 
             reading = { ...reading, subscription: { ...reading.subscription,
                 lastRefreshError: { ...subscription.lastRefreshError, observedAtMs: start + 5_800 } } };
-            contentCursor = 17;
             const beforeIndependentError = boundary.requests.length;
-            await wake(observationForReading(true));
+            await wake();
             assertCold();
             expect.soft(boundary.requests.slice(beforeIndependentError)).toEqual([readRoute]);
 
             // The client misses a material body with new meters and a different subscription clock.
             const beforeMissedBody = boundary.requests.length;
-            contentCursor = 20;
             reading = { ...reading, fetchedAtMs: start + 6_000, observedAtMs: start + 2_000,
                 subscription: { ...reading.subscription, observedAtMs: start + 5_750 },
                 meters: reading.meters.map(meter => ({ ...meter, used: 70, remainingPct: 30 })) };
-            const next = { ...fact, fetchedAtMs: reading.fetchedAtMs, observedAtMs: reading.observedAtMs,
-                subscriptionObservedAtMs: reading.subscription.observedAtMs, contentCursor };
-            await wake(next);
+            await wake();
             assertCold();
-            expect.soft(boundary.requests.slice(beforeMissedBody)).toEqual([readRoute]);
+            // The connected harness may still complete its independent Account Settings bootstrap here.
+            // The Resource cost test counts all HTTP on a settled Home for this same addressed wake.
+            expect.soft(boundary.requests.slice(beforeMissedBody).filter(request =>
+                request.path !== '/v1/account/encryption/currentness' && request.path !== '/v2/account/settings',
+            )).toEqual([readRoute]);
             const afterRecovery = boundary.requests.length;
-            await wake(next);
+            await wake();
             assertCold();
-            expect(boundary.requests.slice(afterRecovery)).toEqual([]);
-
-            // An older sender has no proof, and an admitted version can advance
-            // even if the resulting projection has the exact same values.
-            const beforeLegacy = boundary.requests.length;
-            await wake({ ...next, contentCursor: undefined });
-            assertCold();
-            expect.soft(boundary.requests.slice(beforeLegacy)).toEqual([readRoute]);
-            contentCursor = 25;
-            const beforeNewBody = boundary.requests.length;
-            await wake({ ...next, contentCursor });
-            assertCold();
-            await wake({ ...next, contentCursor });
-            expect(boundary.requests.slice(beforeNewBody)).toEqual([readRoute]);
+            expect(boundary.requests.slice(afterRecovery)).toEqual([readRoute]);
         } finally { await mounted.unmount(); }
     });
 
-    it('matches cold sealed Pace and quota clocks without trusting plaintext wake times', async () => {
+    it('matches cold sealed Pace and quota clocks after reading the sealed body', async () => {
         const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const { createAccountEncryptionCurrentnessFixtureForCredentials } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
         const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
@@ -337,12 +315,11 @@ describe('useProviderAccountUsageSnapshots', () => {
                 metadata: { fetchedAt: reading.fetchedAtMs, staleAfterMs: reading.staleAfterMs, status: 'ok' } };
         };
         let record = seal(first);
-        const header = { 'x-happier-usage-content-cursor': '8' };
         const cold = () => openProviderAccountUsageRecordV4({ recordId, accountMode: 'e2ee', material, record });
         const coldQuota = () => projectQuota({ snapshot: cold(), ref: quotaTestRef });
-        boundary.usageRead.mockImplementation(async () => Response.json(record, { headers: header }));
+        boundary.usageRead.mockImplementation(async () => Response.json(record));
         boundary.read.mockImplementation(async () => Response.json({ ...quotaTestResponse(coldQuota()),
-            content: record.content }, { headers: header }));
+            content: record.content }));
         const mounted = await renderHook(() => ({
             raw: useProviderAccountUsageSnapshots([recordId]),
             qualified: useQualifiedConnectedAccountQuota(quotaTestRef),
@@ -354,21 +331,18 @@ describe('useProviderAccountUsageSnapshots', () => {
             expect(mounted.getCurrent().qualified.snapshot).toEqual(coldQuota());
             const pace = (snapshot: NonNullable<ReturnType<typeof current>>) =>
                 deriveProviderAccountUsagePace({ snapshot, meterId: 'weekly', nowMs: start + 1_400 });
-            for (const [contentChanged, next, expectedPace, untrustedPlainClocks] of [
-                [false, { ...first, fetchedAtMs: start + 1_000 }, 'unavailable'],
-                [true, { ...first, fetchedAtMs: start + 1_100, observedAtMs: start + 1_050 }, 'available'],
-                [true, { ...first, fetchedAtMs: start + 1_200, observedAtMs: start + 1_050,
+            for (const [next, expectedPace] of [
+                [{ ...first, fetchedAtMs: start + 1_000 }, 'unavailable'],
+                [{ ...first, fetchedAtMs: start + 1_100, observedAtMs: start + 1_050 }, 'available'],
+                [{ ...first, fetchedAtMs: start + 1_200, observedAtMs: start + 1_050,
                     meters: first.meters.map(meter => ({ ...meter, used: 60, remainingPct: 40, utilizationPct: 60 })) }, 'available'],
-                [false, { ...first, fetchedAtMs: start + 1_300 }, 'unavailable',
-                    { observedAtMs: start + 1_300, subscriptionObservedAtMs: null }],
+                [{ ...first, fetchedAtMs: start + 1_300 }, 'unavailable'],
             ] as const) {
                 record = seal(next);
                 const requests = boundary.requests.length;
                 await act(async () => {
                     publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                         changeKinds: ['account'], providerAccountUsageRecordIds: [recordId],
-                        providerAccountUsageObservations: [{ recordId, fetchedAtMs: next.fetchedAtMs, contentChanged,
-                            ...untrustedPlainClocks, contentCursor: 8 }],
                     });
                 });
                 await flushHookEffects({ cycles: 16, turns: 16 });
@@ -624,9 +598,7 @@ describe('useProviderAccountUsageSnapshots', () => {
         const { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4: projectQuota } =
             await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
         const snapshot = quotaTestProviderUsageSnapshot();
-        const contentCursor = 10;
-        const headers = { 'x-happier-usage-content-cursor': String(contentCursor) };
-        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(projectQuota({ snapshot, ref: quotaTestRef })), { headers }));
+        boundary.read.mockImplementation(async () => Response.json(quotaTestResponse(projectQuota({ snapshot, ref: quotaTestRef }))));
         boundary.usageRead.mockImplementation(async () => new Response('{}', { status: 503 }));
         storage.getState().applyProfile({ ...storage.getState().profile, connectedAccountsV4: [{ ref: quotaTestRef,
             status: 'connected', authenticationModeId: 'api-key', revisionSemantics: 'revisioned', credentialRevision: 'revision-1',
@@ -658,7 +630,7 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(screen.findByTestId('sidebar-usage-refresh-error')).toBeTruthy();
 
         boundary.usageRead.mockImplementation(async () => Response.json({ ...quotaTestProviderUsageResponse(snapshot),
-            sources: [{ bindingKind: 'account', ref: quotaTestRef }] }, { headers }));
+            sources: [{ bindingKind: 'account', ref: quotaTestRef }] }));
         await act(async () => { wake(); });
         await flushHookEffects({ cycles: 16, turns: 16 });
         expect(sessionUsage.getCurrent()).toMatchObject({ quotaReadFailed: false, readState: 'loaded_data', snapshot });
@@ -666,33 +638,33 @@ describe('useProviderAccountUsageSnapshots', () => {
 
         const reads = boundary.usageRead.mock.calls.length;
         const nextAsOf = snapshot.fetchedAtMs + 1_000;
-        const tick = (at: number, contentChanged = false) => publishHomeAccountChange(getActiveServerSnapshot().serverId,
+        const tick = () => publishHomeAccountChange(getActiveServerSnapshot().serverId,
             [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs: at, observedAtMs: at,
-                    subscriptionObservedAtMs: null, contentChanged, contentCursor }],
             });
         const { openProviderAccountUsageRecordV4 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
         const cold = openProviderAccountUsageRecordV4({ recordId: snapshot.recordId, accountMode: 'plain',
             record: quotaTestProviderUsageResponse({ ...snapshot, fetchedAtMs: nextAsOf, observedAtMs: nextAsOf }) });
-        await act(async () => { tick(nextAsOf); });
+        boundary.usageRead.mockImplementation(async () => Response.json({ ...quotaTestProviderUsageResponse(cold),
+            sources: [{ bindingKind: 'account', ref: quotaTestRef }] }));
+        await act(async () => { tick(); });
         await flushHookEffects({ cycles: 16, turns: 16 });
         expect(sessionUsage.getCurrent().accountUsageSnapshot, 'composer equals a cold opening').toEqual(cold);
         expect(screen.findAllByType(SurfaceAsOfLabel).find(node => node.props.testID === 'sidebar-usage-as-of')?.props.at, 'sidebar as-of').toBe(nextAsOf);
-        await act(async () => { tick(snapshot.fetchedAtMs + 500); });
+        await act(async () => { tick(); });
         await flushHookEffects({ cycles: 8, turns: 8 });
         expect(sessionUsage.getCurrent().accountUsageSnapshot?.fetchedAtMs).toBe(nextAsOf);
-        expect(boundary.usageRead).toHaveBeenCalledTimes(reads);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(reads + 2);
 
         const changed = { ...snapshot, fetchedAtMs: nextAsOf + 1_000, observedAtMs: nextAsOf + 1_000,
             meters: snapshot.meters.map(meter => ({ ...meter, used: 50 })) };
         boundary.usageRead.mockImplementation(async () => Response.json({ ...quotaTestProviderUsageResponse(changed),
             sources: [{ bindingKind: 'account', ref: quotaTestRef }] }));
-        await act(async () => { tick(changed.fetchedAtMs, true); });
+        await act(async () => { tick(); });
         await flushHookEffects({ cycles: 16, turns: 16 });
         expect(sessionUsage.getCurrent().accountUsageSnapshot).toEqual(changed);
         expect(screen.findAllByType(SurfaceAsOfLabel).find(node => node.props.testID === 'sidebar-usage-as-of')?.props.at).toBe(changed.fetchedAtMs);
-        expect(boundary.usageRead).toHaveBeenCalledTimes(reads + 1);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(reads + 3);
         await screen.unmount();
         await sessionUsage.unmount();
     });
@@ -713,18 +685,17 @@ describe('useProviderAccountUsageSnapshots', () => {
     it('ages retained usage once at its presentation deadline without another read', async () => {
         vi.useFakeTimers();
         const snapshot = { ...makeUsageSnapshot(), staleAfterMs: 100 };
-        const contentCursor = 10;
-        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(snapshot),
-            { headers: { 'x-happier-usage-content-cursor': String(contentCursor) } }));
+        boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse(snapshot)));
         const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
         await flushHookEffects({ cycles: 8, turns: 8 });
         await act(async () => {
             await vi.advanceTimersByTimeAsync(50);
             const fetchedAtMs = snapshot.fetchedAtMs + 50;
+            boundary.usageRead.mockImplementation(async () => Response.json(quotaTestProviderUsageResponse({
+                ...snapshot, fetchedAtMs, observedAtMs: fetchedAtMs,
+            })));
             publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs, observedAtMs: fetchedAtMs,
-                    subscriptionObservedAtMs: null, contentChanged: false, contentCursor }],
             });
         });
         await flushHookEffects({ cycles: 8, turns: 8 });
@@ -739,7 +710,7 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(stale.snapshotsByRecordId[snapshot.recordId]).toBe(fresh.snapshotsByRecordId[snapshot.recordId]);
         await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
         expect(hook.getCurrent()).toBe(stale);
-        expect(boundary.usageRead).toHaveBeenCalledTimes(1);
+        expect(boundary.usageRead).toHaveBeenCalledTimes(2);
     });
 
     it('preserves a cold miss and admits the first reading from a named wake', async () => {
@@ -759,8 +730,6 @@ describe('useProviderAccountUsageSnapshots', () => {
         await act(async () => {
             publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs: snapshot.fetchedAtMs,
-                    observedAtMs: snapshot.observedAtMs, contentChanged: true }],
             });
         });
         await flushHookEffects({ cycles: 16, turns: 16 });

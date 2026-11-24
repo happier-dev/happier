@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { buildConnectedServicesAccountChangeV1, buildProviderAccountUsageRefreshChangeV1 } from '@happier-dev/protocol/changes';
-import { buildProviderAccountUsageChangeRecordEntityIdV1, readProviderAccountUsageObservationRowV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/app/changes/markAccountChanged';
 
 import { isProviderAccountUsageIdentityMatch, isProviderAccountUsageOrganizationContextMatch } from '@happier-dev/protocol/connect/accountUsage';
@@ -1349,26 +1348,11 @@ export async function listQualifiedUsageSourcesForRecord(
     return await listQualifiedUsageSourcesForRecordInStorage(db, params);
 }
 
-async function readAdmittedUsageContentCursor(tx: Tx, params: Readonly<{ accountId: string; recordId: string }>,
-    record: StoredProviderAccountUsageRecord): Promise<number | undefined> {
-    if (record.payloadMode !== "plain_json_v1") return undefined;
-    const row = await tx.accountChange.findUnique({
-        where: { accountId_kind_entityId: { accountId: params.accountId, kind: "account",
-            entityId: buildProviderAccountUsageChangeRecordEntityIdV1(params.recordId) } },
-        select: { kind: true, entityId: true, cursor: true, hint: true },
-    });
-    return row ? readProviderAccountUsageObservationRowV1(row)?.providerAccountUsageObservation.contentCursor : undefined;
-}
-
 export async function readQualifiedProviderAccountUsageRecord(
     params: Readonly<{ accountId: string; recordId: string }>,
 ): Promise<QualifiedProviderAccountUsageAdmission> {
-    return await inReadSnapshot(async (tx) => {
-        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, params);
-        if (admitted.status !== "resolved") return admitted;
-        // The body and its cursor must be captured in the same read snapshot.
-        return { ...admitted, contentCursor: await readAdmittedUsageContentCursor(tx, params, admitted.record) };
-    });
+    return await inReadSnapshot(async (tx) =>
+        await admitQualifiedProviderAccountUsageRecordInTx(tx, params));
 }
 
 export async function readQualifiedProviderAccountUsageHistory(params: Readonly<{ accountId: string }> & ReturnType<typeof import('@happier-dev/protocol/connect/providerAccountUsageHistory').QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>): Promise<
@@ -1712,12 +1696,10 @@ export async function readQualifiedConnectedAccountUsageRecordWithSource(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-    includeContentCursor = false,
 ): Promise<Readonly<{
     status: "resolved";
     sourceResolution: QualifiedConnectedServiceUsageSourceResolutionV4;
     record: StoredProviderAccountUsageRecord;
-    contentCursor?: number;
 }> | Readonly<{ status: "not_found" }> | Readonly<{ status: "no_usage_observed" }> | QualifiedConnectedAccountUsageOwnershipRefusal | Readonly<{ status: "storage_mode_mismatch" }>> {
     return await inReadSnapshot(async (tx) => {
         const source = await readFirstQualifiedSourceForRef(params, tx);
@@ -1732,8 +1714,6 @@ export async function readQualifiedConnectedAccountUsageRecordWithSource(
             status: "resolved" as const,
             sourceResolution: source,
             record: admitted.record,
-            ...(includeContentCursor ? { contentCursor: await readAdmittedUsageContentCursor(tx,
-                { accountId: params.accountId, recordId: source.recordId }, admitted.record) } : {}),
         };
     });
 }
@@ -1784,7 +1764,9 @@ export async function readQualifiedConnectedAccountQuota(
     }>,
 ) {
     const resolved =
-        await readQualifiedConnectedAccountUsageRecordWithSource(params, true);
+        await readQualifiedConnectedAccountUsageRecordWithSource(
+            params,
+        );
     if (resolved.status !== "resolved") return resolved;
     const { record, sourceResolution } = resolved;
     const metadata = {
@@ -1812,7 +1794,6 @@ export async function readQualifiedConnectedAccountQuota(
             sourceResolution,
             content: projectSealedProviderAccountUsageContentV4(record.sealedPayload),
             metadata,
-            contentCursor: undefined,
         };
     }
     if (!record.snapshot) return null;
@@ -1829,7 +1810,6 @@ export async function readQualifiedConnectedAccountQuota(
             v: quota,
         },
         metadata,
-        contentCursor: resolved.contentCursor,
     };
 }
 
@@ -1987,7 +1967,6 @@ type QualifiedProviderAccountUsageAdmission =
         status: "resolved";
         record: StoredProviderAccountUsageRecord;
         sources: QualifiedConnectedServiceUsageSourceV4[];
-        contentCursor?: number;
     }>
     | Readonly<{ status: "not_found" }>
     | Readonly<{ status: "storage_mode_mismatch" }>;

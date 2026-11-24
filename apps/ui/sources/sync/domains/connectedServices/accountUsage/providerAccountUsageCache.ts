@@ -1,6 +1,5 @@
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { readUsageContentCursor } from './usageObservation';
 import { resolveProviderAccountUsageReadState, type ProviderAccountUsageEmptyRead } from './providerAccountUsageSelectors';
 
 export type ProviderAccountUsageCacheEntry = Readonly<{
@@ -132,7 +131,6 @@ export function updateProviderAccountUsageCacheEntries(
     for (const [recordId, incoming] of Object.entries(incomingEntries)) {
         const previous = currentEntries[recordId];
         const next = previous && incoming.snapshot !== previous.snapshot
-            && readUsageContentCursor(previous.snapshot) === readUsageContentCursor(incoming.snapshot)
             && sameStrictJsonValue(previous.snapshot, incoming.snapshot)
             ? { ...incoming, snapshot: previous.snapshot }
             : incoming;

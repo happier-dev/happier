@@ -4,8 +4,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import { readConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
-import { isProviderAccountUsageChangeEntityIdV1, coalesceProviderAccountUsageObservationV1,
-    type ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
@@ -36,16 +36,6 @@ export function isUsageQuotaHomeAccountChange(event: HomeAccountChangeEvent): bo
 export function readUsageQuotaChangedRecordIds(event: HomeAccountChangeEvent): readonly string[] | undefined {
     return event.source !== 'snapshot' && event.source !== 'connected'
         && event.providerAccountUsageRecordIds?.length ? event.providerAccountUsageRecordIds : undefined;
-}
-
-/** A mixed authority/recovery wake needs normal admission even if a record also published. */
-export function readUsageQuotaObservations(event: HomeAccountChangeEvent): readonly ProviderAccountUsageObservationV1[] | undefined {
-    const ids = readUsageQuotaChangedRecordIds(event);
-    const observations = event.providerAccountUsageObservations;
-    if (!ids || !observations) return undefined;
-    const addressed = new Map<string, ProviderAccountUsageObservationV1>(observations.map(observation => [observation.recordId, observation]));
-    const selected = ids.flatMap(id => addressed.get(id) ?? []);
-    return selected.length === ids.length ? selected : undefined;
 }
 
 /** An unresolved source still needs acquisition; admitted sources consume only their record changes. */
@@ -100,9 +90,7 @@ export function observeUsageProjection(input: Readonly<{
     /** The caller already awaited an admitted read before attaching this observation. */
     initialReadCompleted?: boolean;
     readRecordId?(): string | null | undefined;
-    /** Returns false when the addressed body is absent or needs recovery. */
-    applyObservation?(observation: ProviderAccountUsageObservationV1): boolean;
-    read(observation?: ProviderAccountUsageObservationV1): Promise<unknown>;
+    read(recordId?: ProviderAccountUsageRecordId): Promise<unknown>;
     busy(): boolean;
     nextReadAtMs(): number;
     /** Aging a retained observation updates presentation without another GET. */
@@ -111,17 +99,18 @@ export function observeUsageProjection(input: Readonly<{
 }>): Readonly<{ reconcile(): void; invalidate(): void; dispose(): void }> {
     let disposed = false;
     let pending = input.initialReadCompleted !== true;
-    let retainedObservation: ProviderAccountUsageObservationV1 | undefined;
+    let addressedRecordId: ProviderAccountUsageRecordId | undefined;
     let active = isRuntimeActive();
     let timer: ReturnType<typeof setTimeout> | null = null;
     function reconcile(): void {
         if (timer !== null) { clearTimeout(timer); timer = null; }
         if (disposed || !isRuntimeActive() || input.busy()) return;
-        const observation = pending ? undefined : retainedObservation;
-        retainedObservation = undefined;
-        if (pending || observation && (observation.contentChanged || input.applyObservation?.(observation) !== true)) {
+        const recordId = !pending && addressedRecordId === input.readRecordId?.() ? addressedRecordId : undefined;
+        const needsRead = pending || addressedRecordId !== undefined;
+        addressedRecordId = undefined;
+        if (needsRead) {
             pending = false;
-            void input.read(observation).then(reconcile, reconcile);
+            void input.read(recordId).then(reconcile, reconcile);
             return;
         }
         const readDeadline = input.nextReadAtMs();
@@ -142,10 +131,8 @@ export function observeUsageProjection(input: Readonly<{
         if (!areServerProfileIdentifiersEquivalent(event.serverId, input.serverId)) return;
         const id = input.readRecordId?.();
         if (!isUsageProjectionHomeAccountChange(event, false, input.readRecordId ? [id] : undefined)) return;
-        const observation = input.applyObservation && readUsageQuotaObservations(event)?.find(fact => fact.recordId === id);
-        if (observation) {
-            retainedObservation = retainedObservation
-                ? coalesceProviderAccountUsageObservationV1(retainedObservation, observation) : observation;
+        if (id && readUsageQuotaChangedRecordIds(event)?.includes(id)) {
+            addressedRecordId = id;
             reconcile();
         } else invalidate();
     }, { reconnect: 'refresh' });

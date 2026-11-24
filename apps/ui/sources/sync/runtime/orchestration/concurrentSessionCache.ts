@@ -4,7 +4,6 @@ import { attachManagedSessionHumanPresenceSocket } from '@/sync/domains/session/
 import { attachManagedSessionConsumptionSocket } from '@/sync/runtime/attachManagedSessionConsumptionSocket';
 import { getHomeAccountChangeDemandedServerIds, subscribeHomeAccountChangeDemand, invalidateHomeAccountReadJoins, publishHomeAccountChange, publishHomeAccountChangeForRouting, publishHomeAccountChangeWake, type HomeAccountChangeEvent } from './homeAccountChange';
 import { EphemeralUpdateSchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
-import { readProviderAccountUsageWakeObservationsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { notifyExecutionRunActivityFromUpdate, notifyExecutionRunActivityReconnect } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { notifyScmDiffSummaryResultActivity } from '@/sync/ops/scmDiffSummary/resultActivity';
 import {
@@ -1584,8 +1583,7 @@ async function connectManagedServer(
                             const wake = parsedAccountUpdate.data.body;
                             accountEvent = publishHomeAccountChangeWake(entry.id, wake, 'socket',
                                 sessionId => Boolean(storage.getState().sessionListRowsByServerId[entry.id]?.[sessionId]),
-                                parsedAccountUpdate.data.discussionSettingsChangedIds,
-                                readProviderAccountUsageWakeObservationsV1(parsedAccountUpdate.data));
+                                parsedAccountUpdate.data.discussionSettingsChangedIds);
                         } else {
                             accountEvent = publishHomeAccountChangeForRouting(entry.id);
                         }

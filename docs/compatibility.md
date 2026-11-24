@@ -7954,31 +7954,14 @@ poll. Material writes and newly retained observations publish the existing
 observation time advances history and its daily coverage even if the allowance
 is flat. The global row's advisory hint names its paired record. The Changes
 Protocol leaf owns these identities and reads the consumed page's record scope;
-coalesced record rows retain changes to several sources. The write owner records
-the accepted observation clocks and whether the current reading changed. The
-same bodyless fact travels on the existing Account wake for secondary Homes.
-Coalescing keeps the latest accepted clock and preserves any material change.
-The durable row lets primary Home detect a material change since its cursor.
-
-A complete clock-only fact names the last material Account Change cursor for
-its record. The V4 record and quota GETs return that same cursor in
-`X-Happier-Usage-Content-Cursor` for admitted plaintext readings, captured in
-the same database snapshot as the body. A matching cursor lets readers update
-quota fetch time, quota provider observation time and subscription observation
-time from their separate stored values without a GET. A null subscription
-clock means no stored subscription. A missing or different cursor, a material
-change or a clock the hint cannot reproduce triggers one addressed record GET.
-On a socket wake the cursor travels in the optional Account envelope field
-`providerAccountUsageClockContentCursors`. The strict predecessor observation
-keeps its existing shape and requests a read. A client that understands the
-cursor field can apply the clocks after matching its body.
-For a sealed reading, the wake carries the accepted fetch clock and readers
-open the addressed record to verify its clocks. An older publisher that omits
-the cursor also triggers a read. A legacy/unscoped key, an incomplete
-pair, unknown scope, snapshot, foreground or explicit recovery keeps the full
-reread. An older UI still consumes the global key. Replacing a source's record
-binding publishes the existing Connected Service change fact so readers
-admitted to the previous record resolve the new binding.
+coalesced record rows retain changes to several sources. A complete pair lets the
+UI read named records directly when their identities are already admitted. Other
+readings stay in place, and consumers in one runtime share each record GET.
+A legacy/unscoped key, an incomplete pair, unknown scope, snapshot, foreground
+or explicit recovery keeps the full reread. New UI with an old server therefore
+retains its previous behavior; old UI with a new server still consumes the global
+key. Replacing a source's record binding publishes the existing Connected Service
+change fact so readers admitted to the previous record resolve the new binding.
 This additive development contract changes no request/response envelope,
 wire epoch or authority. A server reload is needed to publish the new identities.
 The push invalidates the admitted read when the producer settles, including an unchanged-material write that clears

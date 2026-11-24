@@ -76,10 +76,10 @@ import { isTransientConnectivityError, RetryableServerResponseError } from '@/sy
 import { UsageModelPriceCatalogSchema, type UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { HappyError } from '@/utils/errors/errors';
 import { readMachineName } from '@/utils/sessions/machineDisplayNames';
-import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, readUsageQuotaObservations, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
-import type { ProviderAccountUsageAddressedRead, ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
-import { coalesceProviderAccountUsageObservationV1, type ProviderAccountUsageDayChangeV1,
-    type ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { getUsageQueryMachineInvalidationKey, getUsageQueryPoolMachineSelection, isUsagePresentationHomeAccountChange, isUsageQuotaHomeAccountChange, isUsageProjectionHomeAccountChange, readUsageAccountingChangeScope, readUsageQuotaChangedRecordIds, usageQuotaRecordChangeAffects, subscribeUsageQueryStateInvalidation, usageAccountingChangeAffectsQueries, type UsageQueryStateInvalidation } from './usageQueryInvalidation';
+import type { ProviderAccountUsageProjectionDocuments, ProviderAccountUsageQuotaViewDemand } from './apiProviderAccountUsage';
+import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import type { ProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { createUsageQueryResourceContent } from './usageQueryResourceEncoding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
 import { createCapturedServerReadTransport, type CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
@@ -531,7 +531,7 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
     demands: readonly Readonly<{ query: UsageQuery; period: NonNullable<UsageAccountingSourceSnapshot['period']> }>[], nowMs: number, signal?: AbortSignal,
     onProgress?: (quota: OpenedQuotaRead) => void, previous?: UsageQueryBatchResult,
     opened: OpenedQuotaRead = readOpenedQuota(context, demands.map(({ query }) => query), previous), changedRecordIds?: readonly string[], dayChange?: ProviderAccountUsageDayChangeV1,
-    recoverySources?: ReadonlySet<string>, observations?: readonly ProviderAccountUsageObservationV1[]): Promise<OpenedQuotaRead> {
+    recoverySources?: ReadonlySet<string>): Promise<OpenedQuotaRead> {
     const scope = readOpenedQuotaHistoryScope(context);
     if (!scope) return opened;
     // Start at the existing transport batch size; the admitted B reader grows
@@ -577,25 +577,15 @@ async function readOpenedQuotaHistory(context: UsageQueryAccountContext,
         });
         return { ...view, sources };
     });
+    const addressedReads = new Map<string, ProviderAccountUsageRecordId>();
     const requestedIndices = admissions.flatMap(({ admitted, sourceKey }, index) => {
         if (recoverySources && !recoverySources.has(`quota:${sourceKey}`)) return [];
-        return usageQuotaRecordChangeAffects(admitted.usageRecordId
-            ?? progress.find(view => view.sources[index]?.value?.current)?.sources[index]?.value?.current?.recordId, changedRecordIds) ? [index] : [];
+        const recordId = admitted.usageRecordId
+            ?? progress.find(view => view.sources[index]?.value?.current)?.sources[index]?.value?.current?.recordId;
+        if (!usageQuotaRecordChangeAffects(recordId, changedRecordIds)) return [];
+        if (recordId && admitted.supported !== false && changedRecordIds?.includes(recordId)) addressedReads.set(sourceKey, recordId);
+        return [index];
     });
-    const observationsByRecord = new Map<string, ProviderAccountUsageObservationV1>(observations?.map(fact => [fact.recordId, fact]));
-    const addressedReads = new Map<string, ProviderAccountUsageAddressedRead>();
-    if (observationsByRecord.size) for (const index of requestedIndices) {
-        const { admitted, sourceKey } = admissions[index]!;
-        const row = progress.find(view => view.sources[index]?.previous?.current)?.sources[index];
-        const previousCurrent = row?.previous?.current ?? undefined;
-        const id = admitted.usageRecordId ?? previousCurrent?.recordId;
-        const observation = id && observationsByRecord.get(id);
-        if (observation && admitted.supported !== false) addressedReads.set(sourceKey, {
-            observation,
-            ...(previousCurrent?.recordId === id && !row?.previousState?.errorCode && !admitted.error
-                ? { retained: previousCurrent } : {}),
-        });
-    }
     const projectQuota = (rows: typeof progress[number]['sources'], settled: boolean): UsageQuotaSourceSnapshot => {
         const value = rows.flatMap(row => row.value ? [row.value] : []);
         const sources = rows.map(row => row.state);
@@ -1483,7 +1473,6 @@ export async function readUiUsageQueryBatch(
         /** Undefined retains full acquisition for legacy and recovery demand. */
         allowanceRecordIds?: readonly string[];
         allowanceDayChange?: ProviderAccountUsageDayChangeV1;
-        allowanceObservations?: readonly ProviderAccountUsageObservationV1[];
         /** An allowance-only wake keeps this entry's admitted independent sources. */
         retainedProjection?: UsageQueryReprojection;
     }>,
@@ -1522,7 +1511,7 @@ export async function readUiUsageQueryBatch(
             quota = await readOpenedQuotaHistory(context, quotaDemands, accountingNowMs, signal, value => {
                     quota = value;
                     progress = readOptions.onProgress?.(reproject);
-                }, previous, quota, readOptions.allowanceRecordIds, readOptions.allowanceDayChange, undefined, readOptions.allowanceObservations);
+                }, previous, quota, readOptions.allowanceRecordIds, readOptions.allowanceDayChange);
             await progress;
             return reproject(signal);
         } finally {
@@ -1842,7 +1831,7 @@ export async function readUiUsageQueryBatch(
             // its retained observation is complete, stale, unavailable or failed.
             if (quotaQueries.length && !readOptions?.retainAllowance) {
                 const settled = await readOpenedQuotaHistory(context, quotaDemands, accountingNowMs, signal,
-                    value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceRecordIds, readOptions?.allowanceDayChange, recoveryQuotaSources, readOptions?.allowanceObservations);
+                    value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceRecordIds, readOptions?.allowanceDayChange, recoveryQuotaSources);
                 if (settled !== quota) { quota = settled; publish(); }
             }
         })(),
@@ -1894,7 +1883,6 @@ type UsageQueryReadDemand = Readonly<{
     allowance: boolean | undefined;
     allowanceRecordIds?: readonly string[];
     allowanceDayChange?: ProviderAccountUsageDayChangeV1;
-    allowanceObservations?: readonly ProviderAccountUsageObservationV1[];
     projectionOnly: boolean;
     allowanceOnly: boolean;
     authorityChanged: boolean;
@@ -1909,17 +1897,6 @@ type UsageQueryReadDemand = Readonly<{
 function joinAllowanceDayChanges(left: ProviderAccountUsageDayChangeV1 | undefined, right: ProviderAccountUsageDayChangeV1 | undefined) {
     if (!left || !right || left.recordId !== right.recordId || left.dayStartAtMs !== right.dayStartAtMs) return undefined;
     return left.throughCursor >= right.throughCursor ? left : right;
-}
-
-function joinAllowanceObservations(left: readonly ProviderAccountUsageObservationV1[] | undefined,
-    right: readonly ProviderAccountUsageObservationV1[] | undefined) {
-    if (!left || !right) return undefined;
-    const byRecord = new Map(left.map(fact => [fact.recordId, fact]));
-    for (const fact of right) {
-        const previous = byRecord.get(fact.recordId);
-        byRecord.set(fact.recordId, previous ? coalesceProviderAccountUsageObservationV1(previous, fact) : fact);
-    }
-    return [...byRecord.values()];
 }
 
 /** Activity comes from this watch's admitted demand, independently of retained allowance facts. */
@@ -2720,8 +2697,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const value = retainUsageQueryResultReferences(batch, currentBatch, ownPrevious);
                     // Reuse the entry's content as well as its decoded value. A
                     // terminal read commonly repeats its last progress revision.
-                    allowance = retainUsageAllowance(batch, allowance);
                     if (current && value === currentBatch) return keepContent(current, currentBatch);
+                    allowance = retainUsageAllowance(value, allowance);
                     return keepContent(createUsageQueryResourceContent(value), value, true);
                 };
                 let queuedProgress: UsageQueryReprojection | null = null;
@@ -2786,8 +2763,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             allowanceRecordIds: allowanceDemands.length > 0 && allowanceDemands.every(demand => demand.allowanceRecordIds !== undefined)
                                 ? [...new Set(allowanceDemands.flatMap(demand => demand.allowanceRecordIds!))] : undefined,
                             allowanceDayChange: allowanceDemands.map(demand => demand.allowanceDayChange).reduce(joinAllowanceDayChanges, allowanceDemands[0]?.allowanceDayChange),
-                            allowanceObservations: allowanceDemands.map(demand => demand.allowanceObservations)
-                                .reduce(joinAllowanceObservations, allowanceDemands[0]?.allowanceObservations),
                             onProgress: project => {
                                 // Keep the original admitted closure, rather than
                                 // retaining one wrapper for every allowance wake.
@@ -2883,7 +2858,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 let allowanceReadDemand: boolean | undefined;
                 let allowanceRecordIds: readonly string[] | undefined;
                 let allowanceDayChange: ProviderAccountUsageDayChangeV1 | undefined;
-                let allowanceObservations: readonly ProviderAccountUsageObservationV1[] | undefined;
                 // Keep the demand already taken by the active read; retained B
                 // can stay available while its real replacement is outstanding.
                 let activeReadDemand: UsageQueryReadDemand | undefined;
@@ -2929,9 +2903,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     if (allowanceChanged) {
                         const changedIds = accountModeChanged ? undefined : quotaRecordIds
                             ?? (typeof change === 'object' ? readUsageQuotaChangedRecordIds(change) : undefined);
-                        const observations = !accountModeChanged && typeof change === 'object' ? readUsageQuotaObservations(change) : undefined;
-                        allowanceObservations = allowanceReadDemand === true
-                            ? joinAllowanceObservations(allowanceObservations, observations) : observations;
                         const dayChange = typeof change === 'object' ? change.providerAccountUsageDayChange : undefined;
                         const scopedDay = dayChange && changedIds?.includes(dayChange.recordId) ? dayChange : undefined;
                         allowanceDayChange = allowanceReadDemand === true ? joinAllowanceDayChanges(allowanceDayChange, scopedDay) : scopedDay;
@@ -2988,7 +2959,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         retryFailuresOnly = failedOnly;
                         woken = true;
                         if (!readsAllowance) return;
-                        allowanceReadDemand = true; allowanceRecordIds = undefined; allowanceDayChange = undefined; allowanceObservations = undefined;
+                        allowanceReadDemand = true; allowanceRecordIds = undefined; allowanceDayChange = undefined;
                         projectionOnly = false; allowanceOnlyDemand = false; woken = true;
                     },
                     isAllowanceReadPending() {
@@ -3003,7 +2974,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         const demand: UsageQueryReadDemand = { allowance: readsAllowance ? (authorityChanged ? true : allowanceReadDemand) : false,
                             allowanceRecordIds: authorityChanged ? undefined : allowanceRecordIds,
                             allowanceDayChange: authorityChanged ? undefined : allowanceDayChange,
-                            allowanceObservations: authorityChanged ? undefined : allowanceObservations,
                             projectionOnly: !authorityChanged && projectionOnly === true, authorityChanged,
                             retryFailuresOnly: !authorityChanged && retryFailuresOnly,
                             allowanceOnly: !authorityChanged && allowanceOnlyDemand === true,
@@ -3013,7 +2983,6 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         allowanceReadDemand = undefined;
                         allowanceRecordIds = undefined;
                         allowanceDayChange = undefined;
-                        allowanceObservations = undefined;
                         projectionOnly = undefined;
                         allowanceOnlyDemand = undefined;
                         woken = false;

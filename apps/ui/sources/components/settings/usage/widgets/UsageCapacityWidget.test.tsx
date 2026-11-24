@@ -118,7 +118,7 @@ beforeEach(() => {
 it('keeps standalone All Capacity independent of accounting across unrelated Account and current-record wakes', async () => {
   const previousMachines = storage.getState().machines;
   const scope = { period: { relative: 'all' }, agents: [], machines: [], projects: [], sources: [], session: null, costBasis: 'auto' } as const;
-  const now = Date.now();
+  const now = Date.now() - 2_000;
   const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'capacity' };
   const source = { bindingKind: 'account' as const, ref };
   const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
@@ -248,18 +248,17 @@ it('keeps standalone All Capacity independent of accounting across unrelated Acc
     expect(home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/history'))
       .map(request => [request.method, request.path])).toEqual([]);
     const refreshedAt = record.fetchedAtMs + 1000;
-    const readsBeforeObservation = home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')).length;
+    const readsBeforeObservation = home.requests.length;
+    record = { ...record, fetchedAtMs: refreshedAt, observedAtMs: refreshedAt };
     await act(async () => {
       publishHomeAccountChange(home!.homes.a!.id, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
         changeKinds: ['account'], providerAccountUsageRecordIds: [record.recordId],
-        providerAccountUsageObservations: [{ recordId: record.recordId, fetchedAtMs: refreshedAt,
-          observedAtMs: refreshedAt, contentChanged: false }],
       });
     });
     await expect.poll(() => seen.at(-1)?.slice?.quota?.[0]?.current?.fetchedAtMs,
       { message: 'Plans and Overview share the Capacity observation' }).toBe(refreshedAt);
-    expect(home.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')))
-      .toHaveLength(readsBeforeObservation);
+    expect(home.requests.slice(readsBeforeObservation).map(request => [request.method, request.path]))
+      .toEqual([['GET', '/v4/connect/qualified/provider-account-usage/record']]);
     expect(seen.at(-1)?.slice?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(48);
     // Source facts can settle before their Resource finishes publishing bytes.
     // Begin the held refresh only after the canonical read itself is idle.
