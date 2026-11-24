@@ -232,6 +232,11 @@ export async function claudeLocalLauncher(
         onRawJsonlValue: (value, observation) => {
             transcriptProjector.observeRaw(value, observation);
         },
+        onMainTranscriptMaterialized: ({ sessionId, transcriptPath }) => {
+            if (sessionId === session.sessionId) {
+                session.onSessionFound(sessionId, { transcript_path: transcriptPath });
+            }
+        },
         onLiveJsonlValue: ({ sessionId, value }) => {
             lifecycleTracker.observeLiveProviderActivityRow(value, sessionId);
         },
