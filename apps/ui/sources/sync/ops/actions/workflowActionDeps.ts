@@ -82,7 +82,10 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
 import { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
+import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
 import { randomUUID } from '@/platform/randomUUID';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { parseCompatSessionByIdResponse } from '@/sync/engine/sessions/sessionHttpCompat';
@@ -157,8 +160,12 @@ export function createUiTriggerSessionResolver(account: LazyActionAccountContext
     };
 }
 
+type WorkflowStartConfirmation = Readonly<{ reviewDigest?: string }>;
+
 /** Compose Account content owners and the existing exact-Machine effect relay. */
-export type UiWorkflowAction = WorkflowActionExecute & Readonly<{
+export type UiWorkflowAction = WorkflowActionExecute
+    & ((args: WorkflowActionExecuteArgs, confirmation: WorkflowStartConfirmation) => ReturnType<WorkflowActionExecute>)
+    & Readonly<{
     actionAutomationChecks: ReturnType<typeof createWorkflowActorConsentPortV1> & Pick<ActionAutomationPortV1, 'wait' | 'cancel'>;
 }>;
 
@@ -169,6 +176,28 @@ export function createUiWorkflowAction(params: Readonly<{
 }>): UiWorkflowAction {
     const account = params.account;
     const executeRelay = createUiAccountAction(params);
+    const resolveOriginSessionProject = async ({ context, input, signal }: WorkflowActionExecuteArgs<'workflow.run.start'>) => {
+        // Signed invocations, approved replays, Discussion starts and Run-again have their own placement.
+        if (context.externalActionExecutionAuthorization || context.externalActionCredential || context.rpcSessionAuthorization
+            || context.presentUserConfirmation || context.presentUserApproval || context.approvedActionReplay
+            || input.origin || (input.source.kind === 'inline' && input.source.replay)) return undefined;
+        const sessionId = context.defaultSessionId?.trim();
+        if (!sessionId || (context.actionCaller?.kind === 'session' && context.actionCaller.sessionId !== sessionId)) return undefined;
+        const requestSignal = signal ?? context.signal;
+        const opened = await withActionAccountRequestSignal(account, requestSignal, signal =>
+            runWithServerRequestAuthorityForServerAccountScope({
+                scope: account.accountLifetime.scope, activeRequest: account.request,
+            }, authority => readSessionSnapshotForAuthority({ authority, sessionId, signal,
+                includeTurns: false, isCurrent: account.accountLifetime.isCurrent })))
+            .catch(error => { if (error instanceof SessionSnapshotReadError) return null; throw error; });
+        account.assertCurrent();
+        throwIfAborted(requestSignal);
+        const metadata = opened ? readSessionOwnerMetadataView(opened.session) : null;
+        const machineId = resolveSessionMachineId(metadata);
+        if (!machineId) return undefined;
+        const directory = resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath: metadata?.path?.trim() ?? '' }).machinePath;
+        return directory ? { machineId, directory } : undefined;
+    };
     // Account authoring stays local. Only shared targets need the existing
     // private installation channel to retain the requester's own sign-in.
     const deliverRequesterCustody = async (operation: 'retain' | 'retire',
@@ -513,7 +542,8 @@ export function createUiWorkflowAction(params: Readonly<{
             || (isWorkflowHostAdmittedChildActionIdV1(args.actionId) && args.context.authority !== 'present_user');
         return { accountOperation: ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation, recoveryRunId };
     };
-    const execute: WorkflowActionExecute = async (rawArgs) => {
+    const execute = async (rawArgs: WorkflowActionExecuteArgs,
+        confirmation?: WorkflowStartConfirmation): ReturnType<WorkflowActionExecute> => {
         try { account.assertCurrent(); } catch { return unavailable; }
         if (!areServerProfileIdentifiersEquivalent(rawArgs.context.serverId, account.serverId)
             || rawArgs.context.runtimeAccountId !== account.accountId) return unavailable;
@@ -533,18 +563,22 @@ export function createUiWorkflowAction(params: Readonly<{
             // consume the same UI policy before relaying. Scoped credentials keep host admission.
             if (ordinaryAccountCredential && !accountOperation && !await isWorkflowFeatureEnabled()) return unavailable;
             let relayArgs = args;
-            if (startingRun && args.context.workflowStartProject) {
-                const project = args.context.workflowStartProject;
+            if (startingRun) {
                 const target = args.context.externalActionTarget;
+                let startContext = args.context;
                 if (!target || (target.kind === 'machine' && !target.project)) {
-                    // Private host context does not cross Account transport. Bind the resolved
-                    // workspace to the existing signed target without replacing its restrictions.
-                    const projected = ExternalActionTargetV1Schema.safeParse({
-                        ...(target ?? { kind: 'machine', machineId: project.machineId }), project,
-                    });
-                    if (!projected.success) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-                    relayArgs = { ...args, context: { ...args.context, externalActionTarget: projected.data } };
+                    // Resolve an omitted Project from the admitted origin before binding confirmation and signing.
+                    const project = args.context.workflowStartProject ?? (ordinaryAccountCredential ? await resolveOriginSessionProject(args) : undefined);
+                    if (project) {
+                        const projected = ExternalActionTargetV1Schema.safeParse({
+                            ...(target ?? { kind: 'machine', machineId: project.machineId }), project,
+                        });
+                        if (!projected.success) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                        startContext = { ...args.context, externalActionTarget: projected.data };
+                    }
                 }
+                if (confirmation) startContext = bindPresentUserActionConfirmation(args.actionId, args.input, startContext, confirmation.reviewDigest);
+                if (startContext !== args.context) relayArgs = { ...args, context: startContext };
             }
             if (ordinaryAccountCredential && args.context.externalActionTarget === undefined && recoveryRunId !== undefined) {
                 // Recovery belongs to the retained Run's Machine. A reachable Account

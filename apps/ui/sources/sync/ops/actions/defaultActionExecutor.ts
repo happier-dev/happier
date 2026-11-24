@@ -1133,10 +1133,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // The Workflow relay owns placement and uncertain admission outcomes.
       // Return its carried review to the Machine confirmation path, without
       // admitting the same request against a second, app-local review digest.
-      const context = args.confirmInFlow
-        ? bindPresentUserActionConfirmation(args.actionId, args.input, args.context, args.reviewDigest) : args.context;
-      return workflowAction({ actionId: args.actionId, input: WorkflowRunStartRequestV1Schema.parse(args.input), context,
-        ...(context.signal ? { signal: context.signal } : {}) });
+      const start = { actionId: args.actionId, input: WorkflowRunStartRequestV1Schema.parse(args.input), context: args.context,
+        ...(args.context.signal ? { signal: args.context.signal } : {}) } as const;
+      if (!args.confirmInFlow) return workflowAction(start);
+      if (ownedWorkflowAction) return ownedWorkflowAction(start, { reviewDigest: args.reviewDigest });
+      return workflowAction({ ...start, context: bindPresentUserActionConfirmation(args.actionId, start.input, args.context, args.reviewDigest) });
     }
     // Mounted surfaces supply this target through the admitted controller, not
     // Action input, presence ranking, or the UI's default Machine selection.

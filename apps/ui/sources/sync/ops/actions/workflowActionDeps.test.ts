@@ -33,10 +33,14 @@ import {
     validateWorkflowDefinition} from '@happier-dev/protocol/workflows/workflowValidationV1';
 import {
     getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { createWorkflowAccountRunActionOwner } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import {
     WorkflowRunStartRequestV1Schema} from '@happier-dev/protocol/workflows/actionsV1';
 import {
-    WorkflowActionFailureV1Schema} from '@happier-dev/protocol/workflows/workflowProgressV1';
+    WorkflowActionFailureV1Schema, WorkflowRunOriginV1Schema} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import {
     WorkflowTriggerWriteResultV1Schema,
     WorkflowTriggerUpdateRequestV1Schema} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -114,7 +118,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createInMemoryReviewRecordPortV1 } from '../../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { createScmCapabilities } from '@happier-dev/protocol/scm';
-import { ExternalActionTargetV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionTargetV1Schema, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -2276,6 +2280,144 @@ describe('UI Workflow Action front door', () => {
             })).resolves.toMatchObject({ ok: true, result: { admission: 'created' } });
             expect(h.transport).toHaveBeenCalledWith(expect.objectContaining({ target: { kind: 'machine', machineId: 'machine-a', project } }));
         } finally { h.account.dispose(); }
+    });
+
+    it.each(['explicit', 'bound'] as const)('previews and rejoins a catalog start with a %s Project target', async targetKind => {
+        const h = await createHarness('plain', { identity: true, credentialKind: 'account' });
+        const request = runtimeFetch.getMockImplementation()!;
+        const sessionId = 'voice-origin-session';
+        const portableHome = h.account.serverIdentityId!;
+        const project = { machineId: 'machine-a', directory: targetKind === 'explicit' ? '/chosen' : '/host/repo' };
+        const target = { kind: 'machine' as const, machineId: project.machineId, project };
+        const session = { serverId: h.account.serverId, sessionId };
+        const reviewers = [{ kind: 'session', session }];
+        const input = WorkflowRunStartRequestV1Schema.parse({ runId: crypto.randomUUID(),
+            source: { kind: 'catalog', workflow: 'builtin:review-and-converge' },
+            inputs: { reviewers, steps: [{ kind: 'review', reviewers, instructions: 'Review the session changes.' }] } });
+        const witness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: null };
+        const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: input.runId, ownerAccountId: accountId,
+            access: 'owner', encryptionMode: 'plain', ownerAccountCurrentness: witness, dataEncryptionKey: null,
+            callerDataEncryptionKey: null, recipients: [], visibleTeamId: null });
+        let committed: { run: ReturnType<typeof createWorkflowRunSummaryFixture>; acceptedEnvelope: string } | undefined;
+        let phase: 'preview' | 'start' | 'rejoin' = 'preview';
+        let previewedTarget: unknown;
+        let admittedTarget: ExternalActionTargetV1 | undefined;
+        let admissions = 0;
+        let sessionReads = 0;
+        let failureAfterAdmission = false;
+        const owner = createWorkflowAccountRunActionOwner({
+            resolveAccountId: async () => accountId,
+            definitions: { get: async () => { throw new Error('Catalog start must use its built-in definition'); } },
+            resolveEncryption: async () => ({ kind: 'available', witness }),
+            normalizeAbsolutePath: directory => directory.startsWith('/') ? directory : null,
+            randomBytes: () => { throw new Error('Plain runs do not need keys'); },
+            prepareWorkspace: async ({ projectTarget }) => ({ ok: true, workspaceTarget: {
+                project: { ...projectTarget, checkoutRootPath: projectTarget.directory },
+            } }),
+            resolveMaterializationContext: async () => ({
+                roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' },
+                    availableAgentTargetKeys: ['agent:happier.agent.codex/codex'] },
+                effects: { resolveTargetAvailability: async () => true,
+                    resolveSessionTarget: async value => value === sessionId
+                        || (typeof value === 'object' && value !== null && 'sessionId' in value && value.sessionId === sessionId)
+                        ? { address: session, machineId: project.machineId } : null,
+                    readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) },
+            }),
+            storage: { execute: async operation => {
+                if (operation.operation === 'get') {
+                    if (committed) return { ...committed, checkpointEnvelope: null, resultEnvelope: null, keyCensus };
+                    if (operation.prepareAdmission) return { run: null, keyCensus };
+                    throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+                }
+                if (operation.operation !== 'admit') throw new Error('Unexpected Workflow storage operation');
+                if (typeof operation.runId !== 'string' || typeof operation.acceptedEnvelope !== 'string') {
+                    throw new Error('Expected a Run ID and accepted snapshot');
+                }
+                admissions += 1;
+                const run = createWorkflowRunSummaryFixture({ id: operation.runId, machineId: project.machineId,
+                    ownerAccountId: accountId, origin: WorkflowRunOriginV1Schema.parse(operation.origin) });
+                committed = { run, acceptedEnvelope: operation.acceptedEnvelope };
+                return { kind: 'created', run };
+            } },
+        });
+        const relay = await createExternalActionAccountHttpBoundary({
+            serverUrl: h.home.serverUrl, serverIdentityId: portableHome, accountId, machineId: project.machineId,
+            installationId: 'voice-workflow-installation', actionId: 'workflow.run.start', tokenEpoch: 0,
+            failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null,
+            execute: async (raw, { target: signedTarget, invocation }) => {
+                const args = { actionId: 'workflow.run.start' as const, input: WorkflowRunStartRequestV1Schema.parse(raw), context: {
+                    surface: invocation.surface, authority: invocation.authority, actionCaller: invocation.caller,
+                    externalActionTarget: signedTarget, defaultSessionId: invocation.defaultSessionId, callerPermissionMode: 'safe-yolo' as const,
+                    serverId: h.account.serverId, runtimeAccountId: accountId,
+                } };
+                expect(invocation.defaultSessionId).toBe(sessionId);
+                try {
+                    if (phase === 'preview') {
+                        await owner.prepareStartApproval(args, {});
+                        previewedTarget = signedTarget;
+                        return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
+                    }
+                    const result = await owner.execute(args);
+                    if (phase === 'start') {
+                        admittedTarget = signedTarget;
+                        failureAfterAdmission = true;
+                    }
+                    return result;
+                } catch (error) {
+                    const code = error instanceof Error && 'code' in error ? String(error.code) : 'unexpected_failure';
+                    return { ok: false, errorCode: code, error: code,
+                        ...(error instanceof Error && 'details' in error ? { details: error.details } : {}) };
+                }
+            },
+        });
+        const sessionBoundary = createSessionReadBatchHttpBoundary(component => {
+            if (component.path !== `/v2/sessions/${sessionId}`) return undefined;
+            sessionReads += 1;
+            return json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: sessionId,
+                metadata: { host: 'host', homeDir: '/home', machineId: project.machineId, path: '/agent/repo',
+                    sessionWorkspaceLocationV1: { v: 1, machineId: project.machineId, agentPath: '/agent/repo',
+                        machinePath: phase === 'rejoin' ? '/moved' : '/host/repo' } } }) });
+        });
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
+            const address = new URL(String(url));
+            const response = await relay.handle(address, init);
+            if (failureAfterAdmission) {
+                failureAfterAdmission = false;
+                throw new TypeError('Workflow start response lost after admission');
+            }
+            if (response) return response;
+            return await sessionBoundary.handle({ home: h.account.serverId, accountId, url: address,
+                path: address.pathname, method: init?.method ?? 'GET', headers: new Headers(init?.headers),
+                signal: init?.signal, body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined }) ?? request(url, init);
+        });
+        try {
+            const context = { ...h.context, surface: 'voice' as const, defaultSessionId: sessionId,
+                externalActionTarget: targetKind === 'explicit' ? target : { kind: 'machine' as const, machineId: project.machineId } };
+            const preview = await h.executeDefault.prepare('workflow.run.start', input, context, { reviewOnly: true });
+            if (preview.kind !== 'ready') throw new Error(JSON.stringify(preview.result));
+            const previewResult = await preview.invocation.run();
+            expect(previewResult, JSON.stringify(previewResult)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+            expect(previewedTarget).toEqual(target);
+            expect(admissions).toBe(0);
+
+            phase = 'start';
+            await expect(h.executeDefault('workflow.run.start', input, context))
+                .resolves.toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved' });
+            expect(admittedTarget).toEqual(target);
+            if (targetKind === 'bound') expect(sessionReads).toBeGreaterThan(0);
+            else expect(sessionReads).toBe(0);
+            const sessionReadsAtAdmission = sessionReads;
+
+            phase = 'rejoin';
+            if (!admittedTarget) throw new Error('Expected the signed target from the admitted start');
+            await expect(h.executeDefault('workflow.run.start', input, { ...context, externalActionTarget: admittedTarget }))
+                .resolves.toMatchObject({ ok: true, result: { admission: 'existing',
+                    run: { id: input.runId, origin: { kind: 'direct', originSessionId: sessionId } } } });
+            expect(admissions).toBe(1);
+            expect(sessionReads).toBe(sessionReadsAtAdmission);
+        } finally {
+            h.account.dispose();
+        }
     });
 
     it('carries the Session Review resolved workspace into its real Workflow Account transport', async () => {
