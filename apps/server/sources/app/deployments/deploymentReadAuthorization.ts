@@ -116,11 +116,13 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
                 if (!loaded.ok || loaded.row.deletedAt || loaded.row.telemetryMachineId !== binding.machineId
                     || !loaded.admission.canManage) return { ok: false, code: 'source_access_denied' };
                 const row = loaded.row;
+                const policy = await readDeploymentDatabasePolicyInTx(tx, row);
+                if (!policy) return { ok: false, code: 'source_access_denied' };
                 const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(row);
                 return { ok: true, artifactIds: [], deploymentTelemetryRead: [{
                     environmentId, revision: row.revision, capabilities: { metrics: row.telemetryMetricsEnabled,
                         appLlmCost: row.telemetryAppLlmCostEnabled, exceptions: row.telemetryExceptionsEnabled },
-                    clearApproval: { purpose: row.purpose, dataAgentAccess: row.dataAgentAccess,
+                    clearApproval: { purpose: row.purpose, dataAgentAccess: policy.dataAgentAccess,
                         ...(previewTemplateEnvironmentId ? { previewTemplateEnvironmentId } : {}),
                         ...(row.previewCompanionOfEnvironmentId ? { previewCompanionOfEnvironmentId: row.previewCompanionOfEnvironmentId } : {}) },
                 }] };

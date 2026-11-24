@@ -120,14 +120,15 @@ describe('current Source deployment authority', () => {
             },
         }), async app => {
             const route = `/v1/actions/${ACTION_INVOKE_ACTION_ID_V1}`;
-            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'regression' | 'clear' = 'list') => {
+            const makeRead = (accountId: string, machineId: string, operation: 'list' | 'regression' | 'clear' = 'list',
+                environmentId = environment.id) => {
                 const target = { kind: 'machine' as const, machineId };
                 const material = { type: 'dataKey' as const, machineKey: nacl.randomBytes(32) };
                 const input = operation === 'regression'
                     ? { action: parseQualifiedPluginActionId(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1),
                         input: { serverId, environmentId: environment.id, serviceName: 'app', measure: 'http.error_rate', windowMs: 1000 } }
                     : { action: parseQualifiedPluginActionId(operation === 'clear' ? DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 : DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1),
-                        input: { source: { kind: 'environment', serverId, environmentId: environment.id },
+                        input: { source: { kind: 'environment', serverId, environmentId },
                             ...(operation === 'list' ? { page: { limit: 6 } } : {}) } };
                 const envelope = sealExternalActionRequestV2({ material, input, randomBytes: nacl.randomBytes,
                     projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
@@ -192,6 +193,23 @@ describe('current Source deployment authority', () => {
             const readerClear = await admit(readerToken, makeRead(teammate.id, collector.id, 'clear').body);
             expect(readerClear.statusCode).toBe(403);
             expect(readerClear.json()).toMatchObject({ error: 'invalid_request', code: 'source_access_denied' });
+
+            await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { dataAgentAccess: 'readWriteAsk' } });
+            const previewTarget = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+                createdByAccountId: owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+                targetKind: 'ownServer', state: 'deployed', contentArtifactId: artifact.artifact.id,
+                contentHeaderVersion: 1, contentBodyVersion: 1 } });
+            const preview = await db.deploymentEnvironment.create({ data: { projectSourceId: project.source.id,
+                createdByAccountId: owner.id, controllerMachineId: collector.id, telemetryMachineId: collector.id,
+                protection: 'nonProduction', purpose: 'preview', previewTemplateEnvironmentId: environment.id,
+                previewRepositoryId: project.source.id, previewPullRequestId: '4', previewTargetLinkId: previewTarget.id, dataAgentAccess: 'read',
+                deployerMode: 'managers', referencedSavedSecretRevisions: [], contentArtifactId: artifact.artifact.id,
+                contentHeaderVersion: 1, contentBodyVersion: 1 } });
+            const previewClear = await admit(ownerToken, makeRead(owner.id, collector.id, 'clear', preview.id).body);
+            expect(previewClear.statusCode).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(previewClear.json()).binding.deploymentTelemetryRead)
+                .toMatchObject([{ environmentId: preview.id, clearApproval: { purpose: 'preview',
+                    previewTemplateEnvironmentId: environment.id, dataAgentAccess: 'readWriteAsk' } }]);
 
             const regression = ExternalActionExecutionAuthorizationV1Schema.parse((await admit(readerToken,
                 makeRead(teammate.id, collector.id, 'regression').body)).json());
