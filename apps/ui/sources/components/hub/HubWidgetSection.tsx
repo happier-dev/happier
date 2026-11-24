@@ -100,12 +100,16 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const lentIdentity = props.instance.displayName == null ? bodyIdentity : null;
     // A built-in withdrawn by its own switch (Your Home's atmosphere moment) keeps its place in the layout, undrawn.
     const switchedOff = isBuiltinWidgetSwitchedOff(props.instance.definition, useAtmosphereMoments());
-    const source = props.followSource
-        ? props.followSource.groupNamesValue
-            ? bodyCaption ?? undefined
-            : widgetGroupFollowSource(props.followSource.value, props.followSource.wide || phone)
-        // A widget whose plugin is not here says that once, in its body; the source slot does not repeat it.
-        : bodyCaption ?? defaultCaption ?? (descriptor ? pluginName : undefined);
+    const followed = props.followSource?.value;
+    const groupNamesValue = props.followSource?.groupNamesValue === true;
+    const roomy = props.followSource?.wide === true || phone;
+    const groupFollowSource = React.useMemo(
+        () => followed && !groupNamesValue ? widgetGroupFollowSource(followed, roomy) : undefined,
+        [followed, groupNamesValue, roomy],
+    );
+    // A widget whose plugin is not here says that once, in its body.
+    const source = groupNamesValue ? bodyCaption ?? undefined
+        : groupFollowSource ?? bodyCaption ?? defaultCaption ?? (descriptor ? pluginName : undefined);
     const savedSize = props.size ?? 'medium';
     // Carried, the card keeps its mark and says its source and the size it keeps (lab wgdnd 1).
     const carried = useWidgetCarriedIdentity({ kind: 'widget', mark: descriptor?.icon ?? 'squares-four',

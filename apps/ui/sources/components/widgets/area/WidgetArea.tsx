@@ -16,7 +16,8 @@ import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { describeWidgetGroupContext, readWidgetGroupFollowedValue, widgetGroupFollowSource, widgetGroupPinnedSource, widgetGroupSurfaceContext } from '@/components/widgets/group/widgetGroupInputs';
+import { describeWidgetGroupContext, widgetGroupFollowSource, widgetGroupPinnedSource, widgetGroupSurfaceContext } from '@/components/widgets/group/widgetGroupInputs';
+import { useWidgetGroupFollowedValue } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget } from '@/components/widgets/group/widgetGroupDropTarget';
@@ -800,10 +801,15 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const shownTitle = resolveWidgetInstanceTitle(instance, candidate).trim().toLocaleLowerCase();
     const sourceName = namesOwnScope && instance.definition.kind === 'builtin' ? undefined
         : candidate?.pluginName && candidate.pluginName.trim().toLocaleLowerCase() === shownTitle ? undefined : candidate?.pluginName;
-    const followed = readWidgetGroupFollowedValue(instance, groupContext, groupLabels);
+    const followed = useWidgetGroupFollowedValue(instance, candidate, context, surface.owner, groupContext, groupLabels);
     // A group with a header names the value it fills once; each widget that follows it does not say it again
     // (nor does a binding label, which would read the same slot). An untitled group has no header to say it.
     const groupNamesFollowed = followed !== null && parent !== undefined && readWidgetGroupTitle(parent.group) !== undefined;
+    const roomy = parent?.wide === true;
+    const groupFollowSource = React.useMemo(
+        () => followed && !groupNamesFollowed ? widgetGroupFollowSource(followed, roomy) : undefined,
+        [followed, groupNamesFollowed, roomy],
+    );
     // The body may name what it shows; a followed group value still wins the source slot.
     const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
     const [bodyMeta, setBodyMeta] = React.useState<React.ReactNode>(null);
@@ -1003,9 +1009,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 title={renaming.field ?? lentIdentity?.title ?? title}
                 source={groupNamesFollowed
                     ? bodyCaption ?? undefined
-                    : followed
-                        ? widgetGroupFollowSource(followed, parent?.wide === true)
-                        : bodyCaption ?? bindingLabel ?? sourceName ?? undefined}
+                    : groupFollowSource ?? bodyCaption ?? bindingLabel ?? sourceName ?? undefined}
                 sourceHeld={widgetDefinitionNamesItsSource(instance.definition)}
                 pageSection={pageSection}
                 meta={bodyMeta}

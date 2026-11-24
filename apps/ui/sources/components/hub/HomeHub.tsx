@@ -37,7 +37,8 @@ import { WidgetGroupMenuButton } from '@/components/widgets/group/WidgetGroupMen
 import { WidgetGroupBar } from '@/components/widgets/group/WidgetGroupBar';
 import { buildWidgetGroupMembershipActions, describeWidgetGroup, describeWidgetGroupAmong, resolveWidgetGroupChildSizeLimit, WIDGET_GROUP_ICON, type WidgetGroupOperations } from '@/components/widgets/group/widgetGroupMenu';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { describeWidgetGroupContext, readWidgetGroupFollowedValue, widgetGroupPinnedSource, widgetGroupSurfaceContext } from '@/components/widgets/group/widgetGroupInputs';
+import { describeWidgetGroupContext, widgetGroupPinnedSource, widgetGroupSurfaceContext } from '@/components/widgets/group/widgetGroupInputs';
+import { useWidgetGroupFollowedValue } from '@/components/widgets/group/widgetGroupFollowedInputs';
 import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useWidgetBindingValueLabels';
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
@@ -325,7 +326,7 @@ function HubWidgetSlot(props: SlotProps & Readonly<{
     const groupLabels = props.parent?.labels;
     const context = React.useMemo(() => widgetGroupSurfaceContext(HOME_CONTEXT, groupContext, groupLabels), [groupContext, groupLabels]);
     const edit = useWidgetInputsEditor({ instance, candidate: widget, scope, context, audience: 'personal', setInputs: saveInputs, testID });
-    const followed = readWidgetGroupFollowedValue(instance, groupContext, groupLabels);
+    const followed = useWidgetGroupFollowedValue(instance, widget, HOME_CONTEXT, scope?.owner, groupContext, groupLabels);
     const childTitle = React.useMemo(() => homeChildTitle(props.layout.sections), [props.layout]);
     const groupActions = buildWidgetGroupMembershipActions({ instanceId: instance.id, size: props.section.size, items: props.layout.items, topLevelIds: props.topLevelIds,
         childTitle, operations: props.groupOperations });

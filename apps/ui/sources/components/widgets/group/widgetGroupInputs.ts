@@ -1,9 +1,7 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { InputFieldHint } from '@happier-dev/protocol/inputs/inputFields';
 import type {
-  WidgetInputBindingV1,
   WidgetInputBindingsV1,
-  WidgetInstanceV1,
 } from '@happier-dev/protocol/widgets';
 
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -54,25 +52,6 @@ export function describeWidgetGroupInputsBinding(
     if (!value) continue;
     const field = fields.find((entry) => entry.path === slot);
     return field ? t('widgetFrame.groupInputsValue', { field: field.title, value }) : value;
-  }
-  return null;
-}
-
-/** The group value a child follows, when one of its inputs follows a slot the group fills. */
-export function readWidgetGroupFollowedValue(
-  instance: Pick<WidgetInstanceV1, 'bindings'>,
-  context: WidgetInputBindingsV1 | undefined,
-  labels?: WidgetBindingValueLabels,
-): string | null {
-  if (!context) return null;
-  for (const binding of Object.values(instance.bindings)) {
-    if (binding.kind !== 'context') continue;
-    const provided: WidgetInputBindingV1 | undefined = context[binding.slot];
-    if (provided?.kind === 'value')
-      return (
-        (labels && Object.hasOwn(labels, binding.slot) ? labels[binding.slot] : describeWidgetBindingValue(provided.value)) ??
-        t('widgetFrame.followingGroup')
-      );
   }
   return null;
 }
@@ -168,8 +147,8 @@ export function widgetGroupPinnedSource(value: string): HappierWidgetFrameSource
 }
 
 /**
- * A grouped widget's source when it follows the group (lab wginputs): "Following group · happier" —
- * the group's value, not each widget's resolved target. A cell with room keeps the phrase and falls
+ * A grouped widget's source (lab wginputs): "Following group · Last 90 days". A cell
+ * with room keeps the phrase and falls
  * back to the value when the frame narrows; a half cell shows the follow glyph and the value at once.
  * Either way the phrase is the line's accessible name.
  */

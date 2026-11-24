@@ -9337,7 +9337,10 @@ children with `packWidgetGroupBands` (shorter-column packing; a full-width
 child takes its own band; a lone child fills its row in view mode and keeps
 its half beside an empty slot while customizing; one column on phones and at
 half width). The group draws ink dividers; children draw plain without their
-own hairline. `widgetGroupMenu` builds the group ⋯ and each widget's group
+own hairline. On an untitled group, the child's Follow badge names the value
+resolved for its first group-supplied field in declaration order, using the
+same labels as the group editor. If it has no usable label, the badge names
+the field. `widgetGroupMenu` builds the group ⋯ and each widget's group
 entries (Move to group, Remove from group, Ungroup, Group with…) through the
 frame menu's order, and every width choice shows unavailable widths with the
 blocking widget. Drag refusals for width and nesting take their words from the

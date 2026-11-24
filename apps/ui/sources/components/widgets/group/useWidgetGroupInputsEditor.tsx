@@ -3,28 +3,24 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics, resolveHappierActionFieldPresentation } from '@happier-dev/plugin-ui/presentation';
-import { isSameInputOptionValue, readInputPath } from '@happier-dev/protocol/inputs';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type {
   WidgetInputBindingsV1,
   WidgetLayoutGroupV1,
   WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import { composeWidgetGroupContextV1, isSameWidgetDefinitionV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
+import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-import { describeHostInputTypePickerValue } from '@/components/sessions/actions/hostInputTypePickerForm';
 import { Typography } from '@/constants/Typography';
 import { WidgetSetupPopover } from '@/components/widgets/add/WidgetSetupPopover';
-import type { WidgetSetup, WidgetSetupField, WidgetSetupInheritedReading, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
+import type { WidgetSetup, WidgetSetupInheritedReading, WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import {
   buildWidgetCandidateSetup,
   runWidgetSetupCommand,
-  WIDGET_SESSION_CONTEXT_SLOT,
   widgetDefinitionOfCandidate,
-  widgetProvidedContext,
   type WidgetSurfaceContext,
 } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
@@ -35,19 +31,10 @@ import {
   buildWidgetGroupInputsCandidate,
   describeWidgetGroupInputsBinding,
 } from './widgetGroupInputs';
+import { createWidgetGroupFollowedInputReader, describeWidgetGroupFollowedInput, readWidgetGroupInputFollowers } from './widgetGroupFollowedInputs';
 import { WIDGET_GROUP_ICON } from './widgetGroupMenu';
 
 const NO_FIELDS: readonly never[] = [];
-
-function describeInheritedLiteral(field: WidgetSetupField['field'], value: JsonValue): string | null {
-  const typedLabel = field.inputType && 'hostType' in field.inputType
-    ? describeHostInputTypePickerValue(field.inputType, value) : null;
-  if (typedLabel) return typedLabel;
-  if (field.allowCustomValue && typeof value === 'string') return value;
-  if (typeof value !== 'string' && typeof value !== 'number' && field.widget !== 'text_list' && field.widget !== 'json') return null;
-  const presentation = resolveHappierActionFieldPresentation(field, value);
-  return presentation.kind === 'text' && !presentation.secure ? presentation.value : null;
-}
 
 /** The opening page is fixed. Each draft uses the same composed inputs the following children read. */
 function createGroupInheritedReader(
@@ -58,45 +45,31 @@ function createGroupInheritedReader(
   labels: WidgetBindingValueLabels,
   fields: WidgetSetup['fields'],
 ): NonNullable<WidgetSetup['readInherited']> {
-  const providedContext = widgetProvidedContext(context);
   const children = group.children.flatMap(({ instance }, index) => {
     const descriptor = candidates[index];
-    if (!descriptor?.inputs) return [];
-    const followers = descriptor.inputs.fields.flatMap(field => {
-      const binding = instance.bindings[field.path];
-      return field.contextMode !== 'own' && !field.connectedAccountOptions && binding?.kind === 'context'
-        ? [{ path: field.path, slot: binding.slot }] : [];
-    });
+    if (!descriptor) return [];
+    const followers = readWidgetGroupInputFollowers(instance, descriptor);
     return followers.length ? [{ instance, descriptor, followers }] : [];
   });
 
   return bindings => {
-    // Follow the operand only to look up its caption. The resolver supplies the value.
-    const readSlotLabel = (slot: string, value: JsonValue): string | null => {
-      const binding = bindings[slot];
-      if (binding?.kind === 'value') {
-        const opening = group.context?.[slot];
-        return opening?.kind === 'value' && sameStrictJsonValue(opening.value, value) ? labels[slot] ?? null : null;
-      }
-      const pageSlot = binding?.kind === 'context' ? binding.slot : slot;
-      return pageSlot === WIDGET_SESSION_CONTEXT_SLOT && context.session
-        ? context.session.label : context.slots?.[pageSlot]?.value?.label ?? null;
-    };
-    const composed = composeWidgetGroupContextV1({ providedContext, surfaceOwner, groupBindings: bindings });
+    const readChild = createWidgetGroupFollowedInputReader({
+      context, surfaceOwner, bindings, labelledBindings: group.context, labels,
+    });
     const values = new Map<string, { kind: 'single'; value: JsonValue; slotLabel: string | null } | { kind: 'several' | 'missing' }>();
     for (const { instance, descriptor, followers } of children) {
-      const unset = followers.filter(({ path }) => bindings[path] === undefined);
+      const unset = followers.filter(({ field }) => bindings[field.path] === undefined);
       if (!unset.length) continue;
-      const resolved = resolveConfiguredWidgetInputs({ instance, descriptor, providedContext: composed, viewerValues: {} });
-      for (const { path, slot } of unset) {
-        const value = resolved.status === 'ready' ? readInputPath(resolved.input, path) as JsonValue | undefined : undefined;
+      const read = readChild(instance, descriptor);
+      for (const { field, slot } of unset) {
+        const { path } = field;
+        const reading = read(field, slot);
         const previous = values.get(path);
-        if (value === undefined) values.set(path, { kind: 'missing' });
-        else if (!previous) values.set(path, { kind: 'single', value, slotLabel: readSlotLabel(slot, value) });
+        if (!reading) values.set(path, { kind: 'missing' });
+        else if (!previous) values.set(path, { kind: 'single', ...reading });
         else if (previous.kind === 'single') {
-          if (!sameStrictJsonValue(previous.value, value)) values.set(path, { kind: 'several' });
-          else if (previous.slotLabel !== null && previous.slotLabel !== readSlotLabel(slot, value))
-            values.set(path, { ...previous, slotLabel: null });
+          if (!sameStrictJsonValue(previous.value, reading.value)) values.set(path, { kind: 'several' });
+          else if (previous.slotLabel !== reading.slotLabel) values.set(path, { ...previous, slotLabel: null });
         }
       }
     }
@@ -106,9 +79,7 @@ function createGroupInheritedReader(
       const result = values.get(field.path);
       if (result?.kind === 'several') readings.set(field.path, { kind: 'several' });
       if (result?.kind !== 'single') continue;
-      const { value, slotLabel } = result;
-      const option = field.options?.find(option => isSameInputOptionValue(option.value, value));
-      const valueLabel = option?.label ?? slotLabel ?? describeInheritedLiteral(field, value);
+      const valueLabel = describeWidgetGroupFollowedInput(field, result);
       if (valueLabel) readings.set(field.path, { kind: 'single', valueLabel });
     }
     return readings;
