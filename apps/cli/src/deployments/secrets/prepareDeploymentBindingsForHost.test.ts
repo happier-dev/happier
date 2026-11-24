@@ -13,7 +13,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { type EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentBindingsSetStorageInputV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
-import { EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
+import { EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import * as identityStore from '@/daemon/identity/store';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -209,7 +209,7 @@ it.each([
     let bindingAdmissionReads = 0;
     const dataRoleTargetLinkIdsByAdmission: string[][] = [];
     let current = true;
-    let denyBindingAdmission = false;
+    let bindingSecretMissing = false;
     let omitController = false;
     const artifactWrites: string[] = [];
     const secretContent = external
@@ -281,8 +281,8 @@ it.each([
         if (config.url?.endsWith('/secret-launch-admission')) bindingAdmissionReads++;
         if (config.url?.endsWith('/secret-launch-admission') && removeOwnDataRole)
             return { status: 403, data: { ok: false, error: 'deployment_access_denied' } };
-        if (config.url?.endsWith('/secret-launch-admission') && denyBindingAdmission)
-            return { status: 403, data: { ok: false, error: 'secret_missing' } };
+        if (config.url?.endsWith('/secret-launch-admission') && bindingSecretMissing)
+            return { status: 404, data: EnvironmentSecretLaunchAdmissionResultV1Schema.parse({ ok: false, error: 'secret_missing' }) };
         if (config.url?.endsWith('/secret-launch-admission')) {
             const admission = EnvironmentSecretAdmissionRequestV1Schema.parse(config.data);
             if (atomicMove && !('kind' in admission) && admission.materialization.kind === 'bindings'
@@ -297,7 +297,7 @@ it.each([
                 dataRoleTargetLinkIdsByAdmission.push([...dataRoleTargetLinkIds]);
             }
             if (dataRoleTargetLinkIds.some(targetLinkId => targetLinkId !== managedDataLink?.id))
-                return { status: 403, data: { ok: false, error: 'secret_missing' } };
+                return { status: 403, data: EnvironmentSecretLaunchAdmissionResultV1Schema.parse({ ok: false, error: 'deployment_access_denied' }) };
             return { status: 200, data: { ok: true, grants,
             bindingPreparation: { runtimeInstallations: preTarget || providerRuntime ? [] : [installation],
                 ...(environment.buildMachineId ? { buildInstallation: environment.buildMachineId === builder.machineId ? builder : installation } : {}),
@@ -492,12 +492,12 @@ it.each([
                 contentBodyVersion: environment.contentBodyVersion,
                 patch: { definition, bindings: { set: bindings, remove: [] } } };
             DeploymentEnvironmentUpdateInputV1Schema.parse(update);
-            denyBindingAdmission = true;
+            bindingSecretMissing = true;
             expect(await daemon.deploymentAction!('deployments.environments.update', update, {}))
                 .toMatchObject({ ok: false, errorCode: 'secret_missing' });
             expect(placementWrites).toHaveLength(0);
             expect(writes).toHaveLength(0);
-            denyBindingAdmission = false;
+            bindingSecretMissing = false;
             for (const patch of [
                 { set: [...bindings, { purpose: 'domainCredential' as const, domainId: 'new-domain', role: 'privateKey' as const,
                     source: { kind: 'secret' as const, ref, resourceRevision: 1 } }], remove: [] },
@@ -631,15 +631,17 @@ it.each([
             // Sharing a retained runtime envelope is not admission for an
             // operational owner or its addressed slot.
             const source = { kind: 'secret' as const, ref, resourceRevision: 1 };
-            const unadmitted: EnvironmentSecretBindingV1[] = [
-                { purpose: 'domainCredential', domainId: 'unadmitted-domain', role: 'privateKey', source },
-                { purpose: 'dataRole', service: 'unadmitted-database', role: 'readOnlyPassword', source },
-                { purpose: 'dataRole', targetLinkId: 'unadmitted-managed-database', role: 'readOnlyPassword', source },
+            const unadmitted: { binding: EnvironmentSecretBindingV1; errorCode: string }[] = [
+                { binding: { purpose: 'domainCredential', domainId: 'unadmitted-domain', role: 'privateKey', source },
+                    errorCode: 'secret_missing' },
+                { binding: { purpose: 'dataRole', service: 'unadmitted-database', role: 'readOnlyPassword', source },
+                    errorCode: 'target_mismatch' },
+                { binding: { purpose: 'dataRole', targetLinkId: 'unadmitted-managed-database', role: 'readOnlyPassword', source },
+                    errorCode: 'deployment_access_denied' },
             ];
-            for (const binding of unadmitted) {
+            for (const { binding, errorCode } of unadmitted) {
                 put('candidate', { ...content, bindings: [...bindings, binding] });
-                expect(await prepare({ input, context: {} })).toMatchObject({ ok: false,
-                    errorCode: binding.purpose === 'dataRole' && 'service' in binding ? 'target_mismatch' : 'secret_missing' });
+                expect(await prepare({ input, context: {} })).toMatchObject({ ok: false, errorCode });
                 expect(materialReads).toBe(beforeIncomplete);
                 expect(writes).toHaveLength(beforeIncompleteWrites);
             }
@@ -699,9 +701,10 @@ it.each([
             expect(await prepare({ input: exact, context: {} }))
                 .toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
             environment = { ...environment, capabilities };
-            denyBindingAdmission = true;
-            expect(await prepare({ input: exact, context: {} })).toMatchObject({ ok: false, errorCode: 'secret_missing' });
-            denyBindingAdmission = false;
+            bindingSecretMissing = true;
+            expect(await prepare({ input: exact, context: {} })).toMatchObject({ ok: false, errorCode: 'secret_missing',
+                failureCause: { phase: 'deployment.secret_launch.admission', httpStatus: 404 } });
+            bindingSecretMissing = false;
             current = false;
             expect(await prepare({ input: exact, context: {} })).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
             current = true;
