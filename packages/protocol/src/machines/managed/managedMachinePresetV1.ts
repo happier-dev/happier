@@ -8,7 +8,7 @@ import * as mini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
-import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';
+import { ManagedRefusalCodeV1Schema } from './managedRefusalCodeV1.js';
 import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRetentionV1Schema } from './managedMachineV1.js';
 import { MachinePoolIdV1Schema } from '../pools/v1.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
@@ -295,7 +295,7 @@ export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.str
     simultaneousLimit: z.optional(z.nullable(ManagedMachinePresetLimitV1Schema)),
   }),
 }));
-export { ManagedRefusalCodeV1Schema as ManagedMachinePresetRefusalCodeV1Schema } from './providerFactsV1.js';
+export { ManagedRefusalCodeV1Schema as ManagedMachinePresetRefusalCodeV1Schema } from './managedRefusalCodeV1.js';
 export const ManagedMachinePresetRefusedV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('refused'), code: ManagedRefusalCodeV1Schema,
 }));
