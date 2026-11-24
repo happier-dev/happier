@@ -333,13 +333,15 @@ export function rpcHandler(
             }
 
             const listeners = resolveUserRpcListeners('get');
+            // Released even when another socket took the method over first, so this socket's
+            // refresh never restores a route it withdrew.
+            ownedMethods.delete(method);
             if (listeners.get(method) === socket) {
                 listeners.delete(method);
-                ownedMethods.delete(method);
                 await redisRegistry.removeSocketRegistration(userId, method, socket.id);
-                await redisRegistry.stopRefreshLoopIfIdle();
                 pruneUserRpcListenerMapIfEmpty(allRpcListeners, userId, listeners);
             }
+            await redisRegistry.stopRefreshLoopIfIdle();
 
             socket.emit(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
         } catch (error) {

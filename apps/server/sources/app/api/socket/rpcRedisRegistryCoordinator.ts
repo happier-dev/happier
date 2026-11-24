@@ -7,13 +7,38 @@ export type RpcRedisRegistryConfig =
 
 const DEL_IF_SOCKET_ID_SCRIPT =
     "if redis.call('HGET', KEYS[1], 'socketId') == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
+// Writes this socket's mapping for a method and returns when it registered, on the Redis clock in
+// microseconds, so sockets on different instances can tell which registration is newer.
+const REGISTER_SCRIPT = [
+    "local t = redis.call('TIME')",
+    "local at = t[1] .. string.format('%06d', t[2])",
+    "redis.call('HSET', KEYS[1], 'instanceId', ARGV[1], 'socketId', ARGV[2], 'updatedAt', ARGV[3], 'registeredAt', at)",
+    "redis.call('EXPIRE', KEYS[1], ARGV[4])",
+    "return at",
+].join(" ");
 // Refreshes this socket's mapping, and restores it when it is missing: a forward that fails or
 // times out deletes the mapping (rpcHandler), and so does expiry after missed refreshes, while the
 // socket can still be connected. Sockets register each method once per connection, so without the
 // restore the method stays unreachable from every other instance until the socket reconnects.
-// A mapping another socket owns is left alone. Returns 0 (other owner), 1 (refreshed), 2 (restored).
-const REFRESH_OR_RESTORE_SCRIPT =
-    "local owner = redis.call('HGET', KEYS[1], 'socketId') if owner and owner ~= ARGV[1] then return 0 end redis.call('HSET', KEYS[1], 'socketId', ARGV[1], 'updatedAt', ARGV[2], 'instanceId', ARGV[3]) redis.call('EXPIRE', KEYS[1], ARGV[4]) if owner then return 1 end return 2";
+// The newest registration owns the route: a mapping registered after ours, or written without a
+// registration time by an older server, is left alone (0, and this socket stops claiming the method);
+// one registered before ours means an older socket restored first, so it is taken back (2).
+// Returns 0 (superseded), 1 (refreshed), 2 (restored).
+const REFRESH_OR_RESTORE_SCRIPT = [
+    "local owner = redis.call('HGET', KEYS[1], 'socketId')",
+    "if owner == ARGV[1] then",
+    "redis.call('HSET', KEYS[1], 'updatedAt', ARGV[2], 'instanceId', ARGV[3])",
+    "redis.call('EXPIRE', KEYS[1], ARGV[4])",
+    "return 1",
+    "end",
+    "if owner then",
+    "local ownerAt = tonumber(redis.call('HGET', KEYS[1], 'registeredAt'))",
+    "if not ownerAt or ownerAt >= tonumber(ARGV[5]) then return 0 end",
+    "end",
+    "redis.call('HSET', KEYS[1], 'socketId', ARGV[1], 'updatedAt', ARGV[2], 'instanceId', ARGV[3], 'registeredAt', ARGV[5])",
+    "redis.call('EXPIRE', KEYS[1], ARGV[4])",
+    "return 2",
+].join(" ");
 
 export function createRpcRedisRegistryCoordinator(params: {
     config: RpcRedisRegistryConfig;
@@ -25,6 +50,8 @@ export function createRpcRedisRegistryCoordinator(params: {
     const redisRegistryTtlSeconds = config.enabled ? (config.ttlSeconds ?? 120) : 0;
     const redisRegistryInstanceId = config.enabled ? config.instanceId : null;
     let refreshTimer: NodeJS.Timeout | null = null;
+    // When this socket registered each method it owns (REGISTER_SCRIPT's Redis-clock value).
+    const registeredAtByMethod = new Map<string, string>();
 
     function startRefreshLoopIfNeeded(): void {
         if (!config.enabled) return;
@@ -38,20 +65,47 @@ export function createRpcRedisRegistryCoordinator(params: {
             if (ownedMethods.size === 0) return;
             const now = Date.now().toString();
             const ttl = redisRegistryTtlSeconds.toString();
-            const methods = [...ownedMethods];
-            // Best-effort refresh; a failed eval is retried on the next tick (restore covers expiry).
+            const claims = [...ownedMethods].flatMap((method) => {
+                const registeredAt = registeredAtByMethod.get(method);
+                return registeredAt ? [{ method, registeredAt }] : [];
+            });
             void Promise.all(
-                methods.map((method) =>
+                claims.map(({ method, registeredAt }) =>
                     redis
-                        .eval(REFRESH_OR_RESTORE_SCRIPT, 1, `rpc:${userId}:${method}`, socketId, now, instanceId, ttl)
-                        .catch(() => null),
+                        .eval(REFRESH_OR_RESTORE_SCRIPT, 1, `rpc:${userId}:${method}`, socketId, now, instanceId, ttl, registeredAt)
+                        .then(
+                            (result) => ({ method, registeredAt, result, error: null }),
+                            (error: unknown) => ({ method, registeredAt, result: null, error }),
+                        ),
                 ),
-            ).then((results) => {
-                const restored = methods.filter((_, index) => results[index] === 2);
+            ).then((outcomes) => {
+                const restored: string[] = [];
+                const failed: string[] = [];
+                let firstError: unknown = null;
+                for (const outcome of outcomes) {
+                    if (outcome.error !== null) {
+                        failed.push(outcome.method);
+                        firstError ??= outcome.error;
+                    } else if (outcome.result === 2) {
+                        restored.push(outcome.method);
+                    } else if (outcome.result === 0 && registeredAtByMethod.get(outcome.method) === outcome.registeredAt) {
+                        // A newer registration owns the method: this socket stops refreshing or restoring it.
+                        ownedMethods.delete(outcome.method);
+                        registeredAtByMethod.delete(outcome.method);
+                    }
+                }
+                if (ownedMethods.size === 0) void stopRefreshLoopIfIdle();
                 if (restored.length > 0) {
                     log(
                         { module: "websocket", level: "warn" },
                         `Restored ${restored.length} missing RPC route(s) for socket ${socketId} (user ${userId}): ${restored.join(", ")}`,
+                    );
+                }
+                if (failed.length > 0) {
+                    // Retried on the next tick; restore covers any expiry in between.
+                    log(
+                        { module: "websocket", level: "warn" },
+                        `Failed to refresh ${failed.length} RPC route(s) for socket ${socketId} (user ${userId}): ${failed.join(", ")}: ${firstError instanceof Error ? firstError.message : String(firstError)}`,
                     );
                 }
             });
@@ -73,11 +127,16 @@ export function createRpcRedisRegistryCoordinator(params: {
         const key = `rpc:${userId}:${method}`;
         const now = Date.now().toString();
 
-        await redis
-            .multi()
-            .hset(key, 'instanceId', redisRegistryInstanceId!, 'socketId', socketId, 'updatedAt', now)
-            .expire(key, redisRegistryTtlSeconds)
-            .exec();
+        const registeredAt = await redis.eval(
+            REGISTER_SCRIPT,
+            1,
+            key,
+            redisRegistryInstanceId!,
+            socketId,
+            now,
+            redisRegistryTtlSeconds.toString(),
+        );
+        registeredAtByMethod.set(method, String(registeredAt));
     }
 
     async function removeSocketRegistration(userIdToUse: string, method: string, socketIdToUse: string): Promise<void> {

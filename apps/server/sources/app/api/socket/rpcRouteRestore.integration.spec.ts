@@ -79,26 +79,96 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await coordinator.stopRefreshLoopIfIdle();
     });
 
-    it("leaves a mapping that another socket owns", async () => {
-        const ownedByA = new Set(["machine-1:stop-session"]);
-        const ownedByB = new Set(["machine-1:stop-session"]);
-        const a = createCoordinator("socket-a", ownedByA);
-        const b = createCoordinator("socket-b", ownedByB);
-        await a.registerMethod("machine-1:stop-session");
-        a.startRefreshLoopIfNeeded();
-        // The daemon reconnected on another instance while the old socket lingers.
-        await b.registerMethod("machine-1:stop-session");
-        b.startRefreshLoopIfNeeded();
+    it("gives a deleted route back to the newer of two connected sockets", async () => {
+        const method = "machine-1:spawn-happy-session";
+        const ownedByOlder = new Set([method]);
+        const ownedByNewer = new Set([method]);
+        const older = createCoordinator("socket-old", ownedByOlder);
+        const newer = createCoordinator("socket-new", ownedByNewer);
+        await older.registerMethod(method);
+        older.startRefreshLoopIfNeeded();
+        // The daemon reconnected (here or on another instance) while its old socket lingers.
+        await newer.registerMethod(method);
+        newer.startRefreshLoopIfNeeded();
+
+        // A forward to the newer socket fails before the older one has refreshed; the older
+        // socket's refresh runs first in the next tick.
+        await newer.removeSocketRegistration(userId, method, "socket-new");
+        await runRefreshTick();
+        expect(await newer.lookupSocketId(userId, method)).toBe("socket-new");
+
+        // Once the older socket has seen the newer registration it stops claiming the method.
+        await runRefreshTick();
+        await newer.removeSocketRegistration(userId, method, "socket-new");
+        await runRefreshTick();
+        expect(await newer.lookupSocketId(userId, method)).toBe("socket-new");
+
+        ownedByOlder.clear();
+        ownedByNewer.clear();
+        await older.stopRefreshLoopIfIdle();
+        await newer.stopRefreshLoopIfIdle();
+    });
+
+    it("leaves another socket's mapping that an older server wrote without a registration time", async () => {
+        const method = "machine-1:stop-session";
+        const ownedMethods = new Set([method]);
+        const coordinator = createCoordinator("socket-a", ownedMethods);
+        await coordinator.registerMethod(method);
+        coordinator.startRefreshLoopIfNeeded();
+        const key = `rpc:${userId}:${method}`;
+        await getRedisClient().del(key);
+        await getRedisClient().hset(key, "socketId", "socket-legacy", "instanceId", "instance-legacy", "updatedAt", "1");
+        await getRedisClient().expire(key, 120);
 
         await runRefreshTick();
 
-        expect(await a.lookupSocketId(userId, "machine-1:stop-session")).toBe("socket-b");
-        expect(logMock).not.toHaveBeenCalled();
+        expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-legacy");
 
-        ownedByA.clear();
-        ownedByB.clear();
-        await a.stopRefreshLoopIfIdle();
-        await b.stopRefreshLoopIfIdle();
+        ownedMethods.clear();
+        await coordinator.stopRefreshLoopIfIdle();
+    });
+
+    it("reports a refresh that Redis rejects", async () => {
+        const method = "machine-1:spawn-happy-session";
+        const ownedMethods = new Set([method]);
+        const coordinator = createCoordinator("socket-a", ownedMethods);
+        await coordinator.registerMethod(method);
+        coordinator.startRefreshLoopIfNeeded();
+        // A key of the wrong type makes every hash command on it fail.
+        await getRedisClient().set(`rpc:${userId}:${method}`, "not-a-hash");
+
+        await runRefreshTick();
+
+        await vi.waitFor(() =>
+            expect(logMock).toHaveBeenCalledWith(expect.objectContaining({ level: "warn" }), expect.stringContaining(method)),
+        );
+
+        ownedMethods.clear();
+        await coordinator.stopRefreshLoopIfIdle();
+    });
+
+    it("restores nothing for a socket that unregistered a method another socket had taken over", async () => {
+        const method = "machine-1:spawn-happy-session";
+        const userRpcListeners = new Map<string, Socket>();
+        const allRpcListeners = new Map<string, Map<string, Socket>>([[userId, userRpcListeners]]);
+        const ctx = { io: {} as Server, redisRegistry: { enabled: true as const, instanceId: "instance-1" } };
+        const first = createFakeSocket({ id: "socket-1", emit: vi.fn() });
+        const second = createFakeSocket({ id: "socket-2", emit: vi.fn() });
+        rpcHandler(userId, first as unknown as Socket, userRpcListeners, allRpcListeners, ctx);
+        rpcHandler(userId, second as unknown as Socket, userRpcListeners, allRpcListeners, ctx);
+
+        await triggerSocketHandler(first, SOCKET_RPC_EVENTS.REGISTER, { method });
+        await triggerSocketHandler(second, SOCKET_RPC_EVENTS.REGISTER, { method });
+        await triggerSocketHandler(first, SOCKET_RPC_EVENTS.UNREGISTER, { method });
+        await triggerSocketHandler(second, SOCKET_RPC_EVENTS.UNREGISTER, { method });
+        await getRedisClient().ping();
+
+        await runRefreshTick();
+
+        expect(await createCoordinator("observer", new Set()).lookupSocketId(userId, method)).toBeNull();
+
+        await triggerSocketHandler(first, "disconnect");
+        await triggerSocketHandler(second, "disconnect");
     });
 
     it("restores nothing for a socket that disconnected after another socket took its methods over", async () => {
