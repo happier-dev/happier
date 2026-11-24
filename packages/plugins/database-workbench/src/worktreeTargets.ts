@@ -2,7 +2,7 @@ import { createCanonicalJsonSigningInput, PluginError, type DatabaseEnginesServi
     type PluginServiceLaunchEnvironmentInputV1, type PluginServiceLaunchEnvironmentRuntimeV1 } from '@happier-dev/plugin-sdk';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import { DatabaseAgentAccessV1Schema, type DatabaseAgentAccessV1 } from '@happier-dev/plugin-sdk/database';
-import { decideDatabaseAccessV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
+import { builtinDatabaseConnectionEngine, DatabaseConnectionUrlError, decideDatabaseAccessV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import type {
     DatabaseDescriptorV1,
     DatabaseOperationClassV1,
@@ -24,6 +24,16 @@ type Request = Readonly<{ identity: Partial<DatabaseManualIdentity>; requester: 
     worktreeEnvironment?: PluginServices['worktreeEnvironment']; signal?: AbortSignal }>;
 
 function unavailable(): never { throw new PluginError({ code: 'database_target_unavailable' }); }
+function selectableDotenvConnectionString(value: string | undefined): string | undefined {
+    if (!value) return undefined;
+    try {
+        // Local files require a contained-file selection before the driver can open them.
+        return builtinDatabaseConnectionEngine(value) === 'sqlite' ? undefined : value;
+    } catch (error) {
+        if (!(error instanceof DatabaseConnectionUrlError)) throw error;
+        return undefined;
+    }
+}
 function admittedScope(scope: DatabaseTargetsListInputV1['scope'], identity: Request['identity']) {
     if (!identity.requesterAccount || !identity.chosenMachine) throw new PluginError({
         code: 'plugin_service_unavailable',
@@ -94,7 +104,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
                 const value = await request.worktreeEnvironment?.readDotenv({
                     workspace: target.workspace, projectKey: target.projectKey, path: source.path, variable: source.variable,
                 });
-                return value || unavailable();
+                return selectableDotenvConnectionString(value) ?? unavailable();
             } };
         }
         if (!entry) return unavailable();
@@ -117,6 +127,16 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             placement: { serverId: workspace.serverId, accountId: target.accountId,
                 machineId: machine.machineId, installationId: target.installationId } };
     };
+    const describeCandidate = async (target: DatabaseWorktreeTargetV1, value: string, request: Request) => {
+        try {
+            return await descriptor(target, value, request);
+        }
+        catch (error) {
+            // Non-database config values are not candidates; failures carry no private URL.
+            if (!(error instanceof DatabaseConnectionUrlError)) throw error;
+            return undefined;
+        }
+    };
     return {
         launch: { async prepare(input) {
             if (!input.requester || !input.workspace.projectKey || input.executionPlacement.machineId !== input.workspace.machineId) return { kind: 'unchanged' };
@@ -137,6 +157,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             request.signal?.throwIfAborted();
             const scope = admittedScope(request.input.scope, request.identity);
             const targets: DatabaseDescriptorV1[] = [];
+            const launchedVariables = new Set<string>();
             for (const entry of entries.values()) {
                 if (scope.kind === 'project' ? entry.scope.accountId !== scope.accountId || entry.scope.installationId !== scope.installationId
                     || entry.scope.projectKey !== scope.projectKey : scopeKey(entry.scope) !== scopeKey(scope)) continue;
@@ -144,16 +165,21 @@ export function createWorktreeDatabaseTargets(): Readonly<{
                 for (const variable of entry.variables) {
                     const value = projection.projectedEnvironment[variable];
                     if (value === undefined) continue;
-                    try {
-                        const target: DatabaseWorktreeTargetV1 = { ...entry.scope, kind: 'worktree',
-                            source: { kind: 'service', serviceId: entry.serviceId, variable } };
-                        const selected = await descriptor(target, value, request);
-                        if (selected) targets.push(selected);
-                    }
-                    catch (error) {
-                        // Non-database config values are not candidates; failures carry no private URL.
-                        if (!(error instanceof Error) || !('code' in error) || error.code !== 'invalid_database_connection_url') throw error;
-                    }
+                    const selected = await describeCandidate({ ...entry.scope,
+                        source: { kind: 'service', serviceId: entry.serviceId, variable } }, value, request);
+                    if (!selected) continue;
+                    launchedVariables.add(variable);
+                    targets.push(selected);
+                }
+            }
+            if (scope.kind === 'worktree' && request.worktreeEnvironment) {
+                const candidates = await request.worktreeEnvironment.listDotenv({ workspace: scope.workspace, projectKey: scope.projectKey });
+                for (const { path, variable, value } of candidates) {
+                    if (launchedVariables.has(variable)) continue;
+                    const connectionString = selectableDotenvConnectionString(value);
+                    if (!connectionString) continue;
+                    const selected = await describeCandidate({ ...scope, source: { kind: 'env_file', path, variable } }, connectionString, request);
+                    if (selected) targets.push(selected);
                 }
             }
             return { targets, completeness: { complete: true } };

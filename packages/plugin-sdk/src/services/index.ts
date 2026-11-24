@@ -372,6 +372,8 @@ export type PluginServiceId =
 export type WorktreeEnvironmentServiceV1 = Readonly<{
     readDotenv(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'> &
         Readonly<{ path: string; variable: string }>): Promise<string | undefined>;
+    listDotenv(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'>):
+        Promise<readonly Readonly<{ path: string; variable: string; value: string }>[]>;
 }>;
 
 export interface PluginServices {

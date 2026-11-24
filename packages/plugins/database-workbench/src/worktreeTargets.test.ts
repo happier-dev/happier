@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -181,30 +181,44 @@ it('stores the worktree database agent level on this Machine: Read & write (asks
     } finally { await kit.dispose(); }
 });
 
-it('resolves a selected env file target without a running service', async () => {
+it('admits a selected network dotenv target and reuses its held demand', async () => {
+    const targets = createWorktreeDatabaseTargets();
+    const target = { ...scope, source: { kind: 'env_file', path: '.env.local', variable: 'DATABASE_URL' } } as const;
+    let dotenvReads = 0;
+    const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
+        input: { operation: 'describe' as const, target },
+        // The daemon's private prepared input is a system boundary for the plugin.
+        worktreeEnvironment: {
+            async readDotenv() { dotenvReads++; return 'postgresql://app:private-selected@localhost/selected'; },
+            async listDotenv() { return []; },
+        } };
+    await expect(targets.admit(request)).resolves.toMatchObject({ agentAccess: 'readWriteAsk' });
+    const heldRead = { ...request, input: { ...request.input, subscriptionId: 'held-demand' } };
+    await expect(targets.admit(heldRead)).resolves.toMatchObject({ access: { canRead: true } });
+    await expect(targets.admit(heldRead)).resolves.toMatchObject({ access: { canRead: true } });
+    expect(dotenvReads).toBe(1);
+});
+
+it('refuses a cold dotenv file URL addressed directly outside the selected checkout', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'dbw-env-file-'));
-    const path = '.env.local';
-    const dbPath = join(rootPath, 'selected.sqlite');
-    const target = { ...scope, workspace: { ...workspace, rootPath },
-        source: { kind: 'env_file', path, variable: 'DATABASE_URL' } } as const;
+    const dbPath = join(rootPath, 'outside.sqlite');
+    const target = { ...scope, workspace: { ...workspace, rootPath: join(rootPath, 'selected') },
+        source: { kind: 'env_file', path: '.env.local', variable: 'DATABASE_URL' } } as const;
     try {
+        await mkdir(target.workspace.rootPath);
         openSqliteDatabaseSync(dbPath).close();
         const targets = createWorktreeDatabaseTargets();
-        let dotenvReads = 0;
         const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
             input: { operation: 'describe' as const, target },
             // The daemon's private prepared input is a system boundary for the plugin.
-            worktreeEnvironment: { async readDotenv() { dotenvReads++; return pathToFileURL(dbPath).href; } } };
-        expect(await targets.admit(request)).toMatchObject({ agentAccess: 'readWriteAsk' });
-        const resolved = await targets.resolve(request);
-        try {
-            expect(resolved.descriptor).toMatchObject({ engine: 'sqlite', target });
-            expect(dotenvReads).toBe(2);
-            const heldRead = { ...request, input: { ...request.input, subscriptionId: 'held-demand' } };
-            await expect(targets.admit(heldRead)).resolves.toMatchObject({ access: { canRead: true } });
-            await expect(targets.admit(heldRead)).resolves.toMatchObject({ access: { canRead: true } });
-            expect(dotenvReads).toBe(2);
-        } finally { await resolved.connection.close(); }
+            worktreeEnvironment: { async readDotenv() { return pathToFileURL(dbPath).href; }, async listDotenv() { return []; } } };
+        const [resolved, admitted] = await Promise.allSettled([
+            targets.resolve(request).then(async ({ connection, descriptor }) => { await connection.close(); return descriptor; }),
+            targets.admit(request),
+        ]);
+        const refusal = { status: 'rejected', reason: { code: 'database_target_unavailable' } };
+        expect(resolved).toMatchObject(refusal);
+        expect(admitted).toMatchObject(refusal);
     } finally { await rm(rootPath, { recursive: true, force: true }); }
 });
 
@@ -213,6 +227,52 @@ it('returns the typed unavailable refusal for a missing env file variable', asyn
     const target = { ...scope, source: { kind: 'env_file', path: '.env.local', variable: 'MISSING_DATABASE_URL' } } as const;
     const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
         input: { operation: 'describe' as const, target },
-        worktreeEnvironment: { async readDotenv() { return undefined; } } };
+        worktreeEnvironment: { async readDotenv() { return undefined; }, async listDotenv() { return []; } } };
     await expect(targets.admit(request)).rejects.toMatchObject({ code: 'database_target_unavailable' });
+});
+
+it('lists private dotenv candidates for the selected checkout without starting a service', async () => {
+    const secret = 'postgresql://app:private-dotenv@localhost:5432/from_file';
+    const reads: unknown[] = [];
+    const targets = createWorktreeDatabaseTargets();
+    const request: Parameters<typeof targets.list>[0] = { input: { scope }, identity, requester: 'person', storage: emptyStorage,
+        // The daemon's prepared Project input is the plugin boundary.
+        worktreeEnvironment: {
+            async readDotenv() { return undefined; },
+            async listDotenv(input) {
+                reads.push(input);
+                return [
+                    { variable: 'DATABASE_URL', path: '.env.local', value: secret },
+                    { variable: 'APP_URL', path: '.env', value: 'https://example.test' },
+                    { variable: 'INVALID_URL', path: '.env', value: 'postgresql://invalid:@' },
+                    { variable: 'FILE_URL', path: '.env', value: pathToFileURL(join(tmpdir(), 'outside.sqlite')).href },
+                ];
+            },
+        },
+    };
+    let release: (() => Promise<void>) | undefined;
+    try {
+        const list = () => targets.list(request);
+        const result = await list();
+        expect(result).toMatchObject({ targets: [{ engine: 'postgresql', target: { ...scope,
+            source: { kind: 'env_file', path: '.env.local', variable: 'DATABASE_URL' } } }], completeness: { complete: true } });
+        expect(JSON.stringify(result)).not.toContain(secret);
+        expect(JSON.stringify(result)).not.toContain('private-dotenv');
+        expect(reads).toEqual([{ workspace, projectKey: scope.projectKey }]);
+
+        const launch = await targets.launch.prepare({
+            workspace: { id: workspace.workspaceId, serverId: workspace.serverId, machineId: workspace.machineId,
+                rootPath: workspace.rootPath, projectKey: scope.projectKey },
+            project: { serverId: workspace.serverId, projectId: scope.projectKey },
+            requester: { accountId: scope.accountId, installationId: scope.installationId },
+            serviceId: 'postgres', physicalRootIdentity: workspace.rootPath,
+            executionPlacement: { mode: 'spawn', machineId: workspace.machineId }, assignedPorts: {},
+            async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://app@localhost/launched' }, provenance: {} }; },
+        });
+        if (launch.kind === 'replace') release = launch.release;
+        expect(await list()).toMatchObject({ targets: [{ target: { ...scope,
+            source: { kind: 'service', serviceId: 'postgres', variable: 'DATABASE_URL' } } }] });
+    } finally {
+        await release?.();
+    }
 });

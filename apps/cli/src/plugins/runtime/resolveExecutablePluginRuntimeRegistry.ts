@@ -1,4 +1,5 @@
-import { readProjectDotenvEnvironment } from '@/workspaces/projectSetup/projectDotenv';
+import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
+import { prepareProjectLaunchEnvironment } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createDatabaseEnginesService } from './lifecycle/contributions/databaseEngines';
@@ -4581,36 +4582,51 @@ export async function resolveExecutablePluginRuntimeRegistry(
         if (!machineId) return undefined;
         const authorization = seed.approvalContext?.externalActionExecutionAuthorization
             ?? seed.externalActionContext?.externalActionExecutionAuthorization;
-        return {
-            async readDotenv({ workspace, projectKey, path, variable }) {
+        type DotenvScope = Parameters<NonNullable<PluginInvocationServicesSeed['worktreeEnvironment']>['listDotenv']>[0];
+        const readDeclaredDotenv = async ({ workspace, projectKey }: DotenvScope, variable?: string) => {
+            seed.signal.throwIfAborted();
+            if (workspace.kind === 'managed' || workspace.machineId !== machineId) return undefined;
+            const context = seed.approvalContext;
+            const requesterAccountId = context?.machineAdmission?.actorAccountId ?? context?.runtimeAccountId;
+            const projection = authorization?.requesterAccountProjection;
+            if (!authorization && (!sessionCredentials || configuration.activeServerId !== sessionCredentialsServerId
+                || carriesNonLocalRequesterAuthority(context)
+                || (requesterAccountId && requesterAccountId !== readAccountIdFromToken(sessionCredentials.token))
+                || (seed.requesterAccount && seed.requesterAccount.credentials.token !== sessionCredentials.token))) return undefined;
+            const serverId = projection?.serverId ?? sessionCredentialsServerId;
+            const serverHttpBaseUrl = authorization?.requesterHttpProjection?.serverHttpBaseUrl ?? notificationServerHttpBaseUrl;
+            const account = authorization ? projectRuntimeAccountRowsInput({ accountAuthorization: authorization })
+                : sessionCredentials ? projectRuntimeAccountRowsInput({ credentials: sessionCredentials }) : undefined;
+            if (!account) return undefined;
+            try {
+                const accepted = await resolveProjectSetupAcceptedWorkspace({
+                    ...account, address: workspace, serverId, serverHttpBaseUrl, signal: seed.signal,
+                });
+                if (accepted.project.projectId !== projectKey) return undefined;
+                const root = accepted.workspace.rootPath;
+                const { effectiveDefinition } = await readProjectEffectiveDefinition({ root, account,
+                    project: accepted.project, serverHttpBaseUrl, signal: seed.signal });
+                const requirements = effectiveDefinition.effectiveManifest?.environmentVariables ?? [];
+                const input = await prepareProjectLaunchEnvironment({ workspace: accepted.workspace, originalEnvironment: {},
+                    requirements: variable === undefined ? requirements : requirements.filter(requirement => requirement.name === variable) });
                 seed.signal.throwIfAborted();
-                if (workspace.kind === 'managed' || workspace.machineId !== machineId) return undefined;
-                const context = seed.approvalContext;
-                const requesterAccountId = context?.machineAdmission?.actorAccountId ?? context?.runtimeAccountId;
-                const projection = authorization?.requesterAccountProjection;
-                if (!authorization && (!sessionCredentials || configuration.activeServerId !== sessionCredentialsServerId
-                    || carriesNonLocalRequesterAuthority(context)
-                    || (requesterAccountId && requesterAccountId !== readAccountIdFromToken(sessionCredentials.token))
-                    || (seed.requesterAccount && seed.requesterAccount.credentials.token !== sessionCredentials.token))) return undefined;
-                const serverId = projection?.serverId ?? sessionCredentialsServerId;
-                const serverHttpBaseUrl = authorization?.requesterHttpProjection?.serverHttpBaseUrl ?? notificationServerHttpBaseUrl;
-                const account = authorization ? projectRuntimeAccountRowsInput({ accountAuthorization: authorization })
-                    : sessionCredentials ? projectRuntimeAccountRowsInput({ credentials: sessionCredentials }) : undefined;
-                if (!account) return undefined;
-                try {
-                    const accepted = await resolveProjectSetupAcceptedWorkspace({
-                        ...account, address: workspace, serverId, serverHttpBaseUrl, signal: seed.signal,
-                    });
-                    if (accepted.project.projectId !== projectKey) return undefined;
-                    const input = await readProjectDotenvEnvironment({ root: accepted.workspace.rootPath, declaredNames: [variable] });
-                    seed.signal.throwIfAborted();
-                    if (input.kind === 'ready' && input.sources.some(source => source.name === variable && source.file === path)) {
-                        return input.environment[variable];
-                    }
-                } catch {
-                    seed.signal.throwIfAborted();
+                return input.kind === 'prepared' ? input.launchInput : undefined;
+            } catch {
+                seed.signal.throwIfAborted();
+                return undefined;
+            }
+        };
+        return {
+            async readDotenv(input) {
+                const selected = await readDeclaredDotenv(input, input.variable);
+                if (selected?.provenance.some(source => source.name === input.variable && source.file === input.path)) {
+                    return selected.environment[input.variable];
                 }
                 return undefined;
+            },
+            async listDotenv(scope) {
+                const selected = await readDeclaredDotenv(scope);
+                return selected?.provenance.map(({ name, file }) => ({ path: file, variable: name, value: selected.environment[name] })) ?? [];
             },
         };
     }

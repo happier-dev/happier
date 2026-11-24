@@ -140,11 +140,12 @@ it from the owner's dashboard inventory.
 These surfaces are in unreleased 0.3 development source. With the Database
 workbench available on your Machine, open **Databases** from the Project's
 development services, or use **Database** in the Project or Session side rail.
-The picker lists targets for that Project. You can connect a database manually
-or pick one discovered from a launched service. An explicit worktree dotenv
-target can resolve a selected variable before the service starts. The picker can
-show the database endpoint and the Machine that runs the workbench. Managed
-databases open from the deployment's Database page.
+The picker lists databases for the selected checkout. It can discover a network
+database URL in a dotenv file if Project Setup declares that config variable.
+When a running service uses the same variable for its database, the service takes
+precedence. You can also connect a database manually. The picker can show the
+database endpoint and the Machine that runs the workbench. Managed databases open
+from the deployment's Database page.
 
 On a database's **Overview**, check its size, connections, and statement
 statistics where the engine shares them. Expand a schema to see its tables.
