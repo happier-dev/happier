@@ -275,6 +275,21 @@ export function createCliActionExecutorHarness(
     ...createActionExecutionHookDeps(),
     ...(overrides ?? {}),
   };
+  // An installed backup owner serves its own received roots. A Workflow's backup
+  // without one (an approved replay on this daemon) spends the Workflow Home admission.
+  const installedBackup = overrides?.deploymentBackupAction;
+  const relayedBackup = baseDepsForRuntime.deploymentBackupAction;
+  if (installedBackup && relayedBackup) {
+    rawDeps.deploymentBackupAction = (actionId, input, context) =>
+      relaysWorkflowDeploymentBackup(actionId, context) ? relayedBackup(actionId, input, context) : installedBackup(actionId, input, context);
+  }
+  const installedRestore = overrides?.deploymentRestore;
+  const relayedRestore = baseDepsForRuntime.deploymentRestore;
+  if (installedRestore && relayedRestore) {
+    rawDeps.deploymentRestore = (input, context) =>
+      relaysWorkflowDeploymentBackup(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, context)
+        ? relayedRestore(input, context) : installedRestore(input, context);
+  }
   const installedRuntime = overrides?.runtimeActionExecute;
   const localMachineId = params.runtimeActionMachineId ?? params.machineActionDirectTargetTransport?.machineId;
   const installedWorker = overrides?.projectWorkerAction;
