@@ -12928,6 +12928,8 @@ const profilesPageTranslations = { fr: translated({
             modelRequiresAgent: 'Choisis d’abord un agent préféré pour choisir son modèle.',
             anyAgent: 'N\'importe quel agent',
             variableCount: ({ count }: { count: number }) => (count === 1 ? `${count} variable` : `${count} variables`),
+            saveNoChanges: 'Aucune modification à enregistrer.',
+            saveNeedsName: 'Donne un nom au profil pour l’enregistrer.',
         },
     }) };
 

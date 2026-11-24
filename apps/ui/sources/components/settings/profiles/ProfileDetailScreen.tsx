@@ -530,6 +530,10 @@ const ProfileDetailHeader = React.memo(function ProfileDetailHeader(props: Reado
         { key: 'summary', text: props.profileFacts, testID: 'settings.profiles.detail.summary' },
         ...(status ? [{ key: 'status', text: status }] : []),
     ];
+    // A saved profile saves once it changed; a new one once it has a name (the one required field).
+    const saveUnavailableReason = props.isDraft
+        ? (typedName.length === 0 ? t('profilesPage.saveNeedsName') : null)
+        : (props.dirty ? null : t('profilesPage.saveNoChanges'));
     return (
         <PageHeader
             testID="settings.profiles.detail.header"
@@ -546,8 +550,8 @@ const ProfileDetailHeader = React.memo(function ProfileDetailHeader(props: Reado
             primaryAction={{
                 testID: 'settings.profiles.detail.save',
                 title: props.builtIn ? t('common.saveAs') : t('common.save'),
-                // A saved profile saves once it changed; a new one once it has a name (the one required field).
-                disabled: props.isDraft ? typedName.length === 0 : !props.dirty,
+                disabled: saveUnavailableReason !== null,
+                ...(saveUnavailableReason ? { disabledReason: saveUnavailableReason } : {}),
                 onPress: props.onSave,
             }}
             actions={props.showMachineChip ? (

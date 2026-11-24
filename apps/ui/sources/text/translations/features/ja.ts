@@ -12866,6 +12866,8 @@ const profilesPageTranslations = { ja: translated({
             modelRequiresAgent: 'モデルを選ぶには、先に優先エージェントを選んでください。',
             anyAgent: 'すべてのエージェント',
             variableCount: ({ count }: { count: number }) => `${count}個の変数`,
+            saveNoChanges: '保存する変更はありません。',
+            saveNeedsName: '保存するにはプロファイルに名前を付けてください。',
         },
     }) };
 

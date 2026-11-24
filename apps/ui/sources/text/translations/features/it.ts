@@ -12921,6 +12921,8 @@ const profilesPageTranslations = { it: translated({
             modelRequiresAgent: 'Scegli prima un agente preferito per scegliere il suo modello.',
             anyAgent: 'Qualsiasi agente',
             variableCount: ({ count }: { count: number }) => (count === 1 ? `${count} variabile` : `${count} variabili`),
+            saveNoChanges: 'Nessuna modifica da salvare.',
+            saveNeedsName: 'Dai un nome al profilo per salvarlo.',
         },
     }) };
 

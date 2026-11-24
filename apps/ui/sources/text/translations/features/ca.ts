@@ -12914,6 +12914,8 @@ const profilesPageTranslations = { ca: translated({
             modelRequiresAgent: 'Tria un agent preferit primer per triar-ne el model.',
             anyAgent: 'Qualsevol agent',
             variableCount: ({ count }: { count: number }) => (count === 1 ? `${count} variable` : `${count} variables`),
+            saveNoChanges: 'No hi ha canvis per desar.',
+            saveNeedsName: 'Posa un nom al perfil per desar-lo.',
         },
     }) };
 

@@ -12942,6 +12942,8 @@ const profilesPageTranslations = { pl: translated({
             modelRequiresAgent: 'Najpierw wybierz preferowanego agenta, aby wybrać jego model.',
             anyAgent: 'Dowolny agent',
             variableCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'zmienna' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'zmienne' : 'zmiennych'}`,
+            saveNoChanges: 'Brak zmian do zapisania.',
+            saveNeedsName: 'Nadaj profilowi nazwę, aby go zapisać.',
         },
     }) };
 

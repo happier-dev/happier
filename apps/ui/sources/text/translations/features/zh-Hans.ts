@@ -12806,6 +12806,8 @@ const profilesPageTranslations = { 'zh-Hans': translated({
             modelRequiresAgent: '请先选择首选智能体，再选择其模型。',
             anyAgent: '任意智能体',
             variableCount: ({ count }: { count: number }) => `${count}个变量`,
+            saveNoChanges: '没有要保存的更改。',
+            saveNeedsName: '为配置文件命名后即可保存。',
         },
     }) };
 

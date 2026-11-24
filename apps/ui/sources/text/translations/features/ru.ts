@@ -12942,6 +12942,8 @@ const profilesPageTranslations = { ru: translated({
             modelRequiresAgent: 'Сначала выберите предпочтительного агента, чтобы выбрать его модель.',
             anyAgent: 'Любой агент',
             variableCount: ({ count }: { count: number }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'переменная' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'переменные' : 'переменных'}`,
+            saveNoChanges: 'Нет изменений для сохранения.',
+            saveNeedsName: 'Дайте профилю имя, чтобы сохранить его.',
         },
     }) };
 

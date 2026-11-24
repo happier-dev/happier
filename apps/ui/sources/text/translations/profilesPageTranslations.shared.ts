@@ -33,6 +33,8 @@ export const english = {
         modelRequiresAgent: 'Choose a preferred agent first to choose its model.',
         anyAgent: 'Any agent',
         variableCount: ({ count }: { count: number }) => (count === 1 ? `${count} variable` : `${count} variables`),
+        saveNoChanges: 'No changes to save.',
+        saveNeedsName: 'Give the profile a name to save it.',
     },
 };
 

@@ -13,6 +13,7 @@ import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/pr
 import type { AlertButton } from '@/modal/types';
 import { HeaderHeightContext } from '@react-navigation/elements';
 import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { t } from '@/text';
 
 const navigation = vi.hoisted(() => ({ replace: vi.fn(), back: vi.fn(), dispatch: vi.fn(), dirty: false,
     beforeRemove: null as ((event: { data: { action: unknown } }) => void) | null,
@@ -229,6 +230,29 @@ describe('Profile editor acknowledged save', () => {
         await act(async () => { screen.tree.changeTextByTestId('profile-slim-name', 'Research'); });
         expect(saveDisabled()).toBe(false);
         expect(alerts).not.toHaveBeenCalled();
+    });
+
+    // A disabled Save says why, from the same decision that disables it.
+    const saveHint = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+        const button = screen.findHostByTestId('settings.profiles.detail.save');
+        return button?.props.accessibilityHint ?? button?.props['aria-description'] ?? null;
+    };
+
+    it('tells a new draft its disabled Save needs a name, and drops the reason once it has one', async () => {
+        await setupAcknowledgedSave();
+        const screen = await renderScreen(<ProfileDetailScreen target={{ kind: 'draft', cloneFrom: null }} />);
+        expect(saveHint(screen)).toBe(t('profilesPage.saveNeedsName'));
+        await act(async () => { screen.tree.changeTextByTestId('profile-slim-name', 'Research'); });
+        expect(saveHint(screen)).toBeNull();
+    });
+
+    it('tells a saved profile its disabled Save has no changes to save', async () => {
+        const source = { ...createEmptyCustomProfile(), name: 'Research' };
+        const record: ProfileRecordV1 = { v: 1, id: source.id, definition: { kind: 'inline', profile: source },
+            enabled: true, promptStack: [], skillSeeds: [], secretBindings: {} };
+        await setupAcknowledgedSave({ initialRecord: record });
+        const screen = await renderScreen(<ProfileDetailScreen target={{ kind: 'profile', profileId: source.id }} />);
+        await vi.waitFor(() => expect(saveHint(screen)).toBe(t('profilesPage.saveNoChanges')));
     });
 
     it('awaits the pending catalog through the canonical save owner without refusing the new draft', async () => {

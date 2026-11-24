@@ -12806,6 +12806,8 @@ const profilesPageTranslations = { 'zh-Hant': translated({
             modelRequiresAgent: '請先選擇偏好的代理，再選擇其模型。',
             anyAgent: '任何代理',
             variableCount: ({ count }: { count: number }) => `${count}個變數`,
+            saveNoChanges: '沒有要儲存的變更。',
+            saveNeedsName: '為設定檔命名後即可儲存。',
         },
     }) };
 
