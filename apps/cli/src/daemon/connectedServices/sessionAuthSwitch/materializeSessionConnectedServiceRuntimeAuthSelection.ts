@@ -51,6 +51,8 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
   processEnv?: NodeJS.ProcessEnv;
   allowNativeAccountState?: boolean;
   accountPluginSettingsSource?: AgentPluginAccountSettingsSource;
+  /** The running Session's runner (local Session channel); defaults to the real channel. */
+  registerSessionTranscriptSecrets?: (input: Readonly<{ sessionId: string; values: readonly string[] }>) => Promise<void>;
 }>): Promise<unknown | null> {
   if (params.input.next.source !== 'connected') return null;
   const legacyServiceId =
@@ -235,6 +237,18 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
               allowNativeAccountState: params.allowNativeAccountState === true,
               accountPluginSettingsSource: params.accountPluginSettingsSource,
               isAccountRuntimeCurrent: async () => purposeLease.isCurrent() && await isMaterializationCurrent(),
+              // A running (tracked) Session's runner writes its transcript: it holds the switched
+              // credential before the home carries it (register-then-write). An unreachable runner
+              // refuses the switch with its typed cause and the home keeps the previous credential.
+              ...(params.input.tracked ? { registerSecretValues: async (values: readonly string[]) => {
+                const input = { sessionId: params.input.sessionId, values };
+                if (params.registerSessionTranscriptSecrets) {
+                  await params.registerSessionTranscriptSecrets(input);
+                  return;
+                }
+                const { registerLocalSessionTranscriptSecrets } = await import('@/session/transport/rpc/localSessionRpcChannel');
+                await registerLocalSessionTranscriptSecrets(input);
+              } } : {}),
             });
             try {
               if (!materialized) throw new Error('connected_account_runtime_selection_materialization_unavailable');

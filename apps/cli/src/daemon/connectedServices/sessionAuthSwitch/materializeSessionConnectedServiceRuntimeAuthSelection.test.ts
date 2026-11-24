@@ -47,6 +47,7 @@ import { createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/conn
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { resolveSessionConnectedServiceSwitchContinuity } from './continuity';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { SessionTranscriptRuntimeUnavailableError } from '@/session/transport/rpc/localSessionRpcChannel';
 
 function qualifiedApiForRecord(record: ReturnType<typeof buildConnectedServiceCredentialRecord>) {
   const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(record.serviceId);
@@ -85,8 +86,20 @@ const purposeOwner = createConnectedAccountPurposeBindingOwner({
   materializeAccount: async input => await materializeExactV021ConnectedServiceCredential({
     registry: runtimeFixture.registry, serviceId: materializationRecord.serviceId, account: input.account,
     record: materializationRecord, request: input.request, signal: input.signal,
+    ...(input.observeMaterializationSecretValues ? { observeMaterializationSecretValues: input.observeMaterializationSecretValues } : {}),
   }),
 });
+
+/**
+ * Stand-in for the running Session's runner, a separate process reached over the local Session
+ * channel: it records what the daemon registers for that Session's transcript.
+ */
+function createSessionRunnerStandIn() {
+  const registrations: Array<Readonly<{ sessionId: string; values: readonly string[] }>> = [];
+  return { registrations, registerSessionTranscriptSecrets: async (input: Readonly<{ sessionId: string; values: readonly string[] }>) => {
+    registrations.push({ sessionId: input.sessionId, values: [...input.values] });
+  } };
+}
 
 beforeAll(async () => {
   runtimeFixture = await createAdmittedPluginRuntimeFixture({
@@ -159,6 +172,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         }] }) },
         materializeRuntimeAuthSelection: input => materializeSessionConnectedServiceRuntimeAuthSelection({
           credentials: { token: 'fixture-token', encryption: null }, api: api as unknown as ApiClient,
+          registerSessionTranscriptSecrets: createSessionRunnerStandIn().registerSessionTranscriptSecrets,
           activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
           connectedAccountsOwner: purposeOwner, activatePurposeBindings: purposeOwner.activatePurposeBindings, processEnv: {}, input,
         }),
@@ -267,6 +281,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         // No internal validator, codec, purpose lease, artifact fence or error projector is mocked.
         resolveAuthForSpawn: async () => {
           await materializeSessionConnectedServiceRuntimeAuthSelection({ credentials, api: api as unknown as ApiClient,
+            registerSessionTranscriptSecrets: createSessionRunnerStandIn().registerSessionTranscriptSecrets,
             activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
             connectedAccountsOwner: purposeOwner, activatePurposeBindings: purposeOwner.activatePurposeBindings,
             validateGroupMutationCurrentness: input => validateConnectedServiceGroupMutationCurrentness({ input, credentials,
@@ -348,8 +363,10 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       } };
       const selection = { source: 'connected' as const, selection: 'profile' as const,
         serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY, profileId: 'backup', groupId: null };
+      const runner = createSessionRunnerStandIn();
       const params = {
         credentials: { token: 'fixture-token', encryption: null } satisfies StoredCredentials,
+        registerSessionTranscriptSecrets: runner.registerSessionTranscriptSecrets,
         api: api as unknown as ApiClient, activeServerDir, baseDir: join(root, 'materialized'),
         connectedAccountsOwner: purposeOwner, activatePurposeBindings: purposeOwner.activatePurposeBindings,
         processEnv: { CLAUDE_CONFIG_DIR: nativeRoot }, allowNativeAccountState,
@@ -372,6 +389,61 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         await expect(readFile(join(home, '.credentials.json'), 'utf8')).resolves.toContain('refreshed-fixture-access');
       }
       await expect(readFile(join(nativeRoot, 'projects', '-tmp', 'resume.jsonl'), 'utf8')).resolves.toContain('resume');
+      expect(runner.registrations[0]).toMatchObject({ sessionId, values: expect.arrayContaining(['refreshed-fixture-access']) });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("registers a switched credential with the running Session's runner before writing it, and keeps the old home when the runner is unreachable", async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-auth-apply-register-'));
+    const sessionId = 'auth-apply-register';
+    try {
+      materializationRecord = buildConnectedServiceCredentialRecord({
+        now: 1_000, serviceId: 'claude-subscription', profileId: 'backup', kind: 'oauth',
+        oauth: { accessToken: 'dummy-switched-access', refreshToken: 'dummy-switched-refresh', idToken: null,
+          providerAccountId: 'fixture-account', providerEmail: null, scope: null, tokenType: null },
+      });
+      const api = qualifiedApiForRecord(materializationRecord);
+      const activeServerDir = join(root, 'server');
+      const home = join(resolveConnectedServiceHomeDir({ activeServerDir,
+        serviceId: 'claude-subscription', profileId: 'backup', agentId: 'claude' }), 'claude-config');
+      const credentialsFile = join(home, '.credentials.json');
+      const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
+        [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'backup' },
+      } };
+      const selection = { source: 'connected' as const, selection: 'profile' as const,
+        serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY, profileId: 'backup', groupId: null };
+      const base = {
+        credentials: { token: 'fixture-token', encryption: null } satisfies StoredCredentials,
+        api: api as unknown as ApiClient, activeServerDir, baseDir: join(root, 'materialized'),
+        connectedAccountsOwner: purposeOwner, activatePurposeBindings: purposeOwner.activatePurposeBindings,
+        processEnv: {},
+        input: { mode: 'apply' as const, sessionId, agentId: 'claude', serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY,
+          tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123 },
+          previous: selection, next: selection, previousBindings: bindings, normalizedBindings: bindings },
+      };
+      const writtenAtRegistration: boolean[] = [];
+      await materializeSessionConnectedServiceRuntimeAuthSelection({ ...base,
+        registerSessionTranscriptSecrets: async (input) => {
+          expect(input).toMatchObject({ sessionId, values: expect.arrayContaining(['dummy-switched-access']) });
+          writtenAtRegistration.push((await readFile(credentialsFile, 'utf8').catch(() => '')).includes('dummy-switched-access'));
+        } });
+      expect(writtenAtRegistration).toEqual([false]);
+      await expect(readFile(credentialsFile, 'utf8')).resolves.toContain('dummy-switched-access');
+
+      // The runner that writes this Session's transcript is unreachable: the switch is refused with
+      // its typed cause, and the home keeps the previous credential.
+      materializationRecord = buildConnectedServiceCredentialRecord({
+        now: 2_000, serviceId: 'claude-subscription', profileId: 'backup', kind: 'oauth',
+        oauth: { accessToken: 'dummy-unregistered-access', refreshToken: 'dummy-switched-refresh', idToken: null,
+          providerAccountId: 'fixture-account', providerEmail: null, scope: null, tokenType: null },
+      });
+      await expect(materializeSessionConnectedServiceRuntimeAuthSelection({ ...base,
+        api: qualifiedApiForRecord(materializationRecord) as unknown as ApiClient,
+        registerSessionTranscriptSecrets: async () => { throw new SessionTranscriptRuntimeUnavailableError(); } }))
+        .rejects.toMatchObject({ code: 'session_transcript_runtime_unavailable' });
+      const kept = await readFile(credentialsFile, 'utf8');
+      expect(kept).toContain('dummy-switched-access');
+      expect(kept).not.toContain('dummy-unregistered-access');
     } finally { await rm(root, { recursive: true, force: true }); }
   });
   it('preserves a newer pool projection through materializer, projector, and delayed native apply', async () => {
@@ -413,6 +485,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         baseDir: join(root, 'materialized'), connectedAccountsOwner: purposeOwner,
         activatePurposeBindings: purposeOwner.activatePurposeBindings,
         validateGroupMutationCurrentness: validateCurrent, processEnv: {},
+        registerSessionTranscriptSecrets: createSessionRunnerStandIn().registerSessionTranscriptSecrets,
         input: { mode: 'apply', tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: sessionId, pid: 123 },
           sessionId, agentId: 'codex', serviceId: CODEX_SERVICE_KEY, previous: null,
           next: { source: 'connected', selection: 'group', serviceId: CODEX_SERVICE_KEY, groupId: 'pool', profileId: 'backup' },
@@ -498,6 +571,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         processEnv: {}, accountSettings: accountSettingsParse({ connectedServicesProviderStateSharingSettingsV1: {
           v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
         } }),
+        registerSessionTranscriptSecrets: createSessionRunnerStandIn().registerSessionTranscriptSecrets,
         input: {
           mode, tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'retained-session', pid: 123, spawnOptions: {
             directory: '/project',
