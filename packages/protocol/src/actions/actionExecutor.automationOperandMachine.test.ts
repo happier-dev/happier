@@ -145,16 +145,29 @@ describe('Before checks on the Action operand Machine', () => {
     },
   );
 
-  it('keeps a Machine already carried by caller context', async () => {
-    const { port, executor, runMachines } = setup(TERMINAL_OPEN);
-    try {
-      await executor.execute(
-        TERMINAL_OPEN,
-        operands[TERMINAL_OPEN],
-        context(TERMINAL_OPEN, 'ui', {
+  it.each(['ui', 'cli'] as const)(
+    'runs the check on the operand Machine, as the approval origin does, when a %s Session is on another Machine',
+    async (surface) => {
+      const { port, executor, effect, runMachines } = setup(TERMINAL_OPEN);
+      try {
+        await executor.execute(TERMINAL_OPEN, operands[TERMINAL_OPEN], context(TERMINAL_OPEN, 'ui', {
+          surface,
           defaultSessionMachineId: 'session-machine',
-        }),
-      );
+          actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [TERMINAL_OPEN]: [surface] } }),
+        }));
+        expect(runMachines).toEqual(['operand-machine']);
+        expect(effect).not.toHaveBeenCalled();
+      } finally {
+        port.dispose();
+      }
+    },
+  );
+
+  it('keeps the caller Session Machine for an Action with no Machine-placed operand', async () => {
+    const { port, executor, runMachines } = setup('account.name.set');
+    try {
+      await executor.execute('account.name.set', { name: 'QA' },
+        context('account.name.set', 'ui', { defaultSessionMachineId: 'session-machine' }));
       expect(runMachines).toEqual(['session-machine']);
     } finally {
       port.dispose();
