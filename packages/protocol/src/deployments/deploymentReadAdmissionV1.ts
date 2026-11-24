@@ -14,8 +14,9 @@ import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
-import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
   isDatabaseActionIdV1, telemetryCollectorActionSourceV1 } from '../actions/actionIdsDatabaseV1.js';
+import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
 import { databaseActionOperationClass } from '../actions/databaseActionMetadata.js';
 import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { DatabaseAgentLevelV1Schema } from './deploymentEnvironmentDeployerV1.js';
@@ -68,11 +69,25 @@ export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.union([z.di
   })),
   z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema).check(
     z.refine(action => telemetryCollectorActionSourceV1(formatQualifiedPluginActionId(action)) !== undefined)),
-    telemetryCollector })]));
+    telemetryCollector }),
+  // The Environment database listing (mounted Data page) reads one Environment before any target is chosen.
+  z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema).check(
+    z.refine(action => formatQualifiedPluginActionId(action) === DATABASE_TARGETS_LIST_ACTION_ID_V1)),
+    environmentId: id, databaseEnvironment: DeploymentEnvironmentRefV1Schema }).check(z.refine(scope =>
+    scope.databaseEnvironment.environmentId === scope.environmentId))]));
 
 export type DeploymentReadAdmissionV1 = z.infer<typeof DeploymentReadAdmissionV1Schema>;
 
 export type DeploymentTelemetryReadAdmissionV1 = Extract<DeploymentReadAdmissionV1, { telemetryCollector: unknown }>;
+
+/** The Home an admitted read names, which the receiving daemon matches to its own Home identity. */
+export function readDeploymentReadAdmissionHomeIdV1(admission: DeploymentReadAdmissionV1, input: unknown): string | null {
+  if ('databaseTarget' in admission) return admission.databaseTarget.environment.serverId;
+  if ('databaseEnvironment' in admission) return admission.databaseEnvironment.serverId;
+  if ('telemetryCollector' in admission) return admission.telemetryCollector.serverId;
+  const serverId = readRecord(input).serverId;
+  return typeof serverId === 'string' ? serverId : null;
+}
 
 /** Setup authority is separate from the Action approval class and ordinary SQL edit authority. */
 export function readDeploymentDatabaseReadAccessSetupV1(admission: DeploymentReadAdmissionV1 | undefined) {
@@ -128,6 +143,13 @@ export function projectDeploymentReadAdmissionV1(actionId: string, input: unknow
         : telemetryEnvironment.safeParse(operands);
       return selected.success ? { actionId, action: invoked.data.action,
         telemetryCollector: { serverId: selected.data.serverId, environmentIds: [selected.data.environmentId] } } : undefined;
+    }
+    if (qualifiedId === DATABASE_TARGETS_LIST_ACTION_ID_V1) {
+      const scope = readRecord(invoked.data.input).scope;
+      if (readRecord(scope).kind !== 'environment') return undefined;
+      const environment = DeploymentEnvironmentRefV1Schema.safeParse(readRecord(scope).environment);
+      return environment.success ? { actionId: ACTION_INVOKE_ACTION_ID_V1, action: invoked.data.action,
+        environmentId: environment.data.environmentId, databaseEnvironment: environment.data } : undefined;
     }
     if (isDatabaseActionIdV1(qualifiedId)) {
       const operands = invoked.data.input;

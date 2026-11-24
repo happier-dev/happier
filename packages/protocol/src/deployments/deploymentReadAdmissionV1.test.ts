@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentReadAdmissionV1Schema, projectDeploymentReadAdmissionV1 } from './deploymentReadAdmissionV1';
+import { DeploymentReadAdmissionV1Schema, projectDeploymentReadAdmissionV1, readDeploymentReadAdmissionHomeIdV1 } from './deploymentReadAdmissionV1';
 import { DeploymentLogsReadInputV1Schema, DeploymentLogsReadSuccessV1Schema, DeploymentHealthReadInputV1Schema } from './deploymentReadsV1';
 import { PluginUiDeploymentStageLogsReadReferenceV1Schema } from '../daemon/machineServiceLogsResource';
 import { FileSaveInputSchema } from '../actions/fileSaveActionFamily';
@@ -79,6 +79,23 @@ describe('deployment current-health read admission', () => {
             actionId: 'action.invoke', action, environmentId: 'environment', targetLinkId: 'link',
             databaseTarget: target, access: 'read',
         });
+    });
+
+    it('admits the mounted Environment database listing as one Environment read', () => {
+        const action = { pluginId: 'happier.database', localId: 'targets/list' };
+        const environment = { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' };
+        const admission = projectDeploymentReadAdmissionV1('action.invoke', { action, input: {
+            scope: { kind: 'environment', environment, selection: { kind: 'native_service', service: 'postgres' } } } });
+        expect(admission).toEqual({ actionId: 'action.invoke', action, environmentId: 'environment', databaseEnvironment: environment });
+        expect(DeploymentReadAdmissionV1Schema.parse(admission)).toEqual(admission);
+        // A worktree listing stays Machine-local.
+        expect(projectDeploymentReadAdmissionV1('action.invoke', { action, input: { scope: { kind: 'worktree' } } })).toBeUndefined();
+        // The receiving daemon checks this Home against its own Home identity.
+        expect(readDeploymentReadAdmissionHomeIdV1(admission!, {})).toBe('home');
+        expect(readDeploymentReadAdmissionHomeIdV1({ actionId: 'action.invoke', action: { pluginId: 'happier.telemetry', localId: 'x' },
+            telemetryCollector: { serverId: 'collector-home', environmentIds: ['environment'] } }, {})).toBe('collector-home');
+        expect(readDeploymentReadAdmissionHomeIdV1({ actionId: 'deployments.health.current', environmentId: 'environment',
+            targetLinkId: 'link', machineId: 'machine' }, { serverId: 'input-home' })).toBe('input-home');
     });
 
     it('binds the read-only current edge to one Environment, link and controller without a receipt', () => {

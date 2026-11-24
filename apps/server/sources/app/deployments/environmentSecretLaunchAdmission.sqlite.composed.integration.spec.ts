@@ -963,6 +963,22 @@ describe('private installed Environment secret launch transport', () => {
             actionId, machineId: input.machineId, target, requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), deploymentReadAdmission: admission });
         const authorization = await mint();
+        // The mounted Data page lists the Environment's databases; Home decides that read with the
+        // same Environment read admission before any Machine work (the Use carrier relies on it).
+        const listAction = parseQualifiedPluginActionId(DATABASE_TARGETS_LIST_ACTION_ID_V1)!;
+        const databaseEnvironment = { serverId, projectSourceId: row.projectSourceId, environmentId: row.id };
+        const mintList = (account: Readonly<{ id: string; tokenEpoch: number }>) => {
+            const listInput = { action: listAction, input: { scope: { kind: 'environment' as const, environment: databaseEnvironment } } };
+            const listEnvelope = { ...envelope, requestId: crypto.randomUUID(), input: listInput };
+            return auth.mintExternalActionExecutionAuthorization({ accountId: account.id,
+                serverIdentityId: serverId, authentication: { kind: 'account', tokenEpoch: account.tokenEpoch },
+                actionId, machineId: input.machineId, target, requestId: listEnvelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(listEnvelope),
+                deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, listInput) });
+        };
+        await expect(mintList(f.requester)).resolves.toMatchObject({ binding: { deploymentReadAdmission: { databaseEnvironment } } });
+        const listOutsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await expect(mintList(listOutsider)).rejects.toMatchObject({ code: 'credential_scope_denied' });
         // A reviewed native write spends the same Environment admission with its own write operand.
         const writeInput = { action, input: DatabaseStatementRunInputV1Schema.parse({
             operation: 'statement.run', mode: 'write', target: actionInput.input.target, executionMode: 'transaction',
@@ -1264,10 +1280,13 @@ describe('private installed Environment secret launch transport', () => {
             const actionInput = { action, input: { scope: { kind: 'environment', environment: { serverId,
                 projectSourceId: row.projectSourceId, environmentId: row.id } } } };
             const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: actionInput };
-            expect(projectDeploymentReadAdmissionV1(actionId, actionInput)).toBeUndefined();
+            // The listing names its Environment; Home admits it once and confines these reads to it.
+            const deploymentReadAdmission = projectDeploymentReadAdmissionV1(actionId, actionInput);
+            expect(deploymentReadAdmission).toMatchObject({ environmentId: row.id });
             const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId, serverIdentityId: serverId,
                 authentication: { kind: 'account', tokenEpoch }, actionId, machineId: target.machineId, target,
-                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentReadAdmission });
             return { method: 'GET' as const, url: path, headers: {
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
                 [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
@@ -1290,19 +1309,18 @@ describe('private installed Environment secret launch transport', () => {
             const signed = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, url));
             expect(signed.statusCode, signed.body).toBe(200);
             expect(signed.json()).toMatchObject({ id: active.contentArtifactId, bodyVersion: active.contentBodyVersion });
+            // The listing's admission binds its Environment's controller, so another Machine is refused at mint.
             const unplacedMachine = await ownInstalledMachine(f.owner.id);
-            const unplaced = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, url, unplacedMachine));
-            expect(unplaced.statusCode, unplaced.body).toBe(401);
+            await expect(read(f.owner.id, f.owner.tokenEpoch, url, unplacedMachine)).rejects.toMatchObject({ code: 'credential_scope_denied' });
             const unrelated = await f.artifact('unrelated.v1');
             for (const id of [history.contentArtifactId, unrelated.contentArtifactId]) {
                 const refused = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, artifactPath(id)));
                 expect(refused.statusCode, refused.body).toBe(401);
             }
-            // An outsider's valid root on its own Machine passes the verifier; the receipt route keeps its own access.
+            // An outsider cannot read this Environment, so Home refuses its listing at admission.
             const outsiderMachine = await ownInstalledMachine(outsider.id);
-            const foreign = await app.inject(await read(outsider.id, outsider.tokenEpoch, receiptPath(deploymentId, row.id), outsiderMachine));
-            expect(foreign.statusCode, foreign.body).not.toBe(200);
-            expect(foreign.statusCode, foreign.body).not.toBe(401);
+            await expect(read(outsider.id, outsider.tokenEpoch, receiptPath(deploymentId, row.id), outsiderMachine))
+                .rejects.toMatchObject({ code: 'credential_scope_denied' });
             // A foreign custodian that cannot read this Environment itself cannot name its receipt under the requester's root.
             await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
             for (const path of [receiptPath(deploymentId, row.id), receiptPath(deploymentId), url]) {

@@ -470,7 +470,8 @@ export function projectExternalActionMachineAdmissionRefusalCause(
         errorCode: denial.requiredRole === 'manage' ? 'machine_manage_required' : denial.code };
 }
 
-/** A database Action whose target is an Environment database (its admission names `databaseTarget`). */
+/** A database Action on an Environment database: its admission names `databaseTarget`, or the
+ * Environment itself for the listing (`databaseEnvironment`). */
 function isEnvironmentDatabaseActionInvoke(input: ExternalActionExecutionMachineAdmissionInput): boolean {
     if (input.actionId !== ACTION_INVOKE_ACTION_ID_V1) return false;
     let admission: DeploymentReadAdmissionV1 | undefined;
@@ -480,7 +481,7 @@ function isEnvironmentDatabaseActionInvoke(input: ExternalActionExecutionMachine
     } catch {
         return false;
     }
-    return admission !== undefined && 'databaseTarget' in admission;
+    return admission !== undefined && ('databaseTarget' in admission || 'databaseEnvironment' in admission);
 }
 
 async function resolveExternalActionExecutionMachineAccessInTx(
@@ -717,7 +718,9 @@ export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExec
 ): VerifiedExternalActionPrincipal | null {
     const native = binding.deploymentNativeAdmission;
     const read = binding.deploymentReadAdmission;
-    const finiteRead = read?.actionId === binding.actionId && read.actionId !== DEPLOYMENT_LOGS_READ_ACTION_ID_V1;
+    // A database target list keeps its ordinary per-request reads (isContributedRootEnvironmentRead).
+    const finiteRead = read?.actionId === binding.actionId && read.actionId !== DEPLOYMENT_LOGS_READ_ACTION_ID_V1
+        && !('databaseEnvironment' in read);
     const presetPreparation = binding.presetPreparationAdmission;
     const finitePresetPreparation = isMachinePresetFiniteOperationActionIdV1(binding.actionId) && presetPreparation !== undefined
         && presetPreparation.homeId === binding.serverIdentityId
@@ -1523,8 +1526,9 @@ export function isDeploymentReadPreparation(binding: ExternalActionExecutionAuth
     if (binding.actionId === effectActionId) return false;
     if (binding.deploymentPreparationAdmission && isDeploymentReceiptReadActionIdV1(effectActionId)
         && binding.deploymentChildRoot !== true) return false;
+    // A database target list keeps only its own contributed-root reads.
     const deploymentRoot = isDeploymentActionIdV1(binding.actionId)
-        || binding.deploymentReadAdmission?.actionId === binding.actionId;
+        || binding.deploymentReadAdmission?.actionId === binding.actionId && !('databaseEnvironment' in binding.deploymentReadAdmission);
     if (deploymentRoot && effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) return true;
     if (deploymentRoot && isDeploymentActionIdV1(effectActionId)) {
         const spec = getActionSpec(effectActionId);
@@ -3092,7 +3096,8 @@ async function isAdmittedDeclaredDeploymentReadInScope(
  * contributed provider read names (a Neon project list), then opens its content Artifact and, for a
  * linked read (Neon branches), the named target link's content Artifact, or (a database target list) the
  * active native receipt and its content on the placed installation, with its
- * admitted contributed root; that root carries no deployment read admission. The Environment and
+ * admitted contributed root; that root carries no deployment read admission, except a database target list's
+ * admitted Environment (`databaseEnvironment`), which confines these reads to that Environment. The Environment and
  * Artifact routes keep the requester's own access, as for the requester's bearer read. A foreign
  * custodian (a Team member's Machine) chose the operand itself, so it names only an Environment its own
  * Account can read, as readDeploymentReferenceHttpPurpose does.
@@ -3101,8 +3106,10 @@ async function isAdmittedDeclaredDeploymentReadInScope(
 async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const binding = verified.binding;
+    // An Environment database listing carries its admitted Environment; its reads stay inside it.
+    const listing = binding.deploymentReadAdmission;
     if (!isContributedActionRoot(binding.actionId) || verified.effectActionId !== binding.actionId
-        || binding.deploymentReadAdmission !== undefined) return false;
+        || listing !== undefined && !('databaseEnvironment' in listing)) return false;
     let environmentId: string;
     if (isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof)) {
         const read = DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput);
@@ -3112,7 +3119,7 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
         // A database target list reads its Environment's active receipt metadata; private evidence stays on the host.
         const read = DeploymentReceiptGetInputV1Schema.safeParse(proof.routeInput);
         if (!read.success || read.data.serverId !== binding.serverIdentityId || read.data.projection !== undefined) return false;
-        if (binding.custodianAccountId === binding.accountId) return true;
+        if (binding.custodianAccountId === binding.accountId && !listing) return true;
         const receipt = await db.deployment.findFirst({ where: { id: read.data.deploymentId,
             ...(read.data.environmentId === undefined ? {} : { environmentId: read.data.environmentId }) }, select: { environmentId: true } });
         if (!receipt) return false;
@@ -3144,6 +3151,7 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
             environmentId = receipt.environment.id;
         }
     }
+    if (listing && environmentId !== listing.environmentId) return false;
     return binding.custodianAccountId === binding.accountId || (await loadDeploymentEnvironmentInTx(db,
         binding.custodianAccountId, binding.serverIdentityId, environmentId)).ok;
 }
@@ -4627,7 +4635,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         // content. Only transport of the exact admitted root/codec remains.
         if (!isAdmittedRootRelay && !readsExecutionMachine) return refuse('deployment_restart_purpose');
     } else if (verified.binding.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
-        || verified.binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+        || verified.binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
+            // A database target list reads under isContributedRootEnvironmentRead, confined to its admitted Environment.
+            && !('databaseEnvironment' in verified.binding.deploymentReadAdmission)) {
         if (!isAdmittedRootRelay && !readsExecutionMachine) {
             const purpose = await readDeploymentDataQueryHttpPurpose(verified, proof);
             if (!purpose) return refuse('deployment_native_read_purpose');

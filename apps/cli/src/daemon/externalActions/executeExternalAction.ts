@@ -18,7 +18,7 @@ import { projectExternalActionRunNowIdempotencyKeyV1, projectExternalActionAppro
   projectRegistryAppUpdateAdmissionV1, projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentReadAdmissionV1, projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { projectPrivateMountedDatabaseReadInputV1, readDeploymentReadAdmissionHomeIdV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { projectDeploymentPreparationAdmissionV1, projectDeploymentNativeAdmissionV1, isDeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
@@ -648,10 +648,7 @@ async function executeExternalActionRequest(input: Readonly<{
         || envelope.data.v === 2 && !sameStrictJsonValue(readAdmission, envelope.data.deploymentReadAdmission)))
       throw new TypeError('Deployment read admission mismatch');
     if (expectedRead && executionAuthorization?.success) {
-      const home = 'databaseTarget' in expectedRead ? expectedRead.databaseTarget.environment.serverId
-        : 'telemetryCollector' in expectedRead ? expectedRead.telemetryCollector.serverId
-        : decodedInput && typeof decodedInput === 'object' && 'serverId' in decodedInput
-          && typeof decodedInput.serverId === 'string' ? decodedInput.serverId : null;
+      const home = readDeploymentReadAdmissionHomeIdV1(expectedRead, decodedInput);
       if (!home || !await isServerProfileHomeIdentity(home, executionAuthorization.data.binding.serverIdentityId))
         throw new TypeError('Deployment read Home mismatch');
     }

@@ -34,7 +34,7 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { DEPLOYMENT_ACTION_IDS_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -304,6 +304,18 @@ describe('Machine current access (real SQLite)', () => {
         expect(await admit(requester.id, { kind: 'manual', associationId: 'association' }))
             .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         expect(await admit(stranger.id, environmentTarget)).toMatchObject({ kind: 'denied' });
+        // The mounted Environment → Data page lists the Environment's databases first (sealed in E2EE;
+        // its cleartext admission is what Home sees).
+        const listAction = parseQualifiedPluginActionId(DATABASE_TARGETS_LIST_ACTION_ID_V1)!;
+        const list = (scope: unknown) => inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+            actorAccountId: requester.id, machineId: f.machine.id, actionId: 'action.invoke',
+            envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: f.machine.id },
+                input: { action: listAction, input: { scope } } },
+            authentication: { authenticationAuthority: 'present_user' },
+        }));
+        expect(await list({ kind: 'environment', environment: environmentTarget.environment }))
+            .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
+        expect(await list({ kind: 'worktree' })).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
     });
 
     it('admits machine-scoped plugin daemon Actions for Manage through authenticated ingress, refusing Can use', async () => {

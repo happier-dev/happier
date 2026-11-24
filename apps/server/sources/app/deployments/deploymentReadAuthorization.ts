@@ -180,6 +180,9 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         const controller = await tx.machine.findFirst({ where: { id: binding.machineId,
             installationId: binding.installationId, revokedAt: null, replacedByMachineId: null }, select: { id: true } });
         if (!controller) return null;
+        // The Environment database listing reads only this admitted Environment on its controller.
+        if ('databaseEnvironment' in admission) return admission.databaseEnvironment.serverId === binding.serverIdentityId
+            && admission.databaseEnvironment.projectSourceId === loaded.row.projectSourceId ? { ok: true, artifactIds: [] } : null;
         const scope = await readAdmittedDeploymentReadScopeInTx(tx, admission);
         return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId),
             ...(deploymentDatabaseAccess ? { deploymentDatabaseAccess } : {}) } : null;
