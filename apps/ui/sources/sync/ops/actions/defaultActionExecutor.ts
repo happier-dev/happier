@@ -4879,6 +4879,22 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     }),
     sessionList: listSessionsForVoiceTool,
     sessionRead: createUiSessionRead(accountContext),
+    spawnMcpServersPreview: async (input, context) => {
+      const current = context?.defaultSessionId ? storage.getState().sessions[context.defaultSessionId] : undefined;
+      const metadata = current && accountContext && areServerProfileIdentifiersEquivalent(current.serverId, accountContext.serverId)
+        ? current.metadata : null;
+      const machineId = input.machineId?.trim() || metadata?.machineId;
+      const directory = input.directory?.trim() || metadata?.path;
+      if (!machineId || !input.agentId) return { ok: false, items: [], preview: null };
+      const { projectSpawnMcpServersPreviewInventory } = await import('@happier-dev/session-core/state');
+      const result = await actionMachineRpc({
+        machineId, serverId: accountContext?.serverId ?? context?.serverId, accountId: accountContext?.accountId,
+        method: RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, operationTimeoutMs: null, signal: context?.signal,
+        payload: { machineId, agentId: input.agentId, ...(directory ? { directory } : {}),
+          ...(input.selection !== undefined ? { selection: input.selection } : {}) },
+      });
+      return projectSpawnMcpServersPreviewInventory(result, input.limit);
+    },
     sessionStatusGet: readUiSessionStatus.bind(undefined, accountContext),
     ...createUiSessionCatalogActionDeps(accountContext, actionSessionRpc),
     sessionWorkStateGet: ({ sessionId, serverId }) => actionSessionRpc({

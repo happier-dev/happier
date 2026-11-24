@@ -45,7 +45,7 @@ import type { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/cata
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
-import type { projectSpawnMcpServersPreviewInventory } from './resolveSpawnMcpServersPreviewInventory';
+import type { projectSpawnMcpServersPreviewInventory } from '@happier-dev/session-core/state';
 import type { createCliSettingsCatalogServices } from '../settingsCatalogServices';
 import { encodeScmDiffSummaryModelOverride, readScmDiffSummaryRunnerCatalogId, readScmDiffSummaryRunnerChoice, ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import {
@@ -1154,7 +1154,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
         || await readCurrentSessionValue('path')
         || sessionWorkingDirectory();
       if (!params.callMachineAction || !machineId || !agentId) return { ok: false, items: [], preview: null };
-      const { projectSpawnMcpServersPreviewInventory } = await import("./resolveSpawnMcpServersPreviewInventory");
+      const { projectSpawnMcpServersPreviewInventory } = await import("@happier-dev/session-core/state");
       return projectSpawnMcpServersPreviewInventory(await params.callMachineAction({ machineId, serverId: context?.serverId ?? params.serverId,
         method: RPC_METHODS.DAEMON_MCP_SERVERS_PREVIEW, request: { machineId, directory, agentId,
           ...((args as { selection?: unknown }).selection !== undefined ? { selection: args.selection } : {}) },
