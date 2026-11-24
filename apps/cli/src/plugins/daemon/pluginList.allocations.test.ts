@@ -78,8 +78,10 @@ it('allocates no loopback transport bytes for a daemon-owned plugin list', async
         })]),
         pendingChanges: [{ kind: 'applying', pendingChangeId: 'pending-1' }],
       });
-      if (projection === 'summary' && 'plugins' in transported) {
-        expect(transported.plugins?.find(plugin => plugin.pluginId === 'acme.list')).not.toHaveProperty('contributions');
+      if (projection === 'summary') {
+        expect(transported).not.toMatchObject({
+          plugins: expect.arrayContaining([expect.objectContaining({ pluginId: 'acme.list', contributions: expect.anything() })]),
+        });
       }
       expect(recovered).toBe(true);
       recovered = false;
@@ -103,21 +105,23 @@ it('allocates no loopback transport bytes for a daemon-owned plugin list', async
 
     inspector.connect();
     const sample = async (inDaemon: boolean) => {
-      await inspector.post('HeapProfiler.startSampling', {
-        samplingInterval: 8192, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true,
-      });
+      // These V8 options keep the samples reclaimed during the sampling window.
+      const samplingOptions = { samplingInterval: 8192, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true };
+      await inspector.post('HeapProfiler.startSampling', samplingOptions);
       const calls = 6;
       for (let index = 0; index < calls; index++) await execute('full', inDaemon);
       const { profile } = await inspector.post('HeapProfiler.stopSampling');
+      let sampledBytes = 0;
       let transportBytes = 0;
       const visit = (node: typeof profile.head, inTransport: boolean) => {
         const transport = inTransport || node.callFrame.functionName === 'daemonPost';
+        sampledBytes += node.selfSize;
         if (transport) transportBytes += node.selfSize;
         for (const child of node.children) visit(child, transport);
       };
       visit(profile.head, false);
       return {
-        sampledBytesPerCall: profile.samples.reduce((sum, allocation) => sum + allocation.size, 0) / calls,
+        sampledBytesPerCall: sampledBytes / calls,
         transportBytesPerCall: transportBytes / calls,
       };
     };
