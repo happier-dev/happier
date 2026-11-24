@@ -19,6 +19,7 @@ import { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/work
 export { readWorkspaceBuildInputs } from '../../apps/stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
 import { incompleteWorkerError, runWorkspaceBuildAdmission, withWorkspaceBuildResources } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
+import { dependencyGenerationIdentityPath } from '../../apps/stack/scripts/utils/proc/dependency_generations.mjs';
 import { createWorkspaceBuildWaitNotifier } from '../../apps/stack/scripts/utils/proc/workspaceBuildWaitNotifier.mjs';
 import { run } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { collectWorkspacePackageJsonPaths } from '../../apps/stack/scripts/utils/proc/workspace_package_manifests.mjs';
@@ -841,7 +842,7 @@ export function readWorkspacePackageInputFingerprint({
     ? identityRepoDir : identitySourceRepoDir ?? packageDir);
   const frameIdentity = path => {
     if (!frameRoot) return path;
-    const relativePath = relative(frameRoot, path);
+    const relativePath = relative(frameRoot, dependencyGenerationIdentityPath(frameRoot, path));
     return relativePath && relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath)
       ? `repo:${relativePath.split(sep).join('/')}` : path;
   };

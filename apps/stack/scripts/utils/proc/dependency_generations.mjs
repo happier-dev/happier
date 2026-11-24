@@ -39,6 +39,15 @@ export function resolveDependencyGenerationContainer(installDir) {
   return join(resolve(installDir), CONTAINER);
 }
 
+/** Give installed files the same content-identity path across generations.
+ * Keep the project and package-manager topology within the generation. */
+export function dependencyGenerationIdentityPath(installDir, path) {
+  const [generation, ...inside] = relative(resolveDependencyGenerationContainer(installDir), path).split(sep);
+  return GENERATION_NAME.test(generation) && inside.includes('node_modules')
+    ? join(resolve(installDir), ...inside)
+    : path;
+}
+
 function isInside(root, path) {
   const rel = relative(root, path);
   return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));

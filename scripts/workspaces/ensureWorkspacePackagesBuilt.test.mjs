@@ -3824,6 +3824,75 @@ test('a recorded build remains valid after source edits but not after a dependen
   assert.equal(isWorkspacePackageOutputValid(parent, input), false);
 });
 
+test('package output identity survives a byte-identical dependency generation switch', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'workspace-install-generation-identity-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writePnpmWorkspaceFixture(root, { workspaces: ['apps/*', 'packages/*'] });
+  for (const name of ['cli', 'server', 'ui']) {
+    const dir = join(root, 'apps', name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  const packageDir = join(root, 'packages/consumer');
+  mkdirSync(join(packageDir, 'src'), { recursive: true });
+  writeFileSync(join(packageDir, 'package.json'), JSON.stringify({
+    name: '@fixture/consumer', types: './dist/index.d.ts', scripts: { build: 'fixture-compiler' },
+    dependencies: { 'fixture-types': '1.0.0' },
+  }));
+  writeFileSync(join(packageDir, 'src/index.ts'), 'export { value } from "fixture-types";\n');
+  const install = (generation) => {
+    const dir = join(root, '.happier/deps/node_modules', generation);
+    const compiler = join(dir, 'node_modules/@typescript/native/bin/tsc');
+    const external = join(dir, 'packages/consumer/node_modules/fixture-types');
+    mkdirSync(dirname(compiler), { recursive: true });
+    mkdirSync(external, { recursive: true });
+    writeFileSync(compiler, 'compiler launcher');
+    writeFileSync(join(compiler, '../../package.json'), '{"version":"1"}');
+    writeFileSync(join(external, 'package.json'), '{"name":"fixture-types","version":"1.0.0","main":"index.js"}');
+    writeFileSync(join(external, 'index.js'), 'export const value = 1;');
+    writeFileSync(join(external, 'index.d.ts'), 'export declare const value: 1;');
+    return { compiler, external, modules: dirname(external) };
+  };
+  const first = install('g000000001-11111111');
+  const second = install('g000000002-22222222');
+  const modules = join(packageDir, 'node_modules');
+  const select = ({ modules: target, compiler }) => {
+    if (existsSync(modules)) rmSync(modules);
+    symlinkSync(target, modules, process.platform === 'win32' ? 'junction' : 'dir');
+    return readWorkspacePackageInputFingerprint({
+      packageDir, resolveTypeScriptCliInvocationImpl: () => ({ compilerPath: compiler }),
+    });
+  };
+  let compiles = 0;
+  const prepare = () => ensureWorkspacePackagesBuiltByName(root, ['@fixture/consumer'], {
+    buildMode: 'source-dev',
+    workspaceBuildBoundary: {
+      prepareEnv: async (_dir, env) => ({ ...env }),
+      async runPackageBuild(dir, { env }) {
+        compiles++;
+        cpSync(join(dir, 'node_modules/fixture-types/index.d.ts'),
+          join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'));
+      },
+    },
+  });
+  const before = select(first);
+  await prepare();
+  const reselected = select(second);
+  const warm = await Promise.all([prepare(), prepare()]);
+  assert.equal(compiles, 1, 'both consumers reuse the previously compiled declaration');
+  assert.deepEqual(warm.map(result => result.built), [[], []]);
+  assert.equal(reselected, before, 'moving the installed compiler keeps the receipt current');
+
+  writeFileSync(join(second.external, 'index.d.ts'), 'export declare const value: 2;');
+  assert.notEqual(select(second), before, 'changed installed declarations still invalidate the receipt');
+  await Promise.all([prepare(), prepare()]);
+  assert.equal(compiles, 2, 'a genuine input change compiles once for both consumers');
+  assert.equal(readFileSync(join(packageDir, 'dist/index.d.ts'), 'utf8'), 'export declare const value: 2;');
+  writeFileSync(join(second.external, 'index.d.ts'), 'export declare const value: 1;');
+  writeFileSync(second.compiler, 'different compiler launcher');
+  assert.notEqual(select(second), before, 'changed compiler bytes still invalidate the receipt');
+});
+
 test('package input fingerprint changes with the selected compiler bytes', async (t) => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-compiler-identity-'));
   t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
