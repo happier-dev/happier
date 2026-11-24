@@ -74,10 +74,11 @@ afterEach(async () => {
 
 describe('Usage "Your apps" accounting', () => {
   it('reads the selected Environment from its collector and prices it with the shared catalog, never the Agents ledger', async () => {
+    const serverIdentityId = 'srv_usage_apps';
     const collector = createTelemetryCollectorActionBoundary({
       machineId: 'collector-1',
       accountId: 'account-a',
-      serverIdentityId: 'srv_usage_apps',
+      serverIdentityId,
       readCosts: (input) => ({
         ok: true,
         source: input.source,
@@ -100,7 +101,7 @@ describe('Usage "Your apps" accounting', () => {
           key: 'a',
           serverUrl: 'https://usage-your-apps.test',
           accountId: 'account-a',
-          serverIdentityId: 'srv_usage_apps',
+          serverIdentityId,
           currentAccount: true,
         },
       ],
@@ -123,6 +124,7 @@ describe('Usage "Your apps" accounting', () => {
               {
                 ...createDeploymentEnvironmentHeaderV1({
                   id: 'env-prod',
+                  serverId: serverIdentityId,
                   projectSourceId: 'source-billing',
                   telemetryMachineId: 'collector-1',
                 }),
@@ -131,6 +133,7 @@ describe('Usage "Your apps" accounting', () => {
               {
                 ...createDeploymentEnvironmentHeaderV1({
                   id: 'env-docs',
+                  serverId: serverIdentityId,
                   projectSourceId: 'source-billing',
                 }),
                 name: 'Docs',
@@ -168,6 +171,8 @@ describe('Usage "Your apps" accounting', () => {
     const slice = (await readUiUsageQueryBatch(context, { queries: [query] }))
       .results[0]!;
 
+    const accounting = slice.sources.find((source) => source.source === 'accounting');
+    expect(accounting?.status, accounting?.errorCode).toBe('available');
     expect(collector.reads).toEqual([
       expect.objectContaining({
         source: expect.objectContaining({
