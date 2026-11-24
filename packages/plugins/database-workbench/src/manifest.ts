@@ -109,7 +109,7 @@ export const plugin = definePlugin({
         ...createDatabaseInsightProducers({ executeOperation: runtime.executeOperation, admit: admitDatabaseOperation }),
         connectTarget(input, context) {
             return manualTargets(context).connect({ scope: input.scope, savedSecretId: input.savedSecretRef,
-                label: input.label, agentAccess: 'read', secrets: context.services.secrets, signal: context.signal });
+                label: input.label, secrets: context.services.secrets, signal: context.signal });
         },
         async readAccess(input, context) {
             if (isDeploymentTarget(input.target)) {

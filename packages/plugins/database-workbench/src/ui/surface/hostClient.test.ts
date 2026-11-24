@@ -100,7 +100,7 @@ it('relays the exact Environment describe and read without a subscription when t
   try {
     const signal = new AbortController().signal;
     await expect(client.describe(descriptor.target, signal)).resolves.toEqual({ descriptor, connection: 'standalone' });
-    await expect(client.operation({ operation: 'schemas.list', target: descriptor.target }, signal))
+    await expect(client.operation({ operation: 'schemas.list', target: descriptor.target, page: { rows: 20 } }, signal))
       .resolves.toMatchObject({ ok: true, schemas: [{ name: 'selected' }] });
     expect(executeAction).toHaveBeenCalledTimes(2);
   } finally { client.dispose(); await fixture.dispose(); }

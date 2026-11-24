@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import {
+  Button,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -27,6 +28,7 @@ import {
 import { WorkbenchMain } from './WorkbenchPage.js';
 import { InsightsDetailsTab, InsightsRailList } from './insights/InsightsRail.js';
 import { AddTelemetrySetup } from './insights/InsightsSetup.js';
+import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
 import {
   databaseTargetKey,
   readWorkbenchLaunchInput,
@@ -85,6 +87,7 @@ function DatabasePicker(
     current: WorkbenchTarget;
     targets: readonly WorkbenchTarget[];
     onSelect: (targetKey: string) => void;
+    onConnect?: () => void;
   }>,
 ) {
   const translate = usePluginTranslation();
@@ -127,11 +130,13 @@ function DatabasePicker(
           accessAsText
         />
       }
-      groups={[{ id: 'databases', accessibilityLabel: label, items }]}
+      groups={[{ id: 'databases', accessibilityLabel: label, items: props.onConnect
+        ? [...items, { id: CONNECT_ID, label: translate('plugins.database.connect.open', 'Connect a database') }]
+        : items }]}
       radioGroups={radioGroups}
-      // Connect a database… joins as the menu's action row when the one Connect flow is composed (owed).
       onSelect={(id) => {
-        if (id !== CONNECT_ID) props.onSelect(id);
+        if (id === CONNECT_ID) props.onConnect?.();
+        else props.onSelect(id);
         setOpen(false);
       }}
     />
@@ -161,6 +166,9 @@ function RailTab(
       (target) => target.targetKey === picker.selectedTargetKey,
     ) ?? picker.targets[0];
   const [openedKey, setOpenedKey] = React.useState<string | null>(null);
+  const [connecting, setConnecting] = React.useState(false);
+  const scope = props.launch.scope;
+  const connectHere = identity?.tab === 'database' && scope.kind === 'worktree';
   const open = React.useCallback(
     (intent: RailIntent) => {
       const view = detailsViewId(props.context);
@@ -182,6 +190,14 @@ function RailTab(
     },
     [current, instance, props.context, props.launch.scope],
   );
+  if (connecting && scope.kind === 'worktree') {
+    return <DatabaseConnection scope={scope} onCancel={() => { setConnecting(false); picker.refresh(); }} onConnected={descriptor => {
+      picker.select(databaseTargetKey(descriptor));
+      setOpenedKey(null);
+      setConnecting(false);
+      picker.refresh();
+    }} />;
+  }
   if (picker.status === 'loading' && picker.targets.length === 0)
     return <LoadingState layout="line" rows={6} rowShape="compact" />;
   if (picker.status === 'unavailable') {
@@ -202,11 +218,11 @@ function RailTab(
     );
   }
   if (!current) {
-    const scope = props.launch.scope;
     const telemetrySetup = identity?.tab === 'insights' && scope.kind === 'worktree'
       ? <AddTelemetrySetup scope={scope} />
       : null;
-    // Connect a database joins the Database tab once its flow is composed.
+    const connect = connectHere ? <Button title={translate('plugins.database.connect.open', 'Connect a database')}
+      variant="secondary" onPress={() => setConnecting(true)} /> : null;
     return (
       <EmptyState
         layout="line"
@@ -214,7 +230,7 @@ function RailTab(
           'plugins.database.rail.none',
           'No database for this project yet',
         )}
-        {...(telemetrySetup ? { action: telemetrySetup } : {})}
+        action={telemetrySetup ?? connect ?? undefined}
       />
     );
   }
@@ -223,6 +239,7 @@ function RailTab(
     <DatabasePicker
       current={current}
       targets={picker.targets}
+      onConnect={connectHere ? () => setConnecting(true) : undefined}
       onSelect={(key) => {
         setOpenedKey(null);
         picker.select(key);
@@ -247,7 +264,12 @@ function RailTab(
     <WorkbenchRailList
       key={current.targetKey}
       targetKey={current.targetKey}
-      header={pickerHeader}
+      header={current.target.kind === 'manual' ? <Stack>{pickerHeader}
+        <DatabaseForget target={current.target} onForgot={() => {
+          setOpenedKey(null);
+          picker.refresh();
+        }} />
+      </Stack> : pickerHeader}
       selected={selected}
       onOpen={open}
       showOverview={false}

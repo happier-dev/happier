@@ -149,7 +149,10 @@ development services, or use **Database** in the Project or Session side rail.
 The picker lists databases for the selected checkout. It can discover a network
 database URL in a dotenv file if Project Setup declares that config variable.
 When a running service uses the same variable for its database, the service takes
-precedence. You can also connect a database manually. The picker can show the
+precedence. To connect manually, choose **Connect a database** and select or add
+a Saved Secret for the connection. Use **Test and connect**, then **Try again**
+if the database is offline. **Forget database** removes the checkout association
+and keeps the Saved Secret available. The picker can show the
 database endpoint and the Machine that runs the workbench. Managed databases open
 from the deployment's Database page.
 

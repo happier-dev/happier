@@ -39,7 +39,7 @@ export interface DatabaseManualTargets {
         secrets: ManualSecrets; signal?: AbortSignal;
     }>): Promise<Readonly<{ descriptor: DatabaseDescriptorV1; connection: DatabaseWorkbenchConnection }>>;
     connect(input: Readonly<{
-        scope: DatabaseTargetsListInputV1['scope']; savedSecretId: string; label: string; agentAccess: DatabaseAgentAccessV1;
+        scope: DatabaseTargetsListInputV1['scope']; savedSecretId: string; label: string; agentAccess?: DatabaseAgentAccessV1;
         secrets: ManualSecrets; signal?: AbortSignal;
     }>): Promise<DatabaseDescriptorV1>;
     forget(input: Readonly<{ target: DatabaseManualTargetV1; signal?: AbortSignal }>): Promise<void>;
@@ -180,11 +180,15 @@ export function createManualDatabaseTargets(options: Readonly<{
             const target: DatabaseManualTargetV1 = { kind: 'manual', accountId: scope.accountId, workspace: scope.workspace, installationId: scope.installationId, projectKey: scope.projectKey, savedSecretId };
             const secretValue = await secrets.readSavedSecret(savedSecretId, { signal });
             const { openManualDatabaseConnection } = await import('./connection.js');
-            const connection = await openManualDatabaseConnection({ target, secretValue, access: 'read', signal, databaseEngines: options.databaseEngines });
+            const key = targetKey(target);
+            const existing = parseRecord(await daemonStorage.get(key, { signal }));
+            const retainedAccess = agentAccess ?? (existing && targetKey(existing.target) === key ? existing.agentAccess : 'read');
+            const connection = await openManualDatabaseConnection({ target, secretValue, access: 'read', signal,
+                databaseEngines: options.databaseEngines,
+                onSelectedEngine: engine => daemonStorage.set(key, { target, label, engine, agentAccess: retainedAccess }, { signal }),
+            });
             try {
-                const record: ManualRecord = { target, label, engine: connection.engine, agentAccess };
-                await daemonStorage.set(targetKey(target), record, { signal });
-                return describe(record, 'person');
+                return describe({ target, label, engine: connection.engine, agentAccess: retainedAccess }, 'person');
             } finally { await connection.close(); }
         },
         async forget({ target, signal }) {

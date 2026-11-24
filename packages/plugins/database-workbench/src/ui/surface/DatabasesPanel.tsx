@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
+  Button,
   EmptyState,
   ErrorState,
   Icon,
@@ -22,6 +23,7 @@ import {
 } from './mount.js';
 import { openWorkbenchPage } from './openWorkbench.js';
 import { CaptureConfiguration } from './CaptureConfiguration.js';
+import { DatabaseConnection, DatabaseForget } from './DatabaseConnection.js';
 
 const PANEL_LOCATION = Object.freeze({
   targetKey: '',
@@ -97,6 +99,8 @@ function DatabaseRows(
   const { targets, looked, status, error, refresh } = useDatabaseTargets(
     props.launch.scope,
   );
+  const [connecting, setConnecting] = React.useState(false);
+  const scope = props.launch.scope;
   const open = React.useCallback(
     (target: WorkbenchTarget) => {
       // The database's root: the Overview beside the rail; on a phone the rail itself (lab tablesp).
@@ -104,6 +108,15 @@ function DatabaseRows(
     },
     [instance, props.context.hostApi],
   );
+  if (connecting && scope.kind === 'worktree') {
+    return <DatabaseConnection scope={scope} onCancel={() => { setConnecting(false); refresh(); }} onConnected={() => {
+      setConnecting(false);
+      refresh();
+    }} />;
+  }
+  const connect = scope.kind === 'worktree' ? <Button
+    title={translate('plugins.database.connect.open', 'Connect a database')} variant="secondary"
+    onPress={() => setConnecting(true)} /> : null;
   if (status === 'loading' && targets.length === 0)
     return <LoadingState layout="line" rows={1} />;
   if (status === 'unavailable') {
@@ -132,31 +145,35 @@ function DatabaseRows(
           )}
         />
         <LookedDisclosure looked={looked} />
+        {connect}
       </Stack>
     );
   }
   return (
     <>
       {targets.map((target) => (
-        <Item
-          key={target.targetKey}
-          title={target.name}
-          // A database is an identity (its mark), and the row opens its workbench (the navigation chevron).
-          icon={<Icon name="database" tone="secondary" />}
-          showChevron
-          subtitle={targetSubtitle(target, translate)}
-          {...(target.relationCount
-            ? {
-                detail: translate(
-                  'plugins.database.target.tables',
-                  '{count} tables',
-                  { count: target.relationCount },
-                ),
-              }
-            : {})}
-          onPress={() => open(target)}
-        />
+        <Stack key={target.targetKey}>
+          <Item
+            title={target.name}
+            // A database is an identity (its mark), and the row opens its workbench (the navigation chevron).
+            icon={<Icon name="database" tone="secondary" />}
+            showChevron
+            subtitle={targetSubtitle(target, translate)}
+            {...(target.relationCount
+              ? {
+                  detail: translate(
+                    'plugins.database.target.tables',
+                    '{count} tables',
+                    { count: target.relationCount },
+                  ),
+                }
+              : {})}
+            onPress={() => open(target)}
+          />
+          {target.target.kind === 'manual' ? <DatabaseForget target={target.target} onForgot={refresh} /> : null}
+        </Stack>
       ))}
+      {connect}
     </>
   );
 }

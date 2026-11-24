@@ -123,6 +123,8 @@ import type { BotFaceProps, PageAsideColumnsProps, PagePinnedBarProps, KeyboardS
 import type { ExecutableParticipantPickerProps, SavedSecretChoiceListProps, SecretValueControlsProps, SecretValueTextProps } from '@happier-dev/plugin-ui/components';
 import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
 import { SavedSecretReferenceChoice } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { Button as PluginButton } from '@happier-dev/plugin-ui';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
@@ -378,9 +380,20 @@ function PluginUiPrivateQRCode(props: Readonly<{ data: string; size: number; tes
 }
 
 /** A plugin's saved-secret choice reads the signed-in Account's catalog, as Happier's own picker does. */
-function PluginUiPrivateSavedSecretChoice({ unavailableLabel: _unavailable, ...input }: SavedSecretChoiceListProps): React.ReactElement {
+function PluginUiPrivateSavedSecretChoice(input: SavedSecretChoiceListProps): React.ReactElement {
     const scope = useAccountSettingsScope();
-    return <SavedSecretReferenceChoice scope={scope} {...input} />;
+    if (input.onConnect) {
+        const onConnect = input.onConnect;
+        return <PluginButton testID={`${input.testIDPrefix}-open`} title={t('connectedServicesSetup.keyTitle')}
+            onPress={() => {
+                void presentConnectSheet({ scope, intent: 'link', service: { kind: 'key', keyKind: 'other' },
+                    current: input.selectedRef ?? undefined }).then(result => {
+                    if (result.kind !== 'dismissed') onConnect(result.secretRef);
+                });
+            }} />;
+    }
+    return <SavedSecretReferenceChoice scope={scope} selectedRef={input.selectedRef} onSelect={input.onSelect}
+        testIDPrefix={input.testIDPrefix} />;
 }
 
 /**

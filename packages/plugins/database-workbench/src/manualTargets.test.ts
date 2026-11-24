@@ -66,6 +66,27 @@ function manual(target: DatabaseTargetV1): DatabaseManualTargetV1 {
 }
 
 describe('manual target associations in the persistent daemon KV boundary', () => {
+    it('keeps a failed connection association for retry or Forget', async () => {
+        const state = await fixture();
+        const owner = createManualDatabaseTargets({ storage: state.storage, identity: identity('owner') });
+        const selected = scope('owner');
+        const input = { scope: selected, savedSecretId: 'selected-secret', label: 'Selected database', agentAccess: 'none' } as const;
+        const unavailable = { async readSavedSecret() { return `${state.secretValue}.missing`; } };
+        await expect(owner.connect({ ...input, secrets: unavailable })).rejects.toThrow();
+        const listed = await owner.list({ input: { scope: selected }, requester: 'person' });
+        expect(listed.targets.map(target => ({ label: target.label, engine: target.engine })))
+            .toEqual([{ label: input.label, engine: 'sqlite' }]);
+
+        const connected = await owner.connect({ scope: selected, savedSecretId: input.savedSecretId,
+            label: input.label, secrets: state.secrets });
+        expect(connected.target).toEqual(listed.targets[0]?.target);
+        await expect(owner.admit({ target: connected.target, access: 'read', requester: 'agent' }))
+            .rejects.toMatchObject({ code: 'database_agent_access_none' });
+        await owner.forget({ target: manual(connected.target) });
+        expect((await owner.list({ input: { scope: selected }, requester: 'person' })).targets).toEqual([]);
+        expect(await state.secrets.readSavedSecret(input.savedSecretId)).toBe(state.secretValue);
+    });
+
     it('lists a Project across worktrees without acquiring secrets or disclosing another scope', async () => {
         const state = await fixture();
         const owner = createManualDatabaseTargets({ storage: state.storage, identity: identity('owner') });

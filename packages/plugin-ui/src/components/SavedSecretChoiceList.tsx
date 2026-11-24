@@ -14,10 +14,13 @@ export type SavedSecretChoiceListProps = Readonly<{
   testIDPrefix: string;
   /** The reference currently chosen, which carries the check. */
   selectedRef: string | null;
-  onSelect: (selection: SavedSecretChoiceSelection) => void;
   /** Readable alternative on a host without the saved-secret choice presentation. */
   unavailableLabel?: string;
-}>;
+}> & (
+  | Readonly<{ onSelect: (selection: SavedSecretChoiceSelection) => void; onConnect?: never }>
+  /** Offer the host's saved-or-new secret flow and return only its accepted reference. */
+  | Readonly<{ onConnect: (ref: string) => void; onSelect?: never }>
+);
 
 /** The incumbent saved-secret choice list, shared with Happier core; the host loads and draws it. */
 export function SavedSecretChoiceList(props: SavedSecretChoiceListProps): ReactElement {

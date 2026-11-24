@@ -15,6 +15,8 @@ import {
     DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STRUCTURE_READ_ACTION_ID_V1,
+    DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
+    DATABASE_TARGETS_FORGET_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
     UI_DATABASE_DRAFT_READ_ACTION_ID_V1,
     UI_DATABASE_NAVIGATE_ACTION_ID_V1,
@@ -34,6 +36,7 @@ import {
   type PluginUiTestkitHostHandlers,
 } from '@happier-dev/plugin-sdk/testing';
 import { encodeBase64, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { Button } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
 import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
@@ -1085,6 +1088,67 @@ describe('Database workbench surfaces', () => {
     } finally {
       await fixture.dispose();
     }
+  });
+
+  it.each(['servicesPanel', 'rightSidebarTab'] as const)('connects a Saved Secret to the selected checkout from an empty %s', async (container) => {
+    const connect = databaseActionLocalIdV1(DATABASE_TARGETS_CONNECT_ACTION_ID_V1);
+    const forget = databaseActionLocalIdV1(DATABASE_TARGETS_FORGET_ACTION_ID_V1);
+    const { kind: _kind, ...placement } = scope;
+    const installed = { ...descriptor, target: { ...placement, kind: 'manual' as const, savedSecretId: 'saved-url' } };
+    let targets: DatabaseDescriptorV1[] = [];
+    let ready = false;
+    const operate = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
+      const { action, input } = request;
+      if (action === connect) {
+        expect(input).toMatchObject({ scope, savedSecretRef: 'saved-url' });
+        targets = [installed];
+        if (!ready) throw new PluginError({ code: 'database_target_unavailable', message: 'Database is offline.' });
+        return projectNativeJsonValueForTransport(installed);
+      }
+      return daemonAnswers(targets)(request);
+    });
+    const unlink = vi.fn(async (request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => {
+      expect(request).toMatchObject({ action: forget, input: { target: installed.target } });
+      expect(request.input).toEqual({ target: installed.target });
+      targets = [];
+      return { ok: true as const, result: { ok: true } };
+    });
+    const control = createPluginUiActionControlTestHost(unlink);
+    const render = container === 'servicesPanel' ? renderPanel : renderRail;
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: container, mountNonce: 'connect-empty' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)} presentationHost={{
+        renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+        renderSavedSecretChoiceList: input => <Button title="Saved database URL" onPress={() => input.onConnect?.('saved-url')} />,
+      }}>{render(context)}</PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: container === 'servicesPanel' ? 'databases-panel' : 'database-session-rail',
+      }, container },
+      target: container === 'servicesPanel' ? { kind: 'services' } : { kind: 'session', sessionId: 'session' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { ...connectionResourceHandlers(), executeAction: operate, actionControl: control.handler },
+    });
+    try {
+      const start = await fixture.findByRole('button', { name: 'Connect a database' });
+      await act(async () => { await fixture.press(start); });
+      const secret = await fixture.findByRole('button', { name: 'Saved database URL' });
+      await act(async () => { await fixture.press(secret); });
+      const connectButton = await fixture.findByRole('button', { name: 'Test and connect' });
+      await act(async () => { await fixture.press(connectButton); });
+      const retry = await fixture.findByRole('button', { name: 'Try again' });
+      expect(control.presentation('Forget database')).toBeDefined();
+      ready = true;
+      await act(async () => { await fixture.press(retry); });
+      await act(async () => { await Promise.resolve(); });
+      expect(control.presentation('Forget database')).toBeDefined();
+      expect(unlink).not.toHaveBeenCalled();
+      await act(async () => control.press('Forget database'));
+      await fixture.findByRole('button', { name: 'Connect a database' });
+      expect(unlink).toHaveBeenCalledTimes(1);
+      expect(operate.mock.calls.filter(([request]) => request.action === connect)).toHaveLength(2);
+    } finally { await fixture.dispose(); }
   });
 
   it('opens on the table its location names and reads its structure once', async () => {

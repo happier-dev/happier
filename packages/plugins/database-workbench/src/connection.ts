@@ -54,10 +54,15 @@ export function describeDatabaseConnection(connectionString: string, databaseEng
 /** Credential acquisition and access admission remain with the invoking target owner. */
 export async function openDatabaseConnection(input: Readonly<{
     connectionString: string; access: DatabaseOperationClassV1; signal?: AbortSignal; databaseEngines?: DatabaseEnginesServiceV1;
+    onSelectedEngine?: (engine: DatabaseEngineIdV1) => Promise<void>;
 }>): Promise<DatabaseWorkbenchConnection> {
     input.signal?.throwIfAborted();
     const descriptor = selectDatabaseConnection(input.connectionString, input.databaseEngines);
     if (!descriptor) throw new PluginError({ code: 'plugin_service_unavailable' });
+    if (input.onSelectedEngine) {
+        await input.onSelectedEngine(descriptor.engine);
+        input.signal?.throwIfAborted();
+    }
     if (descriptor.contributed && input.databaseEngines) return input.databaseEngines.open(descriptor.engine, {
         connectionString: input.connectionString, access: input.access, signal: input.signal,
     });
@@ -76,6 +81,8 @@ export async function openManualDatabaseConnection(input: Readonly<{
     access: DatabaseOperationClassV1;
     signal?: AbortSignal;
     databaseEngines?: DatabaseEnginesServiceV1;
+    onSelectedEngine?: (engine: DatabaseEngineIdV1) => Promise<void>;
 }>): Promise<DatabaseWorkbenchConnection> {
-    return openDatabaseConnection({ connectionString: input.secretValue, access: input.access, signal: input.signal, databaseEngines: input.databaseEngines });
+    return openDatabaseConnection({ connectionString: input.secretValue, access: input.access, signal: input.signal,
+        databaseEngines: input.databaseEngines, onSelectedEngine: input.onSelectedEngine });
 }
