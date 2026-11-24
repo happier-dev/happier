@@ -132,7 +132,8 @@ describe('xAI refresh custody', () => {
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
     });
     const staged = new Map<string, string>();
-    const context = { ...f.read, stagedCredentials: { set: async (key: string, value: string) => { staged.set(key, value); } } } as unknown as Parameters<ConnectedAccountRuntime['refresh']>[0];
+    const context = { ...f.read, stagedCredentials: { set: async (key: string, value: string) => { staged.set(key, value); },
+      delete: async (key: string) => { staged.delete(key); } } } as unknown as Parameters<ConnectedAccountRuntime['refresh']>[0];
     expect(await runtime.refresh(context)).toMatchObject({ status: 'connected', credentialKind: 'oauth' });
     expect(urls).toEqual(['https://auth.x.ai/.well-known/openid-configuration', 'https://auth.example/native-token']);
     expect(JSON.parse(staged.get('xaiCredential') ?? 'null')).toMatchObject({ tokenEndpoint: 'https://auth.example/native-token', refreshToken: 'fake-refresh', accessToken: 'fake-rotated' });
@@ -143,9 +144,12 @@ describe('xAI refresh custody', () => {
     await f.credentials.set('xaiCredential', JSON.stringify({ mode: 'subscription', accessToken: 'fake-old', refreshToken: 'fake-old-refresh', tokenEndpoint: 'https://auth.example/token', clientId: 'fake-client' }));
     f.request.mockImplementation(async () => ({ status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ access_token: 'fake-new-access', refresh_token: 'fake-new-refresh', expires_in: 3600 })) }));
     const staged = new Map<string, string>();
-    const context = { ...f.read, stagedCredentials: { set: async (key: string, value: string) => { staged.set(key, value); } } } as unknown as Parameters<ConnectedAccountRuntime['refresh']>[0];
+    const context = { ...f.read, stagedCredentials: { set: async (key: string, value: string) => { staged.set(key, value); },
+      delete: async (key: string) => { staged.delete(key); } } } as unknown as Parameters<ConnectedAccountRuntime['refresh']>[0];
     expect(await runtime.refresh(context)).toMatchObject({ status: 'connected', credentialKind: 'oauth', expiresAt: 3601000 });
     expect(JSON.parse(staged.get('xaiCredential') ?? 'null')).toMatchObject({ accessToken: 'fake-new-access', refreshToken: 'fake-new-refresh' });
+    // The rotated secrets also sit under the canonical keys the Session transcript collector registers.
+    expect({ accessToken: staged.get('accessToken'), refreshToken: staged.get('refreshToken') }).toEqual({ accessToken: 'fake-new-access', refreshToken: 'fake-new-refresh' });
     expect(f.saved.get('xaiCredential')).toContain('fake-old-refresh');
     expect(f.request).toHaveBeenCalledTimes(1);
   });

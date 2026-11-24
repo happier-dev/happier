@@ -47,8 +47,22 @@ function parseDeviceState(value: string | null): DeviceState {
   if (typeof row.pollIntervalMs !== 'number' || row.pollIntervalMs <= 0) throw new Error('Invalid xAI device interval');
   return { deviceCode: text(row.deviceCode), tokenEndpoint: endpoint(row.tokenEndpoint), pollIntervalMs: row.pollIntervalMs };
 }
+type XaiCredentialStore = ConnectedAccountAuthenticationContext['attemptCredentials'];
+/**
+ * The sealed xAI credential, plus its secrets under the canonical credential keys: the host's
+ * transcript collector registers those, and cannot see a token inside the JSON value.
+ */
+async function writeXaiCredential(store: XaiCredentialStore, credential: XaiCredential, options?: Readonly<{ signal?: AbortSignal }>) {
+  await store.set(XAI_CREDENTIAL_KEY, JSON.stringify(credential), options);
+  const secrets = credential.mode === 'api-key' ? { apiKey: credential.accessToken }
+    : { accessToken: credential.accessToken, ...(credential.refreshToken ? { refreshToken: credential.refreshToken } : {}) };
+  for (const key of ['apiKey', 'accessToken', 'refreshToken'] as const) {
+    const value = secrets[key as keyof typeof secrets];
+    if (value) await store.set(key, value, options); else await store.delete(key, options);
+  }
+}
 export async function saveCredential(credential: XaiCredential, context: ConnectedAccountAuthenticationContext): Promise<ConnectedAccountAuthCompletionResult> {
-  await context.attemptCredentials.set(XAI_CREDENTIAL_KEY, JSON.stringify(credential));
+  await writeXaiCredential(context.attemptCredentials, credential);
   return { status: 'connected', credentialKind: credential.mode === 'api-key' ? 'token' : 'oauth',
     ...(credential.subject ? { providerIdentity: { accountId: credential.subject, ...(credential.email ? { email: credential.email } : {}) } } : {}),
     displayName: credential.email ?? (credential.mode === 'api-key' ? 'xAI paid API key' : 'xAI subscription'),
@@ -177,7 +191,7 @@ export function createXaiPortableConnectedAccountRuntime(): ConnectedAccountRunt
           return { status: failure.kind === 'invalid_grant' || failure.kind === 'invalid_client' ? 'reconnectRequired' : 'unavailable', diagnostic: diagnostic(`xai_refresh_${policyReason ?? failure.providerErrorCode ?? response.status}`) };
         }
         const refreshed = parseToken(JSON.parse(new TextDecoder().decode(response.body)), context.invokedAtMs, { ...credential, tokenEndpoint });
-        await context.stagedCredentials.set(XAI_CREDENTIAL_KEY, JSON.stringify(refreshed), { signal });
+        await writeXaiCredential(context.stagedCredentials, refreshed, { signal });
         return { status: 'connected', credentialKind: 'oauth', ...(refreshed.expiresAtMs ? { expiresAt: refreshed.expiresAtMs } : {}) };
       } catch (error) {
         if (signal.aborted) throw error;

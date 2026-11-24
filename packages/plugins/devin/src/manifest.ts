@@ -18,6 +18,9 @@ const {
   ...DEVIN_AGENT_SETTINGS_DECLARATION
 } = DEVIN_AGENT_SETTINGS_CONTRIBUTION;
 
+/** The session and enterprise seat credentials Devin stores; a Session transcript masks both. */
+const DEVIN_SECRET_CREDENTIAL_KEYS = ['sessionToken', 'seatToken'] as const;
+
 export const DEVIN_PLUGIN = definePlugin({
   id: 'happier.agent.devin',
   version: '0.0.0',
@@ -58,8 +61,10 @@ export const DEVIN_PLUGIN = definePlugin({
             id: 'browser-session', kind: 'oauthAuthorizationCode', title: 'Sign in with Devin',
             callbackUrl: 'https://app.happier.dev/oauth/mcp/callback',
             scopes: [], pkce: 'required', allowRawAuthorizationCode: true, outcomeReconciliation: 'none',
+            secretCredentialKeys: [...DEVIN_SECRET_CREDENTIAL_KEYS],
           }, {
             id: 'enterprise-seat', kind: 'manual', title: 'Enterprise seat credential', outcomeReconciliation: 'none',
+            secretCredentialKeys: [...DEVIN_SECRET_CREDENTIAL_KEYS],
             setup: {
               url: 'https://docs.devin.ai/cli/enterprise/devin-auth',
               checklist: ['Your enterprise administrator must grant the Use Devin CLI role.', 'Use the native enterprise seat credential and its matching API server.'],
@@ -72,6 +77,7 @@ export const DEVIN_PLUGIN = definePlugin({
           }, {
             id: 'native-import', kind: 'manual', title: 'Import native login', credentialOrigin: 'native_import',
             browserReachability: 'unreachable', outcomeReconciliation: 'none',
+            secretCredentialKeys: [...DEVIN_SECRET_CREDENTIAL_KEYS],
             fields: [{ id: 'source', title: 'Source', secret: false, default: 'native',
               schema: { type: 'string', enum: ['native'] } }],
           }],
