@@ -24,6 +24,26 @@ function observation(machineId: string, overrides: Partial<DeploymentHealthObser
 const healthy = [observation('a'), observation('b')];
 
 describe('Environment health aggregate', () => {
+    it('reports a passing web check beside an unchecked database and keeps a real gap visible', () => {
+        const web = { serviceId: 'web', observation: { status: 'up' as const, observedAtMs: 2000 } };
+        const database = { serviceId: 'database', observation: {
+            status: 'unknown' as const, reason: 'running_unverified', observedAtMs: 2000,
+        } };
+        const member = { environmentId: environment.id, targetLinkId: targetLink.id, targetLinkRevision: targetLink.revision,
+            machineId: 'b', installationId: 'installation-b', role: 'runtime' as const, observedAtMs: 2000,
+            source: { kind: 'native' as const } };
+        const project = (services: readonly (typeof web | typeof database | { serviceId: string })[]) =>
+            projectDeploymentHealthAggregateV1({ environment, targetLink,
+                observations: [healthy[0], { ...member, services }] });
+        expect(project([web, database])).toMatchObject({
+            status: 'up', unknown: 0, authoritativeRecovery: true,
+        });
+        expect(project([database])).toMatchObject({ status: 'unknown', down: 0, authoritativeRecovery: false });
+        expect(project([web, { serviceId: 'database' }])).toMatchObject({
+            status: 'degraded', down: 1, authoritativeRecovery: false,
+        });
+    });
+
     it('retains actual stopped health without opening an outage or proving recovery for a native desired Stop', () => {
         const stopped = { environmentId: environment.id, targetLinkId: targetLink.id, targetLinkRevision: targetLink.revision,
             machineId: 'b', installationId: 'installation-b', role: 'runtime' as const, observedAtMs: 2000,

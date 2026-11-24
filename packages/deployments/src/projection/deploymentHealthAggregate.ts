@@ -49,13 +49,13 @@ const key = (machineId: string, role: DeploymentHealthRoleV1) => JSON.stringify(
 const rank: Record<DeploymentHealthStatusV1, number> = { up: 0, degraded: 2, unknown: 3, down: 4 };
 export const DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1 = 'running_unverified';
 
-function isRunningUnverified(evidence?: RankedHealthEvidence): boolean {
-    return evidence?.status === 'unknown' && evidence.reason === DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1;
+/** Current native liveness with no reported readiness check. */
+export function isDeploymentServiceRunningWithoutCheckV1(status: DeploymentHealthStatusV1 | undefined, reason: string | null | undefined): boolean {
+    return status === 'unknown' && reason === DEPLOYMENT_RUNNING_UNVERIFIED_REASON_V1;
 }
 
-// A liveness observation can never mask a failing sibling or missing coverage.
 function evidenceRank(evidence?: RankedHealthEvidence): number {
-    return isRunningUnverified(evidence) ? 1 : rank[evidence?.status ?? 'unknown'];
+    return isDeploymentServiceRunningWithoutCheckV1(evidence?.status, evidence?.reason) ? 1 : rank[evidence?.status ?? 'unknown'];
 }
 
 function sameMember(a: Member, b: Member) {
@@ -73,10 +73,15 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
     if ('services' in observation) {
         let worst: DeploymentHealthServicesObservationV1['services'][number] | undefined;
         let unavailable: typeof worst;
+        let unchecked: typeof worst;
         let expectedStop: typeof worst;
         for (const service of observation.services) {
             if (service.observation?.expectedDown === 'stop') {
                 if (!expectedStop || service.serviceId < expectedStop.serviceId) expectedStop = service;
+                continue;
+            }
+            if (isDeploymentServiceRunningWithoutCheckV1(service.observation?.status, service.observation?.reason)) {
+                if (!unchecked || service.serviceId < unchecked.serviceId) unchecked = service;
                 continue;
             }
             const status = service.observation?.status ?? 'unknown';
@@ -86,6 +91,9 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
             if (status === 'unknown' && (!unavailable || priority > evidenceRank(unavailable.observation)
                 || (priority === evidenceRank(unavailable.observation) && service.serviceId < unavailable.serviceId))) unavailable = service;
         }
+        // An unchecked running service is advisory when this Machine has real check evidence.
+        // If there is no such evidence, retain liveness without calling the workload healthy.
+        worst ??= unchecked;
         // Keep unavailable coverage alongside a proved outage. Neither fact
         // changes the other, and both count the same Machine only once.
         const services: Array<typeof worst> = unavailable && worst?.observation?.status === 'down' ? [worst, unavailable] : worst ? [worst] : [];
@@ -189,7 +197,7 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
     const production = environment.protection === 'production';
     const down = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && (value.status === 'down'
         || (production && value.status === 'unknown'
-            && !(value.role === 'runtime' && value.source === 'native' && isRunningUnverified(value)))))).length;
+            && !(value.role === 'runtime' && value.source === 'native' && isDeploymentServiceRunningWithoutCheckV1(value.status, value.reason)))))).length;
     const degraded = rows.filter(member => member.status === 'degraded').length;
     const unknown = rows.filter(member => member.evidence.some(value => value.expectedDown !== 'stop' && value.status === 'unknown')).length;
     const edge = rows.flatMap(member => member.evidence.filter(value => value.role === 'edge'));
