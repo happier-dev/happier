@@ -1132,11 +1132,11 @@ use the new value. Saving only a managed database login updates the Environment
 binding and seals the Saved Secret to its controller. The Railway app's Variables
 and runtime Link revision stay as they were.
 
-Workbench can list the linked database. Its read path returns
-`database_transport_unavailable` until Workbench can open a limited Railway
-database login. For writes, bind
-a separately reviewed login and an address the controller Machine can reach,
-such as a Railway TCP proxy. Removing an adopted Link defaults
+Workbench can list the linked database. Reads and writes both reach it at the
+service's Public Networking TCP proxy, over TLS with the server identity
+unverified. Reads use the limited login; writes use a separately reviewed login
+whose host and port must be that proxy. Only the login's user name and password
+are used, so options in its URL cannot turn TLS off. Removing an adopted Link defaults
 to unlinking. Explicit service deletion targets the selected Railway
 environment. Review the service's volume separately in Railway.
 [Railway database reference](https://docs.railway.com/databases/reference) ·

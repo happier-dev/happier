@@ -48,17 +48,10 @@ export function railwayDatabaseRuntime(engine: Engine): DeploymentTargetDatabase
       if (!database) return { targets: [], completeness: { complete: false, reason: 'transport_unproven' } };
       return { targets: [descriptor(engine, { ...target, database }, placement)], completeness: { complete: true } };
     },
-    async open({ target, placement, access }, context) {
-      // The host reads through `readRoleEndpoint` with the limited login.
-      if (access !== 'write') throw new PluginError({ code: 'database_transport_unavailable',
-        message: 'Railway reads require a limited database login.' });
-      const readRole = context.services.secrets.readDataRole;
-      if (!readRole) throw new PluginError({ code: 'write_connection_setup_required' });
-      const engines = context.services.databaseEngines;
-      if (!engines) throw new PluginError({ code: 'plugin_service_unavailable' });
-      const connectionString = await readRole({ role: 'write', signal: context.signal });
-      const connection = await engines.open(engine, { connectionString, access, signal: context.signal });
-      return { descriptor: descriptor(engine, target, placement), connection };
+    async open() {
+      // The host opens reads and writes at `readRoleEndpoint`, over TLS with its declared trust.
+      throw new PluginError({ code: 'database_transport_unavailable',
+        message: 'Railway databases open through their declared public endpoint.' });
     },
   };
 }

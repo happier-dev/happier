@@ -494,8 +494,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             const selected = admitted.selected ?? refuse('target_mismatch');
             const bound = await bind(admission, selected, { access: operation, database: target.database });
             try {
-                const resolved = operation === 'read' && bound.runtime.readRoleEndpoint
-                    ? await bindReadAccess(admitted, bound).openRead().then(connection => ({ connection, descriptor: {
+                // A declared endpoint owns how this database is reached, for reads and writes alike.
+                const resolved = (operation === 'read' || operation === 'write') && bound.runtime.readRoleEndpoint
+                    ? await (operation === 'read' ? bindReadAccess(admitted, bound).openRead()
+                        : bindReadAccess(admitted, bound).openWrite()).then(connection => ({ connection, descriptor: {
                         target, engine: connection.engine, label: target.database, origin: admission.origin,
                         capabilities: builtinDatabaseCapabilities(connection.engine), access: summary, placement: bound.placement,
                     } }))

@@ -312,6 +312,22 @@ describe('managed database attachment at the deployment owner', () => {
                 statements: [expect.stringContaining('IDENTIFIED BY RANDOM PASSWORD'), expect.stringContaining('GRANT SELECT, SHOW VIEW'),
                     expect.stringContaining('ACCOUNT UNLOCK')] });
             expect(JSON.stringify(preview)).not.toContain('writer:fixture');
+
+            // Workbench writes reach the same declared endpoint as reads: TLS is mandatory and the
+            // provider's unverified trust is honoured; the person's URL options cannot turn it off.
+            runtime.readRoleEndpoint = vi.fn(async () => ({ connectionString: `mysql://selected/${target.database}`,
+                trust: 'encrypted_unverified' as const }));
+            writeUrl = `mysql://writer:fixture@selected:3306/${target.database}?ssl=false&sslmode=DISABLED`;
+            const encrypted = await service.resolve(write, 'write');
+            try {
+                await expect(encrypted.connection.execute(write)).resolves.toMatchObject({ ok: true });
+            } finally { await encrypted.connection.close(); }
+            expect(createConnection.mock.calls.at(-1)?.[0]).toMatchObject({ uri: `mysql://writer:fixture@selected/${target.database}`,
+                ssl: { rejectUnauthorized: false, verifyIdentity: false } });
+            const opened = createConnection.mock.calls.length;
+            writeUrl = `mysql://writer:fixture@private.railway.internal/${target.database}`;
+            await expect(service.resolve(write, 'write')).rejects.toMatchObject({ code: 'target_mismatch' });
+            expect(createConnection).toHaveBeenCalledTimes(opened);
         } finally { await owners.dispose(); }
     });
 });

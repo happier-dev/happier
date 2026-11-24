@@ -44,8 +44,11 @@ describe('Railway managed runtime registered with the SDK host', () => {
           scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe', readOnly: true,
           async run(_input: JsonValue, context: PluginAccountActionContext): Promise<JsonValue> {
             const listing = await runtime.listTargets({ preparation, target, placement }, context);
-            await expect(runtime.open({ preparation, target: { ...target, database: 'railway' }, access: 'read', placement }, context))
-              .rejects.toMatchObject({ code: 'database_transport_unavailable' });
+            // The host opens reads and writes at `readRoleEndpoint` with its declared trust; no raw-URL path remains.
+            for (const access of ['read', 'write'] as const) {
+              await expect(runtime.open({ preparation, target: { ...target, database: 'railway' }, access, placement }, context))
+                .rejects.toMatchObject({ code: 'database_transport_unavailable' });
+            }
             return JSON.parse(JSON.stringify(listing));
           },
         } } });

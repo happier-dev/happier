@@ -120,7 +120,8 @@ export type DeploymentDatabaseEndpointV1 = Readonly<{ connectionString: string }
 /** The deployment owner supplies its admitted selection and captured invocation custody. */
 export interface DeploymentTargetDatabaseRuntimeV1 {
     /** Optional native setup for this exact linked database. Return the provider-selected
-     * endpoint without credentials. The host always uses TLS and honours the declared trust. */
+     * endpoint without credentials. When declared, the host opens reads and writes there,
+     * always over TLS with the declared trust; `open` is not used for this target. */
     readRoleEndpoint?(input: Readonly<{
         preparation: DeploymentTargetPreparationBaseV1;
         target: DatabaseManagedDeploymentTargetV1;
