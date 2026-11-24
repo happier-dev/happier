@@ -10,7 +10,7 @@ import { MachineSetupResolveResultV1Schema, MachineSetupResolvedSourceV1Schema, 
   type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isMachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
@@ -125,11 +125,19 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
   }
   // Home selects the actor's recipient envelope; installed custody still owns native effects.
   const requester = readRequesterAccountActionTransportContext(params.context.externalActionExecutionAuthorization);
+  const binding = params.context.externalActionExecutionAuthorization?.binding;
+  const foreignWithoutCustody = !requester && binding !== undefined && binding.accountId !== binding.custodianAccountId;
   const hydrator = createManagedPresetHydrator({ credentials: requester?.credentials ?? params.runtime.credentials,
     serverUrl: params.runtime.serverHttpBaseUrl });
   const opened = await hydrateManagedOpaqueSetupSourcesV1({ sources: requested, resolvedSources: resolved.sources,
-    open: async source => await hydrator.openRecipientProjection({ presetId: source.presetId,
-      mode: source.mode, projection: source.projection, signal: params.signal }) });
+    open: async source => {
+      // Another person's E2EE copy opens only with their own admitted custody, never the custodian's key.
+      // Plain content is server-readable by contract and uses no key.
+      if (foreignWithoutCustody && source.mode === 'e2ee') throw createActionExecuteFailureError({ ok: false,
+        errorCode: 'requester_account_context_unavailable', error: 'requester_account_context_unavailable', effectAttempted: false });
+      return await hydrator.openRecipientProjection({ presetId: source.presetId,
+        mode: source.mode, projection: source.projection, signal: params.signal });
+    } });
   if (!opened) return null;
   let index = 0;
   const local = pending.map(source => source.kind === 'bundledPreset' ? source : opened[index++]);

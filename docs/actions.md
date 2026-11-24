@@ -3365,6 +3365,12 @@ that exact effect and retain its credential floor; spawn-only or template-only
 grants do not install software. The native Setup leaf reuses the installation's
 existing sealed invocation codec with a fresh request/reply key. It carries no
 Account bearer or Account encryption key, including on a shared Machine.
+On another person's Machine the receiving daemon opens the member's own preset
+copies with the dispatching Run's requester custody that this installation
+already retains, the same custody that Run's dispatch spent. When the Run is
+hosted on a different Machine, the leaf stays codec-only and a member's opaque
+preset refuses with `requester_account_context_unavailable`. The custodian's
+key never opens another person's copy.
 No-software Copy and Update retain their token-only transport.
 A daemon that predates the optional
 field rejects the strict input instead of silently starting without setup.

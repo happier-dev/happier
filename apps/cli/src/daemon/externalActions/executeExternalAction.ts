@@ -47,7 +47,7 @@ import { deriveMountedPluginInvocationCaller, type MountedAccountPluginExecution
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { isManagedEnrollmentPolicyChildAccountCustody, isOriginalOwnAccountActionCustody,
-  isOriginalSessionInputAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
+  isOriginalSessionInputAccountActionCustody, readWorkflowSetupRequesterRunId } from '../sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { createExternalActionStartDiagnosticRecorder, refuseExternalActionPhase, runExternalActionPhase, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
 import { setApprovalTraceArtifactId, timeApprovalPhase, timeApprovalPhaseSync, timeWebLatencyPhase, withApprovalActionTrace, withWebLatencyTrace } from './webLatencyTrace';
@@ -416,7 +416,13 @@ async function executeExternalActionRequest(input: Readonly<{
       || isOriginalSessionInputAccountActionCustody(executionAuthorization.data.binding)
       || (managedReviewedParent?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1
         && isManagedEnrollmentPolicyChildAccountCustody(executionAuthorization.data.binding)));
-  if (!managedControllerCodec && executionAuthorization?.success && (executionAuthorization.data.requesterAccountContext || prepareOwnAccount)) {
+  // A member's reviewed Setup leaf keeps its codec for the envelope and spends its
+  // Run's retained requester custody when this installation hosts that Run.
+  const workflowSetupRequester = managedControllerCodec && executionAuthorization?.success
+    && input.prepareRequesterAccountContext !== undefined
+    && readWorkflowSetupRequesterRunId(executionAuthorization.data.binding) !== null;
+  if ((!managedControllerCodec || workflowSetupRequester) && executionAuthorization?.success
+    && (executionAuthorization.data.requesterAccountContext || prepareOwnAccount)) {
     const authorization = executionAuthorization.data;
     diagnoseSessionInput('requester_prepare', 'started');
     if (input.signal?.aborted || !input.prepareRequesterAccountContext) return { kind: 'invalid_request',
@@ -428,7 +434,9 @@ async function executeExternalActionRequest(input: Readonly<{
         ...(input.signal ? { signal: input.signal } : {}) }));
     trace('requester_prepare.end');
     requesterContext = preparedRequester.ok ? preparedRequester.value : null;
-    if (!requesterContext) {
+    // A Run hosted on another Machine leaves no custody here: the leaf stays
+    // codec-only, and a member's own opaque copy refuses typed at its opener.
+    if (!requesterContext && !(workflowSetupRequester && !preparedRequester.ok && !preparedRequester.executionFailure)) {
       const requesterFailure = !preparedRequester.ok ? preparedRequester.executionFailure : undefined;
       const requesterHomeUnavailable = requesterFailure?.errorCode === 'project_requester_home_unavailable';
       diagnoseSessionInput('requester_prepare', requesterHomeUnavailable ? 'home_unavailable' : 'refused');

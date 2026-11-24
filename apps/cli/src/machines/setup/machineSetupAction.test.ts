@@ -33,7 +33,7 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
   });
-  it.each(['owner', 'member', 'plain-member', 'wrong-recipient'] as const)('opens the Home-selected preset with its admitted %s custody', async principal => {
+  it.each(['owner', 'member', 'plain-member', 'wrong-recipient', 'unadmitted-member'] as const)('opens the Home-selected preset with its admitted %s custody', async principal => {
     const { createRequesterCurrentnessSocketHarness } = await import('@/testkit/backends/requesterCurrentnessSocketHarness');
     const { admitRequesterAccountActionContext } = await import('@/daemon/sessionEncryption/requesterAccountActionProjection');
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'e2ee' });
@@ -65,6 +65,10 @@ describe('admitted Machine setup snapshot lifetime', () => {
     const contextFor = async (actionId: 'machines.setup.plan' | 'machines.setup.apply') => {
       const context = fixture.context(actionId);
       if (principal === 'owner') return context;
+      // A member's signed root that reached this Machine without the member's own custody.
+      if (principal === 'unadmitted-member') return { ...context, externalActionExecutionAuthorization: {
+        ...context.externalActionExecutionAuthorization!, binding: { ...context.externalActionExecutionAuthorization!.binding, accountId: 'bob' } },
+        machineAdmission: { ...context.machineAdmission!, actorAccountId: 'bob' } };
       const admitted = await admitRequesterAccountActionContext({ authorization: {
         ...context.externalActionExecutionAuthorization!, binding: { ...context.externalActionExecutionAuthorization!.binding, accountId: 'bob', accountEncryptionMode: mode } },
         credentials: member, serverId: configuration.activeServerId, serverIdentityId: 'srv_home',
@@ -96,6 +100,11 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(fixture.metadataWrites).toEqual([]);
     if (principal === 'wrong-recipient') {
       expect(result).toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
+      return;
+    }
+    if (principal === 'unadmitted-member') {
+      // Never opened with the custodian's key: a typed refusal, not its credential_unavailable.
+      expect(result).toMatchObject({ ok: false, errorCode: 'requester_account_context_unavailable' });
       return;
     }
     expect(result).toMatchObject({ sources: [source, direct], recipePlans: [] });

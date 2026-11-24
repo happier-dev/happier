@@ -843,6 +843,7 @@ import { resolveTrackedConnectedServiceBindingsRaw } from '../connectedServices/
 import { removeRuntimeAuthFailureReportOutboxItemsForSession } from '../connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
 import { createConnectedServiceRecoverySupersessionCleaner } from '../connectedServices/continuation/continuationRecoverySupersession';
 import { createDaemonRunnerInvocationServices } from '@/daemon/agentRuntime/invocationServices';
+import { acquireWorkflowRequesterCredentials } from '@/daemon/workflows/requesterCustody';
 import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
@@ -11817,6 +11818,17 @@ export async function startDaemonSessionControlRuntime(
                   ...(signal ? { signal } : {}),
                 });
                 return custody ? { ...custody, release: async () => {} } : null;
+              },
+              // The Run's own retained requester custody, the same one its dispatch spent.
+              resolveWorkflowRunRequesterCustody: async (runId, attribution) => {
+                const retained = await acquireWorkflowRequesterCredentials({ happyHomeDir: configuration.happyHomeDir,
+                  serverId: attribution.serverId, machineId: attribution.machineId,
+                  installationId: attribution.installationId, scopeId: runId, accountId: attribution.accountId,
+                  homeServerIdentityId: authorization.binding.serverIdentityId, serverHttpBaseUrl: params.serverBaseUrl,
+                  ...(signal ? { signal } : {}) });
+                return retained ? { credentials: retained.credentials, attribution, serverHttpBaseUrl: params.serverBaseUrl,
+                  getBoundSessionId: () => runId, release: retained.release,
+                  isCurrent: async () => !signal?.aborted && await isRetainedCustodyCurrent() } : null;
               },
               resolveCurrentMachineExecutionOriginContext: signal => params.resolveCurrentMachineExecutionOriginContext?.(signal)
                 ?? Promise.resolve(null),
