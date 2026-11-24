@@ -23,7 +23,7 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import { createCliLocalServiceClientActionExecutor } from './cliActionDeps/localServices';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, RuntimeActionExecute, ActionId } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { relaysWorkflowDeploymentBackup } from './controllerDeploymentDispatch';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type {
   ExternalSessionPluginAdmissionOwner,
@@ -317,10 +317,8 @@ export function createCliActionHost(params: CliActionExecutorParams):
       ...(params.sessionStop ? { sessionStop: params.sessionStop } : {}),
       ...(params.hostActionApprovalLifetime ? { hostActionApprovalLifetime: params.hostActionApprovalLifetime } : {}),
       ...(runActionOperation ? { runActionOperation: async (request) => {
-        // The signed receiver owns the operation for relayed backup work.
-        const relaysBackup = isDeploymentBackupActionIdV1(request.actionId) && !params.deploymentBackupAction;
-        const relaysRestore = request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 && !params.deploymentRestore;
-        if (request.context.actionCaller?.kind === 'workflowRun' && (relaysBackup || relaysRestore)) {
+        // The signed receiver owns the operation for relayed Workflow backup work.
+        if (relaysWorkflowDeploymentBackup(request.actionId, request.context)) {
           return request.execute(request.context);
         }
         return runActionOperation(request);

@@ -1,5 +1,5 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentTransportActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentBackupActionIdV1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentTransportActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { isDeploymentEnvironmentPlacementActionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -15,6 +15,16 @@ export function readControllerDeploymentWorkflowCaller(actionId: string, context
   return !carried || actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
     && carried === caller.authorization.externalActionExecutionAuthorization
     && carried.binding.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 ? caller : null;
+}
+
+/**
+ * A Workflow's backup or restore without its own signed root spends the Workflow's
+ * Home admission (the relay), including an approved replay on a daemon that also
+ * hosts the installed owner. A received root stays with the installed owner.
+ */
+export function relaysWorkflowDeploymentBackup(actionId: string, context: ActionExecutorContext): boolean {
+  return (isDeploymentBackupActionIdV1(actionId) || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1)
+    && readControllerDeploymentWorkflowCaller(actionId, context) !== null;
 }
 
 /** Selects the installed deployment dispatch path for original Actions. */

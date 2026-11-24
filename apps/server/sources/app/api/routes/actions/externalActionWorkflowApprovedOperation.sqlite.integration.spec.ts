@@ -36,7 +36,8 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { sealSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
-import { DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { computeEnvironmentSecretLaunchAdmissionDigestV1, type EnvironmentSecretLaunchAdmissionBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 let server: Awaited<ReturnType<typeof startWorkflowApprovedOperationServer>>;
@@ -659,6 +660,106 @@ it('admits installed Workflow deployment provenance at current placement without
     await db.automationRun.update({ where: { id: runId }, data: { state: 'cancelled' } });
     expect((await nativeRequest(transitionPath, stageBody)).status).toBe(401);
     await db.automationRun.update({ where: { id: runId }, data: { state: activeRun.state } });
+}, 120_000);
+
+it('admits a Workflow backup run root at secret launch like the direct root, only for its own Environment and member (L11)', async () => {
+    const [publisher, other] = server.machines;
+    const backupEnvironment = async (createdByAccountId = server.accountId) => {
+        const project = await server.createDeploymentProject();
+        const environment = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: project.projectSourceId, createdByAccountId,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: publisher.id, buildMachineId: publisher.id, ...project.environmentContent,
+        } });
+        const link = await db.deploymentTargetLink.create({ data: {
+            environmentId: environment.id, createdByAccountId, role: 'runtime',
+            sourceKind: 'host', hostTargetId: 'own-server', targetKind: 'ownServer', state: 'deployed', ...project.runtimeContent,
+            machines: { create: [{ machineId: publisher.id, installationId: publisher.installationId, position: 0, state: 'active' }] },
+        } });
+        const receipt = await db.deployment.create({ data: { environmentId: environment.id, targetLinkId: link.id,
+            operation: 'deploy', state: 'succeeded', requestKey: randomUUID(), requestedByAccountId: createdByAccountId,
+            actionOperationId: randomUUID(), acceptedControllerMachineId: publisher.id,
+            acceptedControllerInstallationId: publisher.installationId, ...project.runtimeContent } });
+        await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: link.id } });
+        await db.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: receipt.id } });
+        return { environment, link, receipt };
+    };
+    const own = await backupEnvironment();
+    const sibling = await backupEnvironment();
+    const actionId = DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1;
+    const target = { kind: 'machine' as const, machineId: publisher.id };
+    const backupInput = (scope: typeof own) => ({ serverId: server.homeId, environmentId: scope.environment.id,
+        machineId: publisher.id, installationId: publisher.installationId, targetLinkId: scope.link.id,
+        deploymentId: scope.receipt.id, expectedRevision: scope.environment.revision, configRevision: 1 });
+    const headers = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' };
+    const mintDirect = async () => {
+        const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: randomUUID(), target, input: backupInput(own) });
+        const response = await fetch(`${server.baseUrl}${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`, {
+            method: 'POST', headers, body: JSON.stringify({ v: 1, machineId: publisher.id, envelope }) });
+        expect(response.status, await response.clone().text()).toBe(200);
+        return ExternalActionExecutionAuthorizationV1Schema.parse(await response.json());
+    };
+    const runId = randomUUID();
+    const snapshot = await materializeWorkflowAcceptedSnapshotFixture({
+        definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
+            document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId: publisher.id, executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: publisher.id, directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+    });
+    const currentness = await fetchAutomationAccountCurrentnessWitnessTx(db, server.accountId);
+    if (!currentness) throw new Error('account_currentness_unavailable');
+    await admitWorkflowRun({ accountId: server.accountId, machineId: publisher.id, runId,
+        accountCurrentness: currentness, origin: { kind: 'direct' }, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+            sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: server.accountId, runId }, acceptedSnapshot: snapshot })) });
+    await server.claim(publisher.id);
+    const requestWorkflowRoot = (input: ReturnType<typeof backupInput>) => {
+        const requestId = `${runId}/${randomUUID()}/0`;
+        const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input });
+        const origin = { runId, requestId };
+        return fetch(`${server.baseUrl}${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`, {
+            method: 'POST', headers, body: JSON.stringify({ v: 1, machineId: publisher.id, envelope, workflowActionOrigin: origin,
+                installationProof: signMachineInstallationProof({ privateKey: publisher.keys.secretKey, payload: {
+                    version: 1, accountId: server.accountId, machineId: publisher.id, installationId: publisher.installationId,
+                    externalActionOrigin: { homeId: server.homeId, actionId, requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin },
+                } }) }) });
+    };
+    type Authorization = Awaited<ReturnType<typeof mintDirect>>;
+    const launch = async (root: Authorization, scope: typeof own = own, changes: Partial<EnvironmentSecretLaunchAdmissionBodyV1> = {}) => {
+        const path = `/v1/deployments/environments/${scope.environment.id}/secret-launch-admission`;
+        const body: EnvironmentSecretLaunchAdmissionBodyV1 = { serverId: server.homeId, environmentId: scope.environment.id,
+            targetLinkId: scope.link.id, machineId: publisher.id, installationId: publisher.installationId,
+            materialization: { kind: 'deployment', deploymentId: scope.receipt.id, actionOperationId: scope.receipt.actionOperationId },
+            ...changes };
+        const payload = { ...body, proof: signMachineInstallationProof({ privateKey: publisher.keys.secretKey, payload: {
+            version: 1, accountId: server.accountId, machineId: publisher.id, installationId: publisher.installationId,
+            deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } } }) };
+        const response = await fetch(`${server.baseUrl}${path}`, { method: 'POST', body: JSON.stringify(payload), headers: {
+            'content-type': 'application/json',
+            [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+            [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+            [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                effectActionId: actionId, target, installationId: publisher.installationId,
+                requestId: root.binding.requestId, privateKey: publisher.keys.secretKey, method: 'POST', path, body: payload }) } });
+        return { status: response.status, body: await response.json() as unknown };
+    };
+    expect(await launch(await mintDirect()), 'direct control').toMatchObject({ status: 200, body: { ok: true } });
+    const minted = await requestWorkflowRoot(backupInput(own));
+    expect(minted.status, await minted.clone().text()).toBe(200);
+    const workflowRoot = ExternalActionExecutionAuthorizationV1Schema.parse(await minted.json());
+    expect(workflowRoot.binding).toMatchObject({ workflowActionOrigin: { runId },
+        deploymentNativeAdmission: { kind: 'backup', environmentId: own.environment.id, deploymentId: own.receipt.id } });
+    expect(await launch(workflowRoot), 'workflow child').toMatchObject({ status: 200, body: { ok: true } });
+    // The admitted root names one Environment and one installation.
+    expect((await launch(workflowRoot, sibling)).status).not.toBe(200);
+    expect((await launch(workflowRoot, own, { machineId: other.id, installationId: other.installationId })).status).not.toBe(200);
+    // A Workflow step naming an Environment the requester can no longer deploy is refused at mint.
+    const retired = await backupEnvironment();
+    await db.deploymentEnvironment.update({ where: { id: retired.environment.id }, data: { deletedAt: new Date() } });
+    expect((await requestWorkflowRoot(backupInput(retired))).status).toBe(403);
 }, 120_000);
 
 it('admits same-Account accepted Run placement without deciding receiver consent, with receiving installation currentness', async () => {
