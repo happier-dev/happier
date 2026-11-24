@@ -16,6 +16,11 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
+    "./finding-brief": {
+      "happier-source": "./src/insights/findingBrief.ts",
+      "types": "./dist/insights/findingBrief.d.ts",
+      "default": "./dist/insights/findingBrief.js"
+    },
     "./happier-plugin-ui/database-panel-native": "./src/ui/surface/DatabasesPanel.tsx",
     "./happier-plugin-ui/database-workbench-native": "./src/ui/surface/WorkbenchPage.tsx",
     "./happier-plugin-ui/database-rail-native": "./src/ui/surface/DatabaseRailTab.tsx"

@@ -20,7 +20,6 @@ import {
   type DatabaseCaptureEndpointV1,
   type DatabaseCaptureCursorV1,
   type DatabaseCaptureSummaryV1,
-  type DatabaseCaptureTraceGetResultV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -212,20 +211,11 @@ export function createTelemetryCaptureReads(
     async trace(
       traceId: string,
       signal?: AbortSignal,
-    ): Promise<Extract<DatabaseCaptureTraceGetResultV1, { ok: true }>> {
-      return settle(
-        DatabaseCaptureTraceGetResultV1Schema.safeParse(
-          await call(
-            DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
-            {
-              source: source(environment),
-              traceId,
-              page: { limit: PAGE_LIMIT },
-            },
-            signal,
-          ),
-        ),
-      );
+    ) {
+      const traceRead = { source: source(environment), traceId, page: { limit: PAGE_LIMIT } };
+      return settle(DatabaseCaptureTraceGetResultV1Schema.safeParse(
+        await call(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, traceRead, signal),
+      ));
     },
     /** A cut log line's whole body, only when the person opens it. */
     async logBody(id: string, signal?: AbortSignal): Promise<string | null> {

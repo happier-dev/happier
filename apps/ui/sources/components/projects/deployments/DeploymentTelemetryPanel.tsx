@@ -9,6 +9,7 @@ import type {
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
 import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { SESSION_INPUT_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import {
   CaptureEndpoints,
@@ -21,8 +22,9 @@ import {
   captureSummaryFailed,
   requestLabelOf,
   type CaptureEndpointAction,
-  type CapturedTraceV1,
 } from '@happier-dev/plugins-telemetry/capture-views';
+import { buildDatabaseFindingBriefV1, createDatabaseBriefHandoffControl } from '@happier-dev/plugins-database-workbench/finding-brief';
+import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -38,10 +40,12 @@ import { Text } from '@/components/ui/text/Text';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { AddCheckSetup } from './AddCheckSetup';
 import { Typography } from '@/constants/Typography';
+import { randomUUID } from '@/platform/randomUUID';
 import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getPreferredLanguage, t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { createDeploymentActions } from './deploymentActions';
@@ -317,6 +321,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   ) : tab === 'traces' && openTrace && openTrace.reads === reads ? (
     <TelemetryRequestDetail
       reads={openTrace.reads}
+      lifetime={lifetime}
       active={active}
       request={openTrace.request}
       locale={locale}
@@ -461,19 +466,20 @@ function TelemetryMenu({ onOpenSettings, onClear }: Readonly<{
 
 type RequestRead =
   | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'ready'; trace: CapturedTraceV1 }>
+  | Readonly<{ kind: 'ready'; trace: Awaited<ReturnType<TelemetryCaptureReads['trace']>> }>
   | Readonly<{ kind: 'unavailable'; code: string }>;
 
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
 function TelemetryRequestDetail(props: Readonly<{
   reads: TelemetryCaptureReads;
+  lifetime: ServerAccountScopeLifetime | null;
   active: boolean;
   request: DatabaseCaptureSummaryV1;
   locale: string;
   onBack: () => void;
   onAddCheck?: (route: KeyFlowRoute) => void;
 }>) {
-  const { reads, active, request, locale, onAddCheck } = props;
+  const { reads, lifetime, active, request, locale, onAddCheck } = props;
   const { serviceName, endpointMethod, endpointRoute } = request;
   const traceId = request.traceId ?? null;
   const [read, setRead] = React.useState<RequestRead>({ kind: 'loading' });
@@ -496,6 +502,44 @@ function TelemetryRequestDetail(props: Readonly<{
   }, [reads, active, traceId, attempt]);
   const readBody = React.useCallback((id: string) => active ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [active, reads]);
   const queries = read.kind === 'ready' ? read.trace.summaries.filter(summary => summary.kind === 'query').length : null;
+  const finding = active && read.kind === 'ready'
+    ? read.trace.findings?.find(candidate => candidate.verification.observationKey === request.id)
+    : undefined;
+  const [openingBrief, setOpeningBrief] = React.useState(false);
+  const openBrief = async () => {
+    if (!finding || !lifetime?.isCurrent() || openingBrief) return;
+    const abort = new AbortController();
+    const retirement = lifetime.onRetire(() => abort.abort());
+    const { signal } = abort;
+    setOpeningBrief(true);
+    try {
+      const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(finding), {
+        handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose', newSession: { kind: 'new', seed: {} } },
+        idempotencyKey: randomUUID,
+      });
+      const prepared = await control.controller.prepare({ signal });
+      if (prepared && !signal.aborted) {
+        const { serverId, accountId } = lifetime.scope;
+        const outcome = await createFrontDoorUiActionExecutor(undefined, { serverId, expectedAccountId: accountId })(
+          SESSION_INPUT_HANDOFF_ACTION_ID_V1, prepared.input, { signal },
+        );
+        const result = SessionInputHandoffResultV1Schema.parse(outcome);
+        if (signal.aborted) return;
+        const code = result.kind === 'unavailable' ? result.reason
+          : result.kind === 'failed' ? result.failure.errorCode
+          : result.kind === 'authoringResult' && result.result.kind !== 'opened' ? result.result.reason
+          : null;
+        if (code) alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code });
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        alertActionFailure({ reason: t('deploymentTelemetry.request.investigateFailed'), code: telemetryCaptureFailureCode(error) });
+      }
+    } finally {
+      retirement.dispose();
+      setOpeningBrief(false);
+    }
+  };
   const status = request.httpStatusCode === null || request.httpStatusCode === undefined ? null : String(request.httpStatusCode);
   const facts = [
     request.serviceName ?? null,
@@ -512,6 +556,10 @@ function TelemetryRequestDetail(props: Readonly<{
         {onAddCheck && serviceName && endpointMethod && endpointRoute ? (
           <TextLinkButton testID="project-deployments.telemetry.request.add-check" label={t('deploymentTelemetry.addCheck')}
             onPress={() => onAddCheck({ serviceName, method: endpointMethod, route: endpointRoute })} size="meta" />
+        ) : null}
+        {finding && lifetime ? (
+          <TextLinkButton testID="project-deployments.telemetry.request.investigate" label={t('deploymentTelemetry.request.investigate')}
+            onPress={() => { void openBrief(); }} disabled={openingBrief} size="meta" />
         ) : null}
         <Text variant="meta" style={styles.facts}>
           {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (

@@ -8,10 +8,11 @@ import type {
 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
     DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
-    DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+    DATABASE_STATS_READ_ACTION_ID_V1, type DatabaseCaptureTraceGetResultV1 } from '@happier-dev/database-protocol';
 import type { SessionInputDeliveryPlanV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 
 type SourceFinding = Extract<ReturnType<typeof DatabaseInsightSourceOperationSchemasV1.detailResult.parse>, { ok: true }>['finding'];
+type CaptureFinding = NonNullable<Extract<DatabaseCaptureTraceGetResultV1, { ok: true }>['findings']>[number];
 type SelectedFinding = Readonly<{
     sourceInput: Extract<DatabaseInsightBriefBuildInputV1, { sourceSelection: unknown }>;
     finding: SourceFinding;
@@ -40,15 +41,21 @@ export function planDatabaseFindingSessionInputV1(finding: DatabaseFindingV1 | D
 
 /** One immutable brief survives leaving the pane. Evidence remains descriptive;
  * the Session host owns framing, admission and delivery. */
-export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | DatabaseTaskEvidenceV1 | SelectedFinding, baseline?: DatabaseFindingBaselineV1): Brief {
-    if ('sourceInput' in finding) {
-        const { sourceInput, finding: detail } = finding;
+export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | DatabaseTaskEvidenceV1 | SelectedFinding | CaptureFinding, baseline?: DatabaseFindingBaselineV1): Brief {
+    const selectedSource = 'sourceInput' in finding;
+    if (selectedSource || 'title' in finding) {
+        const detail = selectedSource ? finding.finding : finding;
+        const verification = selectedSource ? undefined : finding.verification;
         return findingBrief([
             `Investigate the database finding “${detail.title}” and propose the smallest justified improvement.`,
             `The source measured ${JSON.stringify(detail.summary)} before the change, from ${detail.observedWindow.fromMs} to ${detail.observedWindow.toMs} ms. It reported ${JSON.stringify(detail.coverage)} for coverage.`,
+            ...(verification ? [`Inspect the retained before trace using ${verification.readBefore.action} and its exact input in the evidence.`] : []),
             ...(detail.exercise ? ['Repeat the source’s verification exercise. ' + detail.exercise] : []),
-            `After the agreed change, repeat ${DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1} with the exact verification input in the evidence. Compare observations for the same scope and report incomplete coverage or source evidence that expired.`,
-        ], detail.title, { currentDetail: detail, verification: { action: DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, input: sourceInput } });
+            verification
+                ? `After the agreed change, use ${verification.findAfter.action} with its verification input in the evidence and inspect the resulting trace. Compare observations for the same scope and report incomplete coverage or expired evidence.`
+                : `After the agreed change, repeat ${DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1} with the exact verification input in the evidence. Compare observations for the same scope and report incomplete coverage or source evidence that expired.`,
+        ], detail.title, { currentDetail: detail, verification: verification ?? (selectedSource
+            ? { action: DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, input: finding.sourceInput } : undefined) });
     }
     if (!('evidenceIdentity' in finding)) {
         const genericRequest = {

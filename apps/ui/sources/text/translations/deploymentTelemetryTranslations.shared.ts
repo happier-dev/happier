@@ -41,6 +41,8 @@ export type Copy = Readonly<{
     waterfall: string;
     reading: string;
     unavailable: string;
+    investigate: string;
+    investigateFailed: string;
     queries: (p: Readonly<{ count: number }>) => string;
   }>;
   addCheck: string;
@@ -124,6 +126,8 @@ const en: Copy = {
     reason: 'the collector didn’t answer this read',
   },
   request: {
+    investigate: 'Send to agent',
+    investigateFailed: 'Could not open the finding brief',
     back: 'All traces',
     waterfall: 'Waterfall',
     reading: 'Reading the request',

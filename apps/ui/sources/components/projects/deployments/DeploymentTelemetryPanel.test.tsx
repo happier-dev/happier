@@ -13,6 +13,13 @@ import {
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { storage } from '@/sync/domains/state/storage';
+import { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { discardSessionDraftPersistenceWrites, prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
+import { clearBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -34,6 +41,9 @@ const modal = await vi.hoisted(async () =>
   }),
 );
 vi.mock('@/modal', () => modal.module);
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+  (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock(),
+);
 afterEach(standardCleanup);
 
 const { DeploymentTelemetryPanel } = await import('./DeploymentTelemetryPanel');
@@ -128,7 +138,7 @@ async function settle() {
 function panel(
   invoke: ReturnType<typeof collector>['invoke'],
   detail: ReturnType<typeof setUpDetail>,
-  demand?: { telemetryApplied?: boolean; active?: boolean },
+  demand?: { telemetryApplied?: boolean; active?: boolean; lifetime?: typeof lifetime },
 ) {
   return (
     <AppPresentationPlatformProvider><ModalProvider>
@@ -154,7 +164,8 @@ async function mount(
   return screen;
 }
 
-const answers = (call: Call) => {
+const answers = (call: Call, admittedSource: Readonly<{ kind: 'environment'; serverId: string; environmentId: string }> = source) => {
+  const source = admittedSource;
   if (call.actionId.endsWith('/capture/endpoints/list'))
     return { ok: true, source, items: [checkout] };
   if (call.actionId.endsWith('/capture/traces/list'))
@@ -164,6 +175,23 @@ const answers = (call: Call) => {
       ok: true,
       source,
       traceId: 'trace-1',
+      findings: [{
+        v: 1,
+        sourceRef: { pluginId: 'happier.telemetry', localId: 'capture-findings' },
+        sourceScope: { serverId: source.serverId, machineId: 'collector' },
+        evidenceIdentity: 'retained-request-failure',
+        kind: 'failing_endpoint',
+        title: 'Endpoint request failed',
+        observedWindow: { fromMs: request.at, toMs: request.at + request.durationMs },
+        coverage: { status: 'complete' },
+        summary: { records: 1, totalTimeMs: request.durationMs },
+        verification: {
+          observationKey: request.id,
+          httpStatusCode: request.httpStatusCode,
+          readBefore: { action: 'happier.telemetry/actions/capture/trace/get', input: { source, traceId: 'trace-1', page: { limit: 10 } } },
+          findAfter: { action: 'happier.telemetry/actions/capture/traces/list', input: { source, since: request.at + request.durationMs, page: { limit: 10 } } },
+        },
+      }],
       repeatedQueries: [],
       slowChildSpans: [],
       logCorrelations: [],
@@ -345,6 +373,7 @@ describe('Environment Telemetry tabs', () => {
       ).not.toBeNull();
       expect(screen.findByTestId('telemetry.request.slowest')).not.toBeNull();
       expect(screen.findByTestId('telemetry.request.log.log-1')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.request.investigate')).not.toBeNull();
       await screen.pressByTestIdAsync(
         'project-deployments.telemetry.request.back',
       );
@@ -352,6 +381,81 @@ describe('Environment Telemetry tabs', () => {
       expect(
         screen.findByTestId('telemetry.capture.trace.req-1'),
       ).not.toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('opens an editable Session draft with the selected Environment finding and verification reads', async () => {
+    await prepareSessionDraftPersistenceStorage();
+    const homes = createHomeGovernanceHarness();
+    installHomeGovernanceBoundaries(homes);
+    const serverUrl = 'https://telemetry.test';
+    const accountId = lifetime.scope.accountId;
+    const serverId = await homes.addHome({ name: 'Telemetry', serverUrl, accountId, currentAccount: true });
+    const scope = { serverId, accountId };
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl, generation: 1 });
+    storage.getState().activateProfileScope(scope);
+    router.spies.push.mockClear();
+    modal.spies.alert.mockClear();
+    modal.spies.confirm.mockResolvedValue(true);
+    const actualModal = await vi.importActual<typeof import('@/modal')>('@/modal');
+    const confirm = vi.spyOn(actualModal.Modal, 'confirm').mockImplementation(modal.spies.confirm);
+    const { invoke } = collector(call => answers(call, { ...source, serverId }));
+    const screen = await renderScreen(panel(invoke, setUpDetail(), { lifetime: { ...lifetime, scope } }));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.request.investigate');
+      const draftId = await waitForHomeGovernance(() => {
+        const failure = modal.spies.alert.mock.calls[0];
+        if (failure) {
+          failure[2]?.[0]?.onPress?.();
+          throw new Error(`Opening finding failed: ${String(modal.spies.alert.mock.calls.at(-1)?.[1])}`);
+        }
+        const route = router.spies.push.mock.calls.at(-1)?.[0];
+        if (typeof route !== 'object' || route === null || !('params' in route)) throw new Error('The Session draft did not open');
+        const params = route.params;
+        if (typeof params !== 'object' || params === null || !('draftId' in params) || typeof params.draftId !== 'string') {
+          throw new Error('The Session route did not include a draft ID');
+        }
+        expect(route).toMatchObject({ pathname: '/new' });
+        return params.draftId;
+      });
+      const draft = readNewSessionDraftFromRepository({ scope, draftId });
+      expect(draft?.input).toContain('Endpoint request failed');
+      const evidence = JSON.stringify(draft?.composerAttachmentSeeds);
+      expect(evidence).toContain('retained-request-failure');
+      expect(evidence).toContain('happier.telemetry/actions/capture/trace/get');
+    } finally {
+      await screen.unmount();
+      confirm.mockRestore();
+      await discardSessionDraftPersistenceWrites();
+      resetSessionDraftRepositoryForTests();
+      await clearBrowserRecords();
+      publishAppliedActiveServerRuntimeAvailability(false);
+      await homes.reset();
+    }
+  });
+
+  it('offers investigation only when the collector returned a finding for the selected request', async () => {
+    const { invoke } = collector(call => {
+      const reply = answers(call);
+      return call.actionId.endsWith('/capture/trace/get') ? { ...reply, findings: [] } : reply;
+    });
+    const screen = await mount(invoke);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
+      await settle();
+      expect(screen.findByTestId('telemetry.request.slowest')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.request.investigate')).toBeNull();
     } finally {
       await screen.unmount();
     }
@@ -400,6 +504,7 @@ describe('Environment Telemetry tabs', () => {
       await settle();
       await screen.pressByTestIdAsync('project-deployments.telemetry.request.unavailable-details-toggle');
       expect(screen.findByTestId('project-deployments.telemetry.request.unavailable-details-code')?.props.children).toBe(code);
+      expect(screen.findByTestId('project-deployments.telemetry.request.investigate')).toBeNull();
     } finally {
       await screen.unmount();
     }
