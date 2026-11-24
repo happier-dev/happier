@@ -1403,7 +1403,9 @@ export async function observePendingSessionFollowForDestinationInTx(tx: Tx, inpu
     // Observation finishes admitted work; a wake starts a new Turn, so it needs the destination's
     // committed Machine placement to be admitted now, as every other Follow wake path requires.
     const placement = await readCurrentCommittedSessionInputMachineTargetInTx(tx, destination.id);
-    if (!placement || placement.accountId !== destinationRuntimeAccountId) return { ...combined, wakeAdmission: unavailableWake };
+    if (!placement || placement.accountId !== destinationRuntimeAccountId) {
+        return { ...combined, wakeAdmission: unavailableWake('session.follow.runtime_placement') };
+    }
     return { ...combined, wakeAdmission: await readFollowWakeAdmissionInTx(tx, {
         destinationSessionId: destination.id, destinationAccountId: destinationRuntimeAccountId,
         publisherGeneration: destination.publisherGeneration,
