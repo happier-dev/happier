@@ -218,20 +218,73 @@ describe('Usage Work repository admission', () => {
       expect(slice.workSummary?.mergedPrCount).toBe(merged);
     });
 
-  it('retains earlier Work when offline and timed-out Sessions supplied no replacement', async () => {
-    const turns = ['offline', 'slow'].map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier' as const] }));
-    const work = await collectUsageWorkSources({ queries: [query],
-      accounting: [{ query, value: { ...value, sessionMembership: { turns } }, status: 'available' }], assertCurrent: () => {},
-      resolveSession: async sessionId => ({ machineId: sessionId, cwd: '/repo' }),
+  it.each([
+    { name: 'all read', first: 'read', second: 'read', borrowPrevious: false, current: [11, 12] },
+    { name: 'read + offline', first: 'read', second: 'offline', borrowPrevious: false, current: [11] },
+    { name: 'read + timed out', first: 'read', second: 'slow', borrowPrevious: false, current: [11] },
+    { name: 'offline + timed out', first: 'offline', second: 'slow', borrowPrevious: false, current: [] },
+    { name: 'Machine refusal + timed out (J-A23)', first: 'machineRefusal', second: 'slow', borrowPrevious: false, current: [] },
+    { name: 'Machine refusal + offline', first: 'machineRefusal', second: 'offline', borrowPrevious: false, current: [] },
+    { name: 'Machine refusal among successes', first: 'read', second: 'machineRefusal', borrowPrevious: false, current: [11] },
+    { name: 'all offline', first: 'offline', second: 'offline', borrowPrevious: false, current: [] },
+    { name: 'all timed out', first: 'slow', second: 'slow', borrowPrevious: true, current: [] },
+    { name: 'all plain backend failure', first: 'backend', second: 'backend', borrowPrevious: true, current: [] },
+    { name: 'Session admission denial among successes', first: 'read', second: 'denied', borrowPrevious: false, current: [11] },
+  ])('keeps the cut-36 prior Work boundary for $name', async ({ first, second, borrowPrevious, current }) => {
+    const turns = [1, 2].map(number => ({ sessionId: String(number), turnId: 'turn', executions: ['happier' as const] }));
+    const accounting = [{ query, status: 'available' as const, value: { ...value,
+      contributions: turns.map(turn => ({
+        sessionId: turn.sessionId, turnId: turn.turnId, id: turn.sessionId, observedAtMs: 1, agentId: 'codex', modelId: null, machineId: turn.sessionId,
+        projectKey: 'project', workspaceId: null, source: 'runtime' as const, tokens: value.totals.tokens, cost: value.totals.cost,
+      })),
+      sessionMembership: { turns },
+    } }];
+    const reply = (sessionId: string, number: number) => {
+      const checkpoint = { sessionId, turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' };
+      return { sessions: [{ sessionId, status: 'partial', pullRequestsRead: true,
+        branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/branch-' + number, headSha: 'b'.repeat(40) } }],
+        evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
+          baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+          number, title: 'Linked', url: 'https://github.com/owner/repo/pull/' + number,
+          baseBranch: 'main', headBranch: 'feature', state: 'merged' } }],
+      }] };
+    };
+    const read = (replies: readonly string[], offset: number) => collectUsageWorkSources({
+      queries: [query], accounting, assertCurrent: () => {},
+      resolveSession: async sessionId => replies[Number(sessionId) - 1] === 'denied'
+        ? { errorCode: RPC_ERROR_CODES.FORBIDDEN } : { machineId: sessionId, cwd: '/repo' },
       readMachine: async machineId => {
-        if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'machine_offline' });
-        throw Object.assign(new Error('Timed out'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+        const number = Number(machineId);
+        switch (replies[number - 1]) {
+          case 'offline': throw createRpcCallError({ error: 'Offline', errorCode: 'machine_offline' });
+          case 'slow': throw createRpcCallError({ error: 'Deadline', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+          case 'machineRefusal': throw createRpcCallError({ error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } });
+          case 'backend': return { sessions: [{ sessionId: machineId, status: 'error', errorCode: 'BACKEND_UNAVAILABLE' }] };
+          default: return reply(machineId, number + offset);
+        }
       },
     });
-    expect(work[0]).toMatchObject({ status: 'error', errorCode: 'work_evidence_failed',
-      unreadSessions: { machine_unavailable: 1, timed_out: 1 } });
-    expect(work[0]?.evidence).toBeUndefined();
-    expect(work[0]?.branchEvidence).toBeUndefined();
+    const initialWork = await read(['read', 'read'], 0);
+    const inputs = { queries: [query], accounting, nowMs: 500 };
+    const previous = resolveUsagePageAggregation({ ...inputs, work: initialWork }, bundledUsageModelPriceCatalog);
+    expect(previous.results[0]?.workSummary?.mergedPrCount).toBe(2);
+    const work = await read([first, second], 10);
+    const settled = UsageQueryBatchResultSchema.parse(
+      resolveUsagePageAggregation({ ...inputs, previous, work }, bundledUsageModelPriceCatalog));
+    const slice = settled.results[0]!;
+    const source = slice.sources.find(row => row.source === 'work');
+    const expected = borrowPrevious ? [1, 2] : current;
+    expect.soft(source?.status === 'stale', 'borrows prior evidence').toBe(borrowPrevious);
+    expect.soft(slice.work?.outcomes.map(row => row.pullRequest.number).sort() ?? []).toEqual(expected);
+    expect.soft(slice.work?.branches.map(row => row.branch.ref).sort() ?? []).toEqual(
+      expected.map(number => 'refs/heads/branch-' + number));
+    expect(slice.workSummary?.mergedPrCount).toBe(current.length === 2 ? 2 : undefined);
+    if (current.length === 2) {
+      const cold = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ ...inputs, work }, bundledUsageModelPriceCatalog));
+      expect(JSON.stringify(settled)).toBe(JSON.stringify(cold));
+    }
   });
 
   it('acquires a newly admitted turn set while reusing the exact admitted read', async () => {

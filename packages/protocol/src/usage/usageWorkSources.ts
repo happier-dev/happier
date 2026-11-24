@@ -1,4 +1,4 @@
-import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isMachineRpcTimeoutError, isRpcMachineAdmissionUnavailableError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { isMachineRequestReachabilityFailureV1 } from '../machines/machineReachabilityV1.js';
 import { SCM_OPERATION_ERROR_CODES } from '../scm/operationError.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
@@ -8,7 +8,7 @@ import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMemb
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 
 type UnreadSessions = NonNullable<UsageWorkSourceSnapshot['unreadSessions']>;
-type UnreadReason = keyof UnreadSessions | 'machine_offline';
+type UnreadReason = keyof UnreadSessions | 'machine_offline' | 'machine_admission_unavailable';
 
 export type SessionWorkSourceResult = Readonly<(
     | { status: 'unsupported' | 'error' | 'unknown' }
@@ -41,11 +41,12 @@ function unreadSession(code: string | undefined): SessionWorkSourceResult {
     return { status: 'error', unreadReason };
 }
 
-function readWorkFailureCode(error: unknown): string | undefined {
-    if (isMachineRpcTimeoutError(error)) return MACHINE_RPC_TIMEOUT_ERROR_CODE;
+function unreadWorkFailure(error: unknown): SessionWorkSourceResult {
+    if (isRpcMachineAdmissionUnavailableError(error)) return { status: 'unknown', unreadReason: 'machine_admission_unavailable' };
+    if (isMachineRpcTimeoutError(error)) return unreadSession(MACHINE_RPC_TIMEOUT_ERROR_CODE);
     const code = readRpcErrorCode(error);
-    if (code === 'machine_offline') return code;
-    return isMachineRequestReachabilityFailureV1(error) ? 'target_unavailable' : code;
+    if (code === 'machine_offline') return unreadSession(code);
+    return unreadSession(isMachineRequestReachabilityFailureV1(error) ? 'target_unavailable' : code);
 }
 
 /** Work admission and its observers consume this exact witnessed turn population. */
@@ -123,7 +124,7 @@ export async function collectUsageWorkSources(input: Readonly<{
                 return { sessionId, target: await input.resolveSession(sessionId) };
             } catch (error) {
                 await input.assertCurrent();
-                results.set(sessionId, unreadSession(readWorkFailureCode(error)));
+                results.set(sessionId, unreadWorkFailure(error));
                 return null;
             }
         }));
@@ -173,7 +174,7 @@ export async function collectUsageWorkSources(input: Readonly<{
                 }
             } catch (error) {
                 await input.assertCurrent();
-                const result = unreadSession(readWorkFailureCode(error));
+                const result = unreadWorkFailure(error);
                 for (const session of sessions) results.set(session.sessionId, result);
             }
         }));
@@ -203,13 +204,12 @@ export async function collectUsageWorkSources(input: Readonly<{
         for (const { unreadReason } of selected) {
             if (unreadReason === undefined) continue;
             if (unreadReason === 'machine_offline') hasOfflineMachine = true;
-            const reason = unreadReason === 'machine_offline' ? 'machine_unavailable' : unreadReason;
+            const reason = unreadReason === 'machine_offline' || unreadReason === 'machine_admission_unavailable'
+                ? 'machine_unavailable' : unreadReason;
             unreadSessions[reason] = (unreadSessions[reason] ?? 0) + 1;
         }
+        const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
         const readFailed = selected.some(source => source.status === 'error');
-        // Offline Sessions supply no replacement either. Explicit empty evidence
-        // still supersedes prior facts after a refusal or an admitted read.
-        const failedReplacement = readFailed && selected.every(source => !('evidence' in source));
         const value = byQuery.get(key);
         const measuredEmpty = selected.length === 0 && value?.totals.eventCount === 0
             && value.coverage?.status === 'complete' && value.coverage.range.complete;
