@@ -49,8 +49,10 @@ export interface WorkflowPublicationAudience {
 }
 
 async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: readonly string[],
-    definitionWrite?: WorkflowPublicationScope['automationDefinitionWrite']): Promise<WorkflowPublicationAudience> {
-    if (automationIds.length === 0 && !definitionWrite) return { accountIds: [], sessionIds: [] };
+    definitionWrite?: WorkflowPublicationScope['automationDefinitionWrite']): Promise<WorkflowPublicationAudience & {
+        machineTargets: { accountId: string; machineId: string }[];
+    }> {
+    if (automationIds.length === 0 && !definitionWrite) return { accountIds: [], sessionIds: [], machineTargets: [] };
     const automations: { id: string; accountId: string; workflowDefinitionId: string | null;
         scopeSessionId: string | null; assignments: { machineId: string }[] }[] = [];
     // The enabled-assignment predicate and portable Prisma offset share the ID budget.
@@ -62,19 +64,16 @@ async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: read
         automations.push(...rows);
     }
     const sessionIds = [...new Set(automations.flatMap(automation => automation.scopeSessionId ? [automation.scopeSessionId] : []))].sort();
-    const managedAccounts = await readManagedWakePublicationAccountIdsInTx(tx, {
-        machineTargets: automations.flatMap(automation => automation.assignments.map(assignment => ({
-            accountId: automation.accountId, machineId: assignment.machineId,
-        }))),
-        sessionIds,
-    });
+    const machineTargets = automations.flatMap(automation => automation.assignments.map(assignment => ({
+        accountId: automation.accountId, machineId: assignment.machineId,
+    })));
     // Use the Action-index publisher's Artifact audience owner, not the narrower
     // selected-Team schedule audience. Replacements clear the old readers too.
     const workflowIds = [...new Set([...automations.flatMap(row => row.workflowDefinitionId ? [row.workflowDefinitionId] : []),
         ...(definitionWrite?.workflowDefinitionId ? [definitionWrite.workflowDefinitionId] : [])])];
     const artifactAccounts = (await Promise.all(workflowIds.map(id => resolveArtifactAudienceInTx(tx, id)))).flat();
-    return { accountIds: [...new Set([...automations.map(automation => automation.accountId), ...managedAccounts,
-        ...artifactAccounts])].sort(), sessionIds };
+    return { accountIds: [...new Set([...automations.map(automation => automation.accountId), ...artifactAccounts])].sort(),
+        sessionIds, machineTargets };
 }
 
 /** Session fact writers collect lifecycle admission's review/wake audience before locking their source. */
@@ -90,7 +89,11 @@ export async function getSessionLifecycleAutomationPublicationAudienceInTx(tx: T
         .filter(row => row.automation.accountId === source.ownerAccountId && row.enabled && row.automation.enabled)
         .map(row => row.automationId)))];
     const audience = await readAutomationPublicationAudienceInTx(tx, automationIds);
-    return { ...audience, sessionIds: [...new Set([...sourceSessionIds, ...audience.sessionIds])].sort() };
+    const managedAccounts = await readManagedWakePublicationAccountIdsInTx(tx, {
+        machineTargets: audience.machineTargets, sessionIds: audience.sessionIds,
+    });
+    return { accountIds: [...new Set([...audience.accountIds, ...managedAccounts])].sort(),
+        sessionIds: [...new Set([...sources.map(source => source.id), ...audience.sessionIds])].sort() };
 
 }
 
@@ -181,6 +184,7 @@ export async function getWorkflowPublicationAudienceInTx(tx: Tx, scope: Workflow
     }
     for (const accountId of await readManagedWakePublicationAccountIdsInTx(tx, {
         machineTargets: [
+            ...automationAudience.machineTargets,
             ...runs.flatMap(run => run.assignments.map(assignment => ({ accountId: run.accountId, machineId: assignment.machineId }))),
             ...(scope.machineIds ?? []).map(machineId => ({ accountId: scope.accountId, machineId })),
             ...(scope.machineTargets ?? []),

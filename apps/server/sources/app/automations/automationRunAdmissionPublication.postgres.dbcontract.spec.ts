@@ -3,8 +3,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { logger } from '@/utils/logging/log';
 import { withWebLatencyTrace } from '@/utils/webLatencyTrace';
+import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerAutomationActionRoutes } from '@/app/api/routes/automations/registerAutomationActionRoutes';
+import { getWorkflowPublicationAudienceInTx } from '@/app/workflows/workflowPublicationAudience';
+import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { admitAutomationRunsTx } from './automationRunAdmissionService';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batch publication admission (PostgreSQL)', () => {
@@ -38,6 +43,84 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
     });
     afterAll(async () => { await db.$disconnect(); });
 
+    it('reads one occurrence page for three matched triggers and rejoins the same Runs after trigger edits', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        accountId = account.id;
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId, metadata: '{}' } });
+        const triggers = [];
+        for (const name of ['First', 'Second', 'Third']) {
+            const automation = await db.automation.create({ data: {
+                accountId, name, enabled: true, templateVersion: 1,
+                templateCiphertext: JSON.stringify(createAutomationWorkflowRecipeFixture({
+                    templateVersion: 1, directory: '/repo', prompt: 'Review',
+                })),
+                assignments: { create: { machineId: machine.id, enabled: true } },
+            } });
+            const row = await db.automationTrigger.create({ data: {
+                id: randomUUID(), automationId: automation.id, kind: 'action', enabled: true,
+                definitionEnvelope: JSON.stringify({ t: 'plain', v: { kind: 'action' } }),
+                phase: 'after', actionIdsJson: JSON.stringify(['scm.commit.create']),
+            } });
+            triggers.push({ automationId: row.automationId, triggerId: row.id, triggerRevision: row.revision });
+        }
+        const app = createAuthenticatedTestApp();
+        registerAutomationActionRoutes(app);
+        logger.level = 'trace';
+        const phases: string[] = [];
+        vi.spyOn(logger, 'trace').mockImplementation(record => {
+            if (typeof record === 'object' && record !== null && 'module' in record && record.module === 'web-latency'
+                && 'phase' in record && typeof record.phase === 'string') phases.push(record.phase);
+        });
+        const route = '/v1/automations/actions/admit';
+        const payload = { evidence: { v: 1, kind: 'action', actionId: 'scm.commit.create', requestId: randomUUID(),
+            phase: 'after', occurredAt: Date.now(), status: 'succeeded', subjects: [] }, triggers };
+        const admit = () => withWebLatencyTrace(randomUUID(), () => app.inject({ method: 'POST', url: route,
+            headers: { 'x-test-user-id': account.id }, payload }));
+        try {
+            const original = await admit();
+            expect(original.statusCode, original.body).toBe(200);
+            const inserted = original.json().results;
+            expect(inserted).toEqual(triggers.map(({ automationId, triggerId }) => ({
+                kind: 'admitted', automationId, triggerId, runId: expect.any(String),
+            })));
+            expect(phases.filter(phase => phase === 'db.AutomationRun.findMany'), 'one retained occurrence read for the batch').toHaveLength(1);
+
+            await db.automationTrigger.updateMany({ where: { id: { in: triggers.map(trigger => trigger.triggerId) } },
+                data: { enabled: false, revision: { increment: 1 } } });
+            phases.length = 0;
+            const replay = await admit();
+            expect(replay.statusCode, replay.body).toBe(200);
+            expect(replay.json().results).toEqual(inserted.map((item: object) => ({ ...item, kind: 'rejoined' })));
+            expect(phases.filter(phase => phase === 'db.AutomationRun.findMany'), 'one retained occurrence read for replay').toHaveLength(1);
+            expect(await db.automationRun.count({ where: { accountId } })).toBe(triggers.length);
+        } finally {
+            await app.close();
+        }
+    });
+
+    it('reads one Machine audience for both definition assignments and Action invocation placement', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        accountId = account.id;
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId, metadata: '{}' } });
+        const automation = await db.automation.create({ data: {
+            accountId, name: 'Published workflow', enabled: true, templateVersion: 1, templateCiphertext: '{}',
+            assignments: { create: { machineId: machine.id, enabled: true } },
+        } });
+        const traced = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        const statements: string[] = [];
+        onDbClientQuery(traced, ({ query }) => statements.push(query));
+        try {
+            const audience = await traced.$transaction(tx => getWorkflowPublicationAudienceInTx(tx, {
+                accountId: account.id, automationIds: [automation.id], machineIds: [machine.id],
+            }));
+            expect(audience).toEqual({ accountIds: [account.id], sessionIds: [], runIds: [] });
+            expect(statements.filter(query => query.includes('SELECT "accountId" FROM "Machine" WHERE "id" = ANY')),
+                'one physical wake audience read for the same Machine').toHaveLength(1);
+        } finally {
+            await traced.$disconnect();
+        }
+    });
+
     it('attaches five Workflow bodies with one admitted Session audience census', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         accountId = account.id;
@@ -48,12 +131,12 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
                 inlineDefinition: { version: 1, blocks: [{ kind: 'action', id: 'notice', actionId: 'notifications.notify_me',
                     input: { message: { kind: 'literal', value: 'Run finished' } } }] } } } });
         if (recipe.kind !== 'available') throw new Error('Workflow recipe unavailable');
-        const automations = [];
+        const automationIds: string[] = [];
         for (let index = 0; index < 5; index++) {
             const automation = await db.automation.create({ data: { accountId, scopeSessionId: session.id,
                 name: `Batch habit ${index}`, enabled: true, templateCiphertext: recipe.serialized, templateVersion: 1 } });
             await db.automationAssignment.create({ data: { automationId: automation.id, machineId: machine.id, enabled: true } });
-            automations.push(automation);
+            automationIds.push(automation.id);
         }
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         logger.level = 'trace';
@@ -68,7 +151,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
             admitting = true;
             try {
                 return await admitAutomationRunsTx({ tx, accountId: account.id,
-                    admissions: automations.map(automation => ({ automationId: automation.id, now,
+                    admissions: automationIds.map(automationId => ({ automationId, now,
                         cause: { kind: 'manual' as const, invokedAt: now.getTime() } })),
                 });
             } finally { admitting = false; }

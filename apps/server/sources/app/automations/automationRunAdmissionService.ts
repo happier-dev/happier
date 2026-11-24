@@ -26,6 +26,10 @@ import {
 } from "./automationRecipeFeaturePolicy";
 
 import { automationRunItemSelect } from "./automationPersistenceSelect";
+import {
+    automationActionTriggerConfigurationSelect,
+    type AutomationActionTriggerColumns,
+} from "./automationActionTriggerConfiguration";
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
 import { matchesScopedAutomationConversationTriggerTx } from "./automationConversationTargetVerificationService";
@@ -55,6 +59,9 @@ export type AutomationRunAdmissionIneligibleReason =
     | "triggerDisabled"
     | "triggerRevisionMismatch"
     | "triggerKindMismatch"
+    | "originRunNotFound"
+    | "causeSuppressed"
+    | "subjectMismatch"
     | "idempotencyKeyInvalid"
     | "featureDisabled"
     | "definitionInvalid"
@@ -170,7 +177,7 @@ function occurrenceDiscriminator(params: Readonly<{
 }
 
 function findExistingRun(params: Readonly<{
-    rows: readonly AutomationRunItem[];
+    rows: ReadonlyMap<string, AutomationRunItem>;
     automationId: string;
     cause: AutomationRunCause;
     manualIdempotencyKey?: string;
@@ -181,11 +188,8 @@ function findExistingRun(params: Readonly<{
     // under a different cause is a collision, not a second namespace, and the
     // immutable-evidence check below rejects it.
     const occurrenceKey = admissionOccurrenceKey(params);
-    const existing = params.rows.find((row) => {
-        if (row.automationId !== params.automationId) return false;
-        if (occurrenceKey !== null) return row.occurrenceKey === occurrenceKey;
-        return false;
-    }) ?? null;
+    const existing = occurrenceKey === null ? undefined
+        : params.rows.get(JSON.stringify([params.automationId, occurrenceKey]));
     if (!existing) return null;
     if (!sameOccurrenceCause(decodeAutomationRunCause(existing), params.cause)
         || existing.occurrenceEvidenceEqualityTag !== (params.occurrenceEvidenceEqualityTag ?? null)) {
@@ -230,6 +234,15 @@ const automationAdmissionTriggerSelect = {
 type AutomationAdmissionTrigger = Prisma.AutomationTriggerGetPayload<{
     select: typeof automationAdmissionTriggerSelect;
 }>;
+
+type NewAutomationRunQualification =
+    | Readonly<{ runTargetMachineId: string }>
+    | Extract<AutomationRunAdmissionResult, { kind: "ineligible" }>;
+
+type QualifyNewAutomationRuns = (
+    requests: readonly AutomationRunAdmissionRequest[],
+    triggers: ReadonlyMap<string, AutomationAdmissionTrigger & AutomationActionTriggerColumns>,
+) => Promise<ReadonlyMap<AutomationRunAdmissionRequest, NewAutomationRunQualification>>;
 
 type PreparedAutomationRunAdmission = Readonly<{
     request: AutomationRunAdmissionRequest;
@@ -323,7 +336,6 @@ export function freezeAutomationRunInput(params: Readonly<{
 function prepareAutomationRunAdmission(params: Readonly<{
     request: AutomationRunAdmissionRequest;
     cause: AutomationRunCause;
-    existingRuns: readonly AutomationRunItem[];
     automationsById: ReadonlyMap<string, AutomationAdmissionDefinition>;
     triggersById: ReadonlyMap<string, AutomationAdmissionTrigger>;
     recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
@@ -333,13 +345,6 @@ function prepareAutomationRunAdmission(params: Readonly<{
     manualAssignmentAccessDenied: boolean;
 }>): PreparedAutomationRunAdmissionResult {
     const cause = params.cause;
-    const existing = findExistingRun({
-        rows: params.existingRuns,
-        ...params.request,
-        cause,
-    });
-    if (existing) return { kind: "rejoined", run: existing };
-
     const automation = params.automationsById.get(params.request.automationId);
     if (!automation) return { kind: "ineligible", reason: "automationNotFound" };
     if (!automation.enabled) return { kind: "ineligible", reason: "automationDisabled" };
@@ -379,7 +384,6 @@ function prepareAutomationRunAdmission(params: Readonly<{
     // non-replayable and may retain a reversibly replaced machine so undo can
     // make the already-admitted Run claimable. An empty post-policy snapshot
     // is permanently unclaimable.
-    // Rejoin above keeps already-admitted Runs on their immutable snapshots.
     if (admissionAutomation.assignments.length === 0) {
         if (cause.kind === "manual" && params.manualAssignmentAccessDenied) {
             return { kind: "ineligible", reason: "target_unavailable" };
@@ -576,6 +580,8 @@ export async function admitAutomationRunsTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     admissions: readonly AutomationRunAdmissionRequest[];
+    /** Action matching uses current trigger routing only for occurrences that have no retained Run. */
+    qualifyNew?: QualifyNewAutomationRuns;
     recipeFeaturePolicy?: AutomationRecipeFeaturePolicy;
 }>): Promise<readonly AutomationRunAdmissionResult[]> {
     if (params.admissions.length === 0) return [];
@@ -605,7 +611,6 @@ export async function admitAutomationRunsTx(params: Readonly<{
             automation: { scopeSessionId: { not: null } },
         })) } : {}),
     });
-    const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy({ tx: params.tx });
     // The same trigger row also serializes claims. Lock before mutable reads
     // so concurrent admissions observe the incumbent pending reservation.
     const scopedLockCandidates = [...new Set(parsedAdmissions.flatMap(({ cause }) => (
@@ -650,15 +655,45 @@ export async function admitAutomationRunsTx(params: Readonly<{
             },
             select: automationRunItemSelect,
         })))).flat();
-    const existingRuns = existingRunRows.map((row) => {
+    const existingRuns = new Map(existingRunRows.map((row) => {
         const run = projectAutomationOriginRun(row);
         if (!run) throw new Error("Stored Automation Run has invalid origin correspondence");
-        return run;
+        return [JSON.stringify([run.automationId, run.occurrenceKey]), run] as const;
+    }));
+    const results: AutomationRunAdmissionResult[] = [];
+    const newAdmissions = parsedAdmissions.flatMap(({ request, cause }, position) => {
+        const existing = findExistingRun({ rows: existingRuns, ...request, cause });
+        if (!existing) return [{ request, cause, position }];
+        results[position] = { kind: "rejoined", run: existing };
+        return [];
     });
-    const automationIds = [...new Set(parsedAdmissions.map(({ request }) => request.automationId))];
-    const triggerIds = [...new Set(parsedAdmissions.flatMap(({ cause }) => (
+    if (newAdmissions.length === 0) return results;
+
+    const triggerIds = [...new Set(newAdmissions.flatMap(({ cause }) => (
         cause.kind !== "manual" && cause.triggerId ? [cause.triggerId] : []
     )))];
+    const triggers = (await Promise.all(automationPortableQueryChunks({
+        values: triggerIds,
+        bindingsPerValue: 1,
+        fixedBindings: 2,
+    }).map((chunk) => params.tx.automationTrigger.findMany({
+        where: { id: { in: [...chunk] }, deletedAt: null, automation: { accountId: params.accountId } },
+        select: { ...automationAdmissionTriggerSelect, ...(params.qualifyNew ? automationActionTriggerConfigurationSelect : {}) },
+    })))).flat();
+    const triggersById = new Map(triggers.map((trigger) => [trigger.id, trigger]));
+    const qualifications = await params.qualifyNew?.(newAdmissions.map(({ request }) => request), triggersById);
+    const eligibleAdmissions = newAdmissions.flatMap(({ request, cause, position }) => {
+        const qualification = qualifications?.get(request);
+        if (qualification && "kind" in qualification) {
+            results[position] = qualification;
+            return [];
+        }
+        return [{ request: qualification ? { ...request, ...qualification } : request, cause, position }];
+    });
+    if (eligibleAdmissions.length === 0) return results;
+
+    const recipeFeaturePolicy = params.recipeFeaturePolicy ?? await resolveAutomationRecipeFeaturePolicy({ tx: params.tx });
+    const automationIds = [...new Set(eligibleAdmissions.map(({ request }) => request.automationId))];
     const automations = (await Promise.all(automationPortableQueryChunks({
         values: automationIds,
         bindingsPerValue: 1,
@@ -671,35 +706,16 @@ export async function admitAutomationRunsTx(params: Readonly<{
         },
         select: automationAdmissionDefinitionSelect,
     })))).flat();
-    const triggers = triggerIds.length === 0
-        ? []
-        : (await Promise.all(automationPortableQueryChunks({
-            values: triggerIds,
-            bindingsPerValue: 1,
-            fixedBindings: 1,
-        }).map((chunk) => params.tx.automationTrigger.findMany({
-            where: { id: { in: [...chunk] }, deletedAt: null },
-            select: automationAdmissionTriggerSelect,
-        })))).flat();
-    // Definition assignments are mutable configuration and intentionally
-    // survive reversible machine replacement. Account ownership and permanent
-    // revocation are cause-independent. The preparation owner below applies
-    // the cause-specific availability rule: replayable causes freeze only
-    // available machines, while every non-replayable Session-lifecycle
-    // occurrence preserves reversibly replaced machines for natural claim
-    // after undo.
-    const newAdmissionAutomationIds = new Set(parsedAdmissions.filter(({ request, cause }) =>
-        !findExistingRun({ rows: existingRuns, ...request, cause })).map(({ request }) => request.automationId));
+    // The preparation owner freezes availability according to the cause.
     const workflowRecipes = new Map(automations.flatMap(automation => {
-        if (!newAdmissionAutomationIds.has(automation.id)) return [];
         const parsed = parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext);
         return parsed.kind === "available" ? [[automation.id, parsed.recipe] as const] : [];
     }));
-    const placedAdmissions = parsedAdmissions.map(({ request, cause }) => {
+    const placedAdmissions = eligibleAdmissions.map(({ request, cause, position }) => {
         const invocationPlacement = workflowRecipes.get(request.automationId)?.placement === "action_invocation";
         const machineId = invocationPlacement && cause.kind === "trigger" && cause.triggerKind === "action"
             ? cause.evidence.machineId : request.runTargetMachineId;
-        return { request: { ...request, runTargetMachineId: machineId }, cause, invocationPlacement };
+        return { request: { ...request, runTargetMachineId: machineId }, cause, invocationPlacement, position };
     });
     const machineAdmissions = await resolveMachineAdmissionsInTx(params.tx, { actorAccountId: params.accountId, purpose: 'workflow',
         machineIds: [
@@ -728,8 +744,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
             }),
         },
     ]));
-    const triggersById = new Map(triggers.map((trigger) => [trigger.id, trigger]));
-    const scopedConversationMatches = await Promise.all(parsedAdmissions.map(async ({ request, cause }) => {
+    const scopedConversationMatches = await Promise.all(placedAdmissions.map(async ({ request, cause }) => {
         if (cause.kind !== "conversation" || !cause.triggerId) return true;
         if (request.scopedConversationTrigger?.triggerId !== cause.triggerId) return false;
         const automation = automationsById.get(request.automationId);
@@ -741,7 +756,6 @@ export async function admitAutomationRunsTx(params: Readonly<{
     const prepared = placedAdmissions.map(({ request, cause, invocationPlacement }, index) => prepareAutomationRunAdmission({
         request,
         cause,
-        existingRuns,
         automationsById,
         triggersById,
         recipeFeaturePolicy,
@@ -751,18 +765,13 @@ export async function admitAutomationRunsTx(params: Readonly<{
         manualAssignmentAccessDenied: deniedAssignmentAutomationIds.has(request.automationId),
     }));
 
-    const results: AutomationRunAdmissionResult[] = [];
-    for (const result of prepared) {
-        if (result.kind !== "prepared") {
-            results.push(result);
-            continue;
-        }
-        const admitted = await insertPreparedAutomationRunTx({
+    for (const [index, result] of prepared.entries()) {
+        const { position } = placedAdmissions[index]!;
+        results[position] = result.kind !== "prepared" ? result : await insertPreparedAutomationRunTx({
             tx: params.tx,
             accountId: params.accountId,
             admission: result.admission,
         });
-        results.push(admitted);
     }
     return results;
 }

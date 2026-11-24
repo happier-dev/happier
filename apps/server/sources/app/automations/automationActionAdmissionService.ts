@@ -4,14 +4,12 @@ import {
     type AutomationActionAdmitResultV1,
 } from '@happier-dev/protocol/automations/automationActionOccurrenceV1';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
-import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { automationSubjectKeyMatchesV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { inTx } from '@/storage/inTx';
-import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { admitAutomationRunsTx, type AutomationRunAdmissionRequest } from './automationRunAdmissionService';
-import { automationActionTriggerConfigurationSelect, decodeAutomationActionTriggerConfiguration } from './automationActionTriggerConfiguration';
+import { admitAutomationRunsTx, type AutomationRunAdmissionRequest, type AutomationRunAdmissionIneligibleReason } from './automationRunAdmissionService';
+import { decodeAutomationActionTriggerConfiguration } from './automationActionTriggerConfiguration';
 import { readAutomationRunCauseChainTx } from './automationTriggerCauseChain';
-import { findAutomationOccurrencesTx, rejoinAutomationOccurrenceInsertRace } from './automationOccurrencePersistence';
+import { rejoinAutomationOccurrenceInsertRace } from './automationOccurrencePersistence';
 
 /** Selected occurrences enter ordinary actor-owned Run admission in one batch. */
 export async function admitAutomationActionOccurrencesV1(params: Readonly<{
@@ -21,84 +19,65 @@ export async function admitAutomationActionOccurrencesV1(params: Readonly<{
     const input = AutomationActionAdmitRequestV1Schema.parse(params.input);
     if (input.triggers.length === 0) return { results: [] };
     return rejoinAutomationOccurrenceInsertRace(() => inTx(async tx => {
-        const occurrences = input.triggers.map(ref => {
-            const evidence = ref.actionId === undefined ? input.evidence : { ...input.evidence, actionId: ref.actionId };
-            return { automationId: ref.automationId, evidence,
-                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId: ref.triggerId, evidence }) };
-        });
-        // Current configuration is irrelevant to an immutable occurrence already admitted.
-        // Ordinary admission remains the sole evidence-correspondence/rejoin decision.
-        const existing = (await Promise.all(portableQueryChunks({ values: occurrences, bindingsPerValue: 2,
-            fixedBindings: 1 }).map(chunk => findAutomationOccurrencesTx({ tx, accountId: params.accountId,
-            occurrences: chunk, select: { automationId: true, occurrenceKey: true } })))).flat();
-        const existingKeys = new Set(existing.map(row => JSON.stringify([row.automationId, row.occurrenceKey])));
-        const triggerIds = [...new Set(input.triggers.map(trigger => trigger.triggerId))];
-        const rows = (await Promise.all(portableQueryChunks({ values: triggerIds, bindingsPerValue: 1,
-            fixedBindings: 1 }).map(ids => tx.automationTrigger.findMany({
-            where: { id: { in: [...ids] }, automation: { accountId: params.accountId }, deletedAt: null },
-            select: { id: true, automationId: true, kind: true, revision: true, enabled: true,
-                ...automationActionTriggerConfigurationSelect },
-        })))).flat();
-        const rowsById = new Map(rows.map(row => [row.id, row]));
-        const origin = input.evidence.originRunId === undefined ? null
-            : await tx.automationRun.findFirst({ where: { id: input.evidence.originRunId, accountId: params.accountId },
-                select: { id: true } });
-        const causeChain = await readAutomationRunCauseChainTx(tx, origin?.id ?? null);
         const admissions: AutomationRunAdmissionRequest[] = [];
-        const admissionIndexes = new Map<string, number>();
-        const results: AutomationActionAdmitResultV1['results'] = [];
-        const pending: { position: number; index: number }[] = [];
-        for (const [position, ref] of input.triggers.entries()) {
-            const skip = (reason: string) => results.push({ automationId: ref.automationId,
-                triggerId: ref.triggerId, kind: 'skipped', reason });
-            const { evidence, occurrenceKey } = occurrences[position]!;
+        const indexesByOccurrence = new Map<string, number>();
+        const occurrenceIndexes = input.triggers.map(ref => {
+            const evidence = ref.actionId === undefined ? input.evidence : { ...input.evidence, actionId: ref.actionId };
+            const occurrenceKey = deriveAutomationOccurrenceKeyV1({ triggerId: ref.triggerId, evidence });
             const key = JSON.stringify([ref.automationId, occurrenceKey]);
-            const rejoining = existingKeys.has(key);
-            const row = rowsById.get(ref.triggerId);
-            let consentForInvocation = false;
-            if (!rejoining) {
-                if (input.evidence.originRunId !== undefined && !origin) { skip('originRunNotFound'); continue; }
-                if (!row || row.automationId !== ref.automationId || row.kind !== 'action') { skip('triggerNotFound'); continue; }
-                if (causeChain.triggerIds.has(row.id)) { skip('causeSuppressed'); continue; }
-                const definition = decodeAutomationActionTriggerConfiguration(row);
-                consentForInvocation = 'consentFor' in definition;
-                if (!('consentFor' in definition)) {
-                    if (definition.phase !== evidence.phase || !definition.actionIds.includes(evidence.actionId)) {
-                        skip('triggerKindMismatch'); continue;
+            const existingIndex = indexesByOccurrence.get(key);
+            if (existingIndex !== undefined) return existingIndex;
+            const index = admissions.length;
+            indexesByOccurrence.set(key, index);
+            const { v: _v, kind: _kind, subjects: _subjects, occurredAt, ...runEvidence } = evidence;
+            admissions.push({
+                automationId: ref.automationId,
+                now: new Date(occurredAt),
+                cause: { kind: 'trigger', triggerKind: 'action', triggerId: ref.triggerId,
+                    triggerRevision: ref.triggerRevision, occurredAt, occurrenceKey, evidence: runEvidence },
+            });
+            return index;
+        });
+        const admitted = await admitAutomationRunsTx({
+            tx, accountId: params.accountId, admissions,
+            qualifyNew: async (requests, triggers) => {
+                const originId = input.evidence.originRunId;
+                const origin = originId === undefined ? null
+                    : await tx.automationRun.findFirst({ where: { id: originId, accountId: params.accountId },
+                        select: { id: true } });
+                const causeChain = await readAutomationRunCauseChainTx(tx, origin?.id ?? null);
+                const qualified = new Map<AutomationRunAdmissionRequest, { kind: 'ineligible'; reason: AutomationRunAdmissionIneligibleReason }
+                    | { runTargetMachineId: string }>();
+                for (const request of requests) {
+                    const cause = request.cause;
+                    if (cause.kind !== 'trigger' || cause.triggerKind !== 'action') throw new Error('Expected Action occurrence');
+                    const skip = (reason: AutomationRunAdmissionIneligibleReason) => qualified.set(request, { kind: 'ineligible', reason });
+                    if (originId !== undefined && !origin) { skip('originRunNotFound'); continue; }
+                    const trigger = triggers.get(cause.triggerId);
+                    if (!trigger || trigger.automationId !== request.automationId || trigger.kind !== 'action') {
+                        skip('triggerNotFound'); continue;
                     }
-                    if (definition.subjectKey !== undefined && !automationSubjectKeyMatchesV1(
-                        definition.subjectKey, evidence.subjects, undefined, definition.subjectKind)) {
-                        skip('subjectMismatch'); continue;
+                    if (causeChain.triggerIds.has(trigger.id)) { skip('causeSuppressed'); continue; }
+                    const definition = decodeAutomationActionTriggerConfiguration(trigger);
+                    const evidence = cause.evidence;
+                    if ('consentFor' in definition) {
+                        if (evidence.machineId === undefined) skip('machineRequired');
+                        else qualified.set(request, { runTargetMachineId: evidence.machineId });
+                    } else if (definition.phase !== evidence.phase || !definition.actionIds.includes(evidence.actionId)) {
+                        skip('triggerKindMismatch');
+                    } else if (definition.subjectKey !== undefined && !automationSubjectKeyMatchesV1(
+                        definition.subjectKey, input.evidence.subjects, undefined, definition.subjectKind)) {
+                        skip('subjectMismatch');
                     }
                 }
-                if (evidence.machineId === undefined && consentForInvocation) { skip('machineRequired'); continue; }
-            }
-            let index = admissionIndexes.get(key);
-            if (index === undefined) {
-                index = admissions.length;
-                admissionIndexes.set(key, index);
-                const { v: _v, kind: _kind, subjects: _subjects, occurredAt, ...runEvidence } = evidence;
-                admissions.push({ automationId: ref.automationId,
-                    ...(consentForInvocation && evidence.machineId !== undefined ? { runTargetMachineId: evidence.machineId } : {}),
-                    now: new Date(occurredAt), cause: AutomationRunCauseSchema.parse({
-                        kind: 'trigger', triggerKind: 'action', triggerId: ref.triggerId,
-                        triggerRevision: ref.triggerRevision, occurredAt,
-                        occurrenceKey,
-                        evidence: runEvidence,
-                    }) });
-            }
-            pending.push({ position: results.length, index });
-            // Replaced with the ordinary admission result below, preserving supplied order.
-            skip('admissionPending');
-        }
-        const admitted = await admitAutomationRunsTx({ tx, accountId: params.accountId, admissions });
-        for (const { position, index } of pending) {
-            const result = admitted[index]!;
-            const ref = results[position]!;
-            results[position] = result.kind === 'ineligible'
-                ? { automationId: ref.automationId, triggerId: ref.triggerId, kind: 'skipped', reason: result.reason }
-                : { automationId: ref.automationId, triggerId: ref.triggerId, kind: result.kind, runId: result.run.id };
-        }
-        return { results };
+                return qualified;
+            },
+        });
+        return { results: input.triggers.map(({ automationId, triggerId }, position) => {
+            const result = admitted[occurrenceIndexes[position]!]!;
+            return result.kind === 'ineligible'
+                ? { automationId, triggerId, kind: 'skipped', reason: result.reason }
+                : { automationId, triggerId, kind: result.kind, runId: result.run.id };
+        }) };
     }));
 }
