@@ -1391,7 +1391,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 <View ref={automationsReveal.hostRef} collapsable={false}>
                 <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
-                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                  deploymentEnvironment={{ serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
                     environmentId: detail.environment.id }}
                   deploymentSourceName={projectSource.source?.source.name}
                   sourceAudience={projectSource.audience}
@@ -1473,7 +1473,10 @@ export const DeploymentEnvironmentDetail = React.memo(
               controller={props.controller}
               environmentId={props.environmentId}
               healthSetup={props.lifetime && controllerMachineId
-                ? { lifetime: props.lifetime, controllerMachineId } : null}
+                ? { lifetime: props.lifetime, controllerMachineId, deploymentEnvironment: {
+                    serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: detail.environment.id,
+                  } } : null}
               demand={props.demand}
               phone={props.phone}
               ownMachineId={machineIds[0] ?? null}

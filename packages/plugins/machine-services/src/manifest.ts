@@ -7,6 +7,7 @@ import { httpRequestActions } from './httpRequest.js';
 import { systemdRuntime } from './systemd.js';
 import { savedBuiltinHealthCheckActionId } from './actionIds.js';
 import { healthCatalogActions } from './healthCatalog.js';
+import { savedHealthRemovalActions } from './healthRemoval.js';
 import { retainedHealthActions } from './healthResults.js';
 import { monitorActions } from './monitorWebhooks.js';
 import { monitorCapabilityContributions, monitorDefinitions, monitorKinds, monitorObserved } from './monitorDefinitions.js';
@@ -45,7 +46,7 @@ export const plugin = definePlugin({
         translations: locales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` })) },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     activation: { events: [], configuration: { automationEventSources: true } },
-    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...retainedHealthActions, ...savedHealthActions, ...savedHealthTransitionActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
+    actions: { ...httpRequestActions, ...machineOutcomeEventActions, ...monitorActions, ...healthCatalogActions, ...retainedHealthActions, ...savedHealthRemovalActions, ...savedHealthActions, ...savedHealthTransitionActions, ...deploymentEventActions, ...managedSetupEventActions, ...mcpUpdateEventActions, ...machinePresenceEventActions,
         [HEALTH_SETUP_OPEN_ACTION_ID]: {
             title: 'Open health check setup', scopes: ['global', 'machine'], surfaces: ['ui', 'agent', 'plugin'], dangerLevel: 'safe',
             placementBindings: [],

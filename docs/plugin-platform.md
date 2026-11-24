@@ -352,6 +352,19 @@ Launch intent stays outside the setup Action's input. The plugin returns complet
 Action input through the existing form owner, which validates it and resolves its
 connected Account; the host does not assume saved, launch and Action shapes match.
 
+Environment Add Check supplies the existing Automation Environment reference. The
+saved Workflow read returns that association, and Environment withdrawal disables
+the linked definition. If the create acknowledgement is lost, the Account host
+attempts to delete the newly allocated definition and preserves the unresolved
+outcome when deletion cannot be confirmed.
+
+Machine services exposes `health/remove` with `automationId`, `triggerId`, and
+`checkId`. It uses the saved Workflow revision to update the selected source.
+Removing the last check disables the definition when it has one source, or the
+selected trigger when the definition has several sources. The Checks read should
+offer removal only for enabled checks. The Action returns `removed` after the
+write settles, or `approvalRequested` with the approval artifact id.
+
 ## Cold Bot template declarations (unreleased 0.3)
 
 The canonical contribution family registry admits `botTemplates` entries as

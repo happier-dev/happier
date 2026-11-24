@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -27,6 +28,7 @@ type Configured = Extract<Settlement, { kind: 'configured' }>;
 export function AddCheckSetup(
   props: Readonly<{
     lifetime: ServerAccountScopeLifetime;
+    deploymentEnvironment: DeploymentEnvironmentRefV1;
     seed: PluginUiOpenAutomationEventRequestV1 | undefined;
     onClose: () => void;
     testID: string;
@@ -42,7 +44,7 @@ export function AddCheckSetup(
       await addWorkflowTrigger(
         {
           trigger: settlement.trigger,
-          observationOnly: settlement.observationOnly,
+          observationOnly: { ...settlement.observationOnly, deploymentEnvironment: props.deploymentEnvironment },
         },
         { accountLifetime: props.lifetime },
       );

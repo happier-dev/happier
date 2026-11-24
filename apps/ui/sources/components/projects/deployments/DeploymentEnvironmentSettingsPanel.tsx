@@ -502,6 +502,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
               testID={`${section('checks-alerts')}.setup`}
               onClose={() => setOpeningCheckSetup(false)}
               lifetime={checkLifetime}
+              deploymentEnvironment={{ serverId: detail.environment.serverId,
+                projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id }}
               seed={subjectStarterEventSeed('addCheck', {
                 subject: { kind: 'environment', environmentId: detail.environment.id,
                   machineId: detail.environment.controllerMachineId },

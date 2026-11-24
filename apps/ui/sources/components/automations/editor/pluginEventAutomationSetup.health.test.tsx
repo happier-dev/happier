@@ -1241,7 +1241,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 });
 
 // The alternate Machine can finish its first origin read after the native form opens.
-it.each(['submitted', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'replyLostAndCompensated', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1270,7 +1270,11 @@ it.each(['submitted', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projec
                 return Response.json(exactIntentRead);
             if (path === '/v1/features' || path === '/v1/features/authenticated')
                 return Response.json(createRootLayoutFeaturesResponse());
-            return await workflows.handle(new URL(String(input)), init) ?? http.request(input, init);
+            const response = await workflows.handle(new URL(String(input)), init);
+            if (outcome === 'replyLostAndCompensated' && path === '/v3/automations' && init?.method === 'POST' && response?.ok) {
+                throw new TypeError('Connection lost after the Home saved the Automation');
+            }
+            return response ?? http.request(input, init);
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected Add check Account');
@@ -1362,7 +1366,9 @@ it.each(['submitted', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projec
         const seed = subjectStarterEventSeed('addCheck', { subject: { ...subject, machineId }, controllerMachineId: machineId });
         if (!seed) throw new Error('Expected the Environment Add check seed');
         const onClose = vi.fn();
-        screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed} onClose={onClose} />);
+        const deploymentEnvironment = { serverId: serverIdentityId, projectSourceId: 'production-source', environmentId: subject.environmentId };
+        screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed}
+            deploymentEnvironment={deploymentEnvironment} onClose={onClose} />);
         const scope = { machineId, serverId: connection.serverId };
         const projectionEntry = () => readObservedDaemonMergedProjectionCacheEntry({
             ...scope, accountLifetime: lifetime, sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
@@ -1508,6 +1514,13 @@ it.each(['submitted', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projec
             if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
             await act(async () => { settle(outcome === 'cancelled' ? { kind: 'cancelled' } : { kind: 'completed', input: setupInput }); });
         }
+        if (outcome === 'replyLostAndCompensated') {
+            await waitForHomeGovernance(() => expect(screen!.findByTestId('add-check.failed')).not.toBeNull());
+            expect(workflows.creates).toHaveLength(1);
+            expect(workflows.rows.size).toBe(0);
+            expect(onClose).not.toHaveBeenCalled();
+            return;
+        }
         await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
         if (outcome === 'cancelled') {
             expect(rpc.hostActions).toEqual([]);
@@ -1515,12 +1528,29 @@ it.each(['submitted', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projec
         } else {
             expect(rpc.hostActions).toHaveLength(1);
             expect(workflows.creates).toHaveLength(1);
+            const { listWorkflowTriggerPage, updateWorkflowTrigger } = await import('@/sync/domains/workflows/workflowTriggerActions');
+            const query = { healthSource: { sourceInstanceIds: [sourceInstanceId] } };
+            const options = { accountLifetime: lifetime };
+            const saved = await listWorkflowTriggerPage(query, options);
+            expect(saved.healthSources).toEqual([expect.objectContaining({
+                sourceInstanceId, enabled: true, source: expect.objectContaining({ subject, checks: setupInput.checks }),
+            })]);
             expect([...workflows.rows.values()]).toEqual([expect.objectContaining({
-                observationOnly: expect.objectContaining({ kind: 'observationOnly' }),
+                observationOnly: { kind: 'observationOnly', templateVersion: 1, deploymentEnvironment },
                 triggers: [expect.objectContaining({ observation: expect.objectContaining({
                     watcher: expect.objectContaining({ machineId: peer?.machineId ?? machineId }),
                 }) })],
             })]);
+            if (outcome === 'submitted') {
+                const savedSource = saved.healthSources?.[0];
+                if (!savedSource) throw new Error('Expected a saved Environment check');
+                const definition = workflows.rows.get(savedSource.automationId);
+                if (!definition) throw new Error('Expected the saved Automation definition');
+                await updateWorkflowTrigger({ automationId: savedSource.automationId,
+                    expectedRevision: definition.templateVersion, patch: { enabled: false } }, options);
+                expect((await listWorkflowTriggerPage(query, options)).healthSources)
+                    .toEqual([expect.objectContaining({ sourceInstanceId, enabled: false })]);
+            }
         }
     } finally {
         alternateProjection.resolve();

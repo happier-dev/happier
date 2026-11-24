@@ -10,6 +10,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { createDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
+import { deleteDeploymentEnvironmentInTx } from '@/app/deployments/deploymentDispositionService';
 import { setDeploymentEnvironmentControllerInTx } from '@/app/deployments/deploymentControllerService';
 import { createAutomation, createAutomationTrigger, deleteAutomation, getAutomation, updateAutomation, reconcileAutomationDefinition, runAutomationNow } from '@/app/automations/automationCrudService';
 import { AutomationValidationError } from '@/app/automations/automationValidation';
@@ -56,6 +57,12 @@ describe('Environment-owned Automation controller assignment', () => {
             contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
         }));
         if (!environment.ok) throw new Error(environment.error);
+        const reference = { serverId, projectSourceId: source.source.id, environmentId: environment.environmentId };
+        const observation = await createAutomation({ accountId: owner.id, input: {
+            automationId: crypto.randomUUID(), name: 'Environment health', enabled: true, triggers: [], assignments: [],
+            observationOnly: { kind: 'observationOnly', templateVersion: 1, deploymentEnvironment: reference },
+        } });
+        expect(observation).toMatchObject({ enabled: true, deploymentEnvironmentId: environment.environmentId });
         const recipe = createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/workspace/app', prompt: 'Preview' });
         const ordinary = await createAutomation({ accountId: owner.id, input: AutomationDefinitionCreateRequestSchema.parse({
             automationId: crypto.randomUUID(), name: 'Unrelated Workflow', enabled: true, triggers: [],
@@ -118,6 +125,14 @@ describe('Environment-owned Automation controller assignment', () => {
                 } });
             expect(unknownRole.statusCode).toBe(400);
         });
+
+        const withdrawn = await inTx(tx => deleteDeploymentEnvironmentInTx(tx, owner.id, {
+            serverId, environmentId: environment.environmentId, expectedRevision: environment.revision,
+            requestKey: crypto.randomUUID(),
+        }));
+        expect(withdrawn).toMatchObject({ ok: true });
+        expect(await getAutomation({ accountId: owner.id, automationId: observation.id }))
+            .toMatchObject({ enabled: false, deploymentEnvironmentId: environment.environmentId });
     });
 
     it.each(['plain', 'e2ee'] as const)('reads a %s observation-only health definition without resolving its private Domain subject', async encryptionMode => {

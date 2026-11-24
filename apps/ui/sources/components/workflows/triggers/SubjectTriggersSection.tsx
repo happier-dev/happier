@@ -347,6 +347,7 @@ export const SubjectTriggersSectionContent = React.memo(
             onRequestClose={close}
             {...(project ? { initialProject: project } : {})}
             accountLifetime={accountLifetime}
+            deploymentEnvironment={props.deploymentEnvironment}
             eventSeed={legacy ? subjectStarterEventSeed('addCheck', { subject: legacy, controllerMachineId: props.controllerMachineId }) : undefined}
           />
         ) : null}

@@ -81,6 +81,7 @@ import type { ActionExecutorContext } from './types.js';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
 import {
   createSavedHealthTransitionSourceInstanceIdV1,
+  HealthCheckSourceConfigV1Schema,
   isHealthCheckEventSourceV1,
   SavedHealthTransitionSourceV1Schema,
 } from '../../deployments/healthCheckSourceV1.js';
@@ -851,15 +852,20 @@ if (trigger.kind === 'sessionLifecycle') {
         });
         const environment = input.observationOnly?.deploymentEnvironment;
         const requested = triggers.length === 1 ? triggers[0]!.trigger : undefined;
+        const savedHealthCheck = input.observationOnly !== undefined && requested?.kind === 'pluginEvent'
+          && !('triggerDefinitionEnvelope' in requested) && isHealthCheckEventSourceV1(requested)
+          && HealthCheckSourceConfigV1Schema.safeParse(requested.sourceConfig).success;
         const reuse = current && environment && requested?.kind === 'pluginEvent' && !('triggerDefinitionEnvelope' in requested)
           ? (row: AutomationDefinitionDetail) => {
             const trigger = row.triggers[0];
-            return pluginJsonValuesEqual(row.observationOnly?.deploymentEnvironment, environment)
-              && row.triggers.length === 1 && trigger?.kind === 'pluginEvent'
-              && pluginJsonValuesEqual(trigger.eventRef, requested.eventRef)
-              && trigger.sourceContractVersion === requested.sourceContractVersion
-              && trigger.observation.kind === requested.observationTransport.kind
-              && readAccountStoredPluginEventTriggerV1(row, trigger.id, current).definition.sourceInstanceId === requested.sourceInstanceId;
+            if (!pluginJsonValuesEqual(row.observationOnly?.deploymentEnvironment, environment)
+              || row.triggers.length !== 1 || trigger?.kind !== 'pluginEvent'
+              || !pluginJsonValuesEqual(trigger.eventRef, requested.eventRef)
+              || trigger.sourceContractVersion !== requested.sourceContractVersion
+              || trigger.observation.kind !== requested.observationTransport.kind) return false;
+            const definition = readAccountStoredPluginEventTriggerV1(row, trigger.id, current).definition;
+            return definition.sourceInstanceId === requested.sourceInstanceId
+              && (!savedHealthCheck || pluginJsonValuesEqual(definition.sourceConfig, requested.sourceConfig));
           } : undefined;
         const retained = current ? await assertSourceConfigurations(input.automationId, input.name,
           triggers.flatMap(item => {
@@ -885,9 +891,24 @@ if (trigger.kind === 'sessionLifecycle') {
         const privateTriggers = await Promise.all(triggers.map(async item => current ? { ...item,
           trigger: await preparePrivateTrigger(input.automationId, item.triggerId, 0, item.trigger, current, undefined,
             input.workflowDefinitionId) } : item));
-        return commitRequesterScopes([], nextScopes, async () => materializePrivateDetail(
-          await params.automations.create(await sealCreatePrivateDisplay({ ...input, triggers: privateTriggers }), beforeWrite, signal),
-        ), beforeWrite, signal);
+        return commitRequesterScopes([], nextScopes, async () => {
+          const sealed = await sealCreatePrivateDisplay({ ...input, triggers: privateTriggers });
+          let committed: AutomationDefinitionDetail;
+          try {
+            committed = await params.automations.create(sealed, beforeWrite, signal);
+          } catch (error) {
+            if (!savedHealthCheck || readActionErrorCodeV1(error) !== 'workflow_outcome_unresolved') throw error;
+            // The generated ID belongs to this Save alone. Keep an unresolved outcome
+            // if the Home also cannot confirm deletion, including a too-early 404.
+            try {
+              await params.automations.delete(input.automationId);
+            } catch {
+              throw error;
+            }
+            throw Object.assign(new Error('storage_unavailable', { cause: error }), { code: 'storage_unavailable' });
+          }
+          return materializePrivateDetail(committed);
+        }, beforeWrite, signal);
       },
       reconcile: async (automationId, request, row, beforeWrite, signal) => {
         if (!row || row.id !== automationId || row.templateVersion !== request.expectedTemplateVersion) unavailable('currentness_conflict');

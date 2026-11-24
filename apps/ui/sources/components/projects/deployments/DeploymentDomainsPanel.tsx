@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { DeploymentEnvironmentHeaderV1, OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployments/contracts/v1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
@@ -99,7 +100,8 @@ export function DeploymentDomainsPanel(
     runtimeProjections?: readonly OwnServerDeploymentRuntimeProjectionV1[];
     /** Absent where the page cannot write: the addresses stay read-only. */
     editing?: DeploymentDomainEditing | null;
-    healthSetup?: Readonly<{ controllerMachineId: string; lifetime: ServerAccountScopeLifetime }> | null;
+    healthSetup?: Readonly<{ controllerMachineId: string; lifetime: ServerAccountScopeLifetime;
+        deploymentEnvironment: DeploymentEnvironmentRefV1 }> | null;
     /** The platform's own stable addresses (`DeploymentEnvironmentReadDetailV1.builtInUrls`), listed first, read-only. */
     builtInUrls?: readonly string[];
   }>,
@@ -344,6 +346,7 @@ export function DeploymentDomainsPanel(
         testID="project-deployments.environment.domains.check-setup"
         onClose={() => setCheckSetup(null)}
         lifetime={props.healthSetup.lifetime}
+        deploymentEnvironment={props.healthSetup.deploymentEnvironment}
         seed={subjectStarterEventSeed('addCheck', {
           subject: { kind: 'environment', environmentId: props.environmentId, machineId: props.healthSetup.controllerMachineId },
           controllerMachineId: props.healthSetup.controllerMachineId,

@@ -5,6 +5,7 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presenta
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
@@ -466,6 +467,7 @@ function AccountTriggerPopover(props: Readonly<{
  * with its set's Runs on, written through `workflow.trigger.add`. It joins the Library as a Workflow (Q7).
  */
 type NewAccountTriggerPopoverProps = Readonly<{
+    deploymentEnvironment?: DeploymentEnvironmentRefV1;
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
     eventSeed?: PluginUiOpenAutomationEventRequestV1;
@@ -576,8 +578,12 @@ function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): Re
             )}
             onSubmit={async (value, write) => {
                 if (write.observationOnly && write.trigger !== null) {
-                    await addWorkflowTrigger({ trigger: write.trigger, observationOnly: write.observationOnly },
-                        props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
+                    await addWorkflowTrigger({
+                        trigger: write.trigger,
+                        observationOnly: props.deploymentEnvironment
+                            ? { ...write.observationOnly, deploymentEnvironment: props.deploymentEnvironment }
+                            : write.observationOnly,
+                    }, props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
                     fireAndForget(sync.refreshAutomations());
                     return;
                 }
