@@ -65,8 +65,8 @@ const NOT_SENT: readonly DiscardedPendingMessage[] = [{
 } as DiscardedPendingMessage];
 
 const APPROVAL_RESULT: readonly PendingMessage[] = [{
-  ...queuedMessage('dev-approval-result', JSON.stringify({ actionId: 'browser.open', status: 'executed',
-    execution: { executedAtMs: 5, ok: false, errorCode: 'browser_unavailable' } }), 5),
+  ...queuedMessage('dev-approval-result', JSON.stringify({ actionId: 'machines.list', status: 'executed',
+    execution: { executedAtMs: 5, ok: false, errorCode: 'machine_unavailable' } }), 5),
   localId: 'approval-result:dev-approval',
   rawRecord: { meta: { [SESSION_MESSAGE_PROVENANCE_META_KEY]: buildTrustedHostSessionInputAdmissionV1('mcp').provenance } },
 } as PendingMessage];
