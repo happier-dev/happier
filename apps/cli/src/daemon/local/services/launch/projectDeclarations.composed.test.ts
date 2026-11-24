@@ -244,6 +244,32 @@ describe('accepted Project Service declaration starter', () => {
         expect(h.setupProcesses).toEqual([]);
         await h.owner.listProjectServices()[0]?.stop();
     });
+    it('publishes reviewed Start for a declaration with retained stopped history and starts it again', async () => {
+        const h = await fixture(false, undefined, true, undefined, 'home', 'home', undefined, undefined, false, false, true);
+        const first = (await h.routes.getSnapshot()).targets.find(target => target.id === h.request.targetId)!;
+        const review = await h.selectStart();
+        expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
+            .toMatchObject({ status: 'succeeded' });
+        const original = h.owner.listProjectServices()[0]!;
+        await original.stop();
+        const retained = (await h.routes.getSnapshot()).targets.find(target => target.id === first.id)!;
+        expect(retained).toMatchObject({ sourceClass: { kind: 'managed_service', managedServiceId: original.instanceId },
+            serviceState: 'stopped', workspace: first.workspace, declaration: first.declaration });
+        expect(retained.actions).toContain('start');
+        expect(first.actions).toContain('start');
+        const request = { machineId: retained.machineId!, targetId: retained.id, workspace: retained.workspace!, declaration: retained.declaration! };
+        const nextReview = await h.starter.resolveStartTarget(request, h.ingress, h.context);
+        if (!nextReview.ok) throw new Error(nextReview.reasonCode);
+        expect(await h.routes.startTarget!({ ...request, expectedEffectDigest: nextReview.declaration.reviewedEffectDigest }, h.ingress,
+            { ...h.context, actionRequestId: 'retained-history-start' })).toMatchObject({ status: 'succeeded' });
+        await h.owner.listProjectServices().find(handle => handle.snapshot().state === 'running')?.stop();
+        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest, services: {} }));
+        await h.refreshDiscovery();
+        const history = (await h.routes.getSnapshot()).targets.find(target => target.id === first.id)!;
+        expect(history.serviceState).toBe('stopped');
+        expect(history.actions).not.toContain('start');
+    });
+
     it('starts the same declaration again after its original process is stopped', async () => {
         const h = await fixture();
         const review = await h.selectStart();
@@ -789,7 +815,7 @@ describe('accepted Project Service declaration starter', () => {
     }
 
     async function fixture(setup = false, source?: unknown, finiteAccepting = true, workerExecution?: 'portable' | 'primary', profileId = 'home', homeId = profileId, supervisorPlatform?: NodeJS.Platform,
-        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false, interactive = false) {
+        toolchain?: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectToolchainSelectionV1, acceptedSharedSetup = false, interactive = false, retained = false) {
         const root = await mkdtemp(join(tmpdir(), 'happier-project-service-'));
         await mkdir(join(root, '.happier'));
         const command = `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`;
@@ -1009,7 +1035,7 @@ describe('accepted Project Service declaration starter', () => {
             custodyBinding: { serverId: homeId, installationId: 'installation' }, resolveAccountId: async () => 'owner',
             publishSnapshot: snapshot => { operationSnapshots.push(snapshot); snapshotWaiters.forEach(waiter => waiter(snapshot)); },
             ...(workerExecution ? { generateOperationId: () => ++operationIndex === 1 ? 'service-start-operation' : `setup-operation${operationIndex === 2 ? '' : `-${operationIndex}`}` } : {}) });
-        const owner = createManagedServicesOwner({ processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon',
+        const owner = createManagedServicesOwner({ ...(retained ? { projectServiceStateDirectory: join(root, 'retained-services') } : {}), processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon',
             ...(supervisorPlatform ? { platform: supervisorPlatform } : {}) }),
             // Plugin dependency installation is unreachable for literal Project commands.
             dependencies: Object.freeze({}) as never, resolveScope: scope => scope });
@@ -1094,6 +1120,7 @@ describe('accepted Project Service declaration starter', () => {
             runTargets: () => discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [targetWorkspace], projectDefinitionAccount }) });
         const routes = createLocalServiceLauncherRoutes({ feed, history, ...starter });
         return { root, workspace, targetRoot, targetWorkspace, serverIdentityId, machineInstallationKeys, projectDefinitionActionFor, manifest, starter, routes, history, request, ingress, context, owner, post, setupProcesses, setupStarted, terminalSessions, operationRuntime, operationSnapshots, operationPublished, runtime, admissionDrain, prepareBetween,
+            async refreshDiscovery() { await feed.refreshRunTargets(); },
             async selectStart(selectedIngress: Parameters<typeof starter.resolveStartTarget>[1] = ingress) {
                 const selected = await starter.resolveStartTarget(request, selectedIngress, context);
                 if (!selected.ok) throw new Error(selected.reasonCode);

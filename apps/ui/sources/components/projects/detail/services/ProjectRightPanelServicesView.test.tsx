@@ -453,7 +453,7 @@ describe('ProjectRightPanelServicesView', () => {
         const workspace = { serverId, machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
         const target = { id: 'declared:web', source: 'managed_service' as const, machineId: workspace.machineId,
             workspace, declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest' as const, name: 'web' } },
-            title: 'Web', confidence: 'high' as const, state: 'unavailable' as const, unavailableReason: 'launch_unavailable', actions: [] };
+            title: 'Web', confidence: 'high' as const, state: 'available' as const, serviceState: 'stopped' as const, actions: ['start' as const] };
         await home.requireUiApproval(serverId, 'localServices.launcher.start');
         const readApprovalPreference = () => readExplicitActionApprovalPreferenceV1('localServices.launcher.start',
             storage.getState().settings.actionsSettingsV1, { surface: 'ui' });
@@ -522,7 +522,7 @@ describe('ProjectRightPanelServicesView', () => {
                 workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace } });
         const target = { id: 'declared:web', source: 'managed_service' as const, machineId: workspace.machineId,
             workspace, declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest' as const, name: 'web' } },
-            title: 'Web', confidence: 'high' as const, state: 'unavailable' as const, unavailableReason: 'launch_unavailable', actions: [] };
+            title: 'Web', confidence: 'high' as const, state: 'available' as const, serviceState: 'stopped' as const, actions: ['start' as const] };
         // Finite preparation uses the captured Home's HTTP Action admission, not ambient RPC.
         const machine = ExternalActionMachineBootstrapV1Schema.parse({ id: workspace.machineId,
             kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,

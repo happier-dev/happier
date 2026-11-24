@@ -90,7 +90,8 @@ vi.mock('@/modal', async () => {
   return createModalModuleMock({ confirmResult: true }).module;
 });
 
-vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', () => ({
+vi.mock('@/components/appShell/plugins/AppShellPluginUiProjection', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/components/appShell/plugins/AppShellPluginUiProjection')>(),
   useAppShellPluginUiProjection: () => pluginProjectionState.appShell,
 }));
 

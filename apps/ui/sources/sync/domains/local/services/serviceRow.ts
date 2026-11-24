@@ -127,21 +127,12 @@ function resolvePrimaryAction(target: LocalServiceLaunchTarget): ServiceRow['pri
     if (target.unavailableReason === 'project_service_binding_pending') return null;
     if (target.unavailableReason === 'project_service_binding_unavailable') return null;
     if (hasUncertainLocalServiceNativeCustodyV1(target)) return null;
-    // An unaccepted package is presentation only, not a Session terminal command.
-    if (target.source === 'package_script' && !(target.workspace && target.declaration)) return null;
     // A target with private-preview registration is an Open intent. The shared action
     // owner registers it before admitting the returned browser target and access URL.
     const openTarget = resolveLocalServiceOpenableTarget(target);
     if (openTarget) {
         return { kind: 'open', openTarget };
     }
-    // A qualified declaration offers review, not executable feed authority. The
-    // launcher resolves current accepted facts and policy before admitting Start.
-    const declarationCanBeReviewed = (target.source === 'package_script' || target.source === 'managed_service')
-        && target.workspace && target.declaration
-        && (target.serviceState === undefined || target.serviceState === 'stopped' || target.serviceState === 'failed')
-        && target.state !== 'starting';
-    if (declarationCanBeReviewed) return { kind: 'start', target };
     if (target.actions.includes('start')) {
         return { kind: 'start', target };
     }

@@ -660,7 +660,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             await watch;
             expect(changed).toEqual([expect.objectContaining({ changed: true })]);
             expect((await runtime.launcherRoutes.getSnapshot({ scope: 'machine' })).targets).toEqual([
-                expect.objectContaining({ id: 'worker', state: 'unavailable', actions: [] }),
+                expect.objectContaining({ id: 'worker', state: 'available', serviceState: 'stopped', actions: ['start'] }),
             ]);
             expect(scans).toBe(scansBeforeStop);
             const stoppedPublications = publications;
@@ -1131,7 +1131,7 @@ describe('createLocalServicesDaemonRuntime', () => {
                 } },
             ]));
             expect(snapshot).not.toHaveProperty('sessionId');
-            expect(snapshot.targets.every(target => !target.actions.includes('start'))).toBe(true);
+            expect(snapshot.targets.every(target => target.actions.includes('start'))).toBe(true);
         } finally {
             await runtime.stop();
             await rm(root, { recursive: true, force: true });
@@ -1168,7 +1168,7 @@ describe('createLocalServicesDaemonRuntime', () => {
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(launcher);
             expect(snapshot.targets).toEqual([expect.objectContaining({
                 declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'web' } },
-                state: 'unavailable',
+                state: 'available', serviceState: 'stopped', actions: ['start'],
             })]);
             const state = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), snapshot);
             const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: selectLocalServiceLaunchTargets(state),

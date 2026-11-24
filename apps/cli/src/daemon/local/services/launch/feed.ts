@@ -1,5 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionOperationSnapshotV1, LocalServiceLauncherSnapshotV1, LocalServiceLaunchTargetV1 } from '@happier-dev/protocol';
+import { hasUncertainLocalServiceNativeCustodyV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import { getHostWorktreePortsOwner, type WorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 import { canonicalAbsolutePathsEqual, expandHomeDirPath } from '../../../../utils/path/expandHomeDirPath';
@@ -88,7 +89,7 @@ function fenceExecutableAuthority(target: LocalServiceLaunchTargetV1): LocalServ
 }
 
 function sourcePriority(target: LocalServiceLaunchTargetV1): number {
-    if (target.source === 'managed_service' && target.serviceState !== 'stopped') return 0;
+    if (target.source === 'managed_service' && (target.serviceState !== 'stopped' || !target.sourceClass)) return 0;
     if (target.source === 'registered_preview') return 0;
     if (target.source === 'inventory_entry' && target.browserTarget) return 1;
     if (target.source === 'inventory_entry') return 2;
@@ -378,6 +379,10 @@ export function createLocalServiceLauncherFeed(
                 });
             if (bindingsOnly) return { v: 1, machineId: input.machineId, updatedAt: snapshot.updatedAt, targets: sortTargets(managed) };
             const managedIds = new Set(managed.map(target => target.id));
+            // Discovery owns the current declaration link; retained native history
+            // contributes lifecycle facts, never an independent Start decision.
+            const declarations = new Map(runTargets.flatMap(target => 'declaration' in target
+                ? [[target.id, target] as const] : []));
             const declaredIds = new Set([...snapshot.targets, ...managed]
                 .filter(target => target.declaration).map(target => target.id));
             for (const entry of inventoryEntries) {
@@ -393,7 +398,15 @@ export function createLocalServiceLauncherFeed(
                         && !(target.sourceClass?.kind === 'inventory_entry' && correlatedInventoryIds.has(target.sourceClass.inventoryEntryId)))
                         .map(fenceExecutableAuthority),
                     ...managed,
-                ], input.startOperations?.() ?? [], input.machineId, workspaceScopePaths))
+                ].map(target => {
+                    const declaration = declarations.get(target.id);
+                    if (!declaration || target.state !== 'available' || target.serviceState !== 'stopped'
+                        || hasUncertainLocalServiceNativeCustodyV1(target)) return target;
+                    // Start means review this declaration. The existing Start owner
+                    // still admits its current files, placement and execution policy.
+                    return { ...target, workspace: declaration.workspace, declaration: declaration.declaration,
+                        actions: [...target.actions, 'start' as const] };
+                }), input.startOperations?.() ?? [], input.machineId, workspaceScopePaths))
                     .filter(target => !input.history?.isDismissed(target.id))],
             };
         },

@@ -63,6 +63,12 @@ function packageTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): Local
 }
 
 describe('selectLocalServiceRowForInventoryEntry', () => {
+    it('does not offer Start for retained declaration history whose owner publishes no start action', () => {
+        const target = packageTarget({ source: 'managed_service', state: 'available', serviceState: 'stopped', unavailableReason: undefined,
+            workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
+            declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'worker' } } });
+        expect(buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' })[0]?.primaryAction).toBeNull();
+    });
     it('selects a Services port without mistaking an unrelated managed row for an inventory identity', () => {
         const unrelated = LocalServiceLaunchTargetV1Schema.parse(openableTarget({
             id: 'other-managed-service', source: 'managed_service', serviceState: 'running', sessionId: undefined,
@@ -198,9 +204,9 @@ describe('buildLocalServiceRows', () => {
         expect(rows[0]?.status).toBe('stopped');
         expect(selectLocalServiceRunningCount(rows)).toBe(0);
     });
-    it.each(['package_script', 'managed_service'] as const)('offers a fresh reviewed Start intent for a qualified %s declaration without inventing executable actions', source => {
+    it.each(['package_script', 'managed_service'] as const)('consumes the owner Start action for a qualified %s declaration', source => {
         const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' };
-        const target = packageTarget({ source,
+        const target = packageTarget({ source, state: 'available', serviceState: 'stopped', unavailableReason: undefined, actions: ['start'],
             sourceClass: source === 'package_script'
                 ? { kind: 'package_script', runTargetId: 'project-service:selected', packageName: 'web', scriptName: 'dev', cwd: '/repo/web' }
                 : { kind: 'managed_service', managedServiceId: 'project-service:selected' },
@@ -208,7 +214,7 @@ describe('buildLocalServiceRows', () => {
         });
         const rows = buildLocalServiceRows({ inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace' });
         expect(rows[0]?.primaryAction).toEqual({ kind: 'start', target });
-        expect(target.actions).toEqual([]);
+        expect(target.actions).toEqual(['start']);
         expect(selectLocalServiceRunningCount(rows)).toBe(0);
         expect(groupLocalServiceRowsBySection(rows)[0]?.section).toBe('ready');
     });
@@ -226,7 +232,7 @@ describe('buildLocalServiceRows', () => {
             inventoryRows: [], launchTargets: [target], sessionId: null, scope: 'workspace',
         });
         expect(rowsFor(running)[0]?.primaryAction).toEqual({ kind: 'open', openTarget: running });
-        const stopped = { ...running, serviceState: 'stopped' as const };
+        const stopped = { ...running, serviceState: 'stopped' as const, actions: ['start' as const] };
         expect(rowsFor(stopped)[0]).toMatchObject({ status: 'stopped', primaryAction: { kind: 'start', target: stopped } });
     });
     it.each([
@@ -245,7 +251,7 @@ describe('buildLocalServiceRows', () => {
             sourceClass: { kind: 'managed_service', managedServiceId: 'actual-instance', inventoryEntryId: 'entry-a' },
             workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'accepted', rootPath: '/repo' },
             declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'worker' } },
-            state: 'available', serviceState, actions: ['manage'],
+            state: 'available', serviceState, actions: canStart ? ['start'] : ['manage'],
         });
         const rows = buildLocalServiceRows({ inventoryRows: [inventoryRow()], launchTargets: [target], sessionId: null, scope: 'workspace' });
         expect(rows[0]?.primaryAction).toEqual(canStart ? { kind: 'start', target } : null);
@@ -278,7 +284,7 @@ describe('buildLocalServiceRows', () => {
             managed('server', { state: 'available', serviceState: 'detecting', actions: ['manage'],
                 declaration: { workspaceRefId: 'accepted', selection: { kind: 'manifest', name: 'server' } } }),
             managed('web', { state: 'available', serviceState: 'running', actions: ['manage'], endpointUrl: 'http://localhost:5173/' }),
-            managed('docs', { declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
+            managed('docs', { actions: ['start'], declaration: { workspaceRefId: 'accepted', selection: { kind: 'native',
                 source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'docs' } } } }),
         ] });
         const byId = new Map(rows.map((row) => [row.id, row]));

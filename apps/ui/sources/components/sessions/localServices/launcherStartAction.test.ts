@@ -57,6 +57,17 @@ type StartActionContextWithSnapshotApply = Readonly<{
 }>;
 
 describe('launcher start action helpers', () => {
+    it('does not dispatch Start for history with declaration metadata but no owner start action', async () => {
+        const { useLocalServiceLauncherStartAction } = await import('./launcherStartAction');
+        const runtimeActionExecute = vi.fn(async () => ({})) satisfies RuntimeActionExecute;
+        const target = { ...startableTarget, actions: [],
+            workspace: { serverId: 'server-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: '/accepted' },
+            declaration: { workspaceRefId: 'workspace-a', selection: { kind: 'manifest' as const, name: 'worker' } } };
+        const hook = await renderHook(() => useLocalServiceLauncherStartAction({ runtimeActionExecute, serverId: 'server-a' }));
+        expect(await hook.getCurrent()!(target)).toBeUndefined();
+        expect(runtimeActionExecute).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
     it.each(['accept', 'decline', 'retire'] as const)('continues an already-returned native effect review without a pre-consent retry (%s)', async decision => {
         const { executeLocalServiceLauncherStartWithReview } = await import('./launcherStartAction');
         const cancellation = new AbortController();
@@ -255,12 +266,12 @@ describe('launcher start action helpers', () => {
         expect(requests).toHaveLength(1);
     });
 
-    it('preserves the actual accepted Project address, declaration and reviewed digest without guessing from cwd', async () => {
+    it('preserves a stopped retained Service’s accepted Project address, declaration and reviewed digest without guessing from cwd', async () => {
         const { buildLocalServiceLauncherStartRequest } = await import('./launcherStartAction');
         const workspace = { serverId: 'server-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: '/accepted-root' };
         const declaration = { workspaceRefId: 'workspace-a', selection: { kind: 'native' as const,
             source: { kind: 'native' as const, tool: 'package_script' as const, file: 'web/package.json', target: 'dev' } } };
-        const input = { target: { ...startableTarget, workspace, declaration, cwd: '/accepted-root/web' }, expectedEffectDigest: 'a'.repeat(64) };
+        const input = { target: { ...startableTarget, serviceState: 'stopped' as const, workspace, declaration, cwd: '/accepted-root/web' }, expectedEffectDigest: 'a'.repeat(64) };
         expect(buildLocalServiceLauncherStartRequest(input)).toMatchObject({ workspace, declaration, expectedEffectDigest: 'a'.repeat(64) });
     });
 
@@ -287,7 +298,7 @@ describe('launcher start action helpers', () => {
         const { useLocalServiceLauncherStartAction } = await import('./launcherStartAction');
         const runtimeActionExecute = vi.fn(async () => undefined) satisfies RuntimeActionExecute;
         const hook = await renderHook(() => useLocalServiceLauncherStartAction({ runtimeActionExecute, serverId: 'server-a', machineId: 'machine-a' }));
-        const packageTarget = { ...startableTarget, source: 'package_script' as const,
+        const packageTarget = { ...startableTarget, source: 'package_script' as const, actions: [],
             sourceClass: { kind: 'package_script' as const, runTargetId: 'legacy-package', packageName: 'web', scriptName: 'dev' } };
         expect(await hook.getCurrent()?.(packageTarget)).toBeUndefined();
         expect(await hook.getCurrent()?.({ ...startableTarget,

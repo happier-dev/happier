@@ -157,8 +157,7 @@ export function useLocalServiceLauncherStartAction(
             if (target.workspace && serverId && !areServerProfileIdentifiersEquivalent(target.workspace.serverId, serverId)) {
                 return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
             }
-            if ((!hasStartAction(target) && !(target.workspace && target.declaration))
-                || (target.source === 'package_script' && !(target.workspace && target.declaration))) {
+            if (!hasStartAction(target)) {
                 return undefined;
             }
             const resolveDestination = async (selected?: ProjectExecutionChoiceV1): Promise<ProjectExecutionChoiceV1 | undefined> => {

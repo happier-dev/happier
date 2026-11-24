@@ -5,6 +5,7 @@ import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { createLocalServicePreviewRegistry, previewIdForInventoryEntry, registerLocalServicePreview } from '../preview/registry';
 import { createLocalServiceLauncherFeed } from './feed';
+import { discoverLocalServiceRunTargets } from './runTargets';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import { buildLocalServiceRows } from '../../../../../../../apps/ui/sources/sync/domains/local/services/serviceRow';
@@ -73,6 +74,38 @@ function inventoryEntry(
 }
 
 describe('createLocalServiceLauncherFeed', () => {
+    it('offers Start for an accepted non-Git folder script while unqualified scripts stay unavailable', async () => {
+        const directory = await fs.mkdtemp(join(tmpdir(), 'happier-folder-service-'));
+        try {
+            await fs.writeFile(join(directory, 'package.json'), JSON.stringify({
+                name: 'billing-api', scripts: { dev: 'python3 -m http.server 5173' },
+            }));
+            const workspace: WorkspaceRefV1 = {
+                id: 'folder-workspace', serverId: 'home', machineId: 'machine-a', rootPath: directory, createdAtMs: 1,
+            };
+            const createFeed = (acceptedWorkspaceRefs: readonly WorkspaceRefV1[]) => createLocalServiceLauncherFeed({
+                machineId: 'machine-a', inventoryRegistry: createLocalServiceInventoryRegistry(),
+                previewRegistry: createLocalServicePreviewRegistry(),
+                runTargets: () => discoverLocalServiceRunTargets({ roots: [directory], acceptedWorkspaceRefs }),
+            });
+            const declared = LocalServiceLauncherSnapshotV1Schema.parse(await createFeed([workspace])
+                .getSnapshot({ scope: 'workspace', workspaceRoot: directory }));
+            expect(declared.targets).toHaveLength(1);
+            expect(declared.targets[0]).toMatchObject({
+                state: 'available', serviceState: 'stopped', actions: ['start'],
+                workspace: { serverId: workspace.serverId, machineId: workspace.machineId,
+                    workspaceId: workspace.id, rootPath: workspace.rootPath },
+                declaration: { selection: { kind: 'native', source: {
+                    kind: 'native', tool: 'package_script', file: 'package.json', target: 'dev',
+                } } },
+            });
+            const unqualified = LocalServiceLauncherSnapshotV1Schema.parse(await createFeed([])
+                .getSnapshot({ scope: 'workspace', workspaceRoot: directory }));
+            expect(unqualified.targets).toHaveLength(1);
+            expect(unqualified.targets[0]).toMatchObject({ state: 'unavailable', actions: [] });
+        } finally { await fs.rm(directory, { recursive: true, force: true }); }
+    });
+
     it('projects only the selected opted-in worktree assignment, including a checkout with no services', async () => {
         const directory = await fs.mkdtemp(join(tmpdir(), 'happier-ports-feed-'));
         try {
