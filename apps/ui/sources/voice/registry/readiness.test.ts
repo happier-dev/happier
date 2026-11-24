@@ -93,10 +93,11 @@ describe('resolveVoiceRoleReadiness', () => {
       facts: { ...readyFacts, runtime: 'unknown' as const },
     };
 
+    // A runtime that could not be checked is checked again, never answered by switching provider (B1).
     expect(resolveVoicePassiveSetupReadiness(input)).toMatchObject({
       status: 'unavailable',
       code: 'runtime_unknown',
-      recoveryAction: 'switch_provider',
+      recoveryAction: 'retry',
     });
     expect(resolveVoicePassiveSetupReadiness({
       ...input,
