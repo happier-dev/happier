@@ -89,7 +89,7 @@ export interface WorkbenchClient {
     /** Existing R4 demand subscription. No second own-write channel. */
     subscribeOwnWrites(listener: (change: Readonly<{ target: DatabaseTargetV1; relation?: DatabaseRelationV1 }>) => void): () => void;
     /** Uses the existing page navigation owner; never rediscover an Environment target. */
-    navigate(location: WorkbenchLocation): Promise<void>;
+    navigate(location: WorkbenchLocation, signal?: AbortSignal): Promise<void>;
     /** Go to the database's root (no place), replacing the current entry: where a cold link's place opens from. */
     openRoot(): Promise<void>;
     setUnsavedChanges(value: boolean): Promise<void>;

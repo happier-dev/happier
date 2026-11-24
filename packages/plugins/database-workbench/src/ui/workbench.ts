@@ -269,10 +269,12 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             if (!held) { held = createConsole(instance, targetKey); consoles.set(targetKey, held); }
             return held;
         },
-        async navigate(intent: Partial<WorkbenchLocation>) {
+        async navigate(intent: Partial<WorkbenchLocation>, signal?: AbortSignal) {
             const next = mergeWorkbenchLocation(local.get('location'), intent);
-            await client.navigate(next);
+            await client.navigate(next, signal);
+            signal?.throwIfAborted();
             local.set('location', next);
+            return next;
         },
         /** Go to the database's root, where a link straight to a place reopens from, so Back reaches the rail. */
         async openRoot() {

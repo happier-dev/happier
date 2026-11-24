@@ -2365,6 +2365,12 @@ history stay under the editor's device scope, and staged edits remain in
 the mounted Workbench until the reviewed Apply. The Open Action returns
 a location outcome and carries no Console content.
 
+Navigate and Draft Read address an existing Database Workbench on the selected
+answering client with its published `mountId`. Navigate uses the same location
+owner as the page controls. Draft Read admits Access Read for the selected
+database under the invoking principal before reading either the current SQL
+draft or SQL-only History from the answering device.
+
 In 0.3 development source, the Database Workbench's Prepare brief control
 invokes `happier.database/actions/insights/brief/build` for the selected
 finding. The build reads the selection once and takes its initial baseline

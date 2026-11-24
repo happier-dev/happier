@@ -84,6 +84,8 @@ export type {
     DatabaseWriteStatementInputV1,
 } from './schemas/databaseOperands.js';
 import * as databaseOperands from './schemas/databaseOperands.js';
+export const DatabaseFilterV1Schema: ProtocolComposableSchema<databaseOperands.DatabaseFilterV1> =
+    projectZodProtocolSchema(databaseOperands.DatabaseFilterV1Schema);
 export const DatabaseReadStatementInputV1Schema: ProtocolComposableSchema<ReturnType<typeof databaseOperands.DatabaseReadStatementInputV1Schema.parse>, JsonObjectOutput<ReturnType<typeof databaseOperands.DatabaseReadStatementInputV1Schema.parse>>> =
     projectZodProtocolSchema(databaseOperands.DatabaseReadStatementInputV1Schema);
 export const DatabaseRelationV1Schema: ProtocolComposableSchema<ReturnType<typeof databaseOperands.DatabaseRelationV1Schema.parse>> =

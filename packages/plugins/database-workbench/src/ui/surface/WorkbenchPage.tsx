@@ -13,8 +13,10 @@ import {
   defineUiSurface,
   useHappierPageChrome,
   usePluginTranslation,
+  useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 import { AutomationsSection } from '@happier-dev/plugin-ui/components';
+import { usePluginUiEphemeralSharedScope } from '@happier-dev/plugin-ui/hostApi';
 import {
   WorkbenchProvider,
   useDatabaseTargets,
@@ -42,6 +44,7 @@ import {
 } from './mount.js';
 import { decodeWorkbenchSubPath, type WorkbenchPlace } from './subPath.js';
 import { databaseEngineName } from './engines.js';
+import { bindMountedWorkbench } from './openWorkbench.js';
 
 function OverviewPane(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
   const translate = usePluginTranslation();
@@ -177,6 +180,15 @@ function MountedWorkbenchPage({ context, launch, place, root, client, connection
   );
   const options = React.useMemo(() => ({ pageLocation: true }), []);
   const instance = useWorkbenchMount(context, launch, initial, options, client);
+  const mountId = useSurfaceContext().mountId;
+  const sharedScope = usePluginUiEphemeralSharedScope();
+  React.useEffect(() => {
+    if (!sharedScope || !mountId || !instance || !targetKey) return;
+    const release = bindMountedWorkbench(sharedScope, mountId, { instance, targetKey, signal: context.signal });
+    if (!release) return;
+    context.hostApi.publishCurrentUiContext({ detail: { address: { mountId } } });
+    return () => { release(); context.hostApi.publishCurrentUiContext(null); };
+  }, [sharedScope, mountId, instance, targetKey, context.signal, context.hostApi]);
   // The host's Back, Forward or a link moves the page: the workbench takes that place, never writing it back.
   React.useEffect(() => { instance?.adopt(place); }, [instance, place]);
   // A link straight to a place goes to the root first and opens the place from there once the page has reached it,

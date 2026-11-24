@@ -21,7 +21,7 @@ export type { DatabaseEditsApplyInputV1 } from './projections.js';
 export type { DatabaseEngineIdV1 } from './projections.js';
 export type { DatabaseFailureCauseV1 } from './projections.js';
 export type { DatabaseFailureV1 } from './projections.js';
-export type { DatabaseFilterV1 } from './projections.js';
+export { DatabaseFilterV1Schema, type DatabaseFilterV1 } from './projections.js';
 export type { DatabaseFindingBaselineV1 } from './projections.js';
 export type { DatabaseFindingBriefBuildInputV1 } from './projections.js';
 export type { DatabaseFindingBriefBuildResultV1 } from './projections.js';

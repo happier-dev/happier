@@ -16,15 +16,18 @@ import {
     DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STRUCTURE_READ_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
+    UI_DATABASE_DRAFT_READ_ACTION_ID_V1,
+    UI_DATABASE_NAVIGATE_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
-import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
+import { databaseActionLocalIdV1, type PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
-import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { JsonValue, PluginEphemeralSharedScope } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest, createCanonicalJsonSigningInput, PluginError } from '@happier-dev/plugin-sdk';
 import {
   createPluginUiActionControlTestHost,
+  createPluginClientTestkit,
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
@@ -36,10 +39,11 @@ import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
 import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
-import { renderSurface as renderPage } from './WorkbenchPage.js';
+import { activate, renderSurface as renderPage } from './WorkbenchPage.js';
 import { renderSurface as renderRail } from './DatabaseRailTab.js';
-import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
+import { WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_VIEW_ID } from './views.js';
 import { encodeWorkbenchRootSubPath } from './subPath.js';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -93,6 +97,78 @@ function connectionResourceHandlers() {
     setUnsavedChanges: async () => {},
   };
 }
+
+it('addresses one mounted Workbench and admits draft disclosure at P3 before reading device state', async () => {
+  const entries = new Map<string, { value: unknown; refs: number; dispose(): void }>();
+  const sharedScope: PluginEphemeralSharedScope = {
+    acquire<T>(key: string, create: () => { value: T; dispose(): void }) {
+      let entry = entries.get(key);
+      if (!entry) { entry = { ...create(), refs: 0 }; entries.set(key, entry); }
+      entry.refs++;
+      return { value: entry.value as T, release() {
+        if (--entry.refs === 0) { entry.dispose(); entries.delete(key); }
+      } };
+    },
+  };
+  const registration = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST, activate,
+    target: { artifactId: WORKBENCH_PAGE_ARTIFACT_ID, exportName: 'activate', platform: 'web' } });
+  const navigate = registration.registration('actions', databaseActionLocalIdV1(UI_DATABASE_NAVIGATE_ACTION_ID_V1));
+  const read = registration.registration('actions', databaseActionLocalIdV1(UI_DATABASE_DRAFT_READ_ACTION_ID_V1));
+  expect(navigate).toBeTypeOf('function');
+  expect(read).toBeTypeOf('function');
+  if (!navigate || !read) throw new Error('Mounted Workbench Actions were not registered');
+  const replacePageLocation = vi.fn<NonNullable<PluginUiTestkitHostHandlers['replacePageLocation']>>(async ({ subPath }) => subPath);
+  const deviceState = vi.fn<NonNullable<PluginUiTestkitHostHandlers['deviceState']>>(() => ({
+    status: 'ready', value: { sql: 'select 42', history: [{ sql: 'select 1' }] },
+  }));
+  const mountId = 'addressed-workbench';
+  const daemon = daemonAnswers([descriptor]);
+  const requestRead = vi.fn<(request: PluginUiTestkitExecuteActionInput) => Promise<JsonValue>>()
+    .mockRejectedValueOnce(new PluginError({ code: 'database_agent_access_none' }))
+    .mockResolvedValue({ setBy: 'machine', agentAccess: 'read', access: { canRead: true, canWrite: false } });
+  const page = await createPluginUiTestkit({
+    identity: { instanceId: mountId, mountNonce: 'addressed-occurrence' },
+    authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage, subPath: savedDatabasePath,
+    surfaceContext: createSurfaceContextFixture({ mountId, mount: { kind: 'destination', destination: {
+      pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
+    adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: sharedScope }),
+    handlers: { ...connectionResourceHandlers(), deviceState, replacePageLocation, executeAction: request =>
+      request.action === databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1) ? requestRead(request) : daemon(request) },
+  });
+  const context: Parameters<PluginClientActionHandler>[1] = {
+    plugin: page.context.plugin, contribution: { id: 'fixture', qualifiedId: 'happier.database/fixture' },
+    invocationSurface: 'agent', signal: new AbortController().signal, ephemeralSharedScope: sharedScope,
+    ui: { ...page.context.hostApi, context: async options => {
+      const scope = await page.context.hostApi.context(options);
+      return { accountScope: scope.accountScope, targetedContributions: scope.targetedContributions ?? null };
+    } },
+  };
+  try {
+    await page.findByRole('button', { name: 'invoices' });
+    const address = { mountId };
+    await expect(navigate({ address: { mountId: 'different-mount' }, mode: 'insights' }, context)).resolves.toEqual({ status: 'unavailable' });
+    expect(replacePageLocation).not.toHaveBeenCalled();
+    await expect(read({ address, section: 'draft' }, context)).rejects.toMatchObject({ code: 'database_agent_access_none' });
+    expect(deviceState).not.toHaveBeenCalled();
+    await expect(read({ address, section: 'draft' }, context)).resolves.toEqual({ status: 'ready', sql: 'select 42' });
+    await expect(read({ address, section: 'history' }, context)).resolves.toEqual({ status: 'ready', history: [{ sql: 'select 1' }] });
+    expect(requestRead).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1), input: { target: descriptor.target },
+    }));
+    await act(async () => {
+      await expect(navigate({ address, mode: 'data', relation: invoices,
+        filters: { kind: 'null', column: 'number', isNull: false } }, context))
+        .resolves.toEqual({ status: 'accepted', mode: 'data', relation: invoices,
+          filters: { kind: 'null', column: 'number', isNull: false } });
+    });
+    expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: expect.stringContaining('data/public/invoices') }));
+  } finally {
+    await page.dispose();
+    await registration.dispose();
+  }
+  await expect(read({ address: { mountId }, section: 'draft' }, context)).resolves.toEqual({ status: 'unavailable' });
+  expect(requestRead).toHaveBeenCalledTimes(3);
+});
 
 /** The daemon's Action results for a small Postgres database; the host Action boundary is the only fake. */
 function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextReference = false, uniqueNumber = false) {
