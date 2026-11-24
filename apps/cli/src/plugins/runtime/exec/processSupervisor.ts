@@ -47,7 +47,7 @@ export { PROCESS_TERMINATION_GRACE_MS } from '@/subprocess/supervision/terminati
 // Host-internal workload guard pending RA21 traffic/platform measurement. Authors may
 // select a smaller result buffer, but cannot turn process supervision into an
 // unbounded in-memory output collector.
-const INTERNAL_MAX_BUFFERED_PROCESS_OUTPUT_BYTES = 8 * 1024 * 1024;
+export const MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const HOST_PROCESS_CHILDREN = new WeakMap<
     PluginProcessHandle,
@@ -235,15 +235,15 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     const stdoutMaximum = Math.max(
         0,
         Math.min(
-            input.maxStdoutBytes ?? INTERNAL_MAX_BUFFERED_PROCESS_OUTPUT_BYTES,
-            INTERNAL_MAX_BUFFERED_PROCESS_OUTPUT_BYTES,
+            input.maxStdoutBytes ?? MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES,
+            MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES,
         ),
     );
     const stderrMaximum = Math.max(
         0,
         Math.min(
-            input.maxStderrBytes ?? INTERNAL_MAX_BUFFERED_PROCESS_OUTPUT_BYTES,
-            INTERNAL_MAX_BUFFERED_PROCESS_OUTPUT_BYTES,
+            input.maxStderrBytes ?? MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES,
+            MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES,
         ),
     );
     const recordRuntimeLimitMeasurement = input.recordRuntimeLimitMeasurement;

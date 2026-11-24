@@ -3,6 +3,8 @@ import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happ
 import type { ActionExecuteFailure, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
+import { MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES } from '@/plugins/runtime/exec/processSupervisor';
+
 export const NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE = 'deployment.native.image.registry';
 
 /** Docker reports its attempted socket. Publish only a closed cause and the shared recovery. */
@@ -34,7 +36,8 @@ export function readNativeComposeCommandFailure(args: readonly string[], exitSta
     if (!subcommand || !/^[a-z][a-z-]*$/u.test(subcommand)) return undefined;
     // The version probe has no deployment inputs, so it can use the normal diagnostic redactor alone.
     const output = redact || args[1] === 'version' ? stripVTControlCharacters(stderr) : '';
-    const stderrTail = trimBugReportTextToMaxBytes(redactBugReportSensitiveText(redact?.(output) ?? output).trim(), 8_192);
+    const stderrTail = trimBugReportTextToMaxBytes(redactBugReportSensitiveText(redact?.(output) ?? output).trim(),
+        MAX_BUFFERED_PLUGIN_PROCESS_OUTPUT_BYTES);
     return { subcommand, exitStatus, ...(stderrTail ? { stderrTail } : {}) };
 }
 

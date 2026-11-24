@@ -68,7 +68,7 @@ describe('phase-correct native platform image production', () => {
                 new Error('refused', { cause: child })), 'build')).toMatchObject({ code: 'native_failed', ...details });
             expect(JSON.stringify(child)).not.toContain('fixture-password');
             expect(JSON.stringify(child)).not.toContain('buildkit-only-fixture-secret');
-            expect(JSON.stringify(child)).not.toContain('older diagnostic '.repeat(511));
+            expect(JSON.stringify(child)).toContain('older diagnostic '.repeat(512));
             const candidate = requests.filter(({ args }) => args.some(arg => arg.endsWith('candidate.compose.json')));
             expect(candidate).toHaveLength(1);
             const args = candidate[0]!.args;
