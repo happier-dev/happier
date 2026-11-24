@@ -366,7 +366,7 @@ it('lets an Agent add the selected live Machine event to the workflow draft and 
     const afterAdd = await agent.executeActionByToolName('action_execute', { actionId: 'ui.current_context.read', input: {} }, createdSessionId);
     if (!afterAdd.ok) throw new Error('Expected the mounted companion context after Add');
     const undo = CurrentUiContextSnapshotV1Schema.parse(afterAdd.result).commands.find(command =>
-        command.title === t('workflows.editor.removeTrigger'));
+        command.title === t('workflows.sentence.removeTrigger'));
     expect(undo, 'The selected companion event exposes selective Undo after Add').toBeDefined();
     await act(async () => {
         expect(await agent.executeActionByToolName('action_execute', {

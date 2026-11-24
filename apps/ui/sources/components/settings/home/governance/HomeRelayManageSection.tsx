@@ -163,7 +163,7 @@ function HomeRelayMachineControls(props: Readonly<{ serverId: string; machineId:
                 {!current && choice.definition.https?.hostname !== 'providerAssigned' ? <FieldTextInput
                     accessibilityLabel={t('settings.relayAccess.fields.hostnameLabel')} placeholder={t('settings.relayAccess.fields.hostnameLabel')}
                     value={hostname} onChangeText={setHostname} autoCapitalize="none" editable={!busy} /> : null}
-                <SectionActionButton testID="home-relay-review" label={t('common.review')} onPress={inspectConfiguration} disabled={busy} />
+                <SectionActionButton testID="home-relay-review" label={t('homeGovernance.overviewPage.review')} onPress={inspectConfiguration} disabled={busy} />
             </> : null}
             {current ? <SectionActionButton testID="home-relay-disable" label={t('homeGovernance.reach.relayDisable')}
                 onPress={() => inspectChange(null)} disabled={busy} /> : null}

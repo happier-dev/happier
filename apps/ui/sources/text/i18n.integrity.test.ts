@@ -2256,31 +2256,6 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 
-const ROUTED_LITERAL_TRANSLATION_KEYS = new Set([
-    // Plugin owners — explicit English fallback keys; TH routes locale coverage.
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionEmpty",
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionIncomplete",
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionLoad",
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionLoadMore",
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionReload",
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionRetry",
-    "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionUnavailable",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.alertDestination",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.connectionsInvalid",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.connectionsUnavailable",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationEmpty",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationInvalid",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationNeedsConnection",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationReopen",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationRetry",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.destinationUnavailable",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.loadingConnections",
-    "packages/plugins/channels/src/ui/notificationDestinationPicker.tsx:plugins.channels.surface.useChannel",
-    "packages/plugins/channels/src/ui/renderSurface.tsx:plugins.channels.page.noteDiscussionReplies",
-    "packages/plugins/channels/src/ui/renderSurface.tsx:plugins.channels.surface.bindingDiscussionDelivery",
-    "packages/plugins/channels/src/ui/renderSurface.tsx:plugins.channels.surface.bindingTargetDiscussion",
-]);
-
 it('resolves literal translation call-site keys to English leaves', () => {
     const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
     const files: string[] = [];
@@ -2318,6 +2293,5 @@ it('resolves literal translation call-site keys to English leaves', () => {
         }
         visit(source);
     }
-    // Equality also rejects stale exceptions after their owner fixes/removes a call.
-    expect([...missing].sort()).toEqual([...ROUTED_LITERAL_TRANSLATION_KEYS].sort());
+    expect([...missing].sort()).toEqual([]);
 });

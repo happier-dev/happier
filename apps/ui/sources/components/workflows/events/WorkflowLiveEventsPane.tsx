@@ -188,7 +188,7 @@ function AddedLiveEvent({ eventKey, active, clientId, testID, onUndo }: Readonly
   onUndo?: WorkflowCompanionUndoTrigger;
 }>) {
   useCurrentUiContextLocalCommands(active && onUndo ? [{
-    key: 'undo-add-to-mounted-workflow', title: t('workflows.editor.removeTrigger'), invoke: async (_input, context, invocation) => {
+    key: 'undo-add-to-mounted-workflow', title: t('workflows.sentence.removeTrigger'), invoke: async (_input, context, invocation) => {
       try {
         return await onUndo(clientId, { context, invocation });
       } catch (error) {
