@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { BackgroundServiceContext, PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
 import type { DaemonDatabaseService } from '@happier-dev/plugin-sdk/storage';
 import { createCaptureBackgroundOwner } from '../background.js';
+import { createCaptureStore } from '../store/capture.js';
 import { createCaptureSqliteFixture } from '../testing/sqlite.js';
 import { runTelemetryCollector, telemetryCollectorRunner } from './runner.js';
 
@@ -102,7 +103,7 @@ describe('registered production collector runner', () => {
     });
 });
 
-it('publishes one typed finding per production shape only while the Environment trigger is armed', async () => {
+it('groups armed production findings and parks a refused recurrence until the next wake', async () => {
     const fixture = createCaptureSqliteFixture();
     const lifetime = new AbortController();
     const materialization = { pluginId: 'happier.telemetry', machineId: 'collector', materializationId: 'installed' };
@@ -111,7 +112,9 @@ it('publishes one typed finding per production shape only while the Environment 
     let endpoint: (() => string | null) | undefined;
     let invalidate: (() => void) | undefined;
     let definitions: readonly PluginCheckpointedEventSourceDefinitionV1[] = [];
-    const admissions: unknown[] = [];
+    const admissions: Array<Readonly<{ occurrenceId: string; occurredAt: number; payload: unknown }>> = [];
+    const admitted = new Map<string, number>();
+    const conflicts: string[] = [];
     const current = vi.fn();
     const token = 'fixture-exporter';
     const neighborToken = 'fixture-neighbor';
@@ -146,7 +149,16 @@ it('publishes one typed finding per production shape only while the Environment 
                 if (id === 'automation.event.sources.list') return { kind: 'page', revision: String(definitions.length + 1), definitions, nextCursor: null };
                 if (id === 'automation.event.source.status.report') { current(input); return { ok: true }; }
                 if (id === 'automation.event.admit') {
-                    admissions.push(input);
+                    const observation = input as (typeof admissions)[number];
+                    admissions.push(observation);
+                    const first = admitted.get(observation.occurrenceId);
+                    if (first !== undefined && first !== observation.occurredAt) {
+                        conflicts.push(observation.occurrenceId);
+                        // Leave the Home round asynchronous so a runaway retry cannot starve the assertion.
+                        await new Promise<void>(resolve => setImmediate(resolve));
+                        return { results: [{ kind: 'blocked', checkpointSafe: false, reason: 'occurrenceConflict' }] };
+                    }
+                    admitted.set(observation.occurrenceId, observation.occurredAt);
                     return { results: [{ kind: 'admitted', checkpointSafe: true, runId: 'workflow-run' }] };
                 }
                 throw new Error(`Unexpected fixture Action ${id}`);
@@ -225,6 +237,13 @@ it('publishes one typed finding per production shape only while the Environment 
         })));
         const groupKeys = admissions.map(({ payload }) => (payload as { groupKey: string }).groupKey);
         expect(new Set(groupKeys).size).toBe(3);
+        const store = createCaptureStore(fixture.db, () => {});
+        const partition = 'environment:assigned';
+        await vi.waitFor(async () => expect(await store.pendingProductionFinding(partition)).toBeUndefined());
+        await store.clear(partition);
+        await sendTrace(token);
+        await vi.waitFor(() => expect(conflicts).toContain(admissions[0].occurrenceId));
+        expect(conflicts).toEqual([admissions[0].occurrenceId]);
     } finally {
         lifetime.abort();
         try { await running; }

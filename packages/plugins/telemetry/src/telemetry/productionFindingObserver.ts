@@ -48,11 +48,13 @@ export function startProductionFindingObserver(
                 return runtime.store.pendingProductionFinding(partition);
             });
             return current ? {
-                observations: [current], checkpoint: current.occurrenceId, complete: true, nextEligibleAt: Date.now(),
+                observations: [current], checkpoint: current.occurrenceId, complete: true, nextEligibleAt: null,
             } : { observations: [], complete: true, nextEligibleAt: null };
         },
-        async save({ source: { subject }, checkpoint }) {
+        async save({ source: { subject }, definition, checkpoint }) {
             await runtime.store.settleProductionFinding(telemetryPartition(subject.environmentId), checkpoint);
+            // Only a settled checkpoint can advance the queue. An unsettled admission waits for a source wake.
+            void wake?.(definition.sourceInstanceId).catch(() => {});
         },
         async retire({ definitions }) {
             const own = context.materialization;
