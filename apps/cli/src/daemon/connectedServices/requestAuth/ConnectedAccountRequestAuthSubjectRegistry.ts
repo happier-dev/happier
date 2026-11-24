@@ -298,7 +298,7 @@ export function createConnectedAccountRequestAuthSubjectRegistry(
                 if (!isPrincipalCurrent()) {
                     throw new ConnectedAccountRequestAuthError('request_auth_not_active');
                 }
-                record.subject.registerRedaction(values);
+                return record.subject.registerRedaction(values);
             },
             resolvePurposeUse: (purpose) => (
                 isPrincipalCurrent() ? record.subject.resolvePurposeUse(purpose) : null

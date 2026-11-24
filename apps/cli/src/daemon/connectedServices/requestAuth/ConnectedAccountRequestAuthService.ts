@@ -72,8 +72,12 @@ export type ConnectedAccountRequestAuthSubject = Readonly<{
     isCurrent: () => boolean;
     /** Host currentness that requires an existing Account or Run transport read. */
     validateCurrent?: (signal: AbortSignal) => Promise<boolean>;
-    /** Registers material with this exact live subject's bounded diagnostic owner. */
-    registerRedaction: (values: readonly string[]) => void;
+    /**
+     * Registers material with this exact live subject's redaction owners. A Session subject
+     * resolves only once its runner holds the values for the transcript; the material is served
+     * only after it resolves, and a rejection refuses the lookup with its typed cause.
+     */
+    registerRedaction: (values: readonly string[]) => void | Promise<void>;
     resolvePurposeUse: (
         purpose: QualifiedConnectedAccountPurposeV1,
     ) => ConnectedAccountRequestAuthPurposeUse | null;
@@ -659,7 +663,7 @@ export function createConnectedAccountRequestAuthService(
                     }
                 }
 
-                input.subject.registerRedaction(Object.freeze([
+                await input.subject.registerRedaction(Object.freeze([
                     ...Object.entries(material.headers).flatMap(([name, value]) => readCredentialRedactionValues(
                         name.toLowerCase() === 'authorization' ? { authorizationValue: value } : { rawCredential: value },
                     )),

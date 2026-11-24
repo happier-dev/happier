@@ -146,7 +146,7 @@ import {
 import { accountWakeNeedsHostChangesRead, registerAccountWakeConsumer, type SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
 import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
-import { redactTranscriptSecrets } from './client/transport/transcriptSecretRedaction';
+import { redactTranscriptSecrets, registerSessionTranscriptSecret } from './client/transport/transcriptSecretRedaction';
 import { createSessionClientUpdateRuntime } from './client/transport/createSessionClientUpdateRuntime';
 import {
     createRuntimeSessionClientDurableMutationOutbox,
@@ -653,6 +653,8 @@ export class ApiSessionClient extends EventEmitter {
     private presenceStopped = false;
     private closed = false;
     private localSessionRpcRetirement: Promise<(() => Promise<void>) | null> | null = null;
+    /** Secrets the daemon served this Session's Agent (request-auth), held until the Session closes. */
+    private readonly servedTranscriptSecretReleases: Array<() => void> = [];
     private isLocalRpcMethodAvailable: ((method: string) => boolean) | null = null;
     private pendingWakeSeq = 0;
     private accountSettingsSyncBarrier: Promise<boolean> | null = null;
@@ -1922,6 +1924,10 @@ export class ApiSessionClient extends EventEmitter {
                 this.isLocalRpcMethodAvailable = isMethodAvailable;
                 this.emit('rpc-handler-availability');
             },
+            // The daemon registers a credential here before serving it to this Session's Agent.
+            registerTranscriptSecrets: bindToHostedSessionScope((values: readonly string[]) => {
+                for (const value of values) this.servedTranscriptSecretReleases.push(registerSessionTranscriptSecret(value));
+            }),
         }).catch((error: unknown) => {
             logger.warn('[API] Local Session RPC channel unavailable; same-machine calls use the server', {
                 error: error instanceof Error ? error.message : String(error),
@@ -5152,6 +5158,7 @@ export class ApiSessionClient extends EventEmitter {
             const retireLocalSessionRpc = await this.localSessionRpcRetirement;
             this.localSessionRpcRetirement = null;
             await retireLocalSessionRpc?.();
+            for (const release of this.servedTranscriptSecretReleases.splice(0)) release();
             await this.sessionHandlersRegistration.dispose();
             const disposeSessionFollowWakeReceiver = this.disposeSessionFollowWakeReceiver;
             this.disposeSessionFollowWakeReceiver = null;

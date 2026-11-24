@@ -3599,6 +3599,7 @@ export async function startDaemonSessionControlRuntime(
               ? { legacyServiceKeyedCompatibility: true as const }
               : {}),
             registerRedaction: redactionLease.add,
+            transcriptSessionId: sessionId,
           });
           const previousAttachCleanup =
             params.sessionAttachCleanupByKey.get(tracked.trackingKey) ?? null;

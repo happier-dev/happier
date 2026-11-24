@@ -73,7 +73,9 @@ vi.mock('socket.io-client', () => ({
 
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { callSessionRpc } from './sessionRpc';
-import { enableLocalSessionRpcCalls, registerLocalSessionRpcTarget, retireGoneLocalSessionRpcHost } from './localSessionRpcChannel';
+import { enableLocalSessionRpcCalls, registerLocalSessionRpcTarget, registerLocalSessionTranscriptSecrets, retireGoneLocalSessionRpcHost } from './localSessionRpcChannel';
+import { bindToHostedSessionScope, runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { redactTranscriptSecrets, registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { captureProcessBirthWitness, type ProcessBirthWitness } from '@/daemon/processIdentity';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
@@ -540,6 +542,33 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       expect(live.seen).toHaveLength(0);
     } finally { await live.retire(); }
     expect(await findDescriptors(`${testHome}/servers`)).toEqual([]);
+  });
+
+  it('registers a credential the daemon is about to serve in that hosted Session first, so the same turn masks it', async () => {
+    const servedCredential = 'dummy-request-auth-served-mid-turn';
+    const created = createHost();
+    let sameTurnLine!: () => unknown;
+    const retire = await runAddedHostedSession({ environment: process.env, workingDirectory: process.cwd(), end: () => {} }, async () => {
+      // What the Session's transcript writer stores for this turn's Agent output.
+      sameTurnLine = bindToHostedSessionScope(() => redactTranscriptSecrets({ text: `turn output ${servedCredential}` }));
+      return await registerLocalSessionRpcTarget({ sessionId: SESSION, credentialToken: OWNER,
+        handleRequest: (request, localActionContext) => created.manager.handleRequest(request, undefined, 'local_session_channel', localActionContext),
+        cancelRequest: requestId => created.manager.cancelTransportRequest(requestId),
+        readTrustedCaller: async () => trusted.birth,
+        registerTranscriptSecrets: bindToHostedSessionScope((values: readonly string[]) => {
+          for (const value of values) registerSessionTranscriptSecret(value);
+        }) });
+    });
+    try {
+      expect(sameTurnLine()).toEqual({ text: `turn output ${servedCredential}` });
+      await registerLocalSessionTranscriptSecrets({ sessionId: SESSION, values: [servedCredential] });
+      expect(sameTurnLine()).toEqual({ text: 'turn output [redacted]' });
+      // Registered in that Session only: another Session's content (here: none) is not masked.
+      expect(redactTranscriptSecrets({ text: servedCredential })).toEqual({ text: servedCredential });
+      expect(relay.calls).toBe(0);
+      await expect(registerLocalSessionTranscriptSecrets({ sessionId: 'sess-not-hosted', values: [servedCredential] }))
+        .rejects.toMatchObject({ code: 'local_session_unavailable' });
+    } finally { await retire(); }
   });
 
   it('addresses Sessions by sessionId: one listener serves several hosted Sessions', async () => {

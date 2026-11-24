@@ -398,6 +398,12 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
   validateCurrent?: ConnectedAccountRequestAuthSubject['validateCurrent'];
   registerRedaction: ConnectedAccountRequestAuthSubject['registerRedaction'];
   /**
+   * The Session whose Agent receives this subject's credentials. Each served value is registered
+   * in that Session's transcript scope on its runner before it is served (register-then-serve);
+   * an unreachable runner refuses the serve.
+   */
+  transcriptSessionId?: string;
+  /**
    * Host-issued certificate for the catalog-Agent-only legacy service-keyed adapter.
    * Every other caller, including manifest-qualified external Agents, remains on the
    * qualified binding owner even when its target service has a legacy projection.
@@ -445,11 +451,15 @@ export function scopeConnectedAccountPurposeBindingLease(input: Readonly<{
       ? { legacyServiceKeyedCompatibility: true as const }
       : {}),
     isCurrent,
-    registerRedaction(values) {
+    async registerRedaction(values) {
       if (!isCurrent()) {
         throw new ConnectedAccountRequestAuthError('request_auth_not_active');
       }
-      input.registerRedaction(values);
+      await input.registerRedaction(values);
+      if (input.transcriptSessionId) {
+        const { registerLocalSessionTranscriptSecrets } = await import('@/session/transport/rpc/localSessionRpcChannel');
+        await registerLocalSessionTranscriptSecrets({ sessionId: input.transcriptSessionId, values });
+      }
     },
     resolvePurposeUse(rawPurpose) {
       const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(rawPurpose);

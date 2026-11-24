@@ -53,6 +53,8 @@ import { createLocalSessionRpcAgent } from './localSessionRpcAgent';
 const DESCRIPTOR_VERSION = 1;
 const CALL_PATH = '/v1/session-rpc/call';
 const CANCEL_PATH = '/v1/session-rpc/cancel';
+/** The daemon hands a hosted Session a secret before serving it to that Session's Agent. */
+const TRANSCRIPT_SECRETS_PATH = '/v1/session-rpc/transcript-secrets';
 /** Ordinary Session RPC packet fields a caller may send; routing/authority fields are server-only. */
 const LOCAL_PACKET_FIELDS: ReadonlySet<string> = new Set([
   'method', 'params', 'requestId', 'traceId', 'timeoutMs', 'waitForResultOnCancel', 'authorization',
@@ -90,6 +92,11 @@ export type LocalSessionRpcTarget = Readonly<{
   readTrustedCaller(): Promise<ProcessBirthWitness | null>;
   /** Called only after the eligible local target is published; retirement invalidates the predicate. */
   onPublished?: (isMethodAvailable: (method: string) => boolean) => void;
+  /**
+   * Registers secret values the daemon is about to serve to this Session's Agent (request-auth
+   * credentials) in this Session's transcript scope, for the Session's life.
+   */
+  registerTranscriptSecrets?: (values: readonly string[]) => void;
 }>;
 
 type RegisteredTarget = Readonly<{
@@ -258,7 +265,8 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
     await handleSessionHostRequest(current, request, response);
     return;
   }
-  if (request.method !== 'POST' || (request.url !== CALL_PATH && request.url !== CANCEL_PATH)) {
+  if (request.method !== 'POST' || (request.url !== CALL_PATH && request.url !== CANCEL_PATH
+    && request.url !== TRANSCRIPT_SECRETS_PATH)) {
     reply(response, 404, { error: 'Not found', errorCode: 'local_session_unavailable' });
     return;
   }
@@ -269,6 +277,25 @@ async function handleIngressRequest(current: Ingress, request: IncomingMessage, 
       return;
     }
     reply(response, 400, { error: 'Invalid local Session RPC request', errorCode: 'RPC_FORBIDDEN' });
+    return;
+  }
+  if (request.url === TRANSCRIPT_SECRETS_PATH) {
+    const { sessionId, values } = (body && typeof body === 'object' ? body : {}) as { sessionId?: unknown; values?: unknown };
+    const registered = typeof sessionId === 'string' ? current.targets.get(sessionId) : undefined;
+    if (!registered?.target.registerTranscriptSecrets) {
+      reply(response, 404, { error: 'Session is not hosted on this local channel', errorCode: 'local_session_unavailable' });
+      return;
+    }
+    if (!Array.isArray(values) || !values.every((value): value is string => typeof value === 'string' && value.length > 0)) {
+      reply(response, 400, { error: 'Invalid transcript secret registration', errorCode: 'RPC_FORBIDDEN' });
+      return;
+    }
+    if (!await isTrustedCaller(registered.target, request)) {
+      reply(response, 403, { error: 'Only the daemon of this host may call it', errorCode: LOCAL_SESSION_PEER_REFUSED });
+      return;
+    }
+    registered.target.registerTranscriptSecrets(values);
+    reply(response, 200, { ok: true });
     return;
   }
   if (request.url === CANCEL_PATH) {
@@ -526,6 +553,24 @@ function postJson(descriptor: LocalSessionRpcDescriptorV1, path: string, body: u
     });
     outgoing.end(text);
   });
+}
+
+/**
+ * Daemon side of register-then-serve: the Session's runner holds `values` in that Session's
+ * transcript scope when this resolves. Throws `LocalSessionRpcUnavailableError` when no published,
+ * peer-accepting host serves the Session; the caller must then refuse to serve the values.
+ */
+export async function registerLocalSessionTranscriptSecrets(input: Readonly<{
+  sessionId: string;
+  values: readonly string[];
+}>): Promise<void> {
+  if (input.values.length === 0) return;
+  const descriptor = readDescriptor(input.sessionId);
+  if (!descriptor) throw new LocalSessionRpcUnavailableError('Session is not hosted on this local channel');
+  const response = await postJson(descriptor, TRANSCRIPT_SECRETS_PATH, { sessionId: input.sessionId, values: [...input.values] });
+  if (response.status !== 200) {
+    throw new LocalSessionRpcUnavailableError('Local Session host did not register the transcript secrets');
+  }
 }
 
 let localSessionRpcCallerEnabled = false;

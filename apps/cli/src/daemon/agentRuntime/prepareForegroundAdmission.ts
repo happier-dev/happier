@@ -1747,6 +1747,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
                   registerRedaction: (values) => {
                     connectedServiceRedactionLease!.add(values);
                   },
+                  transcriptSessionId: canonicalSessionId,
                 }),
                 registry: dependencies.connectedAccountRequestAuthRegistry!,
                 launchResourceScope: connectedServiceLaunchScope,

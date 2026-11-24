@@ -1397,6 +1397,7 @@ export async function executeSpawnSessionRequest(
                                     : {}),
                                 registerRedaction:
                                     providerDiagnosticRedactionLease.add,
+                                transcriptSessionId: canonicalSessionId,
                             }),
                         registry: requestAuthRegistry,
                         launchResourceScope,

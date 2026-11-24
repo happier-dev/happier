@@ -243,6 +243,39 @@ describe('ConnectedAccountRequestAuthService', () => {
         expect(refreshes).toBe(0);
     });
 
+    it('registers a served credential with its Session before returning it, and never serves when that fails', async () => {
+        const events: string[] = [];
+        const registration = deferred<void>();
+        const owner = createConnectedAccountRequestAuthService({
+            resolveCurrentBinding: () => resolved({ accountId: 'one', revision: revision1 }),
+            materializeHeaders: async () => ({ headers: { authorization: 'Bearer dummy-mid-turn-credential' }, facts: {} }),
+            refreshAfterAuthFailure: async () => ({ status: 'current_unchanged' }),
+            reportQuotaFailure: async () => ({ status: 'current_unchanged' }),
+        });
+        const registering = {
+            ...subject(accountBinding()),
+            registerRedaction: async (values: readonly string[]) => {
+                events.push(`register:${values.includes('dummy-mid-turn-credential')}`);
+                await registration.promise;
+                events.push('registered');
+            },
+        };
+        const served = owner.lookupRequestAuth({ subject: registering, purpose }).then((result) => {
+            events.push('served');
+            return result;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        // The helper has nothing until the Session's runner holds the value.
+        expect(events).toEqual(['register:true']);
+        registration.resolve();
+        await expect(served).resolves.toMatchObject({ headers: { authorization: 'Bearer dummy-mid-turn-credential' } });
+        expect(events).toEqual(['register:true', 'registered', 'served']);
+
+        const unreachable = Object.assign(new Error('Local Session host is not listening'), { code: 'local_session_unavailable' });
+        const refusing = { ...subject(accountBinding()), registerRedaction: async () => { throw unreachable; } };
+        await expect(owner.lookupRequestAuth({ subject: refusing, purpose })).rejects.toBe(unreachable);
+    });
+
     it('does not share one account revision across different materialization authority', async () => {
         let origin = 'https://api.example.test';
         let materializations = 0;
