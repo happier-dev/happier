@@ -41,6 +41,8 @@ import {
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
 
 export type SessionRuntimeControls = {
+  readExecutionRunRolePolicy?: (request: import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc').SessionExecutionRunRolePolicyRequestV1) =>
+    import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc').SessionGoalRolePolicyDecisionV1;
   /** Actual admitted Agent and transport selected by the current Session runtime. */
   readToolNormalizationSource?: () => import('@happier-dev/protocol/tools/v2/meta').ToolNormalizationSourceV3 | null;
   /** Same host-captured Account/Agent reader used by the current native runtime.
@@ -414,7 +416,8 @@ export function registerSessionControlHandlers(
   rpc.registerHandler(SESSION_RPC_METHODS.SESSION_GOAL_GET, async (raw: unknown, context) => {
     const parsed = SessionGoalGetRequestV1Schema.safeParse(raw);
     if (!parsed.success) return invalidInput();
-    if (typeof opts.sessionRuntimeControls?.refreshGoal !== 'function') {
+    const readsRolePolicy = parsed.data.capabilitiesOnly === true && parsed.data.rolePolicy !== undefined;
+    if (!readsRolePolicy && typeof opts.sessionRuntimeControls?.refreshGoal !== 'function') {
       const ready = await opts.waitForSessionRuntimeControls?.(context?.signal);
       context?.signal.throwIfAborted();
       if (ready === false) return unsupported(SESSION_RPC_METHODS.SESSION_GOAL_GET);
@@ -426,7 +429,9 @@ export function registerSessionControlHandlers(
       const nativeGoalOwner = typeof opts.sessionRuntimeControls?.refreshGoal === 'function'
         && typeof opts.sessionRuntimeControls?.setGoal === 'function'
         && typeof opts.sessionRuntimeControls?.clearGoal === 'function';
-      return { workState: readWorkState(opts.getSessionMetadata), nativeGoalOwner };
+      return { workState: readWorkState(opts.getSessionMetadata), nativeGoalOwner,
+        ...(parsed.data.rolePolicy ? { rolePolicy: opts.sessionRuntimeControls?.readExecutionRunRolePolicy?.(parsed.data.rolePolicy)
+          ?? { status: 'undecidable' as const } } : {}) };
     }
     if (typeof opts.sessionRuntimeControls?.refreshGoal !== 'function') {
       return unsupported(SESSION_RPC_METHODS.SESSION_GOAL_GET);

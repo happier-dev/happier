@@ -3507,6 +3507,36 @@ describe('workflow trigger Automation composition', () => {
       details: { code: 'session_trigger_project_mismatch' } });
     expect(rows.size).toBe(0);
   });
+  it.each([
+    ['refused', { status: 'refused', code: 'role_policy_unenforceable', surface: 'native_execution_run' }],
+    ['enforceable', { status: 'enforceable', surface: 'retained_agent_session' }],
+    ['undecidable', { status: 'undecidable' }],
+    ['older host omitted the decision', undefined],
+  ] as const)('settles Keep going admission when Role policy is %s', async (label, rolePolicy) => {
+    const { deps, rows, executor } = fixture();
+    const actions = createWorkflowTriggerActions({ ...deps,
+      resolveSession: async (_sessionId, _caller, options) => ({
+        project, nativeGoalOwner: false,
+        ...(options?.rolePolicy && rolePolicy ? { rolePolicy } : {}),
+      }),
+    });
+    const result = await executor(actions).execute('workflow.trigger.add', {
+      lifetimeSession: { sessionId: 'session-one' },
+      target: { kind: 'workflow', ref: 'builtin:keep-going' },
+      inputs: { secondOpinion: label === 'enforceable' },
+      trigger: { kind: 'sessionLifecycle', enabled: true,
+        subject: { kind: 'session', serverId: 'portable-home', sessionId: 'session-one' },
+        events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } },
+    }, { surface: 'ui', authority: 'present_user', actionsSettings: triggerAdmissionWaiver });
+    if (rolePolicy?.status === 'refused') {
+      expect(result).toMatchObject({ ok: false, errorCode: rolePolicy.code });
+      expect(rows.size).toBe(0);
+    } else {
+      expect(result).toMatchObject({ ok: true, result: { set: { scopeSessionId: 'session-one' } } });
+      expect(rows.size).toBe(1);
+      expect([...rows.values()][0]?.triggers).toMatchObject([{ enabled: true }]);
+    }
+  });
   it('reads and removes scoped triggers without requiring a reachable native goal control', async () => {
     const { deps } = fixture();
     const actions = createWorkflowTriggerActions({ ...deps, resolveSession: async (_sessionId, _caller, options) => {

@@ -32,6 +32,7 @@ import {
     type SessionPullRequestBindingInputV1,
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionGoalRolePolicyDecisionV1Schema, type SessionGoalGetRequestV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { ExternalActionTargetV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, WORKFLOW_RUN_RESUME_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -142,14 +143,17 @@ export function createUiTriggerSessionResolver(account: LazyActionAccountContext
         const facts = { project: { machineId, directory }, ...(selection?.success ? { executionSelection: selection.data } : {}) };
         if (session.active !== true) return { ...facts, nativeGoalOwner: false };
         if (options?.checkNativeGoalOwner !== true) return { ...facts, nativeGoalOwner: null };
-        const observed = await withActionAccountRequestSignal(account, caller?.signal, signal => sessionRpcWithServerScope<unknown, { capabilitiesOnly: true }>({
-            sessionId, serverId: account.serverId, method: SESSION_RPC_METHODS.SESSION_GOAL_GET, payload: { capabilitiesOnly: true },
+        const observed = await withActionAccountRequestSignal(account, caller?.signal, signal => sessionRpcWithServerScope<unknown, SessionGoalGetRequestV1>({
+            sessionId, serverId: account.serverId, method: SESSION_RPC_METHODS.SESSION_GOAL_GET,
+            payload: { capabilitiesOnly: true, ...(options.rolePolicy === undefined ? {} : { rolePolicy: options.rolePolicy }) },
             timeoutMs: null, signal,
         })).catch(() => null);
         account.assertCurrent();
         const nativeGoalOwner = observed !== null && typeof observed === 'object' && 'nativeGoalOwner' in observed
             && typeof observed.nativeGoalOwner === 'boolean' ? observed.nativeGoalOwner : null;
-        return { ...facts, nativeGoalOwner };
+        const rolePolicy = SessionGoalRolePolicyDecisionV1Schema.safeParse(observed !== null
+            && typeof observed === 'object' && 'rolePolicy' in observed ? observed.rolePolicy : undefined);
+        return { ...facts, nativeGoalOwner, ...(rolePolicy.success ? { rolePolicy: rolePolicy.data } : {}) };
     };
 }
 

@@ -28,7 +28,33 @@ export const SessionWorkStateGetResponseV1Schema = lazyZodSchema(() => z.looseOb
   }));
 export type SessionWorkStateGetResponseV1 = z.infer<typeof SessionWorkStateGetResponseV1Schema>;
 
-export const SessionGoalGetRequestV1Schema = lazyZodSchema(() => z.looseObject({ capabilitiesOnly: z.optional(z.boolean()) }));
+/** Actual Run surface selected by the host; not an Agent manifest hint. */
+export const ExecutionRunRolePolicySurfaceV1Schema = lazyZodSchema(() => z.enum([
+  'retained_agent_session', 'retained_agent_conversation', 'finite_agent_session', 'native_execution_run',
+]));
+export type ExecutionRunRolePolicySurfaceV1 = z.infer<typeof ExecutionRunRolePolicySurfaceV1Schema>;
+
+/** Keep going's existing detached Role Run, without a parent or Agent override. */
+export const SessionExecutionRunRolePolicyRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  scope: z.literal('detached'), intent: z.literal('agent'), runClass: z.literal('long_lived'),
+  retentionPolicy: z.literal('resumable'), workspaceWrites: z.literal('deny'),
+}));
+export type SessionExecutionRunRolePolicyRequestV1 = z.infer<typeof SessionExecutionRunRolePolicyRequestV1Schema>;
+export const SessionGoalRolePolicyDecisionV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('enforceable'), surface: ExecutionRunRolePolicySurfaceV1Schema }),
+  z.strictObject({ status: z.literal('refused'), code: z.literal('role_policy_unenforceable'), surface: ExecutionRunRolePolicySurfaceV1Schema }),
+  z.strictObject({ status: z.literal('undecidable') }),
+]));
+export type SessionGoalRolePolicyDecisionV1 = z.infer<typeof SessionGoalRolePolicyDecisionV1Schema>;
+
+export const SessionGoalGetRequestV1Schema = lazyZodSchema(() => z.looseObject({
+  capabilitiesOnly: z.optional(z.boolean()), rolePolicy: z.optional(SessionExecutionRunRolePolicyRequestV1Schema),
+}));
+export const SessionGoalGetResponseV1Schema = lazyZodSchema(() => z.looseObject({
+  workState: z.nullable(SessionWorkStateV1Schema), nativeGoalOwner: z.optional(z.boolean()),
+  rolePolicy: z.optional(SessionGoalRolePolicyDecisionV1Schema),
+}));
+export type SessionGoalGetResponseV1 = z.infer<typeof SessionGoalGetResponseV1Schema>;
 export type SessionGoalGetRequestV1 = z.infer<typeof SessionGoalGetRequestV1Schema>;
 
 const sessionGoalMutationHasField = (value: Readonly<{

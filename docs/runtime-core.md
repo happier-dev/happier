@@ -3805,6 +3805,15 @@ declaration, including configured ACP and installed plugin Agents. Keep going
 owns continuation for those Sessions; the host objective adds no native Goal
 capability or second continuation loop.
 
+In 0.3 development source, the Goal capabilities read can also request the
+selected Agent's detached Role workspace-policy decision. It uses the same
+adapter-selection and denial-support decision as Run start, from the opened
+Session runtime. This read returns immediately without opening or waiting for
+a runtime. An absent or retired runtime is undecidable; a selected surface
+that cannot deny writes returns `role_policy_unenforceable`. Ordinary Goal
+reads retain their existing readiness behavior. The result is computed for
+that request and is not stored across runtime replacement.
+
 The Session-bound `session.tasks.set` Action and its `session_tasks_set` MCP
 tool publish a complete ordered Happier checklist through the same work-state
 owner. An empty list clears that checklist. Provider task and plan sources keep

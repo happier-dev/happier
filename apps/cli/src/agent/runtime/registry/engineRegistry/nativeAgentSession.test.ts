@@ -7160,6 +7160,47 @@ describe('native Agent session host adapter', () => {
         });
     });
 
+    it.each([false, true])('reads detached Role policy from the opened runtime through Goal RPC (denial: %s)', async supported => {
+        const { registerSessionControlHandlers } = await import('@/rpc/handlers/sessionControls');
+        const { applySessionRuntimeControls } = await import('@/api/session/sessionRuntimeControls');
+        const { SessionGoalGetResponseV1Schema } = await import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc');
+        const agentId = 'acme-role-policy-read';
+        const contributions = createExternalContributionFixtures(agentId);
+        // Native Agent runtime is the external boundary. Selection, host controls,
+        // their installation, RPC handling and response validation are real.
+        const plan = await createNativeAgentRuntimeSessionPlan({
+            runtime: { sessions: { open: async () => ({ send: async () => ({ status: 'admitted' }),
+                watch: () => ({ dispose() {} }), dispose: async () => undefined }) } },
+            lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
+            sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false,
+                ...(supported ? { workspaceWrites: 'deny' as const } : {}) },
+            createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
+            sessionInput: buildPluginSessionBindingInput({ credentials, directory: '/repo',
+                backendTarget: { kind: 'backend', backendId: agentId } }),
+        });
+        const client = createNativeSessionClientTestPort('role-policy-read');
+        const created = await plan.config.createSessionRuntime!({ directory: '/repo', metadata: {},
+            machineId: 'machine-1', session: client, transcriptSession: {}, messageBuffer: {}, mcpServers: {},
+            permissionHandler: {}, getPermissionMode: () => 'default', setThinking: () => undefined,
+            memoryRecallGuidanceEnabled: false } as never);
+        const controls: import('@/rpc/handlers/sessionControls').SessionRuntimeControls = {};
+        applySessionRuntimeControls(controls, created.nativeRuntime ?? null);
+        let readGoal: ((input: unknown) => Promise<unknown>) | undefined;
+        registerSessionControlHandlers({ registerHandler(method, handler) {
+            if (method === SESSION_RPC_METHODS.SESSION_GOAL_GET) readGoal = handler;
+        } }, { sessionRuntimeControls: controls });
+        try {
+            const request = { capabilitiesOnly: true, rolePolicy: { scope: 'detached', intent: 'agent',
+                runClass: 'long_lived', retentionPolicy: 'resumable', workspaceWrites: 'deny' } };
+            const response = SessionGoalGetResponseV1Schema.parse(await readGoal!(request));
+            expect(response.rolePolicy).toEqual(supported
+                ? { status: 'enforceable', surface: 'finite_agent_session' }
+                : { status: 'refused', code: 'role_policy_unenforceable', surface: 'finite_agent_session' });
+            await created.operations.resetOrDisposeRuntime();
+            expect(SessionGoalGetResponseV1Schema.parse(await readGoal!(request)).rolePolicy).toEqual({ status: 'undecidable' });
+        } finally { await created.operations.resetOrDisposeRuntime(); }
+    });
+
     it.each([false, true])('uses the authored workspace ceiling for native admission and later preparation (support: %s)', async (supported) => {
         const updateConfiguration = vi.fn(async () => ({ status: 'applied' as const, changed: [] }));
         const open = vi.fn<AgentSessionRuntimeFactory['open']>(async () => ({

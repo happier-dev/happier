@@ -79,6 +79,7 @@ import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js'
 import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
+import type { SessionExecutionRunRolePolicyRequestV1, SessionGoalRolePolicyDecisionV1 } from '../../sessions/work/state/sessionWorkStateRpc.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { readWorkflowTriggerActionConsent, readWorkflowTriggerActorConsentSteps } from './workflowTriggerConsent.js';
 import type { WorkflowApprovedOperationNativeAccountV1 } from './workflowRunActions.js';
@@ -172,8 +173,12 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   resolveWorkflowTeamIds?: (artifactId: string) => Promise<readonly string[]>;
   resolveWorkflowContent?: (workflowId: string) => Promise<WorkflowTriggerWorkflowContentV1>;
   /** Session transport authorizes and opens the Session; callers cannot choose placement. */
-  resolveSession?: (sessionId: string, caller?: Caller, options?: Readonly<{ checkNativeGoalOwner: boolean }>) => Promise<Readonly<{
+  resolveSession?: (sessionId: string, caller?: Caller, options?: Readonly<{
+    checkNativeGoalOwner: boolean;
+    rolePolicy?: SessionExecutionRunRolePolicyRequestV1;
+  }>) => Promise<Readonly<{
     project: WorkflowProjectTargetV1; nativeGoalOwner: boolean | null;
+    rolePolicy?: SessionGoalRolePolicyDecisionV1;
     /** Current Session-owned execution facts, used when converting its retained Automation. */
     executionSelection?: WorkflowDefinitionV1['defaults'];
   }>>;
@@ -1611,12 +1616,16 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     await deps.pullRequests.attach({ sessionId, automationId: result.set.automationId,
       triggerId: trigger.id, triggerRevision: trigger.revision, triggerKind: trigger.kind, pullRequest: trigger.pullRequest }, caller);
   };
-  const assertContinuationOwner = async (target: TriggerTargetV1, sessionId: string, caller?: Caller) => {
+  const assertContinuationOwner = async (target: TriggerTargetV1, sessionId: string, caller?: Caller,
+    rolePolicy?: SessionExecutionRunRolePolicyRequestV1) => {
     if (!isKeepGoingTriggerTargetV1(target)) return;
     if (!deps.resolveSession) refuse('target_unavailable');
-    const { nativeGoalOwner } = await deps.resolveSession(sessionId, caller, { checkNativeGoalOwner: true });
-    if (nativeGoalOwner === true) refuse('native_goal_owner');
-    if (nativeGoalOwner === null) refuse('target_unavailable');
+    const resolved = await deps.resolveSession(sessionId, caller, {
+      checkNativeGoalOwner: true, ...(rolePolicy === undefined ? {} : { rolePolicy }),
+    });
+    if (resolved.nativeGoalOwner === true) refuse('native_goal_owner');
+    if (resolved.nativeGoalOwner === null) refuse('target_unavailable');
+    if (rolePolicy !== undefined && resolved.rolePolicy?.status === 'refused') refuse(resolved.rolePolicy.code);
   };
   const sessionActions: WorkflowTriggerActions = { ...actions,
     removeSessionKeepGoingTriggers: async (raw, caller) => {
@@ -1760,7 +1769,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && createCanonicalJsonSigningInput(selectedProject) !== createCanonicalJsonSigningInput(authorized.project)) {
         refuseInput('session_trigger_project_mismatch');
       }
-      await assertContinuationOwner(input.target, sessionId, caller);
+      // Judge and the optional Second opinion both use this same detached, read-only Run on the Session Agent.
+      await assertContinuationOwner(input.target, sessionId, caller, {
+        scope: 'detached', intent: 'agent', runClass: 'long_lived', retentionPolicy: 'resumable', workspaceWrites: 'deny',
+      });
       assertScopedTrigger(input.trigger, sessionId);
       const trigger = await resolveScopedTrigger(input.trigger, sessionId, caller);
       const result = await actions.add(WorkflowTriggerAddRequestV1Schema.parse({ ...input, trigger, project: selectedProject ?? authorized.project }), caller,

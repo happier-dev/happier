@@ -553,6 +553,7 @@ export type HostSessionRuntimeHookRuntime = SessionProviderInputOutcomePort & Re
     >
   >;
   getSessionId?: () => string | null;
+  readExecutionRunRolePolicy?: SessionRuntimeControls['readExecutionRunRolePolicy'];
   refreshGoal?: SessionRuntimeControls['refreshGoal'];
   refreshSkills?: AgentSessionRuntime['refreshSkills'];
   setGoal?: SessionRuntimeControls['setGoal'];
@@ -4131,6 +4132,8 @@ async function runHostedSessionRuntime(
       ...(typeof nativeRuntime.prepareRunTeamCredentialProviderBinding === 'function'
         ? { prepareRunTeamCredentialProviderBinding: nativeRuntime.prepareRunTeamCredentialProviderBinding.bind(nativeRuntime) }
         : {}),
+      ...(typeof nativeRuntime.readExecutionRunRolePolicy === 'function'
+        ? { readExecutionRunRolePolicy: nativeRuntime.readExecutionRunRolePolicy.bind(nativeRuntime) } : {}),
       ...(typeof nativeRuntime.refreshGoal === 'function' ? { refreshGoal: nativeRuntime.refreshGoal.bind(nativeRuntime) } : {}),
       ...(typeof nativeRuntime.setGoal === 'function' ? { setGoal: nativeRuntime.setGoal.bind(nativeRuntime) } : {}),
       ...(typeof nativeRuntime.clearGoal === 'function' ? { clearGoal: nativeRuntime.clearGoal.bind(nativeRuntime) } : {}),

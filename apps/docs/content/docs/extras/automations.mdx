@@ -1005,6 +1005,12 @@ attaches Keep going. A new Keep going attachment is refused when the Agent
 already owns native goal continuation; an existing conflict is shown rather
 than presenting a second continuation control.
 
+Keep going also checks whether the selected Agent can enforce read-only access
+for its Judge and optional Second opinion. A proven refusal prevents arming.
+If the check is unavailable, such as on a stopped Session, you can still arm it.
+If the Agent cannot enforce the policy when the Run starts, the Run shows the
+reason. You can use Keep going with an Agent that supports the read-only policy.
+
 In unreleased 0.3 source, Claude's native Goal updates publish into the same
 Session Goal state through its native owner. They do not need a Keep going
 attachment.

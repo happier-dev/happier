@@ -8,11 +8,7 @@ import type { AgentSessionCapabilities } from '@/plugins/projection/registry/age
  * run; `native_execution_run` belongs to Agents whose genuine owner is native
  * Execution Runs.
  */
-export type ExecutionRunSessionAdapterSelection =
-    | 'retained_agent_session'
-    | 'retained_agent_conversation'
-    | 'finite_agent_session'
-    | 'native_execution_run';
+export type ExecutionRunSessionAdapterSelection = import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc').ExecutionRunRolePolicySurfaceV1;
 
 export type ExecutionRunRetainedInteractionScope =
     | 'session_owned'

@@ -1635,3 +1635,26 @@ describe('registerSessionHandlers session controls', () => {
     });
   });
 });
+
+
+describe('Goal capabilities selected Role policy read', () => {
+  it.each([true, false, null] as const)('returns the live selected-surface decision (denial=%s)', async supported => {
+    const { registerSessionControlHandlers } = await import('./sessionControls');
+    const { decideExecutionRunRolePolicy } = await import('@/agent/runtime/bridges/executionRun/rolePolicy');
+    const { handlers, registrar } = createRegistrar();
+    const request = { scope: 'detached' as const, intent: 'agent' as const, runClass: 'long_lived' as const,
+      retentionPolicy: 'resumable' as const, workspaceWrites: 'deny' as const };
+    // External native runtime facet availability and declarations are the boundary.
+    const controls = { ...(supported === null ? {} : { readExecutionRunRolePolicy: () => decideExecutionRunRolePolicy({ ...request,
+        hasParentSessionCustody: false, agentExposesSessionRuntime: true, agentExposesDetachedConversation: true,
+        sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: true,
+          ...(supported ? { workspaceWrites: 'deny' } : {}) }, executionRunCapabilities: null }) }) };
+    registerSessionControlHandlers(registrar, { sessionRuntimeControls: controls,
+      waitForSessionRuntimeControls: async () => { throw new Error('Role admission must never wait for runtime opening'); } });
+    const { SessionGoalGetResponseV1Schema } = await import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc');
+    const result = SessionGoalGetResponseV1Schema.parse(await handlers.get(SESSION_RPC_METHODS.SESSION_GOAL_GET)!({ capabilitiesOnly: true, rolePolicy: request }));
+    expect(result).toMatchObject({ rolePolicy: supported === null ? { status: 'undecidable' }
+      : supported ? { status: 'enforceable', surface: 'retained_agent_conversation' }
+      : { status: 'refused', code: 'role_policy_unenforceable', surface: 'retained_agent_conversation' } });
+  });
+});

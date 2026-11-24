@@ -117,6 +117,7 @@ import { configuration as happierConfiguration } from '@/configuration';
 import { readTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { buildActiveTerminalHostHandleFromMetadata } from '@/terminal/runtime/terminalMetadata';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import { decideExecutionRunRolePolicy } from '@/agent/runtime/bridges/executionRun/rolePolicy';
 import {
     createProviderBindingLaunchMaterializationCleanup,
 } from '@/providers/spawn/compose';
@@ -131,6 +132,7 @@ import { readPluginSessionsSubagentObservation } from '@/session/services/plugin
 import type { AgentRuntimeRegistrationLease } from '@/plugins/runtime/lifecycle/contributions/targetAgents';
 import type { PublicAcpHostLaunchResolver } from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
 import {
+    readAgentExecutionRunCapabilities,
     readAgentSessionCapabilities,
     type AgentSessionCapabilities,
 } from '@/plugins/projection/registry/agentContributionDefinition';
@@ -1579,6 +1581,7 @@ export function createNativeAgentUsageAccountingWitnessResolver(input: {
 }
 
 type NativeAgentSessionDirectFacets = Readonly<{
+    readExecutionRunRolePolicy?: SessionRuntimeControls['readExecutionRunRolePolicy'];
     scmCommandRunner?: ScmCommandRunner;
     scmCheckpointPhaseRunner?: RepositoryCheckpointPhaseRunner;
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
@@ -1711,6 +1714,7 @@ type NativeAgentSessionInteractionLifecycle = Readonly<{
 }>;
 
 type NativeAgentSessionDirectHostControls = Readonly<{
+    readExecutionRunRolePolicy?: SessionRuntimeControls['readExecutionRunRolePolicy'];
     runScmCommand?: ScmCommandRunner;
     runScmCheckpointPhase?: RepositoryCheckpointPhaseRunner;
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
@@ -3301,6 +3305,10 @@ export function createNativeAgentSessionOperations(
                     },
                 }
                 : {}),
+            ...(directFacets?.readExecutionRunRolePolicy ? {
+                readExecutionRunRolePolicy: (request: Parameters<NonNullable<SessionRuntimeControls['readExecutionRunRolePolicy']>>[0]) =>
+                    activeControlUnavailable() ? { status: 'undecidable' as const } : directFacets.readExecutionRunRolePolicy!(request),
+            } : {}),
             ...(liveGoals
                 ? {
                     async refreshGoal() {
@@ -6325,6 +6333,13 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             },
                         }
                         : {}),
+                    readExecutionRunRolePolicy: request => decideExecutionRunRolePolicy({
+                        ...request, hasParentSessionCustody: false,
+                        agentExposesSessionRuntime: Boolean(runtime.sessions),
+                        agentExposesDetachedConversation: typeof runtime.sessions?.executionRunContextV1?.openConversation === 'function',
+                        sessionCapabilities: sessionCapabilities ?? null,
+                        executionRunCapabilities: readAgentExecutionRunCapabilities(params.agent.richDefinition?.definition),
+                    }),
                     ...(nativeGoals ? { goals: nativeGoals } : {}),
                     prepareNativeGoalOwner: hostRuntimeParams.prepareNativeGoalOwner,
                     ...(sessions.catalog ? { catalog: sessions.catalog } : {}),

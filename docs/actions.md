@@ -10796,7 +10796,13 @@ credentials, the UI front door with its captured Account), so Account-owned trig
 does not require a reachable Machine. Host-dependent facts do reach a Machine:
 another caller's write (agent-start policy and materializer) is relayed to the
 authorized host, and Keep going on an opened Session reads native-goal ownership over
-that Session's `session.goal.get`. An unreachable host yields typed `target_unavailable`.
+that Session's `session.goal.get`. An unreachable host yields typed `target_unavailable`
+when native Goal ownership cannot be established. Keep going admission also
+consumes the live runtime's selected-surface Role-policy result from that read.
+A proven workspace-write refusal returns `role_policy_unenforceable` before the
+trigger is added. An undecidable or omitted Role-policy result allows arming
+once ordinary Session admission succeeds. The same Role-policy decision protects
+the later Run start.
 
 In unreleased 0.3 source, New's managed Workflow continuation acquires and enrolls
 the reviewed Machine through the existing managed-creation owner, then admits the

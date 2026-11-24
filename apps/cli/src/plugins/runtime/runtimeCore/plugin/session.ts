@@ -506,6 +506,10 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                 },
             }
             : {}),
+        ...(currentOperations.readExecutionRunRolePolicy ? {
+            readExecutionRunRolePolicy: (request: Parameters<NonNullable<PluginRuntimeHookOperations['readExecutionRunRolePolicy']>>[0]) =>
+                currentOperations.readExecutionRunRolePolicy?.(request) ?? { status: 'undecidable' as const },
+        } : {}),
         ...(hasRefreshGoal
             ? {
                 refreshGoal: () => runGoalControl(() => currentOperations.refreshGoal?.() ?? {

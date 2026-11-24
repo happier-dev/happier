@@ -22,6 +22,7 @@ import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { SessionGoalRolePolicyDecisionV1Schema, type SessionGoalRolePolicyDecisionV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { createWorkflowHostActionContractReader, type ReadLocalWorkflowActionSpec } from './workflowHostActionContract';
 import type { requestDaemonSignedRootActionExecution } from '@/daemon/controlClient';
 import type { doesWorkflowImmediateEligibleStepTargetSession } from '@/daemon/workflows/coordinator';
@@ -156,9 +157,15 @@ export function createCliWorkflowFamily(
     const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
     if (!machineId || !directory) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
     let nativeGoalOwner: boolean | null = transport.rawSession.active === true ? null : false;
+    let rolePolicy: SessionGoalRolePolicyDecisionV1 | undefined;
     if (options?.checkNativeGoalOwner === true && transport.rawSession.active === true) {
       const result = await callSessionRpcForTransport(transport, SESSION_RPC_METHODS.SESSION_GOAL_GET,
-        { capabilitiesOnly: true }, caller?.signal, null);
+        { capabilitiesOnly: true, ...(options.rolePolicy === undefined ? {} : { rolePolicy: options.rolePolicy }) },
+        caller?.signal, null);
+      if (result !== null && typeof result === 'object' && 'rolePolicy' in result) {
+        const parsedRolePolicy = SessionGoalRolePolicyDecisionV1Schema.safeParse(result.rolePolicy);
+        if (parsedRolePolicy.success) rolePolicy = parsedRolePolicy.data;
+      }
       if (result !== null && typeof result === 'object' && 'nativeGoalOwner' in result && typeof result.nativeGoalOwner === 'boolean') {
         nativeGoalOwner = result.nativeGoalOwner;
       }
@@ -169,6 +176,7 @@ export function createCliWorkflowFamily(
       agentTarget, ...(metadata?.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
     }) : null;
     return { project: { machineId, directory }, nativeGoalOwner,
+      ...(rolePolicy === undefined ? {} : { rolePolicy }),
       ...(selection?.success ? { executionSelection: selection.data } : {}) };
   };
 
