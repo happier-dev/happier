@@ -146,12 +146,25 @@ export async function selectPublicTelemetryCollectorDomainV1(input: PublicTeleme
     if (domain.id !== domainId || domain.environmentId !== environmentId || domain.targetLinkId !== targetLinkId)
         return { kind: 'unavailable', reason: 'target_mismatch' };
     if (domain.deletedAtMs !== undefined) return { kind: 'unavailable', reason: 'deployment_unavailable' };
-    if (domain.state !== 'active') return { kind: 'unavailable', reason: 'collector_route_unavailable', state: domain.state };
+    if (domain.state !== 'active' && domain.state !== 'warning')
+        return { kind: 'unavailable', reason: 'collector_route_unavailable', state: domain.state };
     const placements = domain.placements?.filter(({ desired, placement }) => desired && placement.serverId === serverId
         && placement.environmentId === environmentId && placement.domainId === domainId && placement.targetLinkId === targetLinkId) ?? [];
     const origin = placements.find(({ listener, placement }) => listener === 'privateOrigin'
         && placement.machineId === collector.controller.machineId && placement.installationId === collector.controller.installationId);
     if (!origin) return { kind: 'unavailable', reason: 'target_mismatch' };
+    const publicListener = placements.find(({ listener }) => listener === 'public');
+    if (domain.state === 'warning') {
+        const exposure = (capture: typeof origin) => domain.networkExposure?.find(item =>
+            item.listener === capture.listener && item.nativeServer === capture.placement.nativeServer
+            && item.machineId === capture.placement.machineId && item.installationId === capture.placement.installationId)?.observation;
+        const privateExposure = exposure(origin);
+        const publicExposure = publicListener && exposure(publicListener);
+        if (privateExposure?.kind !== 'unavailable' || privateExposure.reason !== 'private_scope_unenforceable'
+            || publicExposure?.kind !== 'ready' || publicExposure.listener !== 'public' || !publicExposure.localOrigin
+            || domain.dnsHealth?.status !== 'up')
+            return { kind: 'unavailable', reason: 'collector_route_unavailable', state: domain.state };
+    }
     if (!origin.telemetryCollector) return { kind: 'unavailable', reason: 'collector_route_unavailable', state: 'unbound' };
     if (origin.telemetryCollector.machineId !== collector.machineId || origin.telemetryCollector.deploymentId !== collector.deploymentId)
         return { kind: 'unavailable', reason: 'target_mismatch' };
@@ -162,7 +175,6 @@ export async function selectPublicTelemetryCollectorDomainV1(input: PublicTeleme
     if (content.target.kind !== 'telemetry') return { kind: 'unavailable', reason: 'target_mismatch' };
     // The native listener and the prepared tunnel are produced by Domain Add.
     // A tunnel serves public HTTPS even though its Caddy listener is private.
-    const publicListener = placements.some(({ listener }) => listener === 'public');
     const tunnel = readDeploymentDomainCloudflareConnectorV1(content, origin.placement)?.prepared.owned.some(route => route.hostname === content.hostname);
     if (!publicListener && !tunnel) return { kind: 'unavailable', reason: 'collector_route_unavailable', state: 'private_only' };
     const endpoint = readDeploymentDomainServingUrlV1(content);

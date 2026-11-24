@@ -3339,8 +3339,12 @@ and when its private route resolves. When the deploy starts, the executor reads
 the collector Domain topology under the accepted Receipt and uses the shared
 private origin. Reviewed Domain setup saves the firewall's settled binding for
 the exact private placement in the protected Domain body. Verify and launch
-require Caddy's live publication to match that binding exactly. If the binding
-is absent or the publication no longer matches, launch returns
+require Caddy's live publication to match that binding exactly. Add leaves the
+private placement unavailable when it cannot retain an enforceable binding. If
+the Machine has no native interface for the selected private network, restore
+that interface and review Add address again. A direct public HTTPS placement
+can still settle independently. If the binding is absent or the publication no
+longer matches, launch returns
 `private_scope_unenforceable`. In the affected Environment, use Add address
 for the telemetry collector in Domains and review the private route to settle
 the binding again. Verify only reads the current state.

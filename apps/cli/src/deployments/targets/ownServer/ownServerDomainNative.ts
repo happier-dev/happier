@@ -327,14 +327,24 @@ export function createOwnServerDomainNative(host: Readonly<{
                     settledPrivateBinding = MachineCaddyPrivateBindingV1Schema.parse(prepared.input.privateBinding);
                 caddy = await observeCaddy(settledPrivateBinding);
             }
-            if ((observing || savedBinding) && collectorPlacement && caddy.status === 'ready' && !caddy.privateOrigins?.some(origin =>
-                origin.serverId === collectorPlacement.placement.nativeServer)) return refuse('private_scope_unenforceable', { requiredFact: 'collectorPrivatePlacementBinding' });
+            let privatePlacementRefusal: Extract<NonNullable<DeploymentDomainObservationBodyV1['networkExposure']>, { kind: 'unavailable' }> | undefined;
+            if (collectorPlacement && caddy.status === 'ready' && !caddy.privateOrigins?.some(origin =>
+                origin.serverId === collectorPlacement.placement.nativeServer)) {
+                const reason = 'private_scope_unenforceable';
+                if (job.kind === 'domain' && isDeploymentDomainAddActionIdV1(job.actionId) && !namedTunnel) {
+                    // Settle this capture as unavailable so the controller can still apply its public sibling.
+                    const requiredFact = privateNetworks.some(network => network.state === 'ready' && network.interfaceName)
+                        ? 'privateCaddyListener' : 'reachabilityPosture';
+                    const { remedy } = projectDeploymentFailureRecoveryV1({ requiredFact }, reason);
+                    privatePlacementRefusal = { kind: 'unavailable', reason, requiredFact, remedy };
+                } else if (observing || savedBinding) return refuse(reason, { requiredFact: 'collectorPrivatePlacementBinding' });
+            }
             if (caddy.status !== 'ready' && job.kind !== 'domainDns' && !reviewing) return refuse(caddy.status === 'unavailable' ? caddy.reason : 'native_route_unavailable',
                 caddy.status === 'unavailable' ? caddy.details : undefined);
             if (job.kind === 'domain' && caddy.status === 'ready' && !caddy.servers.some(server => server.serverId === job.capture.placement.nativeServer
                 && (job.capture.listener === 'public' ? server.tls : !server.tls && server.automaticHttpsDisabled))) return refuse('target_mismatch');
             let telemetryBridge: { host: string; port: number; networkId: string } | undefined;
-            if (!reviewing && telemetry && !telemetryApp && member && !withoutWorkload && caddy.status === 'ready') {
+            if (!privatePlacementRefusal && !reviewing && telemetry && !telemetryApp && member && !withoutWorkload && caddy.status === 'ready') {
                 const networkId = caddy.networkNames[0];
                 const acquireEndpoint = lease?.registry.acquireTelemetryCollectorDomainEndpoint;
                 if (!networkId || !acquireEndpoint) return serviceUnavailable(job, 'route_upstreams');
@@ -343,7 +353,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             // A named Tunnel Add applies connector setup on each active member
             // even when its existing Caddy needs no changes.
             const needsNativeSetup = needsCaddySetup || reviewing && namedTunnel && !!member;
-            return { identity, signal, environmentContent, members, domain, docker, run, caddy, needsNativeSetup,
+            return { identity, signal, environmentContent, members, domain, docker, run, caddy, needsNativeSetup, privatePlacementRefusal,
                 get topology() { return DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
                     installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas,
                     ...(telemetryBridge ? { telemetryBridge } : {}), ...(telemetryApp ? { telemetryApp } : {}),
@@ -397,7 +407,14 @@ export function createOwnServerDomainNative(host: Readonly<{
     async function execute(job: DeploymentDomainChildRpcV1, context: ActionExecutorContext) {
         const acquired = await acquire(job, context);
         try {
-            const { domain, topology, signal, identity } = acquired;
+            const { domain, signal, identity } = acquired;
+            const signObservation = (observation: DeploymentDomainObservationBodyV1) => ({ ...observation,
+                proof: signMachineInstallationProof({ payload: deploymentDomainObservationProofPayloadV1({
+                    expectedDomainRevision: job.expectedDomainRevision, observation }), privateKey: identity.privateKey }) });
+            if (acquired.privatePlacementRefusal) return signObservation({
+                capture: job.capture, state: 'warning', networkExposure: acquired.privatePlacementRefusal,
+            });
+            const { topology } = acquired;
             const machines = job.topology?.machines ?? [topology];
             const members = acquired.members.map(member => ({ machineId: member.machineId, state: member.state,
                 caddy: machines.find(machine => machine.machineId === member.machineId && machine.installationId === member.installationId)?.caddy
@@ -406,9 +423,6 @@ export function createOwnServerDomainNative(host: Readonly<{
                 privateKey: decodeBase64(identity.privateKey, 'base64url'), exchange: createNativeCaddyAdminExchange(topology.caddy.adminSocketPath) });
             const basicAuth = domain.basicAuth ? [{ username: domain.basicAuth.username }] : undefined;
             const publicTls = domain.tls?.kind === 'custom' ? { kind: 'custom' as const } : { kind: 'managed' as const };
-            const signObservation = (observation: DeploymentDomainObservationBodyV1) => ({ ...observation,
-                proof: signMachineInstallationProof({ payload: deploymentDomainObservationProofPayloadV1({
-                    expectedDomainRevision: job.expectedDomainRevision, observation }), privateKey: identity.privateKey }) });
             const routeIdentity = { domainId: job.input.domainId, domain, listener: job.capture.listener,
                 ...(basicAuth ? { basicAuth } : {}), ...(job.capture.listener === 'public' ? { publicTls } : {}) };
             const signServingObservation = async (observation: DeploymentDomainObservationBodyV1) => {

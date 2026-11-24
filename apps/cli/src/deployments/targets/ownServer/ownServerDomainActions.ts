@@ -619,8 +619,16 @@ export function createOwnServerDomainActions(host: Readonly<{
                 const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
                     headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
                 const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
-                return settled.success ? { ...settled.data, ...(settled.data.ok && tunnel ? { tunnel } : {}) }
-                    : failure('outcome_unknown', nativeScope);
+                if (!settled.success) return failure('outcome_unknown', nativeScope);
+                if (settled.data.ok && isDeploymentDomainAddActionIdV1(actionId)) {
+                    const refused = observations.find(({ capture, networkExposure }) => capture.desired
+                        && capture.listener === 'privateOrigin' && networkExposure?.kind === 'unavailable'
+                        && networkExposure.reason === 'private_scope_unenforceable')?.networkExposure;
+                    if (refused?.kind === 'unavailable') return failure(refused.reason, {
+                        requiredFact: refused.requiredFact, remedy: refused.remedy,
+                    });
+                }
+                return { ...settled.data, ...(settled.data.ok && tunnel ? { tunnel } : {}) };
             } catch (error) {
                 const diagnostic = issued ? projectDeploymentFailure('outcome_unknown', error, 'deployment.domain.native_execution')
                     : projectDeploymentException(error, { signal: context.signal, phase: 'deployment.domain.native_execution' });

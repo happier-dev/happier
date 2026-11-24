@@ -440,7 +440,10 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     if (sourceFile) return sourceFile;
     if (code === 'deployment_source_unavailable' && request?.pullRequestHead) return pullRequestHeadRecovery;
     const fact = failure?.requiredFact ?? details.requiredFact;
-    if (code === 'private_scope_unenforceable' && (fact === 'collectorPrivatePlacementBinding'
+    if (code === 'private_scope_unenforceable' && fact === 'reachabilityPosture')
+        return recovery('This Machine has no ready native interface for the selected private network. Configure the network’s native interface on the Machine, then use Add address in Domains to review the private route again.',
+            'domains', 'Open Domains');
+    if (code === 'private_scope_unenforceable' && (fact === 'collectorPrivatePlacementBinding' || fact === 'privateCaddyListener'
         || failureCause?.phase === DEPLOYMENT_COLLECTOR_PRIVATE_BINDING_FAILURE_PHASE_V1))
         return recovery('The Machine could not confirm the collector’s private firewall binding. In Domains, use Add address for the telemetry collector and review the private route again.',
             'domains', 'Open Domains');

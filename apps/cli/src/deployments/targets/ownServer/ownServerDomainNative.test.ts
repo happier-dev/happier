@@ -1,4 +1,7 @@
 import axios from 'axios';
+import { createHash } from 'node:crypto';
+import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
+import { createScmBackendRegistry } from '@/scm/registry';
 import { Resolver } from 'node:dns/promises';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -114,6 +117,9 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'ask' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'wrongAddress' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, collectorTopology: 'wrongNetwork' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', collectorTopology: 'userspaceAdd' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', collectorTopology: 'boundAdd' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', collectorTopology: 'userspacePublicAdd', publicListener: true },
 ] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview, public: $publicListener, DNS: $dns, collector topology: $collectorTopology)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
@@ -124,6 +130,8 @@ it.each([
     const publicListener = 'publicListener' in scenario && scenario.publicListener;
     const listener = publicListener ? 'public' as const : 'privateOrigin' as const;
     const collectorTopology = 'collectorTopology' in scenario && scenario.collectorTopology;
+    const collectorAdd = collectorTopology === 'userspaceAdd' || collectorTopology === 'boundAdd' || collectorTopology === 'userspacePublicAdd';
+    const userspaceAdd = collectorTopology === 'userspaceAdd' || collectorTopology === 'userspacePublicAdd';
     const network: MachinePrivateNetworkObservationV1 = {
         provider: { kind: 'builtin', id: 'tailscale' }, state: 'ready', networkIdentity: 'reviewed-tailnet', interfaceName: 'tailscale0',
         addresses: ['100.70.0.2', '100.70.0.3', 'fd7a:115c:a1e0::2'], sourceRanges: ['100.64.0.0/10'],
@@ -131,13 +139,17 @@ it.each([
     };
     const { id: requirementId, ...privatePort } = nativeCaddyProfile.portRequirement;
     const collectorBinding = { HostIp: collectorTopology === 'wrongAddress' ? network.addresses[1] : network.addresses[0], HostPort: String(privatePort.hostPort) };
-    const actualNetwork = collectorTopology === 'wrongNetwork' ? { ...network, networkIdentity: 'another-tailnet' } : network;
+    const actualNetwork = userspaceAdd ? { ...network, interfaceName: null, sourceRanges: [] }
+        : collectorTopology === 'wrongNetwork' ? { ...network, networkIdentity: 'another-tailnet' } : network;
     const binding = MachineCaddyPrivateBindingV1Schema.parse({
         exposure: { ...privatePort, requirementId,
             hostAddress: network.addresses[0], networkIdentity: network.networkIdentity, providerId: 'tailscale' },
         interfaceName: network.interfaceName, sourceRanges: network.sourceRanges,
     });
-    const ports = collectorTopology ? { [`${privatePort.containerPort}/tcp`]: [collectorBinding] } : {};
+    const ports = userspaceAdd ? publicListener ? {
+        '443/tcp': [{ HostIp: '0.0.0.0', HostPort: '443' }],
+        '80/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }],
+    } : {} : collectorTopology ? { [`${privatePort.containerPort}/tcp`]: [collectorBinding] } : {};
     const resolveDns = vi.spyOn(Resolver.prototype, 'resolve').mockImplementation(async (_hostname, recordType) => {
         if (dns === 'unavailable') throw Object.assign(new Error('resolver unavailable'), { code: 'ESERVFAIL' });
         if (dns === 'missing' || dns === 'ipv6' && recordType === 'A')
@@ -182,7 +194,8 @@ it.each([
     const material = materializeCaddyDomainRouteV1({ domainId: 'domain', domain, listener,
         ...(publicListener ? { publicTls: { kind: 'managed' as const } } : {}),
         upstreams: { kind: 'replicas', containerNames: ['retired-generation-web-42'], ...(collectorTopology ? { containerPort: 4318 } : {}) },
-        privateSourceRanges: [], ...(collectorTopology ? { telemetryPrivateHosts: [binding.exposure.hostAddress] } : {}) });
+        privateSourceRanges: collectorTopology === 'boundAdd' ? [...network.sourceRanges] : [],
+        ...(collectorTopology && !userspaceAdd ? { telemetryPrivateHosts: [binding.exposure.hostAddress] } : {}) });
     const foreign = { '@id': 'foreign-app', match: [{ host: ['other.example.test'] }], handle: [{ handler: 'static_response', status_code: 204 }] };
     const nativeServer = { listen: [publicListener ? ':443' : collectorTopology ? `:${privatePort.containerPort}` : ':9381'], automatic_https: { disable: !publicListener },
         ...(material.tls ? { tls_connection_policies: [material.tls.connectionPolicy] } : {}),
@@ -281,17 +294,20 @@ it.each([
         const job = DeploymentChildRpcV1Schema.parse(preview ? { v: 1, kind: 'domainDns',
             actionId: 'deployments.domains.verify', machineId: placement.machineId, installationId: placement.installationId,
             input: previewInput } : { v: 1, kind: 'domain',
-            actionId: verifying ? 'deployments.domains.verify' : 'deployments.domains.remove',
+            actionId: collectorAdd ? 'deployments.domains.add' : verifying ? 'deployments.domains.verify' : 'deployments.domains.remove',
             input: { serverId: placement.serverId, environmentId: placement.environmentId, domainId: 'domain' },
             machineId: placement.machineId, installationId: placement.installationId, actionOperationId: placement.actionOperationId,
             ...(connectorRetirement === 'exact' || connectorRetirement === 'foreign' ? { cloudflareConnector: connector } : {}),
-            expectedDomainRevision: 3, capture: { placement, listener, desired: verifying,
+            expectedDomainRevision: 3, capture: { placement, listener, desired: verifying || collectorAdd,
                 ...(!missingEngine ? { dockerEngineId: 's0-docker-engine' } : {}),
                 environmentContent: { contentArtifactId: environment.environment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
                 targetLinkContent: { contentArtifactId: link.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
                 content: { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 } } });
         const fixture = await createDeploymentChildRequesterHarness({ encryptionMode, job, profileId: placement.serverId,
-            rootInput: preview ? previewInput : { ...job.input, expectedRevision: environment.environment.revision, expectedDomainRevision: 3, requestKey: 'remove' } });
+            rootInput: preview ? previewInput : collectorAdd && job.kind === 'domain'
+                ? { ...job.input, ...job.capture.content, expectedRevision: environment.environment.revision,
+                    targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: 'add' }
+                : { ...job.input, expectedRevision: environment.environment.revision, expectedDomainRevision: 3, requestKey: 'remove' } });
         const resourceKey = await createResourceDataKey({ credentials: fixture.bob, mode: encryptionMode });
         const encode = (value: unknown) => resourceKey.mode === 'plain' ? encodePlainArtifactStoredContent(value)
             : encodeBase64(encryptWithDataKey(value, resourceKey.dataKey));
@@ -329,6 +345,70 @@ it.each([
                 body: encode({ body: JSON.stringify(document.value) }), headerVersion: 1, bodyVersion: 1,
                 seq: 1, createdAt: 1, updatedAt: 1 } };
         });
+        if (collectorAdd) {
+            if (job.kind !== 'domain') throw new Error('Expected admitted native Domain capture');
+            mounted = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });
+            const document = 'services: {collector: {image: collector:latest}}';
+            const materializer = createDeploymentSourceMaterializationPort({ registry: createScmBackendRegistry([]), async admit() {
+                return { environmentId: placement.environmentId, environmentInstanceId: 'collector-instance', deploymentId: 'collector-release',
+                    machineId: placement.machineId, installationId: placement.installationId, deploymentRoot: join(directory, 'deployments'),
+                    artifactDirectory: join(directory, 'artifacts'), async assertCurrent() {},
+                    definition: { kind: 'stored', contentRevision: 1, document,
+                        composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['collector'] } };
+            } });
+            const release = await materializer.materialize({ environmentId: placement.environmentId, deploymentId: 'collector-release' });
+            await release.commit();
+            await mounted.lease.registry.projectManagedServices.superviseProject({
+                kind: 'environment', serverId: placement.serverId, machineId: placement.machineId, environmentId: placement.environmentId,
+                environmentInstanceId: 'collector-instance', deploymentId: 'collector-release', release, composeService: 'collector',
+                serviceId: 'collector-instance/collector', specIdentity: 'collector', isCurrent: () => true, releaseObservation: async () => {},
+                nativeEffects: { keys: [] }, processSpec: { mode: { kind: 'native', builtinLifecycle: {
+                    async inspect() { return { phase: 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:4318' }; },
+                    async stop() { return { status: 'stopped' }; },
+                    nativeContainers: () => [{ id: 'collector', composeProject: 'collector-instance', service: 'collector',
+                        containerName: 'retired-generation-web-42', networkNames: [] }],
+                    nativeDocker: async () => ({ engineId: 's0-docker-engine', async run(args, signal, inputBytes) {
+                        signal?.throwIfAborted();
+                        const output = spawnSync(process.execPath, [docker.executablePath, ...args], { encoding: 'utf8',
+                            ...(inputBytes ? { input: Buffer.from(inputBytes) } : {}) });
+                        if (output.error) throw output.error;
+                        return { exitCode: output.status ?? 1, stdout: output.stdout, stderr: output.stderr };
+                    } }),
+                } } },
+            });
+            const telemetryApp = { environmentId: placement.environmentId, serviceName: 'collector', port: 4318 };
+            const opened = (id: string, kind: string, value: unknown) => ({ artifactId: id, header: { kind, title: 'Collector' },
+                body: JSON.stringify(value), revision: { headerVersion: 1, bodyVersion: 1 } });
+            const native = createOwnServerDomainNative({ credentials: fixture.bob, serverHttpBaseUrl: fixture.serverHttpBaseUrl,
+                machineId: placement.machineId, serverId: placement.serverId,
+                acquirePluginRuntimeRegistryLease: async () => mounted!.lease,
+                open: async id => {
+                    if (id === job.capture.content.contentArtifactId) return opened(id, 'deployment-domain.v1',
+                        collectorTopology === 'boundAdd' ? { ...domain, privatePlacementBindings: [{ machineId: placement.machineId,
+                            installationId: placement.installationId, dockerEngineId: job.capture.dockerEngineId, nativeServer: placement.nativeServer, binding }] }
+                            : domain);
+                    const document = content.get(id);
+                    return document ? opened(id, document.kind, document.value) : null;
+                },
+                async readEnvironment() { throw new Error('Add must use captured Domain custody'); },
+                async readReceipt() { throw new Error('Add must use captured Domain custody'); },
+            });
+            const member = { machineId: placement.machineId, installationId: placement.installationId };
+            const child = { ...job, topology: { members: [member], machines: [DeploymentDomainMachineTopologyV1Schema.parse({
+                ...member, dockerEngineId: job.capture.dockerEngineId, privateNetworks: [actualNetwork],
+                caddy: { status: 'ready', containerId: 'caddy', containerName: 'observed-caddy',
+                    adminSocketPath: socketPath, networkNames: [], servers: [] },
+                replicas: [], telemetryApp,
+                ...(collectorTopology === 'boundAdd' ? { settledPrivateBinding: binding } : {}),
+            })] } };
+            const result = await native(child, {});
+            expect(result, JSON.stringify(result)).toMatchObject(collectorTopology === 'userspaceAdd' ? {
+                state: 'warning', networkExposure: { kind: 'unavailable', reason: 'private_scope_unenforceable',
+                    requiredFact: 'reachabilityPosture', remedy: expect.stringContaining('native interface') },
+            } : { state: 'active', networkExposure: { kind: 'ready', listener } });
+            expect(DeploymentDomainObservationV1Schema.parse(result).capture).toEqual(job.capture);
+            return;
+        }
         if (collectorTopology) {
             if (job.kind !== 'domain') throw new Error('Expected native Domain Verify custody');
             const reference = job.capture.content;

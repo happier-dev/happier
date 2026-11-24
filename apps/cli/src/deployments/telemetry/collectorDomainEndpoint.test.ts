@@ -111,6 +111,29 @@ it.each(['save', 'picker'] as const)('%s uses only the settled public HTTPS rout
     const resolve = () => surface === 'save' ? readTelemetryCollectorDomainForHost(input)
         : deploymentProtocol.selectPublicTelemetryCollectorDomainV1({ ...input, domain: domain ? DeploymentDomainHeaderV1Schema.parse(domain) : null });
     expect(await resolve()).toEqual({ kind: 'ready', endpoint: 'https://collector.example.test/' });
+    const exposure = <T>(capture: typeof origin | typeof edge, observation: T) => ({
+        machineId: capture.placement.machineId, installationId: capture.placement.installationId,
+        nativeServer: capture.placement.nativeServer, listener: capture.listener, observation,
+    });
+    const privateRefusal = exposure(origin, { kind: 'unavailable', reason: 'private_scope_unenforceable',
+        requiredFact: 'reachabilityPosture' });
+    const publicReady = exposure(edge, { kind: 'ready', listener: 'public', localOrigin: true, fallback: false,
+        listeners: [{ tls: true, automaticHttpsDisabled: false, endpoints: [
+            { audience: 'wildcard', hostPort: 443, containerPort: 443, protocol: 'tcp' },
+        ] }] });
+    const partial = { ...base, state: 'warning', dnsHealth: { status: 'up', evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'dns' }, author: { kind: 'process' }, text: 'DNS ready' }] } },
+        networkExposure: [privateRefusal, publicReady] };
+    DeploymentDomainHeaderV1Schema.parse(partial);
+    domain = partial;
+    expect(await resolve()).toEqual({ kind: 'ready', endpoint: 'https://collector.example.test/' });
+    domain = { ...partial, networkExposure: [privateRefusal, { ...publicReady, installationId: 'retired' }] };
+    expect(await resolve()).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable' });
+    domain = { ...partial, networkExposure: [privateRefusal, {
+        ...publicReady, observation: { ...publicReady.observation, localOrigin: false },
+    }] };
+    expect(await resolve()).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable' });
+    domain = { ...partial, dnsHealth: { ...partial.dnsHealth, status: 'unknown' } };
+    expect(await resolve()).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable' });
     domain = { ...base, state: 'pending' };
     expect(await resolve()).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable', state: 'pending' });
     domain = { ...base, id: 'another-domain' };
