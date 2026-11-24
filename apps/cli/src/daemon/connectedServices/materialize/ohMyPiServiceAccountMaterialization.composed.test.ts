@@ -194,11 +194,11 @@ describe('Oh My Pi service-keyed account selection to native launch', () => {
       nativeProvider: 'xai', nativeKey: 'XAI_API_KEY', expected: 'fake-xai-key',
     }, {
       id: 'muse-subscription', service: MUSE_ACCOUNT_SERVICE, runtime: museConnectedAccountRuntime,
-      credentials: { credentialMode: 'native', nativeMechanism: '"oauth"', accessToken: 'fake-muse-oauth', apiKey: 'fake-muse-inference' },
+      credentials: { credentialMode: 'native', nativeMechanism: '"oauth"', accountToken: 'fake-muse-oauth', inferenceKey: 'fake-muse-inference' },
       nativeProvider: 'muse-code', nativeKey: 'MUSE_CODE_CREDENTIAL', expected: { oauthAccessToken: 'fake-muse-oauth', apiKey: 'fake-muse-inference' },
     }, {
       id: 'muse-key', service: MUSE_ACCOUNT_SERVICE, runtime: museConnectedAccountRuntime,
-      credentials: { credentialMode: 'api-key', apiKey: 'fake-meta-key' }, nativeProvider: 'meta', nativeKey: 'META_API_KEY', expected: 'fake-meta-key',
+      credentials: { credentialMode: 'api-key', inferenceKey: 'fake-meta-key' }, nativeProvider: 'meta', nativeKey: 'META_API_KEY', expected: 'fake-meta-key',
     }, {
       id: 'gemini-key', service: GEMINI_CONNECTED_ACCOUNT_SERVICE, runtime: geminiConnectedAccountRuntime,
       credentials: { apiKey: 'fake-gemini-key' }, nativeProvider: 'google', nativeKey: 'GEMINI_API_KEY', expected: 'fake-gemini-key',

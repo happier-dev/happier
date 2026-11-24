@@ -179,7 +179,7 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   const ref = { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: randomUUID() };
   const metadata = { displayName: 'Synthetic sharing credential', providerIdentity: { accountId: ref.accountId } };
   const credentialPayload = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key',
-    payload: { v: 1, values: { credentialMode: 'manual', apiKey: 'journey-only-synthetic-key' } }, metadata, now: Date.now() });
+    payload: { v: 1, values: { credentialMode: 'manual', inferenceKey: 'journey-only-synthetic-key' } }, metadata, now: Date.now() });
   const imported = await request(owner, '/v4/connect/qualified/credential', QualifiedConnectedAccountCredentialMutationV4Schema.parse({
     ref, authenticationModeId: 'api-key', metadata, expectedCredentialRevision: null,
     content: sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee',

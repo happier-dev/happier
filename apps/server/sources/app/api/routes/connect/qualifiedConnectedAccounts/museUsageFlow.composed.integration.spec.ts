@@ -185,8 +185,8 @@ describe('Muse qualified usage publication through Home', () => {
                 ...login.rows.slice(0, 2), { direction: 'send', message: { jsonrpc: '2.0', id: 100, method: 'usage/refresh', params: {} } },
                 { direction: 'recv', message: { jsonrpc: '2.0', id: 100, result: { usage, tierName: 'Subscription', subscriptionActive: true } } },
             ] }, playbackSteps: [{ requestRow: 2, receiveUntilRow: 4 }] });
-            const values = new Map(Object.entries({ credentialMode: 'native', accessToken: 'synthetic-oauth-token',
-                apiKey: 'synthetic-key', nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1' }));
+            const values = new Map(Object.entries({ credentialMode: 'native', accountToken: 'synthetic-oauth-token',
+                inferenceKey: 'synthetic-key', nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1' }));
             const context = { signal, credentials: { async get(key: string) { return values.get(key) ?? null; } }, services: {
                 exec: createStablePluginExecService({ signal, isOccurrenceCurrent: () => true, environment: {},
                     resolvePath: async path => typeof path === 'string' ? path : directory, resolveExecutable: native.resolveExecutable }),

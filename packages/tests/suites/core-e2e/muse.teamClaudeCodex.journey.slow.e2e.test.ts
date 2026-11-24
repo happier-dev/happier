@@ -193,7 +193,7 @@ it('MUSE.J2 shares A’s Muse with B, launches Claude and Codex from the UI, pre
     const ref = { service, accountId: randomUUID() };
     const metadata = { displayName: 'Synthetic Muse account', providerIdentity: { accountId: ref.accountId } };
     const payload = projectQualifiedConnectedAccountCredentialPlaintextV1({ ref, authenticationModeId: 'api-key',
-      payload: { v: 1, values: { credentialMode: 'manual', apiKey: 'synthetic-team-muse-key' } }, metadata, now: Date.now() });
+      payload: { v: 1, values: { credentialMode: 'manual', inferenceKey: 'synthetic-team-muse-key' } }, metadata, now: Date.now() });
     const content = sealQualifiedConnectedAccountContentEnvelope({ kind: 'credential', accountMode: 'e2ee',
       material: { type: 'dataKey', machineKey: owner.auth.accountMachineKey }, payload, randomBytes });
     const imported = await fetchJson<unknown>(`${fixture.server.baseUrl}/v4/connect/qualified/credential`, {

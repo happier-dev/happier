@@ -277,6 +277,8 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       directExport: z.optional(PluginConnectedAccountDirectExportV2Schema),
       accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
+      /** Credential keys this mode's runtime stores secret material under; the canonical token keys need no entry. */
+      secretCredentialKeys: z.optional(z.array(QualifiedConnectedAccountCredentialKeyV1Schema)),
       /** Verified manual input fields staged under these exact credential keys. */
       credentialFieldKeys: z.optional(z.record(PluginSettingFieldIdV2Schema, QualifiedConnectedAccountCredentialKeyV1Schema)),
       /** Omission is unknown. Import completion never establishes the original sign-in time. */
@@ -339,6 +341,8 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       clientConfiguration: z.optional(PluginConnectedAccountClientConfigurationV2Schema),
       accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
+      /** Credential keys this mode's runtime stores secret material under; the canonical token keys need no entry. */
+      secretCredentialKeys: z.optional(z.array(QualifiedConnectedAccountCredentialKeyV1Schema)),
     }).check(z.superRefine((mode, context) => {
       if (mode.postAuthenticationFieldIds !== undefined
         && (mode.configuration?.scope !== 'account'
@@ -359,6 +363,8 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       configuration: z.optional(PluginConnectedAccountConfigurationV2Schema),
       clientConfiguration: z.optional(PluginConnectedAccountClientConfigurationV2Schema),
       accessOnlyExport: z.optional(PluginConnectedAccountAccessOnlyExportV1Schema),
+      /** Credential keys this mode's runtime stores secret material under; the canonical token keys need no entry. */
+      secretCredentialKeys: z.optional(z.array(QualifiedConnectedAccountCredentialKeyV1Schema)),
     }),
   ]).check(z.superRefine((mode, context) => {
     if (mode.kind === 'manual' || mode.clientConfiguration === undefined) return;

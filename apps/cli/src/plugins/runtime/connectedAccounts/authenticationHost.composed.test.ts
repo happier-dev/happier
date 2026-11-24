@@ -123,7 +123,7 @@ it.each(['native-import', 'device'] as const)('tests a saved Muse subscription w
             const account = { service, accountId: 'saved-subscription' };
             await mutateQualifiedConnectedAccountCredentialV4({ token: fixture.credentials.token, mutation: {
                 ref: account, authenticationModeId, expectedCredentialRevision: null,
-                content: { t: 'plain', v: { v: 1, values: { credentialMode: 'native', apiKey: 'synthetic-muse-key', accessToken: 'synthetic-account-token', nativeMechanism: '"oauth"', expiresAtMs: String(Date.now() + 60_000), nativeApiBaseUrl: 'https://api.meta.ai/v1' } } },
+                content: { t: 'plain', v: { v: 1, values: { credentialMode: 'native', inferenceKey: 'synthetic-muse-key', accountToken: 'synthetic-account-token', nativeMechanism: '"oauth"', expiresAtMs: String(Date.now() + 60_000), nativeApiBaseUrl: 'https://api.meta.ai/v1' } } },
                 metadata: { kind: 'oauth', scopes: [] },
             } });
             await ensureCliActionPolicySettings(fixture.credentials, origin);

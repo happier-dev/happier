@@ -57,12 +57,12 @@ const cases: readonly DeliveryCase[] = [{
 }, {
   purpose: 'muse-subscription', provider: 'muse-code', service: MUSE_ACCOUNT_SERVICE,
   runtime: museConnectedAccountRuntime,
-  credentials: { credentialMode: 'native', nativeMechanism: '"oauth"', accessToken: 'fake-muse-oauth', apiKey: 'fake-muse-inference' },
+  credentials: { credentialMode: 'native', nativeMechanism: '"oauth"', accountToken: 'fake-muse-oauth', inferenceKey: 'fake-muse-inference' },
   nativeKey: 'MUSE_CODE_CREDENTIAL', expectedValue: { oauthAccessToken: 'fake-muse-oauth', apiKey: 'fake-muse-inference' },
 }, {
   purpose: 'meta', provider: 'meta', service: MUSE_ACCOUNT_SERVICE,
   runtime: museConnectedAccountRuntime,
-  credentials: { credentialMode: 'api-key', apiKey: 'fake-meta-key' },
+  credentials: { credentialMode: 'api-key', inferenceKey: 'fake-meta-key' },
   nativeKey: 'META_API_KEY', expectedValue: 'fake-meta-key',
 }, {
   purpose: 'github-copilot', provider: 'github-copilot', service: GITHUB_CONNECTED_ACCOUNT_SERVICE,

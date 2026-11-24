@@ -16,15 +16,28 @@ function diagnostic(code: string, reason: string, httpStatus?: number) {
   return { code, severity: 'error' as const, message: 'Muse account operation could not complete.', details: { reason, ...(httpStatus === undefined ? {} : { httpStatus }) } };
 }
 function nonBlank(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0; }
-async function read(store: CredentialReader, key: string, options?: SignalOptions) { return await store.get(key, options) ?? ''; }
+/**
+ * Muse's stored keys are `accountToken` and `inferenceKey`. A build carrying 6d97291a310 wrote
+ * them as `accessToken` and `apiKey`; reads accept that shape and every write returns to the original.
+ */
+const MUSE_REWRITTEN_KEYS = { accountToken: 'accessToken', inferenceKey: 'apiKey' } as const;
+async function read(store: CredentialReader, key: string, options?: SignalOptions) {
+  const rewritten = Object.hasOwn(MUSE_REWRITTEN_KEYS, key) ? MUSE_REWRITTEN_KEYS[key as keyof typeof MUSE_REWRITTEN_KEYS] : null;
+  return await store.get(key, options) ?? (rewritten ? await store.get(rewritten, options) : null) ?? '';
+}
+/** Writes the original keys and drops the rewritten ones, so builds before and after 6d97291a310 read it. */
+async function writeMuseSecret(store: CredentialStore, key: keyof typeof MUSE_REWRITTEN_KEYS, value: string, options?: SignalOptions) {
+  await store.set(key, value, options);
+  await store.delete(MUSE_REWRITTEN_KEYS[key], options);
+}
 
 /** The same sealed credential shapes serve health, explicit tests and native delivery. */
 async function readMuseUsableCredentials(store: CredentialReader, options?: SignalOptions) {
-  const [mode, key, expiry] = await Promise.all(['credentialMode', 'apiKey', 'expiresAtMs'].map(name => read(store, name, options)));
+  const [mode, key, expiry] = await Promise.all(['credentialMode', 'inferenceKey', 'expiresAtMs'].map(name => read(store, name, options)));
   if (!mode) return null;
   if (key) return { mode, key, expiry };
   if (mode !== 'native') return null;
-  const [token, mechanism] = await Promise.all(['accessToken', 'nativeMechanism'].map(name => read(store, name, options)));
+  const [token, mechanism] = await Promise.all(['accountToken', 'nativeMechanism'].map(name => read(store, name, options)));
   return token && mechanism === '"oauth"' && expiry && Number.isFinite(Number(expiry)) && Number(expiry) > Date.now()
     ? { mode, key, expiry } : null;
 }
@@ -32,7 +45,7 @@ async function readMuseUsableCredentials(store: CredentialReader, options?: Sign
 /** Named fields remain in the host's existing sealed credential payload. */
 export async function stageMuseNativeCredentials(store: CredentialStore, meta: MuseNativeMetaAuth, options?: SignalOptions): Promise<void> {
   await Promise.all([
-    store.set('accessToken', meta.access_token, options), store.set('apiKey', meta.api_key, options),
+    writeMuseSecret(store, 'accountToken', meta.access_token, options), writeMuseSecret(store, 'inferenceKey', meta.api_key, options),
     store.set('nativeApiBaseUrl', meta.api_base_url, options), store.set('nativeObtainedVia', meta.obtained_via, options),
     ...([
       ['nativeMechanism', meta.mechanism], ['nativeExpiresAt', meta.expires_at], ['nativeSubsActive', meta.subs_active],
@@ -47,7 +60,7 @@ export async function stageMuseNativeCredentials(store: CredentialStore, meta: M
 
 async function readNativeMeta(store: CredentialReader, options?: SignalOptions): Promise<MuseNativeMetaAuth> {
   const [access_token, api_key, api_base_url, obtained_via, mechanism, expires_at, subs_active, user_email, user_full_name] = await Promise.all([
-    'accessToken', 'apiKey', 'nativeApiBaseUrl', 'nativeObtainedVia', 'nativeMechanism', 'nativeExpiresAt',
+    'accountToken', 'inferenceKey', 'nativeApiBaseUrl', 'nativeObtainedVia', 'nativeMechanism', 'nativeExpiresAt',
     'nativeSubsActive', 'nativeUserEmail', 'nativeUserFullName',
   ].map(key => read(store, key, options)));
   // These values were parsed once at the HTTP/native-file boundary, then sealed by the host.
@@ -78,7 +91,7 @@ async function mintAccountKey(context: AuthContext, options?: SignalOptions): Pr
   let response;
   try {
     response = await context.services.http.request({ url: `${META_API_ORIGIN}/muse-code/key`, method: 'POST', redirect: 'error',
-      headers: { ...META_HEADERS, 'Content-Type': 'application/json', Authorization: `Bearer ${await read(context.attemptCredentials, 'accessToken', options)}` },
+      headers: { ...META_HEADERS, 'Content-Type': 'application/json', Authorization: `Bearer ${await read(context.attemptCredentials, 'accountToken', options)}` },
       body: new TextEncoder().encode('{}'),
     }, { signal });
   } catch (error) {
@@ -102,7 +115,7 @@ async function mintAccountKey(context: AuthContext, options?: SignalOptions): Pr
   }
   const completionObservation = parseMuseMintCompletionObservation(body, Date.now());
   await stageMuseNativeCredentials(context.attemptCredentials, {
-    access_token: await read(context.attemptCredentials, 'accessToken', options), api_key: body.api_key, api_base_url: body.base_url,
+    access_token: await read(context.attemptCredentials, 'accountToken', options), api_key: body.api_key, api_base_url: body.base_url,
     mechanism: 'oauth', obtained_via: 'device_code', subs_active: body.is_subs_active,
     user_email: typeof body.user_email === 'string' ? body.user_email : null,
     user_full_name: typeof body.user_full_name === 'string' ? body.user_full_name : null,
@@ -150,7 +163,7 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
           async parseSuccess(value): Promise<ConnectedAccountAuthCompletionResult> {
             const body = museRecord(value);
             if (!body || !nonBlank(body.access_token)) return { status: 'unavailable', diagnostic: diagnostic('device_grant_response_invalid', 'device_token_response') };
-            await context.attemptCredentials.set('accessToken', body.access_token, options);
+            await writeMuseSecret(context.attemptCredentials, 'accountToken', body.access_token, options);
             if (typeof body.expires_in === 'number' && Number.isFinite(body.expires_in) && body.expires_in >= 0) {
               await context.attemptCredentials.set('expiresAtMs', String(Date.now() + body.expires_in * 1000), options);
             }
@@ -166,13 +179,25 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       kind: 'manual',
       async complete(input, context, options) {
         if (!nonBlank(input.fields.apiKey)) return { status: 'rejected', diagnostic: diagnostic('connected_account_authentication_failed', 'missing_api_key') };
-        await context.attemptCredentials.set('apiKey', input.fields.apiKey.trim(), options);
+        await writeMuseSecret(context.attemptCredentials, 'inferenceKey', input.fields.apiKey.trim(), options);
         await context.attemptCredentials.set('credentialMode', 'manual', options);
         return { status: 'connected', credentialKind: 'token', displayName: 'Muse API key', scopes: [] };
       },
     },
   } },
-  async refresh() { return { status: 'reconnectRequired', diagnostic: diagnostic('connected_account_refresh_unsupported', 'explicit_reconnect_required') }; },
+  async refresh(context, options) {
+    // Muse has no refresh grant: a usable login stays connected and an unusable one needs a reconnect.
+    // A record in the 6d97291a310 shape is written back in the original keys here, so builds without
+    // the dual read recover it without a reconnect.
+    if (!await readMuseUsableCredentials(context.credentials, options)) {
+      return { status: 'reconnectRequired', diagnostic: diagnostic('connected_account_refresh_unsupported', 'explicit_reconnect_required') };
+    }
+    for (const key of Object.keys(MUSE_REWRITTEN_KEYS) as (keyof typeof MUSE_REWRITTEN_KEYS)[]) {
+      const moved = await context.credentials.get(MUSE_REWRITTEN_KEYS[key], options);
+      if (moved !== null && await context.credentials.get(key, options) === null) await writeMuseSecret(context.stagedCredentials, key, moved, options);
+    }
+    return museAccountConnectedResult(context.credentials, options);
+  },
   async revoke() { return { status: 'remoteUnsupported' }; },
   async status(context, options) {
     if (!await readMuseUsableCredentials(context.credentials, options)) return { status: 'unavailable', diagnostic: diagnostic('plugin_connected_account_credentials_unavailable', 'credentials_missing') };
@@ -216,7 +241,7 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       if (request.keys.includes(MUSE_CODE_CREDENTIAL_ENV_KEY)) {
         const mechanism = await read(context.credentials, 'nativeMechanism', options);
         if (mode !== 'native' || mechanism !== '"oauth"') return { kind: 'environment', env };
-        const accessToken = await read(context.credentials, 'accessToken', options);
+        const accessToken = await read(context.credentials, 'accountToken', options);
         if (!accessToken || (expiry && Number(expiry) <= Date.now())) {
           throw new PluginError({ code: 'plugin_connected_account_credentials_unavailable', message: 'The Muse account token is unavailable or expired; reconnect the account.' });
         }

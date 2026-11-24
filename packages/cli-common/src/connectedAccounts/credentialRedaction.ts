@@ -30,7 +30,8 @@ export function createConnectedAccountCredentialRedaction(input: Readonly<{
     });
     const endpointValues = new Set(endpoints.flatMap(endpoint => [endpoint.origin, endpoint.base]));
     const secretKeys = listConnectedAccountSecretCredentialKeysV1(input.mode);
-    const transcriptSecretKeys = new Set([...secretKeys.keys(), ...CANONICAL_CONNECTED_ACCOUNT_SECRET_CREDENTIAL_KEYS_V1]);
+    const transcriptSecretKeys = new Set([...secretKeys.keys(), ...CANONICAL_CONNECTED_ACCOUNT_SECRET_CREDENTIAL_KEYS_V1,
+        ...(input.mode.secretCredentialKeys ?? [])]);
     // Log redaction keeps every credential value; the secret set keeps only real secrets.
     const secrets = new Set<string>();
     const realSecrets = new Set<string>();
