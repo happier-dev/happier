@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentState } from '@/api/types';
 import { AgentStateRequestStore, type PermissionResponseClaim } from './agentStateRequestStore';
 import { createPermissionRequestCoordinator } from './permissionRequestCoordinator';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 class FakeSession {
     sessionId = 'session-test';
@@ -1031,6 +1033,27 @@ describe('PermissionRequestCoordinator', () => {
             status: 'denied', decision: 'denied',
         });
         expect(session.agentState.completedRequests?.[bashRequest.requestId]).not.toHaveProperty('nativeChoice');
+        await coordinator.dispose();
+    });
+
+    it('settles an answer delivered outside the hosted Session whose launch secret redacted the stored request', async () => {
+        const secret = 'fake-scoped-launch-secret-4c1e';
+        const { coordinator, session } = createHarness();
+        const request = { ...bashRequest, requestId: 'scoped-secret-request', toolInput: { command: ['bash', '-lc', `echo ${secret}`] } };
+        // Published inside the Session: its stored entry is redacted with the Session's secret.
+        const { pending, context } = await runInHostedSessionScope({}, async () => {
+            registerSessionTranscriptSecret(secret);
+            const pending = coordinator.requestDecision(request);
+            await vi.waitFor(() => expect(session.agentState.requests?.[request.requestId]).toBeDefined());
+            return { pending, context: coordinator.getResponseContext(request.requestId)! };
+        });
+        expect(JSON.stringify(session.agentState.requests?.[request.requestId])).not.toContain(secret);
+        // The native answer arrives on a callback outside that Session's scope.
+        const completion = { result: { decision: 'approved' }, completedRequest: { status: 'approved', decision: 'approved' } };
+        await expect(coordinator.completeObservedResponse({ context, completion })).resolves.toBe(true);
+        await expect(pending).resolves.toEqual(completion.result);
+        expect(session.agentState.requests?.[request.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests?.[request.requestId]).toMatchObject({ status: 'approved' });
         await coordinator.dispose();
     });
 

@@ -22,6 +22,7 @@ import type {
     PermissionResponseClaimSettlement,
 } from './agentStateRequestStore';
 import { isSameAgentStateRequestArguments, isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
+import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
     isPermissionRequestOwnedByPlugin,
     isPermissionRequestOwnedByPluginTurn,
@@ -224,6 +225,12 @@ type PendingPermissionRequest<TResult> = {
     permissionSuggestions?: readonly unknown[];
     owner?: PermissionRequestOwner;
     status: 'live' | 'detached';
+    /**
+     * Runs work for this occurrence in the hosted Session that admitted it. Its stored projection is
+     * redacted with that Session's transcript secrets; an answer or cancellation can arrive on a
+     * callback outside it, so raw-versus-stored comparisons and stored writes run here.
+     */
+    withAdmittingSession: <R>(run: () => R) => R;
     waiters: Map<string, PendingPermissionWaiter<TResult>>;
     cancelReason: string | null;
     completionPersistence: Promise<boolean> | null;
@@ -353,6 +360,7 @@ export class PermissionRequestCoordinator<TResult> {
                 : {}),
             ...(owner ? { owner } : {}),
             status: 'live',
+            withAdmittingSession: bindToHostedSessionScope(runInPlace),
             waiters: new Map(),
             cancelReason: null,
             completionPersistence: null,
@@ -578,9 +586,9 @@ export class PermissionRequestCoordinator<TResult> {
         completion: PermissionRequestCoordinatorCompletion<TResult>,
     ): Promise<boolean> {
         const application = this.store.captureRequestApplication?.(context.requestId);
-        if (!application || !isSameAgentStateRequestOccurrence(application.pending, {
+        if (!application || !entry.withAdmittingSession(() => isSameAgentStateRequestOccurrence(application.pending, {
             ...entry, tool: entry.toolName, arguments: entry.toolInput,
-        })) return false;
+        }))) return false;
         const persistence = Promise.resolve(this.store.completeRequest({
             requestId: context.requestId,
             ...completion.completedRequest,
@@ -640,7 +648,7 @@ export class PermissionRequestCoordinator<TResult> {
                         return false;
                     }
                 }
-                const persistence = this.store.completeRequest({
+                const persistence = entry.withAdmittingSession(() => this.store.completeRequest({
                     requestId: entry.requestId,
                     ...completion.completedRequest,
                     ...(application ? { applicationAcknowledged: application } : {}),
@@ -663,7 +671,7 @@ export class PermissionRequestCoordinator<TResult> {
                             : {}),
                         ...(entry.owner ? { owner: entry.owner } : {}),
                     },
-                });
+                }));
                 this.observeAppliedCompletion(entry, completion);
                 const persisted = await persistence;
                 if (application && persisted === false) this.retireAppliedEntry(entry);
@@ -678,7 +686,7 @@ export class PermissionRequestCoordinator<TResult> {
                     && delivered.requestId === entry.requestId
                     && deepEqual(delivered.responseTarget, entry.responseTarget)
                     && completed.tool === entry.toolName
-                    && isSameAgentStateRequestArguments(completed.arguments, entry.toolInput)
+                    && entry.withAdmittingSession(() => isSameAgentStateRequestArguments(completed.arguments, entry.toolInput))
                     && completed.createdAt === entry.createdAt
                     && completed.turnId === entry.turnId
                     && completed.source === entry.source
@@ -812,7 +820,7 @@ export class PermissionRequestCoordinator<TResult> {
                 await Promise.all(ids.map(async (requestId) => {
                     const entry = entriesByRequestId.get(requestId);
                     if (!entry) return;
-                    await this.store.completeRequest({
+                    await entry.withAdmittingSession(() => this.store.completeRequest({
                         requestId,
                         status: 'canceled',
                         decision: 'abort',
@@ -836,7 +844,7 @@ export class PermissionRequestCoordinator<TResult> {
                                 : {}),
                             ...(entry.owner ? { owner: entry.owner } : {}),
                         },
-                    });
+                    }));
                 }));
             },
         });
@@ -955,11 +963,11 @@ export class PermissionRequestCoordinator<TResult> {
             // selected a request published while an older completion drained.
             for (const subject of canceled ?? []) {
                 const entry = this.pendingRequests.get(subject.requestId);
-                if (entry && isSameAgentStateRequestOccurrence(subject.completedRequest, {
+                if (entry && entry.withAdmittingSession(() => isSameAgentStateRequestOccurrence(subject.completedRequest, {
                     ...entry,
                     tool: entry.toolName,
                     arguments: entry.toolInput,
-                })) entriesToRetire.add(entry);
+                }))) entriesToRetire.add(entry);
             }
         } catch (error) {
             for (const entry of markedEntries) {
@@ -1064,7 +1072,7 @@ export class PermissionRequestCoordinator<TResult> {
         // first-answer claim intact. Do not set a local cancellation marker
         // before that mutation: a remote CAS owner may otherwise observe the
         // marker after its row commits and lose its ordinary projection.
-        const cancellationPersistence = Promise.resolve(this.store.completeRequest({
+        const cancellationPersistence = Promise.resolve(entry.withAdmittingSession(() => this.store.completeRequest({
             requestId: entry.requestId,
             status: 'canceled',
             observedRetirement: true,
@@ -1090,7 +1098,7 @@ export class PermissionRequestCoordinator<TResult> {
                     : {}),
                 owner: entry.owner,
             },
-        })).then((didCancel) => didCancel !== false);
+        }))).then((didCancel) => didCancel !== false);
         entry.completionPersistence = cancellationPersistence;
         void cancellationPersistence.then(
             (didCancel) => {
@@ -1229,10 +1237,15 @@ function createPendingRequestFromOutstanding<TResult>(
             : {}),
         ...(outstanding.owner ? { owner: outstanding.owner } : {}),
         status: 'live',
+        withAdmittingSession: bindToHostedSessionScope(runInPlace),
         waiters: new Map(),
         cancelReason: null,
         completionPersistence: null,
     };
+}
+
+function runInPlace<R>(run: () => R): R {
+    return run();
 }
 
 function turnIdsEqual(left: string | undefined, right: string | undefined): boolean {

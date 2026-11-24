@@ -15,6 +15,7 @@ import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { deepEqual } from '@/utils/deterministicJson';
 import { redactAgentStatePermissionChoiceOffer, redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionPermissionApprovalReviewerClaimV1Schema, SessionPermissionAccountUserDecisionActorV1Schema, SessionPermissionExternalHumanDecisionActorV1Schema, SessionPermissionIdempotencyKeyV1Schema, SessionPermissionSourceRefV1Schema, SessionPermissionSourceRevisionOrEpochV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
@@ -1078,6 +1079,9 @@ export class AgentStateRequestStore {
     }
 
     async completeRequest(params: AgentStateRequestCompletion): Promise<boolean> {
+        // A fallback entry takes its stored form with the caller's Session secrets, wherever the write runs.
+        // The completed entry takes its stored form with the caller's Session secrets, wherever the write runs.
+        const toStoredCompletedEntry = bindToHostedSessionScope(redactAgentStateRequestContent);
         if (!params.applicationAcknowledged) {
             const state = this.target.readState();
             const responseTarget = readResponseTarget(state?.requests?.[params.requestId]?.responseTarget);
@@ -1092,7 +1096,7 @@ export class AgentStateRequestStore {
                     return await retained.acknowledgement;
                 }
                 const application = this.captureRequestApplication(params.requestId);
-                const preview = this.buildRequestCompletion(state, params, new Set());
+                const preview = this.buildRequestCompletion(state, params, new Set(), toStoredCompletedEntry);
                 if (!application || !preview.didCompleteRequest) return false;
                 if (preview.responseDispatch) {
                     // This target owns the native application. Refusal leaves the same
@@ -1114,7 +1118,7 @@ export class AgentStateRequestStore {
         if (this.session && params.applicationAcknowledged && !this.appliedCompletions.has(params.requestId)) {
             const currentState = this.target.readState();
             if (currentState) {
-                const preview = this.buildRequestCompletion(currentState, params, new Set());
+                const preview = this.buildRequestCompletion(currentState, params, new Set(), toStoredCompletedEntry);
                 if (preview.didCompleteRequest && currentState.requests?.[params.requestId]) {
                     let settle!: (saved: boolean) => void;
                     const acknowledgement = new Promise<boolean>((resolve) => { settle = resolve; });
@@ -1144,7 +1148,7 @@ export class AgentStateRequestStore {
                 didCompleteRequest = !!state.completedRequests?.[params.requestId] && !state.requests?.[params.requestId];
                 return { state };
             }
-            const next = this.buildRequestCompletion(currentState, params, completedRequestIds);
+            const next = this.buildRequestCompletion(currentState, params, completedRequestIds, toStoredCompletedEntry);
             didCompleteRequest = next.didCompleteRequest === true;
             return next;
         }, durableRetirement);
@@ -1161,7 +1165,8 @@ export class AgentStateRequestStore {
     }
 
     private buildRequestCompletion(currentState: AgentState, params: AgentStateRequestCompletion,
-        completedRequestIds: Set<string>): AgentStateUpdateWithResponseDispatch & { didCompleteRequest?: boolean } {
+        completedRequestIds: Set<string>, toStoredCompletedEntry: (entry: Record<string, unknown>) => void,
+    ): AgentStateUpdateWithResponseDispatch & { didCompleteRequest?: boolean } {
         let didCompleteRequest = false;
         const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
         const existing = requests[params.requestId] as unknown;
@@ -1246,6 +1251,7 @@ export class AgentStateRequestStore {
         }
 
         removePermissionResponseClaim(completedEntry);
+        toStoredCompletedEntry(completedEntry);
 
         completedRequests[params.requestId] = completedEntry as AgentStateCompletedEntry;
         removeRequestsCoveredByCompletedEntry({
@@ -1326,6 +1332,8 @@ export class AgentStateRequestStore {
          */
         isCurrent?: () => boolean;
     }>): Promise<boolean> {
+        // The completed entry takes its stored form with the caller's Session secrets, wherever the write runs.
+        const toStoredCompletedEntry = bindToHostedSessionScope(redactAgentStateRequestContent);
         const completedRequestIds = new Set<string>();
         let didRecordCompletedRequest = false;
         const publication = this.pendingPublications.get(params.requestId);
@@ -1381,6 +1389,7 @@ export class AgentStateRequestStore {
                     }
                 }
                 removePermissionResponseClaim(entry as Record<string, unknown>);
+                toStoredCompletedEntry(entry as Record<string, unknown>);
                 completedRequests[params.requestId] = entry;
                 removeRequestsCoveredByCompletedEntry({
                     requestCoverage: this.declaredRequestCoverage,
@@ -1853,12 +1862,23 @@ export function isSameAgentStateRequestArguments(left: unknown, right: unknown):
 }
 
 /**
- * The one stored form of a request: its Agent-authored content (tool input, offer and question
- * prose) passes the transcript redactor, while tool names, ids, keys and routing stay exact.
- * Both stored and local occurrences take this form before they are compared.
+ * The one stored form of a request or completed entry: its Agent-authored content (tool input,
+ * offer and question prose, and the command-derived grants a completion records: allowed tools,
+ * updated permissions and an exec-policy amendment) passes the transcript redactor, while tool
+ * names, ids, keys and routing stay exact. Both stored and local occurrences take this form before
+ * they are compared. A session grant whose command held a secret is therefore not restored after a
+ * reload: the person sees the prompt again.
  */
 function redactAgentStateRequestContent(entry: Record<string, unknown>): void {
     if (entry.arguments !== undefined) entry.arguments = redactTranscriptSecrets(entry.arguments);
+    if (Array.isArray(entry.allowedTools)) {
+        entry.allowedTools = entry.allowedTools.map(tool => typeof tool === 'string' ? redactTranscriptSecrets(tool) : tool);
+    }
+    if (entry.updatedPermissions !== undefined) entry.updatedPermissions = redactTranscriptSecrets(entry.updatedPermissions);
+    const amendment = clonePlainObjectToNullProto(entry.execPolicyAmendment);
+    if (amendment && Array.isArray(amendment.command)) {
+        entry.execPolicyAmendment = { ...amendment, command: amendment.command.map(part => typeof part === 'string' ? redactTranscriptSecrets(part) : part) };
+    }
     if (entry.nativeChoices) entry.nativeChoices = redactAgentStatePermissionChoiceOffer(entry.nativeChoices);
     const question = entry.questionV1 as SessionQuestionContextV1 | undefined;
     if (question) {

@@ -153,6 +153,31 @@ describe('AgentStateRequestStore', () => {
         } finally { store.dispose(); unregister(); }
     });
 
+    it.each(['record', 'fallback', 'existing'] as const)('stores a completed entry, its grants included, in one redacted form (%s)', async path => {
+        const unregister = registerTranscriptSecret('fake-completion-secret-9d2a');
+        let state: AgentState = { requests: {}, completedRequests: {} };
+        const store = new AgentStateRequestStore({ logPrefix: '[Completion redaction]', target: {
+            scopeId: 'completion-redaction', readState: () => state, updateState: updater => { state = updater(state); },
+        } });
+        const raw = { toolName: 'Bash', toolInput: { command: 'echo fake-completion-secret-9d2a' }, createdAt: 1 };
+        // An approve-for-session grant records the command it allows, and an amendment its argv.
+        const grant = { allowedTools: ['Bash(echo fake-completion-secret-9d2a)'],
+            updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'echo fake-completion-secret-9d2a' }] }],
+            extraCompletedFields: { execPolicyAmendment: { command: ['echo', 'fake-completion-secret-9d2a'] } } };
+        try {
+            if (path === 'existing') await store.publishRequestAndWait({ requestId: 'completion', ...raw });
+            expect(await (path === 'record'
+                ? store.recordCompletedRequest({ requestId: 'completion', status: 'approved', decision: 'approved_for_session', ...raw, ...grant })
+                : store.completeRequest({ requestId: 'completion', status: 'approved', decision: 'approved_for_session', ...grant,
+                    ...(path === 'fallback' ? { fallback: raw } : {}) }))).toBe(true);
+            expect(state.completedRequests?.completion).toMatchObject({ tool: 'Bash', arguments: { command: `echo ${TRANSCRIPT_SECRET_REDACTED}` },
+                allowedTools: [`Bash(echo ${TRANSCRIPT_SECRET_REDACTED})`],
+                updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: `echo ${TRANSCRIPT_SECRET_REDACTED}` }] }],
+                execPolicyAmendment: { command: ['echo', TRANSCRIPT_SECRET_REDACTED] } });
+            expect(JSON.stringify(state)).not.toContain('fake-completion-secret-9d2a');
+        } finally { store.dispose(); unregister(); }
+    });
+
     it.each(['complete', 'record'] as const)('removes cleared response targets before strict JSON persistence (%s)', async method => {
         let state: AgentState = { requests: {}, completedRequests: {} };
         const store = new AgentStateRequestStore({ logPrefix: '[Strict completion]', target: {
