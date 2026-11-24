@@ -3909,6 +3909,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(approvedOperation ? { approvedOperation } : {}),
         ...(sharedRequesterEffect ? { defaultConfirmation: true } : {}),
         ...(retainHostOperationApproval ? { retainHostOperationApproval: true } : {}),
+        hasSessionActionConfirmation: !!deps.sessionActionConfirmation,
         ...(computerSelection ? { computerConsentGranted: computerSelection.consentGranted } : {}),
         ...(contextualSafety === undefined ? {} : { defaultSafety: contextualSafety }),
         ...(widgetNetworkChange ? { defaultUiConfirmation: contextualSafety === 'danger' }
@@ -4244,26 +4245,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // when this invocation has no mounted UI presenter.
         if (!approvalRouting.required) return { ok: false,
           errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
-        const confirmationSessionId = resolveSessionIdFromInput(admittedInput, ctx);
-        const confirmationPreview = confirmationSessionId
-          ? spec.projectSessionConfirmation?.(admittedInput, { sessionId: confirmationSessionId })
-          : null;
-        if (
-          approvalRouting.flow === 'blocking'
-          && ctx.surface === 'agent'
-          && ctx.authority === 'account_automation'
-          && spec.executionPlacement === 'session'
-          && confirmationPreview != null
-          && confirmationSessionId
-          && confirmationSessionId === normalizeId(ctx.defaultSessionId)
-          && deps.sessionActionConfirmation
-        ) {
-          const confirmation = await deps.sessionActionConfirmation({
+        if (approvalRouting.sessionConfirmation) {
+          const confirmation = await deps.sessionActionConfirmation?.({
             actionId,
             input: admittedInput,
-            preview: confirmationPreview,
             context: ctx,
-            sessionId: confirmationSessionId,
+            ...approvalRouting.sessionConfirmation,
           });
           if (confirmation) {
             if (confirmation.decision !== 'approve') {

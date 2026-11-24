@@ -24,6 +24,8 @@ import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } 
 import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
 import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from './specs/machine/accessActionIdsV1.js';
 import { isApprovalRuleChangeActionId } from './actionPolicyActionIds.js';
+import { normalizeId } from './executor/inputReading.js';
+import { resolveSessionIdFromInput } from './executor/sessionScope.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
 export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
@@ -31,6 +33,8 @@ export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
   /** Local product review, presented by the UI host without an approval Artifact. */
   uiConfirmationRequired?: true;
+  /** The executor can present this exact operation through its bound Session port. */
+  sessionConfirmation?: Readonly<{ sessionId: string; preview: unknown }>;
   /** Actual missing confidential operands or binding choices use their existing acquisition lifecycle. */
   inputRequired?: true;
   flow: ActionApprovalFlow;
@@ -81,7 +85,7 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   approvalScope?: ActionApprovalPolicyScopeV1;
   /** Already admitted by the target owner; identity and scope come from this invocation. */
   targetApproval?: Pick<ActionTargetApprovalV1, 'databaseAgentLevel'>;
-  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfile' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'workflowTriggerMutationAdmission' | 'actionsSettings' | 'sessionApprovalConsents'> | null;
+  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'defaultSessionId' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfile' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'workflowTriggerMutationAdmission' | 'actionsSettings' | 'sessionApprovalConsents'> | null;
   requiredByPolicy?: boolean;
   /** Host fact: the receiving signed root owns this invocation's Ask, so the local host creates none. */
   approvalOwner?: 'receiver' | 'local';
@@ -105,6 +109,8 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   computerConsentGranted?: boolean;
   /** Exact live host operation proved by the executor's private factory port. */
   retainHostOperationApproval?: boolean;
+  /** The executor has the live Session confirmation port. */
+  hasSessionActionConfirmation?: boolean;
   /** Private operation opened from current admitted Run storage, never caller input. */
   approvedOperation?: Pick<WorkflowApprovedOperationV1, 'parent' | 'steps'> | null;
 }>;
@@ -472,9 +478,20 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const flow = args.inputRequired || preparedReviewRequired ? 'deferred' : required || args.explicitApprovalRequest ? retainsLiveInvocation ? 'blocking' : 'deferred'
     : resolveActionApprovalFlow(args.spec.approval);
 
+  // A bound Session can answer its own permission through the native prompt.
+  // If that port has no live witness, Artifact fallback keeps its own flow.
+  const sessionId = args.hasSessionActionConfirmation && required && !args.explicitApprovalRequest
+    && !args.inputRequired && !preparedReviewRequired && args.context?.surface === 'agent'
+    && args.context.authority === 'account_automation' && args.spec.executionPlacement === 'session'
+    && args.spec.approvalResultCustody !== 'live_only' && args.spec.projectSessionConfirmation
+    ? resolveSessionIdFromInput(args.input, args.context) : null;
+  const sessionPreview = sessionId && sessionId === normalizeId(args.context?.defaultSessionId)
+    ? args.spec.projectSessionConfirmation?.(args.input, { sessionId }) : null;
+
   return {
     required: required === true,
     ...(uiConfirmationRequired ? { uiConfirmationRequired: true as const } : {}),
+    ...(sessionId && sessionPreview != null ? { sessionConfirmation: { sessionId, preview: sessionPreview } } : {}),
     ...(args.inputRequired ? { inputRequired: true as const } : {}),
     flow,
     result: args.inputRequired || preparedReviewRequired ? 'required' : args.spec.approval.result,
