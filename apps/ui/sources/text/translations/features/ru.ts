@@ -5811,11 +5811,9 @@ const english = Shared_eventAutomationComposerTranslations.english;
 
 const ru = {
     eventAutomationComposer: {
-        payloadFields: 'ПОЛЯ ПОЛЕЗНОЙ НАГРУЗКИ',
         payloadSample: 'Пример полезной нагрузки',
         technicalDetails: 'Технические сведения',
-        noFilterableFields: 'Это событие не объявляет фильтруемые поля полезной нагрузки.',
-        addFilterClause: 'Добавить условие',
+        addFilterClause: 'Фильтр',
         filterField: 'Поле фильтра',
         filterOperator: 'Оператор фильтра',
         filterEquals: 'Равно',

@@ -32,5 +32,6 @@ export function SessionLifecycleFilterFields(props: Readonly<{
             ? model.filter.value === null ? {} : { filter: model.filter.value }
             : { filterInvalid: true }) });
     }, [model.filter, props.when, props.onChange]);
-    return <AutomationEventFilterFields model={model} />;
+    // Its host draws "Only when" on the When card's label track; the add and clauses take the value column.
+    return <AutomationEventFilterFields model={model} labelledBy="host" />;
 }

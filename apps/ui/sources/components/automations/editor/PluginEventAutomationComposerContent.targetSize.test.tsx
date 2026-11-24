@@ -199,9 +199,9 @@ describe('PluginEventAutomationComposerContent interactive targets', () => {
             'automation-event-filter-clause-filter-0-operator-picker',
             'automation-event-filter-clause-filter-0-remove',
         ];
-        // The filter value and maximum-age fields are `FieldTextInput`s: their touch floor is that
+        // The filter value field is a `FieldTextInput`: its touch floor is that
         // owner's (native 44/48, none on web; `FieldTextInput` owner tests), not a second one here.
-        for (const testID of ['automation-event-filter-clause-filter-0-value', 'automation-event-maximum-observation-age-input']) {
+        for (const testID of ['automation-event-filter-clause-filter-0-value']) {
             expect(screen.findByProps({ testID }).type).toBe(FieldTextInput);
         }
 

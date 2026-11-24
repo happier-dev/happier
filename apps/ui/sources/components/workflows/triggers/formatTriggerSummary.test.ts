@@ -218,8 +218,9 @@ describe('formatTriggerSummary', () => {
             .toBe('When a pull request merges');
         expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: '9edb6c87-48da-46f7-8d5a-d6bdd91a4cad' } }))
             .toBe('workflows.triggers.kind.pluginEvent');
+        // A retained Event read from its declaration identity speaks in the same "When …" voice as a declared title (NF-30).
         expect(formatTriggerSummary({ kind: 'pluginEvent', eventRef: { pluginId: 'example.github', localId: 'automation/pull-request-checks-failed-v1' } }))
-            .toBe('Pull request checks failed');
+            .toBe('workflows.triggers.summary.event(event=Pull request checks failed)');
     });
 });
 

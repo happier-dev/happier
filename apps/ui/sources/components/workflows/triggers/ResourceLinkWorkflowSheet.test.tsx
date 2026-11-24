@@ -141,9 +141,7 @@ describe('Link a workflow to a resource', () => {
       await pickWorkflow(screen, 'builtin:review-and-converge');
       const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
       await act(async () => whenSelect!.props.onSelect(eventOption.id));
-      const { Item } = await import('@/components/ui/lists/Item');
-      const setup = screen.findAllByType(Item).find(item => item.props.testID === 'resource-link-event-configure-event');
-      expect(setup?.props.subtitle).toBe(eventOption.label);
+      expect(screen.findByTestId('resource-link-event-configure-event')).not.toBeNull();
       expect(screen.findByTestId('resource-link-blocked')).not.toBeNull();
       expect(screen.getTextContent()).toContain('workflows.triggers.link.finishEventSetup');
       // The real Event editor's accepted configuration is the presentation owner's input.
@@ -152,6 +150,30 @@ describe('Link a workflow to a resource', () => {
       expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:review-and-converge', trigger: configured.value }, eventOption);
       await act(async () => workflowSelect!.props.onSelect('builtin:plan-with-a-panel'));
       expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:plan-with-a-panel', trigger: configured.value }, eventOption);
+    } finally { await screen.unmount(); }
+  });
+
+  it('sets up an Event as the sheet\'s own step, so only one footer shows at a time', async () => {
+    const eventRef = { pluginId: 'acme.deploy', localId: 'released' };
+    const eventOption = {
+      id: 'event:acme.deploy/released', label: 'Released', relation: 'event', subject,
+      setupRequired: true, when: { kind: 'pluginEvent', value: null, eventRef }, trigger: null,
+      eventSeed: { eventRef, monitoringMachineId: 'runner', setupInput: {} },
+    } satisfies ResourceWorkflowTriggerStartOption;
+    const screen = await renderScreen(<ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
+      resourceName="Production" link={{ ...linkFor([]), whenOptions: [eventOption] }} serverId={null} machineId={null}
+      accountLifetime={null} onRequestClose={() => undefined} onLinked={() => undefined} />);
+    try {
+      await pickWorkflow(screen, 'builtin:review-and-converge');
+      const [, whenSelect] = screen.findAllByType(ValueFieldSelect);
+      await act(async () => whenSelect!.props.onSelect(eventOption.id));
+      await screen.pressByTestIdAsync('resource-link-event-configure-event');
+      // The Link footer leaves with the sheet; the Event step brings its own.
+      expect(screen.findByTestId('resource-link-submit')).toBeNull();
+      expect(screen.findByTestId('resource-link-sheet')).toBeNull();
+      expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.editing).toBe(true);
+      await act(async () => screen.findAllByType(TriggerPluginEventRows)[0]!.props.onEditingChange(false));
+      expect(screen.findByTestId('resource-link-submit')).not.toBeNull();
     } finally { await screen.unmount(); }
   });
 

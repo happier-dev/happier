@@ -2,11 +2,9 @@
 
 export const english = {
     eventAutomationComposer: {
-        payloadFields: 'PAYLOAD FIELDS',
         payloadSample: 'Sample payload',
         technicalDetails: 'Technical details',
-        noFilterableFields: 'This Event does not declare filterable payload fields.',
-        addFilterClause: 'Add condition',
+        addFilterClause: 'Filter',
         filterField: 'Filter field',
         filterOperator: 'Filter operator',
         filterEquals: 'Equals',

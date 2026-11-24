@@ -41,9 +41,9 @@ export type WorkflowTriggerSentenceLine = Readonly<{
 const SENTENCE_POPOVER_MAX_WIDTH_PX = 420;
 const REMOVE_ID = 'sentence:remove';
 
-/** "A pull request opens" reads "a pull request opens" after "When"; a name keeps its capitals. */
+/** "A pull request opens" reads "a pull request opens" after "When"; a name or acronym keeps its capitals. */
 function lowerStart(text: string): string {
-  return /^\p{Lu}\p{Ll}/u.test(text)
+  return /^\p{Lu}(?:\p{Ll}|\s\p{Ll})/u.test(text)
     ? text.charAt(0).toLocaleLowerCase() + text.slice(1)
     : text;
 }

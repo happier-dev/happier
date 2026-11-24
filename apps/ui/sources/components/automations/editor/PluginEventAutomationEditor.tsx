@@ -117,8 +117,14 @@ export async function completePluginEventAutomationEditor(
 
 const styles = StyleSheet.create((theme) => ({
     content: { minWidth: 0, paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s16 },
+    // Inside the step's section, which already insets its rows: the fields start on its title's edge.
+    sectionContent: { minWidth: 0, paddingBottom: theme.space.s16 },
     footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
         gap: theme.space.s8, padding: theme.space.s16 },
+    // The step's foot under one hairline on the rows' edge, as every trigger popover's (lab T1).
+    overlayFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: theme.space.s8,
+        marginHorizontal: theme.space.s16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default,
+        paddingTop: theme.space.s12, paddingBottom: theme.space.s16 },
 }));
 
 export function InlinePluginEventEditor(props: Readonly<{
@@ -133,7 +139,7 @@ export function InlinePluginEventEditor(props: Readonly<{
     }, [props]);
     return (
         <FloatingOverlay surfaceChrome="theme" maxHeight={props.maxHeight ?? 640}
-            footer={<View style={styles.footer}>
+            footer={<View style={styles.overlayFooter}>
                 <RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
                     title={t('common.cancel')} onPress={props.onCancel} />
                 <RoundButton
@@ -148,7 +154,7 @@ export function InlinePluginEventEditor(props: Readonly<{
                 search. The sheet's header already names the step, so its section repeats no title (as a pushed page's). */}
             <ListPresentationProvider value="page"><ItemGroup surface="none" title={insideSheet ? undefined : t('workflows.triggers.popover.configureEvent')}>
                 <ListPresentationProvider value="grouped" floating={insideSheet}>
-                    <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} /></View>
+                    <View style={styles.sectionContent}><PluginEventAutomationComposerContent model={props.model} /></View>
                 </ListPresentationProvider>
             </ItemGroup></ListPresentationProvider>
         </FloatingOverlay>

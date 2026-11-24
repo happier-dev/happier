@@ -26,8 +26,9 @@ describe('resource Link When choices', () => {
     const finished = event('project-setup-finished', ['project', 'machine']);
     const options = buildResourceWorkflowTriggerStartOptions({ subject: project, actions,
       events: [finished, event('machine-ready', ['machine'])], machineId: 'runner' });
+    // The resource's own Events lead; Actions on it follow (NF-28).
     expect(options.map(option => option.id)).toEqual([
-      'action:before:projects.setup.set', 'action:after:projects.setup.set', 'event:acme.deploy/project-setup-finished',
+      'event:acme.deploy/project-setup-finished', 'action:before:projects.setup.set', 'action:after:projects.setup.set',
     ]);
   });
   it('names each restore from the Database resource perspective while preserving the two Action phases', () => {
@@ -49,13 +50,13 @@ describe('resource Link When choices', () => {
     const options = buildResourceWorkflowTriggerStartOptions({ subject, actions,
       events: [event('released', ['environment']), event('machine-ready', ['machine'])], machineId: 'runner' });
     expect(options.map(option => [option.id, option.relation, option.setupRequired])).toEqual([
-      ['action:after:deployments.deploy', 'after', false], ['event:acme.deploy/released', 'event', true],
+      ['event:acme.deploy/released', 'event', true], ['action:after:deployments.deploy', 'after', false],
     ]);
-    expect(options[0]).toMatchObject({ subject, when: { kind: 'action', phase: 'after',
+    expect(options[1]).toMatchObject({ subject, when: { kind: 'action', phase: 'after',
       actionIds: ['deployments.deploy'], subject }, trigger: { kind: 'action', phase: 'after',
       actionIds: ['deployments.deploy'], subject, enabled: true } });
-    expect(options[0]?.trigger).not.toHaveProperty('filter');
-    expect(options[1]).toMatchObject({ subject, trigger: null,
+    expect(options[1]?.trigger).not.toHaveProperty('filter');
+    expect(options[0]).toMatchObject({ subject, trigger: null,
       when: { kind: 'pluginEvent', value: null, eventRef: { pluginId: 'acme.deploy', localId: 'released' } },
       eventSeed: { eventRef: { pluginId: 'acme.deploy', localId: 'released' }, monitoringMachineId: 'runner', setupInput: {} } });
     expect(buildResourceWorkflowTriggerStartOptions({ subject: { kind: 'machine', serverId: 'home', machineId: 'runner' },
@@ -91,8 +92,8 @@ describe('resource Link When choices', () => {
     const options = buildResourceWorkflowTriggerStartOptions({ subject: pluginSubject, actions, machineId: 'runner',
       events: [declared, { ...declared, eventRef: { pluginId: 'other.plugin', localId: 'released' } },
         { ...declared, eventRef: { pluginId: 'acme.deploy', localId: 'undeclared' }, automation: undefined }] });
-    expect(options.map(option => option.id)).toEqual(['action:before:acme.deploy/actions/ship',
-      'action:after:acme.deploy/actions/ship', 'event:acme.deploy/released']);
+    expect(options.map(option => option.id)).toEqual(['event:acme.deploy/released',
+      'action:before:acme.deploy/actions/ship', 'action:after:acme.deploy/actions/ship']);
     expect(buildResourceWorkflowTriggerStartOptions({ subject: { ...pluginSubject, subjectKindId: 'other-kind' },
       actions, events: [declared], machineId: 'runner' })).toEqual([]);
   });

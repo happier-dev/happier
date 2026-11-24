@@ -64,7 +64,8 @@ export const en = {
         everyHours: ({ count }: Count) => (count === 1 ? 'Every hour' : `Every ${count} hours`),
         cron: ({ expression }: { expression: string }) => `On a schedule · ${expression}`,
         schedule: 'On a schedule',
-        event: ({ event }: { event: string }) => `When ${event} happens`,
+        // An Event's title is a past-tense label ("Backup succeeded"): after When it reads in sentence case; a name keeps its capitals.
+        event: ({ event }: { event: string }) => `When ${/^\p{Lu}(?:\p{Ll}|\s\p{Ll})/u.test(event) ? event.charAt(0).toLowerCase() + event.slice(1) : event}`,
         manual: 'Manual',
         more: ({ first, count }: { first: string; count: number }) => `${first} · ${count} more`,
     },

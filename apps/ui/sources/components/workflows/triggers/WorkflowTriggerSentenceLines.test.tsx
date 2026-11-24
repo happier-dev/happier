@@ -34,4 +34,23 @@ describe('the sentence When clause as labelled rows (phone builder sheet)', () =
       ).length,
     ).toBeGreaterThan(0);
   });
+
+  // NF-29: after "When" the start reads in sentence case ("When a session finishes a turn"); a name keeps its capitals.
+  it('lowers a leading article after When but keeps an acronym', async () => {
+    const line = (key: string, startTitle: string) => ({ key, startId: null, startTitle, detail: null, enabled: true,
+      incomplete: false, onSelectStart: () => {}, onRemove: () => {}, renderRows: () => null });
+    const screen = await renderScreen(
+      <WorkflowTriggerSentenceLines
+        testIDPrefix="p"
+        lines={[line('a', 'A session finishes a turn'), line('b', 'CI fails')]}
+        startOptions={[]}
+        onAdd={() => {}}
+        onStartsOpenChange={() => {}}
+        editable={false}
+      />,
+    );
+    const label = (key: string) => screen.findAll((node) => node.props.testID === `p-sentence-trigger:${key}-start`)[0]?.props.label;
+    expect(label('a')).toBe('a session finishes a turn');
+    expect(label('b')).toBe('CI fails');
+  });
 });

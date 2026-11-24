@@ -351,7 +351,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     enabled={row.enabled}
                     incomplete={edited !== undefined}
                     startOptions={when === null ? startOptions : buildWorkflowTriggerStartOptions(catalog.events,
-                        { when, title: formatTriggerSummary(row.trigger) }, props.startContext)}
+                        { when, title: formatTriggerSummary(row.trigger, { form: 'name' }) }, props.startContext)}
                     onStartsOpenChange={demandCatalog}
                     onSelectStart={(id) => selectStart(when, id, (next) => editRow(row, next))}
                     {...placement}
@@ -423,7 +423,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 const summary = formatTriggerSummary(row.trigger);
                 const title = edited !== undefined ? startTitle(edited) : startId === null ? summary : startTitle(when!) || summary;
                 return { key: row.key, startId, startTitle: title, enabled: row.enabled, incomplete: edited !== undefined,
-                    detail: startId === null ? null : summary === title ? t('workflows.page.inspector.options') : summary,
+                    // A session or run event's summary is its start again ("When a turn ends"): the chip names its rows instead (NF-29).
+                    detail: startId === null ? null : summary === title || row.trigger.kind === 'sessionLifecycle' || row.trigger.kind === 'runLifecycle'
+                        ? t('workflows.page.inspector.options') : summary,
                     onSelectStart: (id) => selectStart(when, id, (next) => editRow(row, next)),
                     onRemove: () => {
                         setEdits(({ [row.key]: _dropped, ...rest }) => rest);

@@ -129,12 +129,14 @@ export function TrackRow(
   props: Readonly<{
     label: string;
     trackKey: string;
+    /** `control`: the value grows beneath its first line (filter clauses), so the label stays level with that line. */
+    labelAlign?: 'center' | 'control';
     children: React.ReactNode;
   }>,
 ) {
   return (
     <View style={workflowEditorStyles.actionFieldRow}>
-      <WorkflowFieldPair label={props.label} trackKey={props.trackKey}>
+      <WorkflowFieldPair label={props.label} trackKey={props.trackKey} labelAlign={props.labelAlign}>
         {props.children}
       </WorkflowFieldPair>
     </View>
@@ -655,7 +657,7 @@ function formatListedWhen(when: TriggerWhenValue): string {
 }
 
 /** A value that opens its own editor, drawn as the bordered field the selects use. */
-function FieldButton(
+export function FieldButton(
   props: Readonly<{
     testID: string;
     label: string;
@@ -1131,7 +1133,9 @@ function SessionEventTrackRows(
           testIDPrefix={`${props.testID}-how-often`}
         />
       </TrackRow>
-      <SessionLifecycleFilterFields when={when} onChange={props.onChange} />
+      <TrackRow label={t('automations.form.trigger.eventFilter')} trackKey={`${props.testID}-only-when`} labelAlign="control">
+        <SessionLifecycleFilterFields when={when} onChange={props.onChange} />
+      </TrackRow>
     </>
   );
 }

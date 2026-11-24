@@ -178,8 +178,11 @@ export function readSessionLifecycleKind(events: readonly AutomationSessionLifec
 }
 
 export type TriggerSummaryContext = Readonly<{
-    /** A generated name needs the event clause, without the Action's execution-policy sentence. */
-    form?: 'clause';
+    /**
+     * `clause`: a generated name needs the event clause, without the Action's execution-policy sentence.
+     * `name`: what a When field calls the start ("Backup succeeded"), without the "When …" sentence around it.
+     */
+    form?: 'clause' | 'name';
     machineId?: string | null;
     serverId?: string | null;
     projection?: Pick<DaemonMergedProjectionInputs, 'automationEligibleEvents' | 'pluginUiProjection'> | null;
@@ -248,15 +251,13 @@ function readHealthEventSummary(event: Extract<TriggerSummarySource, { kind: 'pl
     }
 }
 
-function formatOfflineEventSummary(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string {
+function readOfflineEventName(event: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>['eventRef']): string | null {
     // Older rows can retain only the declaration identity. Read descriptive identifiers without
     // showing their namespace or contract version. Opaque names keep the generic label.
     const label = event.localId.split('/').at(-1)?.replace(/[-_.]v[0-9]+$/iu, '');
-    if (label && /^\p{L}+(?:[-_.]\p{L}+)+$/u.test(label)) {
-        const words = label.replace(/[-_.]/gu, ' ');
-        return words[0]!.toLocaleUpperCase(getPreferredLanguage()) + words.slice(1);
-    }
-    return t('workflows.triggers.kind.pluginEvent');
+    if (!label || !/^\p{L}+(?:[-_.]\p{L}+)+$/u.test(label)) return null;
+    const words = label.replace(/[-_.]/gu, ' ');
+    return words[0]!.toLocaleUpperCase(getPreferredLanguage()) + words.slice(1);
 }
 
 export const DEPLOY_OUTCOME_FIELD = '/outcome';
@@ -324,8 +325,10 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             if (label) return label;
             const health = readHealthEventSummary(trigger.eventRef);
             if (health) return health;
-            const title = readDeclaredEventTitle(trigger, context);
-            return title ? t('workflows.triggers.summary.event', { event: title }) : formatOfflineEventSummary(trigger.eventRef);
+            // A declared title and a retained identity read in the same "When …" voice (NF-30).
+            const title = readDeclaredEventTitle(trigger, context) ?? readOfflineEventName(trigger.eventRef);
+            if (title === null) return t('workflows.triggers.kind.pluginEvent');
+            return context?.form === 'name' ? title : t('workflows.triggers.summary.event', { event: title });
         }
         case 'sessionLifecycle':
             return t(`workflows.triggers.kind.${readSessionLifecycleKind(trigger.events)}`);

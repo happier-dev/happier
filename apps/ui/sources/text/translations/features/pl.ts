@@ -5810,11 +5810,9 @@ const english = Shared_eventAutomationComposerTranslations.english;
 
 const pl = {
     eventAutomationComposer: {
-        payloadFields: 'POLA ŁADUNKU',
         payloadSample: 'Przykładowy ładunek',
         technicalDetails: 'Szczegóły techniczne',
-        noFilterableFields: 'To zdarzenie nie deklaruje możliwych do filtrowania pól ładunku.',
-        addFilterClause: 'Dodaj warunek',
+        addFilterClause: 'Filtr',
         filterField: 'Pole filtra',
         filterOperator: 'Operator filtra',
         filterEquals: 'Równe',

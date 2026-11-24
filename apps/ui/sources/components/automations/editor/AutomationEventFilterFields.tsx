@@ -106,20 +106,22 @@ export type AutomationEventFilterDisclosure = ReturnType<typeof useEventComposer
 export function AutomationEventFilterFields(props: Readonly<{
     model: AutomationEventFilterFieldsModel;
     disclosure?: AutomationEventFilterDisclosure;
+    /** `host`: the host draws "Only when" on its own label track (the When card); otherwise it heads the controls. */
+    labelledBy?: 'self' | 'host';
 }>) {
     return props.disclosure
-        ? <AutomationEventFilterFieldsContent model={props.model} disclosure={props.disclosure} />
-        : <StandaloneAutomationEventFilterFields model={props.model} />;
+        ? <AutomationEventFilterFieldsContent model={props.model} disclosure={props.disclosure} labelledBy={props.labelledBy} />
+        : <StandaloneAutomationEventFilterFields model={props.model} labelledBy={props.labelledBy} />;
 }
 
-function StandaloneAutomationEventFilterFields({ model }: Readonly<{ model: AutomationEventFilterFieldsModel }>) {
+function StandaloneAutomationEventFilterFields({ model, labelledBy }: Readonly<{ model: AutomationEventFilterFieldsModel; labelledBy?: 'self' | 'host' }>) {
     const [filterFieldPickerOpenFor, setFilterFieldPickerOpenFor] = React.useState<string | null>(null);
     const [filterOperatorPickerOpenFor, setFilterOperatorPickerOpenFor] = React.useState<string | null>(null);
     const disclosure = useEventComposerPickerDisclosure({
         anyPickerOpen: filterFieldPickerOpenFor !== null || filterOperatorPickerOpenFor !== null,
         collapseAllPickers: () => { setFilterFieldPickerOpenFor(null); setFilterOperatorPickerOpenFor(null); },
     });
-    return <AutomationEventFilterFieldsContent model={model} disclosure={{
+    return <AutomationEventFilterFieldsContent model={model} labelledBy={labelledBy} disclosure={{
         ...disclosure, filterFieldPickerOpenFor, filterOperatorPickerOpenFor,
         setFilterFieldPickerOpenFor, setFilterOperatorPickerOpenFor,
     }} />;
@@ -128,29 +130,40 @@ function StandaloneAutomationEventFilterFields({ model }: Readonly<{ model: Auto
 function AutomationEventFilterFieldsContent(props: Readonly<{
     model: AutomationEventFilterFieldsModel;
     disclosure: AutomationEventFilterDisclosure;
+    labelledBy?: 'self' | 'host';
 }>) {
     const { theme } = useUnistyles();
     const { filterFieldPickerOpenFor, filterOperatorPickerOpenFor, setFilterFieldPickerOpenFor,
         setFilterOperatorPickerOpenFor, pickerTriggerRef, notePickerCollapsed, notePickerTriggerPressed } = props.disclosure;
+    // "Only when · + Filter" (lab `make-A`): the quiet add follows its label, clauses follow beneath.
+    const add = (
+        <HappierPressable
+            testID="automation-event-filter-add-clause"
+            accessibilityRole="button"
+            accessibilityLabel={`${t('automations.form.trigger.eventFilter')}: ${t('settingsPlugins.eventAutomationComposer.addFilterClause')}`}
+            disabled={props.model.payloadBrowser.fields.length === 0}
+            onPress={props.model.addFilterClause}
+            style={({ pressed }) => [
+                styles.filterAddButton,
+                props.model.payloadBrowser.fields.length === 0 ? styles.disabled : null,
+                pressed ? styles.pressed : null,
+            ]}
+        >
+            <Icon name="plus" size={14} color={theme.colors.text.secondary} />
+            <Text style={styles.filterActionText}>
+                {t('settingsPlugins.eventAutomationComposer.addFilterClause')}
+            </Text>
+        </HappierPressable>
+    );
     return <>
-                                    <Text style={styles.fieldLabel}>{t('automations.form.trigger.eventFilter')}</Text>
+                                    {props.labelledBy === 'host' ? null : (
+                                        <View style={styles.filterHeader}>
+                                            <Text style={styles.fieldLabel}>{t('automations.form.trigger.eventFilter')}</Text>
+                                            {add}
+                                        </View>
+                                    )}
                                     <View style={styles.filterBuilder}>
-                                        <HappierPressable
-                                            testID="automation-event-filter-add-clause"
-                                            accessibilityRole="button"
-                                            disabled={props.model.payloadBrowser.fields.length === 0}
-                                            onPress={props.model.addFilterClause}
-                                            style={({ pressed }) => [
-                                                styles.filterAddButton,
-                                                props.model.payloadBrowser.fields.length === 0 ? styles.disabled : null,
-                                                pressed ? styles.pressed : null,
-                                            ]}
-                                        >
-                                            <Icon name="plus" size={14} color={theme.colors.text.secondary} />
-                                            <Text style={styles.filterActionText}>
-                                                {t('settingsPlugins.eventAutomationComposer.addFilterClause')}
-                                            </Text>
-                                        </HappierPressable>
+                                        {props.labelledBy === 'host' ? add : null}
                                         {props.model.filterClauses.map((clause) => (
                                             <View
                                                 key={clause.id}

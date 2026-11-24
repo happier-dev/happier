@@ -5781,11 +5781,9 @@ const english = Shared_eventAutomationComposerTranslations.english;
 
 const pt = {
     eventAutomationComposer: {
-        payloadFields: 'CAMPOS DE CARGA',
         payloadSample: 'Exemplo de carga útil',
         technicalDetails: 'Detalhes técnicos',
-        noFilterableFields: 'Este evento não declara campos de carga filtráveis.',
-        addFilterClause: 'Adicionar condição',
+        addFilterClause: 'Filtro',
         filterField: 'Campo de filtro',
         filterOperator: 'Operador de filtro',
         filterEquals: 'Igual',

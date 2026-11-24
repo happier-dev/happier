@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierFieldBoxTrigger, HappierPressable, resolveHappierFieldBoxLabel } from '@happier-dev/plugin-ui/presentation';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -19,7 +19,9 @@ import { flattenSettingsPageCatalog, SETTINGS_PAGE_CATALOG } from '@/components/
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useMachineDisplayNamesById, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { Text } from '@/components/ui/text/Text';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     SelectionList,
@@ -146,14 +148,15 @@ export function PluginEventAutomationComposerContent(props: Props) {
         props.model.catalogServerId ? { serverId: props.model.catalogServerId } : {});
     const watcherDisplayLabel = React.useCallback((origin: PluginMachineExecutionOriginV1): string =>
         watcherMachineNames[getPluginMachineExecutionOriginRef(origin).machineId] ?? t('machine.unnamedMachine'), [watcherMachineNames]);
+    // Where it is watched from is a Machine to the person; a webhook is received on one.
     const observationPlacementTitle = props.watcherOnly ? t('projects.deployments.services.checkFrom')
         : props.model.observationTransport === 'durablePush'
-        ? t('automations.detail.event.observationPlacementTitle')
-        : t('automations.detail.event.watcherTitle');
-    const chooseObservationPlacement = props.watcherOnly ? t('projects.open.chooseMachine')
-        : props.model.observationTransport === 'durablePush'
-        ? t('automations.detail.event.observationPlacementTitle')
-        : t('automations.form.trigger.chooseWatcher');
+        ? t('automations.form.trigger.receiveOn')
+        : t('automations.form.trigger.watchFrom');
+    const chooseObservationPlacement = props.watcherOnly || props.model.observationTransport !== 'durablePush'
+        ? t('projects.open.chooseMachine')
+        : t('automations.form.trigger.receiveOn');
+    const fieldColors = resolveFieldBoxColors(theme);
     const selectedEventAvailability = selectedEvent
         ? props.model.getPluginPresentation(selectedEvent).availability
         : null;
@@ -332,18 +335,17 @@ export function PluginEventAutomationComposerContent(props: Props) {
                     notePickerTriggerPressed('watcher', watcherPickerOpen);
                     setWatcherPickerOpen((current) => !current);
                 }}
-                style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
+                style={({ pressed }) => [styles.fieldPress, pressed ? styles.pressed : null]}
             >
-                <Text numberOfLines={1} style={styles.selectTriggerText}>
-                    {selectedWatcher
-                        ? watcherDisplayLabel(selectedWatcher)
-                        : chooseObservationPlacement}
-                </Text>
-                <Icon
-                    name={watcherPickerOpen ? 'caret-up' : 'caret-down'}
-                    size={14}
-                    color={theme.colors.text.secondary}
-                />
+                {renderDropdownItemTriggerRightElement({
+                    detail: selectedWatcher ? watcherDisplayLabel(selectedWatcher) : null,
+                    placeholder: chooseObservationPlacement,
+                    open: watcherPickerOpen,
+                    detailColor: theme.colors.text.secondary,
+                    chevronColor: theme.colors.text.secondary,
+                    field: fieldColors,
+                    fieldSpan: 'row',
+                })}
             </HappierPressable>
             {watcherPickerOpen ? (
                 <View testID="automation-event-watcher-picker-options" style={styles.optionList}>
@@ -450,16 +452,17 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                     notePickerTriggerPressed('event', eventPickerOpen);
                                     setEventPickerOpen((current) => !current);
                                 }}
-                                style={({ pressed }) => [styles.selectTrigger, pressed ? styles.pressed : null]}
+                                style={({ pressed }) => [styles.fieldPress, pressed ? styles.pressed : null]}
                             >
-                                <Text numberOfLines={1} style={styles.selectTriggerText}>
-                                    {selectedEvent ? props.model.getEventPresentation(selectedEvent).title : t('automations.form.trigger.chooseEvent')}
-                                </Text>
-                                <Icon
-                                    name={eventPickerOpen ? 'caret-up' : 'caret-down'}
-                                    size={14}
-                                    color={theme.colors.text.secondary}
-                                />
+                                {renderDropdownItemTriggerRightElement({
+                                    detail: selectedEvent ? props.model.getEventPresentation(selectedEvent).title : null,
+                                    placeholder: t('automations.form.trigger.chooseEvent'),
+                                    open: eventPickerOpen,
+                                    detailColor: theme.colors.text.secondary,
+                                    chevronColor: theme.colors.text.secondary,
+                                    field: fieldColors,
+                                    fieldSpan: 'row',
+                                })}
                             </HappierPressable>
                             {eventPickerOpen ? (
                                 <View testID="automation-event-picker-options" style={styles.optionList}>
@@ -501,32 +504,23 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                             <Text style={styles.fieldLabel}>
                                                 {t('automations.form.trigger.observationTransport')}
                                             </Text>
-                                            <View testID="automation-event-observation-transport" style={styles.targetRow}>
-                                                {props.model.availableObservationTransports.map((kind) => {
-                                                    const selected = props.model.observationTransport === kind;
-                                                    return (
-                                                        <HappierPressable
-                                                            key={kind}
-                                                            testID={`automation-event-observation-${kind}`}
-                                                            accessibilityRole="button"
-                                                            selected={selected}
-                                                            onPress={() => props.model.setObservationTransport(kind)}
-                                                            style={({ pressed }) => [
-                                                                styles.targetButton,
-                                                                selected ? styles.targetButtonSelected : null,
-                                                                pressed ? styles.pressed : null,
-                                                            ]}
-                                                        >
-                                                            <Text numberOfLines={1} style={styles.targetButtonText}>
-                                                                {kind === 'durablePush'
-                                                                    ? t('automations.form.trigger.observationDurablePush')
-                                                                    : kind === 'socket'
-                                                                        ? t('automations.form.trigger.observationSocket')
-                                                                        : t('automations.form.trigger.observationCheckpointedPull')}
-                                                            </Text>
-                                                        </HappierPressable>
-                                                    );
-                                                })}
+                                            <View testID="automation-event-observation-transport">
+                                                <SegmentedTabBar
+                                                    tabs={props.model.availableObservationTransports.map((kind) => ({
+                                                        id: kind,
+                                                        testID: `automation-event-observation-${kind}`,
+                                                        label: kind === 'durablePush'
+                                                            ? t('automations.form.trigger.observationDurablePush')
+                                                            : kind === 'socket'
+                                                                ? t('automations.form.trigger.observationSocket')
+                                                                : t('automations.form.trigger.observationCheckpointedPull'),
+                                                    }))}
+                                                    activeTabId={props.model.observationTransport}
+                                                    onSelectTab={(kind) => props.model.setObservationTransport(kind)}
+                                                    segmentSizing="content"
+                                                    role="radiogroup"
+                                                    accessibilityLabel={t('automations.form.trigger.observationTransport')}
+                                                />
                                             </View>
                                         </>
                                     ) : null}
@@ -540,15 +534,18 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         disabled={sourceSetupDisabled}
                                         onPress={props.model.configureSource}
                                         style={({ pressed }) => [
-                                            styles.selectTrigger,
+                                            styles.fieldPress,
                                             sourceSetupDisabled ? styles.disabled : null,
                                             pressed ? styles.pressed : null,
                                         ]}
                                     >
-                                        <Text style={styles.selectTriggerText}>
-                                            {sourceDisplayText}
-                                        </Text>
-                                        <Icon name="gear" size={14} color={theme.colors.text.secondary} />
+                                        <HappierFieldBoxTrigger colors={fieldColors} span="row"
+                                            trailing={<Icon name="gear" size={14} color={theme.colors.text.secondary} />}>
+                                            <Text numberOfLines={1} style={[resolveHappierFieldBoxLabel({ value: sourceDisplayText,
+                                                placeholder: sourceDisplayText, colors: fieldColors }).style, styles.fieldValueText]}>
+                                                {sourceDisplayText}
+                                            </Text>
+                                        </HappierFieldBoxTrigger>
                                     </HappierPressable>
                                     {sourceUnavailableCopy ? (
                                         <Text
@@ -560,7 +557,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                             {sourceUnavailableCopy}
                                         </Text>
                                     ) : null}
-                                    {sourceFailureDetails}
                                     {sourceSettingsPath ? (
                                         <HappierPressable
                                             testID="automation-event-source-open-settings"
@@ -576,11 +572,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                 {t('modals.openSettings')}
                                             </Text>
                                         </HappierPressable>
-                                    ) : null}
-                                    {showSourceInstanceId ? (
-                                        <Text numberOfLines={1} style={styles.optionDescription}>
-                                            {props.model.sourceInstanceId}
-                                        </Text>
                                     ) : null}
                                     {webhookEndpoint ? (
                                         <View testID="automation-event-webhook-endpoint" style={styles.webhookEndpoint}>
@@ -649,69 +640,22 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         {t('automations.form.trigger.webhookEndpointAwaitingConfirmation')}
                                                     </Text>
                                                     {props.model.refreshWebhookEndpoint ? (
-                                                        <HappierPressable
-                                                            testID="automation-event-webhook-endpoint-recheck"
-                                                            accessibilityRole="button"
-                                                            busy={props.model.webhookEndpointRefreshing}
-                                                            disabled={props.model.webhookEndpointRefreshing}
-                                                            onPress={props.model.refreshWebhookEndpoint}
-                                                            style={({ pressed }) => [
-                                                                styles.selectTrigger,
-                                                                props.model.webhookEndpointRefreshing ? styles.disabled : null,
-                                                                pressed ? styles.pressed : null,
-                                                            ]}
-                                                        >
-                                                            <Text style={styles.selectTriggerText}>
-                                                                {props.model.webhookEndpointRefreshing
-                                                                    ? t('common.loading')
-                                                                    : t('automations.form.trigger.webhookEndpointRecheck')}
-                                                            </Text>
-                                                            <Icon
-                                                                name="arrows-clockwise"
-                                                                size={14}
-                                                                color={theme.colors.text.secondary}
+                                                        <View style={styles.watcherRemedyActions}>
+                                                            <RoundButton
+                                                                testID="automation-event-webhook-endpoint-recheck"
+                                                                size="small"
+                                                                display="secondary"
+                                                                title={t('automations.form.trigger.webhookEndpointRecheck')}
+                                                                loading={props.model.webhookEndpointRefreshing}
+                                                                disabled={props.model.webhookEndpointRefreshing}
+                                                                onPress={props.model.refreshWebhookEndpoint}
                                                             />
-                                                        </HappierPressable>
+                                                        </View>
                                                     ) : null}
                                                 </>
                                             )}
                                         </View>
                                     ) : null}
-
-                                    <Text style={styles.fieldLabel}>{t('settingsPlugins.eventAutomationComposer.payloadFields')}</Text>
-                                    <View testID="automation-event-payload-browser" style={styles.payloadBrowser}>
-                                        {props.model.payloadBrowser.fields.length === 0 ? (
-                                            <Text style={styles.unavailableText}>
-                                                {t('settingsPlugins.eventAutomationComposer.noFilterableFields')}
-                                            </Text>
-                                        ) : (
-                                            <View testID="automation-event-payload-fields" style={styles.payloadFieldList}>
-                                                {props.model.payloadBrowser.fields.map((field, index) => (
-                                                    <Text
-                                                        key={field.pointer}
-                                                        testID={`automation-event-payload-field-${index}`}
-                                                        style={styles.payloadField}
-                                                    >
-                                                        {field.label}
-                                                    </Text>
-                                                ))}
-                                            </View>
-                                        )}
-                                    </View>
-                                    {/* Raw identities, pointers and the sample JSON are support's words: on request only. */}
-                                    <TechnicalDetailsDisclosure
-                                        testID="automation-event-technical-details"
-                                        title={t('settingsPlugins.eventAutomationComposer.technicalDetails')}
-                                        lines={[
-                                            ...(selectedWatcher === null ? [] : [{ key: 'watcher', label: observationPlacementTitle,
-                                                value: watcherTechnicalId(selectedWatcher) }]),
-                                            ...props.model.payloadBrowser.fields.map((field) => ({ key: `field:${field.pointer}`,
-                                                label: field.label, value: field.pointer })),
-                                            ...(props.model.payloadBrowser.samplePayload === null ? [] : [{ key: 'sample',
-                                                label: t('settingsPlugins.eventAutomationComposer.payloadSample'),
-                                                value: formatPayloadSample(props.model.payloadBrowser.samplePayload) }]),
-                                        ]}
-                                    />
 
                                     <AutomationEventFilterFields model={props.model} disclosure={{
                                         filterFieldPickerOpenFor, filterOperatorPickerOpenFor,
@@ -719,32 +663,29 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                         pickerTriggerRef, notePickerCollapsed, notePickerTriggerPressed,
                                     }} />
 
-                                    <Text style={styles.fieldLabel}>{t('automations.form.trigger.maximumObservationAge')}</Text>
-                                    <FieldTextInput
-                                        testID="automation-event-maximum-observation-age-input"
-                                        accessibilityLabel={t('automations.form.trigger.maximumObservationAge')}
-                                        accessibilityHint={!props.model.maximumObservationAgeMsValid
-                                            ? t('automations.form.trigger.maximumObservationAgeInvalid')
-                                            : undefined}
-                                        invalid={!props.model.maximumObservationAgeMsValid}
-                                        monospace
-                                        style={styles.fieldInput}
-                                        value={props.model.maximumObservationAgeMsText}
-                                        onChangeText={props.model.setMaximumObservationAgeMsText}
-                                        placeholder={t('automations.form.trigger.maximumObservationAgePlaceholder')}
-                                        keyboardType="numeric"
+                                    {/* What the person chose stays above; raw identities, payload pointers, the sample and the
+                                        observation age are support's words, on request only (MF-4). */}
+                                    <TechnicalDetailsDisclosure
+                                        testID="automation-event-technical-details"
+                                        title={t('settingsPlugins.eventAutomationComposer.technicalDetails')}
+                                        lines={[
+                                            ...(selectedWatcher === null ? [] : [{ key: 'watcher', label: observationPlacementTitle,
+                                                value: watcherTechnicalId(selectedWatcher) }]),
+                                            ...(showSourceInstanceId && props.model.sourceInstanceId !== null ? [{ key: 'source',
+                                                label: t('automations.form.trigger.source'), value: props.model.sourceInstanceId }] : []),
+                                            ...(props.model.maximumObservationAgeMsText.trim() === '' ? [] : [{ key: 'age',
+                                                label: t('automations.form.trigger.maximumObservationAge'),
+                                                value: props.model.maximumObservationAgeMsText.trim() }]),
+                                            ...props.model.payloadBrowser.fields.map((field) => ({ key: `field:${field.pointer}`,
+                                                label: field.label, value: field.pointer })),
+                                            ...(props.model.payloadBrowser.samplePayload === null ? [] : [{ key: 'sample',
+                                                label: t('settingsPlugins.eventAutomationComposer.payloadSample'),
+                                                value: formatPayloadSample(props.model.payloadBrowser.samplePayload) }]),
+                                        ]}
                                     />
-                                    {!props.model.maximumObservationAgeMsValid ? (
-                                        <Text
-                                            accessibilityRole="alert"
-                                            accessibilityLiveRegion="polite"
-                                            style={styles.unavailableText}
-                                        >
-                                            {t('automations.form.trigger.maximumObservationAgeInvalid')}
-                                        </Text>
-                                    ) : null}
                                 </>
                             ) : null}
+                            {sourceFailureDetails}
                 </View>
         </View>
     );

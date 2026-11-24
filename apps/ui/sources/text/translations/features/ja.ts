@@ -5743,11 +5743,9 @@ const english = Shared_eventAutomationComposerTranslations.english;
 
 const ja = {
     eventAutomationComposer: {
-        payloadFields: 'ペイロードフィールド',
         payloadSample: 'サンプルペイロード',
         technicalDetails: '技術的な詳細',
-        noFilterableFields: 'このイベントは、フィルター可能なペイロード フィールドを宣言しません。',
-        addFilterClause: '条件の追加',
+        addFilterClause: 'フィルター',
         filterField: 'フィルターフィールド',
         filterOperator: 'フィルタ演算子',
         filterEquals: '等しい',

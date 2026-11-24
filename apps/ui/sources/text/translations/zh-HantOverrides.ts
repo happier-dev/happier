@@ -1974,7 +1974,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             clearHistoryConfirmButton: '清除歷程',
             clearHistoryFailed: '無法清除執行歷程。',
             event: {
-                watcherTitle: '事件觀察器',
                 watcherUnwatched: '未設定觀察器',
                 endpointTitle: 'Webhook 端點',
                 observationPlacementTitle: '事件觀察位置',

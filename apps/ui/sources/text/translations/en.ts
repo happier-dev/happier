@@ -2732,7 +2732,7 @@ const enAutomations = {
       eventCatalogLoading: 'Loading Event sources on this machine…',
       eventCatalogUnavailable:
         'Event sources are unavailable until this machine finishes loading.',
-      eventSource: 'Event source',
+      eventSource: 'Event',
       chooseEvent: 'Choose an event',
       searchEvents: 'Search events',
       noEligibleEvents:
@@ -2743,6 +2743,8 @@ const enAutomations = {
       sourceUnavailable:
         'Source setup is unavailable. Check the Event source and try again.',
       chooseWatcher: 'Choose an observation watcher',
+      watchFrom: 'Watch from',
+      receiveOn: 'Receive on',
       noEligibleWatchers:
         'No current watcher is available for this Event source.',
       eventCatalogNeedsMachine: 'Choose a machine to see the events its plugins offer.',
@@ -2750,25 +2752,24 @@ const enAutomations = {
       addFromStore: 'Add from Store',
       watcherCannotObserve: 'This installation can’t watch this Event.',
       fixUnavailableWatchers: 'Fix unavailable watchers',
-      observationTransport: 'HOW EVENTS ARRIVE',
+      observationTransport: 'How events arrive',
       observationCheckpointedPull: 'Poll for changes',
       observationSocket: 'Live connection',
       observationDurablePush: 'Webhook',
       webhookEndpointTitle: 'Add this webhook in GitHub',
       webhookEndpointInstructions:
         'Open your repository settings, add a webhook with this payload URL and secret, choose "application/json", and select the events you want. Happier only receives deliveries after you save it there.',
-      webhookEndpointUrl: 'PAYLOAD URL',
-      webhookEndpointSecret: 'SECRET (SHOWN ONCE)',
+      webhookEndpointUrl: 'Payload URL',
+      webhookEndpointSecret: 'Secret (shown once)',
       webhookEndpointSecretLost:
         'This endpoint already exists and its secret was shown once. Rotate the credential from the webhook settings to get a new one.',
       webhookEndpointAwaitingConfirmation:
         'Happier has not received a verified delivery from this webhook yet, so it is not a working delivery path. Save the webhook in the provider, then recheck. The trigger can be saved either way, but it will not run until a signed delivery arrives.',
       webhookEndpointRecheck: 'Recheck webhook',
-      eventFilter: 'Event filter (optional)',
+      eventFilter: 'Only when',
       eventFilterPlaceholder: '{"v":1,"all":[…]}',
       eventFilterInvalid: 'Enter a valid Event filter.',
-      maximumObservationAge: 'MAXIMUM OBSERVATION AGE (MS, OPTIONAL)',
-      maximumObservationAgePlaceholder: '30000',
+      maximumObservationAge: 'Maximum observation age (ms)',
       maximumObservationAgeInvalid: 'Enter a whole number of milliseconds.',
     },
   },
@@ -2819,7 +2820,6 @@ const enAutomations = {
       paused: 'Paused',
     },
     event: {
-      watcherTitle: 'Observation watcher',
       watcherUnwatched: 'Unwatched',
       endpointTitle: 'Webhook endpoint',
       observationPlacementTitle: 'Event observation placement',

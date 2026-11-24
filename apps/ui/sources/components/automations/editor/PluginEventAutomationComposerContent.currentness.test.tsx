@@ -398,7 +398,7 @@ describe('PluginEventAutomationComposerContent webhook endpoint readiness', () =
 
     it('does not label a secret field that has nothing to show under it', async () => {
         // Suppressing the rotation instruction for a confirmed endpoint must not
-        // leave its "SECRET (SHOWN ONCE)" label standing over an empty field.
+        // leave its "Secret (shown once)" label standing over an empty field.
         const confirmed = await renderWithEndpoint({
             webhookEndpointId: 'whep_a',
             publicUrl: 'https://ingress.example/hooks/abc',
@@ -418,14 +418,13 @@ describe('PluginEventAutomationComposerContent webhook endpoint readiness', () =
         expect(disclosed.getTextContent())
             .toContain('automations.form.trigger.webhookEndpointSecret');
     });
-    it('speaks to people: the watcher by its Machine name and payload fields by label; raw ids and JSON only under Technical details (#184 F3)', async () => {
+    it('speaks to people: the watcher by its Machine name; payload fields, raw ids and JSON only under Technical details (#184 F3, MF-4)', async () => {
         const screen = await renderScreen(<PluginEventAutomationComposerContent model={createModel({ eventAvailable: true })} />);
         const text = screen.getTextContent();
         // Raw identifiers and the sample JSON never read as the editor's words.
         for (const raw of ['watcher-machine', 'github-materialization', 'acme.github', '/action', '"action"']) {
             expect(text).not.toContain(raw);
         }
-        expect(text).toContain('Action');
         // They remain reachable on request, behind the one Technical details fold.
         expect(screen.findByTestId('automation-event-technical-details')).not.toBeNull();
     });

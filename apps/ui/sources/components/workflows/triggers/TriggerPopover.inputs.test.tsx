@@ -577,6 +577,20 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findAll(node => typeof node.props.testID === 'string' && /^sentence-workflow-sentence-trigger:new:/.test(node.props.testID)).length)
             .toBeGreaterThan(0);
     });
+    // NF-29: a session event's summary only restates its start ("A session finishes a turn" / "When a turn ends"),
+    // so the Sentence's detail chip names the rows it opens instead of saying the trigger twice.
+    it('the Sentence view states a session trigger once', async () => {
+        const subject = { kind: 'session' as const, serverId, sessionId: 'session-a' };
+        const trigger = { kind: 'sessionLifecycle' as const, enabled: true, subject,
+            events: ['parentTurnCompleted' as const, 'parentTurnFailed' as const, 'parentTurnCancelled' as const], policy: { kind: 'firstMatch' as const } };
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="once" set={null} presentation="sentence"
+            draft={{ adds: [{ clientId: 'c1', trigger }], updates: {}, removes: [] }} onChangeDraft={vi.fn()}
+            status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+        const detail = screen.findAll(node => node.props.testID === 'once-sentence-trigger:new:c1-detail'
+            && typeof node.props.label === 'string')[0];
+        expect(detail?.props.label).toBe('workflows.page.inspector.options');
+        await screen.unmount();
+    });
     it('the When select switches a session trigger to another session event and keeps its Session and How often', async () => {
         const change = vi.fn();
         const subject = { kind: 'session' as const, serverId, sessionId: 'session-a' };

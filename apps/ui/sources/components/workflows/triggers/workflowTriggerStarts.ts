@@ -86,7 +86,9 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
     machineId: string | null;
 }>): readonly ResourceWorkflowTriggerStartOption[] {
     const { subject } = params;
-    const options: ResourceWorkflowTriggerStartOption[] = [];
+    // The resource's own Events lead (what happens to it); the Actions run on it follow.
+    const events: ResourceWorkflowTriggerStartOption[] = [];
+    const actions: ResourceWorkflowTriggerStartOption[] = [];
     for (const action of params.actions) {
         if (!action.automation?.subjectKinds?.includes(subject.kind)) continue;
         // Session-targeted Actions can match their containing Project at runtime.
@@ -97,7 +99,7 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
         }))) continue;
         for (const option of buildActionWorkflowTriggerStartOptions({ actionId: action.id, actions: [action] })) {
             const when = { ...option.when, subject };
-            options.push({ ...option, subject, when, trigger: { ...when, enabled: true } });
+            actions.push({ ...option, subject, when, trigger: { ...when, enabled: true } });
         }
     }
     for (const event of params.events) {
@@ -114,11 +116,11 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
         const eventSubject = backupCompletion ? params.contextSubjects?.find(candidate => candidate.kind === 'backup'
             && candidate.serverId === subject.serverId && candidate.environmentId === subject.environmentId) : subject;
         if (!eventSubject) continue;
-        options.push({ id, label: event.title, relation: 'event', subject: eventSubject, when, trigger: null, setupRequired: true,
+        events.push({ id, label: event.title, relation: 'event', subject: eventSubject, when, trigger: null, setupRequired: true,
             eventSeed: { eventRef: event.eventRef, setupInput: {},
                 ...(params.machineId === null ? {} : { monitoringMachineId: params.machineId }) } });
     }
-    return options;
+    return [...events, ...actions];
 }
 
 /**
@@ -299,6 +301,7 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
                 : kept.subject === undefined ? {} : { subject: kept.subject }),
             ...(kept?.nextTimeOnly === undefined ? {} : { nextTimeOnly: kept.nextTimeOnly }),
             ...(kept?.policy === undefined ? {} : { policy: kept.policy }),
+            ...(kept?.policyCountDraft === undefined ? {} : { policyCountDraft: kept.policyCountDraft }),
         };
     }
     if (context?.session !== undefined) {

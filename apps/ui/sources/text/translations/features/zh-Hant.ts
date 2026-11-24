@@ -5684,11 +5684,9 @@ const english = Shared_eventAutomationComposerTranslations.english;
 
 const zhHant = {
     eventAutomationComposer: {
-        payloadFields: '有效負載字段',
         payloadSample: '範例有效負載',
         technicalDetails: '技術細節',
-        noFilterableFields: '此事件不聲明可過濾的有效負載欄位。',
-        addFilterClause: '新增條件',
+        addFilterClause: '篩選',
         filterField: '過濾字段',
         filterOperator: '過濾運算符',
         filterEquals: '等於',

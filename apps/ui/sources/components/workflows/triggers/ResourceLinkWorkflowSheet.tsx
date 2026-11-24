@@ -17,12 +17,14 @@ import { Text } from '@/components/ui/text/Text';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { WORKFLOW_STACKED_LABEL_TRACK, WorkflowKindCardLabelTrack } from '@/components/workflows/editor/WorkflowStepDataEditor';
 import { t } from '@/text';
 
 import { TRIGGER_POPOVER_WIDTH } from './TriggerPopover';
 import { TriggerPluginEventRows } from './TriggerPluginEventRows';
 import {
   ActionTriggerPolicyRows,
+  FieldButton,
   TrackRow,
 } from './WorkflowTriggerBlock';
 import type { ResourceAutomationsSectionRead } from './useResourceAutomationsSection';
@@ -37,20 +39,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
   },
   title: { paddingBottom: theme.space.s4 },
-  selectBox: {
-    flexGrow: 0,
-    flexShrink: 1,
-    minWidth: 0,
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
-  },
+  // Workflow and When span the value track, so the sheet's fields share one width (lab `automations-states-link`).
+  selectBox: { minWidth: 0, alignSelf: 'stretch' },
+  note: { color: theme.colors.text.secondary, flexShrink: 1 },
+  // Under one hairline on the rows' edge, pinned below the scrolling rows (the trigger popover's foot).
   foot: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
     gap: theme.space.s8,
-    paddingHorizontal: theme.space.s16,
-    paddingVertical: theme.space.s12,
+    marginHorizontal: theme.space.s16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border.default,
+    paddingTop: theme.space.s12,
+    paddingBottom: theme.space.s16,
   },
   failure: { color: theme.colors.state.danger.textForeground, flexShrink: 1 },
 }));
@@ -95,6 +97,8 @@ export function ResourceLinkWorkflowSheet(
   const [when, setWhen] = React.useState<ResourceWorkflowTriggerStartOption['when'] | null>(null);
   const [failure, setFailure] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
+  // Setting up an Event is the sheet's own next step (as in the trigger popover): one sheet, one footer at a time.
+  const [eventEditing, setEventEditing] = React.useState(false);
   const choice = React.useMemo(
     () => link.whenOptions.find((option) => option.id === whenId) ?? null,
     [link.whenOptions, whenId],
@@ -186,6 +190,39 @@ export function ResourceLinkWorkflowSheet(
             ? t('workflows.triggers.link.finishEventSetup') : null;
   const ready = whenBlock === null && link.draft !== null && !link.loading && link.issue == null && recipientsIdentified;
 
+  // The When field's own placeholder already asks for a start; a note under it says only what the field can't.
+  const whenNote = !(link.whenStatus === 'ready' && !choice && whenItems.length > 0);
+  const eventChoice = choice?.relation === 'event' && when?.kind === 'pluginEvent' ? { choice, when } : null;
+  const eventRows = eventChoice ? (editing: boolean, maxHeight?: number) => (
+    <TriggerPluginEventRows
+      testID="resource-link-event"
+      eventTitle={eventChoice.choice.label}
+      when={eventChoice.when}
+      initialEventSeed={eventChoice.choice.eventSeed}
+      machineId={props.machineId}
+      serverId={props.serverId}
+      editing={editing}
+      onEditingChange={setEventEditing}
+      editorMaxHeight={maxHeight}
+      onChange={(next) => {
+        if (next.kind === 'pluginEvent') {
+          setWhen(next);
+          draftFor(workflow, next, eventChoice.choice);
+        }
+      }}
+      renderEntry={(entry) => (
+        <TrackRow label={t('workflows.triggers.card.source')} trackKey="resource-link-event">
+          <FieldButton
+            testID="resource-link-event-configure-event"
+            label={t('workflows.triggers.card.source')}
+            value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
+            onPress={entry.onPress}
+          />
+        </TrackRow>
+      )}
+    />
+  ) : null;
+
   const submit = async () => {
     if (!ready || submitting) return;
     setSubmitting(true);
@@ -254,8 +291,40 @@ export function ResourceLinkWorkflowSheet(
             heightBehavior="stabilizedContentHeight"
           />
         </FloatingOverlay>
+      ) : eventEditing && eventRows ? (
+        // The Event's setup replaces the sheet with its own step and footer; Done or Cancel comes back here.
+        eventRows(true, maxHeight)
       ) : (
-        <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
+        <FloatingOverlay maxHeight={maxHeight} scrollEnabled footer={(
+          <View style={styles.foot}>
+            <RoundButton
+              testID="resource-link-cancel"
+              size="small"
+              display="inverted"
+              title={t('common.cancel')}
+              onPress={() => {
+                void link.submit('decline');
+                props.onRequestClose();
+              }}
+            />
+            <RoundButton
+              testID="resource-link-submit"
+              size="small"
+              title={t(
+                sharing
+                  ? 'workflows.triggers.link.shareAndLink'
+                  : 'workflows.triggers.link.link',
+              )}
+              disabled={!ready}
+              loading={submitting}
+              onPress={() => {
+                void submit();
+              }}
+            />
+          </View>
+        )}>
+          {/* A phone sheet stacks each label over its field (lab `automations-states-link` at 390). */}
+          <WorkflowKindCardLabelTrack.Provider value={presentation === 'sheet' ? WORKFLOW_STACKED_LABEL_TRACK : null}>
           <View style={styles.body} testID="resource-link-sheet">
             {/* A phone sheet's band already names it. */}
             {presentation === 'sheet' ? null : (
@@ -270,6 +339,8 @@ export function ResourceLinkWorkflowSheet(
               <View style={styles.selectBox}>
                 <ValueFieldSelect
                   testID="resource-link-workflow"
+                  // Stacked under its label on a phone, the field spans the sheet (lab at 390).
+                  fill={presentation === 'sheet'}
                   label={t('workflows.triggers.link.workflow')}
                   items={workflowItems}
                   selectedId={workflow}
@@ -289,6 +360,7 @@ export function ResourceLinkWorkflowSheet(
               <View style={styles.selectBox}>
                 <ValueFieldSelect
                   testID="resource-link-when"
+                  fill={presentation === 'sheet'}
                   label={t('workflows.triggers.link.when')}
                   items={whenItems}
                   selectedId={whenId}
@@ -330,22 +402,7 @@ export function ResourceLinkWorkflowSheet(
                 }}
               />
             ) : null}
-            {choice?.relation === 'event' && when?.kind === 'pluginEvent' ? (
-              <TriggerPluginEventRows
-                testID="resource-link-event"
-                eventTitle={choice.label}
-                when={when}
-                initialEventSeed={choice.eventSeed}
-                machineId={props.machineId}
-                serverId={props.serverId}
-                onChange={(next) => {
-                  if (next.kind === 'pluginEvent') {
-                    setWhen(next);
-                    draftFor(workflow, next, choice);
-                  }
-                }}
-              />
-            ) : null}
+            {eventRows ? eventRows(false) : null}
             {sharing && recipientsIdentified ? (
               <AttentionBanner
                 testID="resource-link-share"
@@ -379,15 +436,21 @@ export function ResourceLinkWorkflowSheet(
                 title={link.loading || names.resolving ? t('common.loading') : t('workflows.triggers.link.reviewFailed')}
               />
             ) : null}
-            {whenBlock && !link.issue && !link.loading ? (
-              <SurfaceStateCard
-                testID={link.whenStatus === 'unavailable' ? 'resource-link-starts-unavailable' : 'resource-link-blocked'}
-                size="line"
-                kind={link.whenStatus === 'idle' || link.whenStatus === 'loading' ? 'loading'
-                  : link.whenStatus === 'ready' ? 'empty' : 'unavailable'}
-                title={whenBlock}
-                action={link.whenStatus === 'unavailable' ? { label: t('common.retry'), onPress: link.retryWhen } : undefined}
-              />
+            {whenBlock && whenNote && !link.issue && !link.loading ? (
+              // Under the fields' column, as a row's consequence reads (lab `automations-states-link`).
+              <TrackRow label="" trackKey="resource-link-note">
+                {link.whenStatus === 'ready' ? (
+                  <Text variant="meta" testID="resource-link-blocked" style={styles.note}>{whenBlock}</Text>
+                ) : (
+                  <SurfaceStateCard
+                    testID={link.whenStatus === 'unavailable' ? 'resource-link-starts-unavailable' : 'resource-link-blocked'}
+                    size="line"
+                    kind={link.whenStatus === 'unavailable' || link.whenStatus === 'machineOffline' ? 'unavailable' : 'loading'}
+                    title={whenBlock}
+                    action={link.whenStatus === 'unavailable' ? { label: t('common.retry'), onPress: link.retryWhen } : undefined}
+                  />
+                )}
+              </TrackRow>
             ) : null}
             {failure ? (
               <Text
@@ -399,32 +462,7 @@ export function ResourceLinkWorkflowSheet(
               </Text>
             ) : null}
           </View>
-          <View style={styles.foot}>
-            <RoundButton
-              testID="resource-link-cancel"
-              size="small"
-              display="inverted"
-              title={t('common.cancel')}
-              onPress={() => {
-                void link.submit('decline');
-                props.onRequestClose();
-              }}
-            />
-            <RoundButton
-              testID="resource-link-submit"
-              size="small"
-              title={t(
-                sharing
-                  ? 'workflows.triggers.link.shareAndLink'
-                  : 'workflows.triggers.link.link',
-              )}
-              disabled={!ready}
-              loading={submitting}
-              onPress={() => {
-                void submit();
-              }}
-            />
-          </View>
+          </WorkflowKindCardLabelTrack.Provider>
         </FloatingOverlay>
       )}
     </Popover>

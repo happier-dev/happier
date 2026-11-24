@@ -427,7 +427,8 @@ export const ApprovalAutomaticChecks = React.memo(
           // A passed check's receipt reads at the lead's size with its mark (lab wait-v-apassed), as the waiting check did.
           <View key={actionAutomationTriggerKeyV1(result)} style={styles.lead}
             testID={props.testID ? `${props.testID}:passed` : undefined}>
-            <Icon name="check-circle" size={ICON_SIZE.sm} color={theme.colors.state.success.foreground} />
+            {/* Healthy is quiet: the receipt's mark stays ink (lab wait-v-apassed); colour speaks only for a check that needs you. */}
+            <Icon name="check-circle" size={ICON_SIZE.sm} color={theme.colors.text.primary} />
             <Text variant="body" style={[styles.primary, styles.leadText]}>
               {t('workflows.triggers.checks.passed', { workflow: nameOf(result) })}
               {duration ? <Text variant="body" style={styles.secondary}>{` · ${duration}`}</Text> : null}
