@@ -16,6 +16,7 @@ import { type DatabaseDescriptorV1, type DatabaseStatsObservationV1 } from '@hap
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
+import { SessionInputHandoffInputV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import {
   createPluginUiActionControlTestHost,
   createPluginUiTestkit,
@@ -262,6 +263,10 @@ describe('Database Insights surfaces', () => {
   });
 
   it('shows the one diagnosed setup state with the producer’s setting when statement statistics are off', async () => {
+    const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({
+      ok: true, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } },
+    }));
+    const actionControl = createPluginUiActionControlTestHost(handoff);
     const page = await createPluginUiTestkit({
       identity: { instanceId: 'setup', mountNonce: 'setup' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -273,6 +278,7 @@ describe('Database Insights surfaces', () => {
       handlers: {
         ...resourceHandlers(),
         executeAction: daemon(() => extensionMissing),
+        actionControl: actionControl.handler,
         replacePageLocation: async ({ subPath }) => subPath,
       },
     });
@@ -286,6 +292,22 @@ describe('Database Insights surfaces', () => {
           "shared_preload_libraries = 'pg_stat_statements'",
         ),
       ).toBeTruthy();
+      for (const [title, task] of [
+        ['Ask an agent to enable pg_stat_statements', { kind: 'enable_pg_stat_statements', target: descriptor.target, stats: { reason: 'extension_missing' } }],
+        ['Add telemetry to this app', { kind: 'add_telemetry', scope }],
+      ] as const) {
+        await act(async () => actionControl.press(title));
+        const call = handoff.mock.calls.at(-1);
+        expect(call).toBeDefined();
+        expect(call?.[0]).toMatchObject({ action: 'session.input.handoff', input: {
+          delivery: 'compose', sessionChoice: { kind: 'new' },
+          input: { forgeEvidence: { items: [{ source: { kind: 'databaseFinding' } }] } },
+        } });
+        const input = SessionInputHandoffInputV1Schema.parse(call?.[0].input);
+        expect(JSON.parse(input.input.forgeEvidence!.items[0]!.text)).toMatchObject({ task: { ...task,
+          sourceScope: { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId },
+        } });
+      }
     } finally {
       await page.dispose();
     }
@@ -361,6 +383,42 @@ describe('Database Insights surfaces', () => {
       expect(statementsReads()).toHaveLength(2);
       expect(watchResource).toHaveBeenCalledTimes(2);
     } finally { await page.dispose(); }
+  });
+
+  it('prepares a telemetry setup draft from an empty worktree Insights rail', async () => {
+    const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({
+      ok: true, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } },
+    }));
+    const actionControl = createPluginUiActionControlTestHost(handoff);
+    const rail = await createPluginUiTestkit({
+      identity: { instanceId: 'empty-insights', mountNonce: 'empty-insights' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({
+        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'insights-session-rail' },
+          container: 'rightSidebarTab' },
+        target: { kind: 'session', sessionId: 'session-1' },
+      }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...resourceHandlers(),
+        actionControl: actionControl.handler,
+        executeAction: async () => ({ targets: [], completeness: { complete: true } }),
+      },
+    });
+    try {
+      await settle();
+      await act(async () => actionControl.press('Add telemetry to this app'));
+      const input = SessionInputHandoffInputV1Schema.parse(handoff.mock.calls[0]?.[0].input);
+      expect(input).toMatchObject({ delivery: 'compose', sessionChoice: { kind: 'new' },
+        newSession: { seed: { placement: { kind: 'exactTarget', serverId: scope.workspace.serverId,
+          machineId: scope.workspace.machineId, directory: scope.workspace.rootPath } } },
+      });
+      expect(JSON.parse(input.input.forgeEvidence!.items[0]!.text)).toMatchObject({ task: { kind: 'add_telemetry', scope } });
+    } finally {
+      await rail.dispose();
+    }
   });
 
   it('opens a statement from the Insights rail tab as a details tab at that statement', async () => {

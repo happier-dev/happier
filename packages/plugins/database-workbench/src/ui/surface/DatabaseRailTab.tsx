@@ -26,6 +26,7 @@ import {
 } from './WorkbenchRail.js';
 import { WorkbenchMain } from './WorkbenchPage.js';
 import { InsightsDetailsTab, InsightsRailList } from './insights/InsightsRail.js';
+import { AddTelemetrySetup } from './insights/InsightsSetup.js';
 import {
   databaseTargetKey,
   readWorkbenchLaunchInput,
@@ -201,7 +202,11 @@ function RailTab(
     );
   }
   if (!current) {
-    // Connect a database… is the tab's one setup Action once the Connect flow is composed (owed); no dead button until then.
+    const scope = props.launch.scope;
+    const telemetrySetup = identity?.tab === 'insights' && scope.kind === 'worktree'
+      ? <AddTelemetrySetup scope={scope} />
+      : null;
+    // Connect a database joins the Database tab once its flow is composed.
     return (
       <EmptyState
         layout="line"
@@ -209,6 +214,7 @@ function RailTab(
           'plugins.database.rail.none',
           'No database for this project yet',
         )}
+        {...(telemetrySetup ? { action: telemetrySetup } : {})}
       />
     );
   }

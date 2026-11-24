@@ -1,12 +1,14 @@
 import * as React from 'react';
-import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1, DatabaseTaskEvidenceV1 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_STATS_ENABLE_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-import { isPluginActionConfirmationDeclined } from '@happier-dev/plugin-ui/hostApi';
+import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import {
   Action,
   Button,
   CodeBlock,
+  ErrorState,
   Row,
   Stack,
   SurfaceState,
@@ -15,6 +17,10 @@ import {
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
 import { databaseActionSettlement } from '../../actionSettlement.js';
+import { buildDatabaseFindingBriefV1 } from '../../../insights/brief.js';
+import { createDatabaseBriefHandoffControl } from '../../../insights/migration.js';
+import type { WorkbenchLaunchInput } from '../mount.js';
+import { STATEMENTS_BY_TOTAL_TIME } from './statements.js';
 
 type Unavailable = Extract<
   DatabaseStatsObservationV1,
@@ -126,6 +132,52 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
   </>;
 }
 
+function SetupTaskControl({ task, directory, title }: Readonly<{
+  task: DatabaseTaskEvidenceV1; directory?: string; title: string;
+}>) {
+  const t = usePluginTranslation();
+  const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
+  const control = createDatabaseBriefHandoffControl(() => buildDatabaseFindingBriefV1(task), {
+    handoff: { v: 1, sessionChoice: { kind: 'new' }, delivery: 'compose',
+      newSession: { kind: 'new', seed: { placement: { kind: 'exactTarget', ...task.sourceScope,
+        ...(directory === undefined ? {} : { directory }),
+      } } },
+    },
+    idempotencyKey: () => globalThis.crypto.randomUUID(),
+    onSettled(execution) {
+      const result = projectPluginActionControlExecutionV1(execution, t);
+      if (isPluginActionConfirmationDeclined(result)) return;
+      if (result.status === 'pending') return;
+      const handoff = result.status === 'success' ? SessionInputHandoffResultV1Schema.safeParse(result.result) : null;
+      const delivered = handoff?.success ? handoff.data : null;
+      if (delivered?.kind === 'composed' || delivered?.kind === 'authoringResult' || delivered?.kind === 'cancelled') {
+        setError(null);
+        return;
+      }
+      const details = delivered?.kind === 'failed' ? delivered.failure.errorCode
+        : delivered?.kind === 'unavailable' ? delivered.reason : 'code' in result ? result.code : undefined;
+      setError({ title: 'message' in result ? result.message
+        : t('plugins.database.insights.composerUnavailable', 'The brief could not be opened in the Composer.'),
+        ...(typeof details === 'string' ? { details } : {}),
+      });
+    },
+  });
+  return <><Action.Control {...control} title={title} variant="secondary" />
+    {error ? <ErrorState layout="line" {...error} /> : null}
+  </>;
+}
+
+export function AddTelemetrySetup({ scope }: Readonly<{
+  scope: Extract<WorkbenchLaunchInput['scope'], { kind: 'worktree' }>;
+}>) {
+  const t = usePluginTranslation();
+  const { serverId, machineId, rootPath } = scope.workspace;
+  return <SetupTaskControl
+    task={{ kind: 'add_telemetry', sourceScope: { serverId, machineId }, scope }}
+    directory={rootPath}
+    title={t('plugins.database.insights.setup.addTelemetry', 'Add telemetry to this app')} />;
+}
+
 /** One diagnosed setup state for the page and rail (D24 C). */
 export function InsightsSetup(
   props: Readonly<{
@@ -143,6 +195,10 @@ export function InsightsSetup(
     && descriptor.access?.canWrite === true;
   const canEnable = (ownServer || canUseOwnLogin) && props.observation.reason === 'extension_missing'
     && descriptor.capabilities.some(capability => capability.operation === 'stats.enable' && capability.available);
+  const target = descriptor?.target;
+  const worktree = target?.kind === 'worktree' ? target : undefined;
+  const askForStatistics = target && setup && !canEnable && props.observation.engineId === 'postgresql';
+  const sourceScope = descriptor && { serverId: descriptor.placement.serverId, machineId: descriptor.placement.machineId };
   const remediation = props.observation.remediation;
   return (
     <SurfaceState
@@ -160,7 +216,7 @@ export function InsightsSetup(
             )
       }
       description={describeReason(translate, props.observation.reason, descriptor?.target.kind)}
-      {...(remediation || canEnable || props.onRetry
+      {...(remediation || canEnable || askForStatistics || worktree || props.onRetry
         ? {
             body: (
               <Stack gap="small">
@@ -175,11 +231,18 @@ export function InsightsSetup(
                     'Copied',
                   )}
                 /> : null}
-                {canEnable || props.onRetry ? <Row gap="small" wrap>
+                {canEnable || askForStatistics || props.onRetry ? <Row gap="small" wrap>
                   {canEnable ? <EnableStatistics target={descriptor.target} onRetry={props.onRetry} /> : null}
+                  {askForStatistics && sourceScope ? <SetupTaskControl
+                    task={{ kind: 'enable_pg_stat_statements', engineId: 'postgresql', target, sourceScope,
+                      stats: { request: STATEMENTS_BY_TOTAL_TIME, reason: props.observation.reason } }}
+                    {...(worktree ? { directory: worktree.workspace.rootPath } : {})}
+                    title={translate('plugins.database.insights.setup.askAgent', 'Ask an agent to enable pg_stat_statements')} /> : null}
                   {props.onRetry ? <Button variant="plain" size="small" onPress={props.onRetry}
                     title={translate('plugins.database.retry', 'Try again')} /> : null}
                 </Row> : null}
+                {worktree ? <AddTelemetrySetup scope={{ kind: 'worktree', accountId: worktree.accountId,
+                  installationId: worktree.installationId, projectKey: worktree.projectKey, workspace: worktree.workspace }} /> : null}
               </Stack>
             ),
           }
