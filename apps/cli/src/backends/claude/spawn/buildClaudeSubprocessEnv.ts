@@ -49,6 +49,7 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
     'TMP',
     'SSH_AUTH_SOCK',
     DBUS_SESSION_BUS_ADDRESS_ENV_KEY,
+    'PLAYWRIGHT_BROWSERS_PATH',
     'HTTP_PROXY',
     'HTTPS_PROXY',
     'NO_PROXY',
