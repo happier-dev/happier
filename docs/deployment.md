@@ -3282,6 +3282,14 @@ listener or a prepared Cloudflare Tunnel. An older Domain without the collector
 reference needs a fresh Add review. Platform configuration consumes this lookup
 separately.
 
+The Own-server launch settles sampler provenance for each applied service in
+the selected serving Receipt's private `machineResults[].telemetrySampling`.
+Select the exact Machine installation and service. An authored sampler variable
+or argument that won at launch produces `authored`. A managed binding that won
+without an authored override produces `managed`. Missing provenance leaves
+the applied sampler unknown. These facts neither expose sampler values nor claim
+an SDK or image default.
+
 The cross-Machine source path uses an ordinary Domain with
 `target: { kind: 'telemetry' }`. The Domain owner captures the selected collector's
 native placement and resolves its observed Caddy `privateOrigins` against the

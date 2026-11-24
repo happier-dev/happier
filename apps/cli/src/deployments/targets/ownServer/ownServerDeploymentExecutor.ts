@@ -352,6 +352,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 if (manifest && manifest.status !== 'valid') refuse('deployment_invalid');
                 let secretMaterial: Awaited<ReturnType<typeof prepareEnvironmentSecretBindingsForLaunch>> | undefined;
                 let deliveredTelemetry: { telemetryMachineId: string; telemetryTokenHash: string } | undefined;
+                let telemetrySampling: DeploymentMachineResultV1['telemetrySampling'];
                 const envPort = createDeploymentExecEnvPortForHost({ source, phase: 'runtime', signal,
                     isCurrent: () => !signal.aborted,
                     prepare: async ({ phase }: Readonly<{ phase: 'build' | 'runtime' }>) => secretMaterial = await prepareEnvironmentSecretBindingsForLaunch({ ...runtime.secrets,
@@ -362,6 +363,8 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const referenceAddresses: NonNullable<NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['referenceAddresses']> = [];
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', exec: runtime.exec, envPort, source,
                     onTelemetryProjection: facts => {
+                        telemetrySampling = facts.flatMap(({ service, samplingProvenance }) =>
+                            samplingProvenance ? [{ service, provenance: samplingProvenance }] : []);
                         const telemetryTokenHash = secretMaterial?.telemetryTokenHash;
                         const telemetryMachineId = environment.environment.telemetryMachineId;
                         deliveredTelemetry = facts.some(fact => fact.receivesTelemetry) && telemetryMachineId && telemetryTokenHash
@@ -428,6 +431,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         signal, assertCurrent }) });
                 return { runtime, source, project, assertCurrent, stageOutput, referenceAddresses,
                     get deliveredTelemetry() { return deliveredTelemetry; },
+                    get telemetrySampling() { return telemetrySampling; },
                     homeServerIdentityId: expectedIdentity.homeServerIdentityId };
             } catch (error) { await source.abort(); throw error; }
         } catch (error) { try { await runtime.release(); } finally { await stageOutput?.close(); } throw error; }
@@ -1105,6 +1109,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     delete result.telemetryTokenHash;
                     Object.assign(result, prepared.deliveredTelemetry);
                 }
+                const telemetrySampling = prepared.telemetrySampling;
+                if (telemetrySampling?.length) result.telemetrySampling = telemetrySampling;
+                else if (telemetrySampling || previous?.currentDeploymentId !== result.currentDeploymentId) delete result.telemetrySampling;
                 return result;
             };
             try {

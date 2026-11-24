@@ -95,7 +95,7 @@ import { buildOwnServerDeploymentReceipt, isOwnServerBuildReceiptComplete } from
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentRootForHost } from './paths';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
-import { createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentReceiptHeaderV1, createDeploymentSecretVariableBindingV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { sealMachineSecretGrant } from '../../secrets/machineSecretGrant';
 import { createOwnServerDeploymentTargetForHost, type OwnServerDeploymentRequest, type OwnServerDeploymentTargetHostInput, type OwnServerDeploymentReceipt } from './ownServerDeploymentTarget';
 import { prepareStoredPromotionCandidate, readStoredPromotionCandidateForHost } from '../../storedPromotionCandidate';
@@ -400,7 +400,9 @@ describe('own-server target at the Action host boundary', () => {
             }), environment: { PRIVATE_INPUT: 'sensitive-host-value',
                 ...(telemetry ? { OTEL_EXPORTER_OTLP_ENDPOINT: scenario === 'telemetry_own_collector'
                     ? 'https://project-collector.example' : null,
-                    ...(scenario !== 'telemetry_no_header' ? { OTEL_EXPORTER_OTLP_HEADERS: null } : {}) } : {}),
+                    ...(scenario !== 'telemetry_no_header' ? { OTEL_EXPORTER_OTLP_HEADERS: null } : {}),
+                    ...(scenario === 'telemetry_delivery' ? { OTEL_TRACES_SAMPLER: null, OTEL_TRACES_SAMPLER_ARG: null }
+                        : scenario === 'telemetry_no_header' ? { OTEL_TRACES_SAMPLER: 'always_off' } : {}) } : {}),
                 ...(previewCopy ? { DATABASE_URL: previewCompanion ? 'postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}'
                     : 'postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}' }
                     : { DEPLOY_PASSWORD: '${DEPLOY_PASSWORD:?required}' }) } },
@@ -523,6 +525,19 @@ describe('own-server target at the Action host boundary', () => {
             installationId: 'installation-a', environmentId: environment.environment.id, resourceId: 'review-secret', resourceRevision: 1 },
             installationPublicKey, content: { kind: 'secret', value: 'review-secret-value-sentinel' } });
         let runtimeGrants = [secretGrant];
+        if (telemetry) {
+            for (const [name, value] of Object.entries({ OTEL_TRACES_SAMPLER: 'parentbased_traceidratio', OTEL_TRACES_SAMPLER_ARG: '0.25' })) {
+                const definition = { kind: 'value' as const, value };
+                const grantRef = randomUUID();
+                const binding = { purpose: 'variable' as const, phase: 'runtime' as const, grantRef };
+                environment.content.bindings.push({ ...createDeploymentVariableBindingV1({
+                    name, phase: 'runtime', source: definition, grantRef,
+                }), managedBy: 'telemetry' });
+                runtimeGrants.push(sealMachineSecretGrant({ subject: { v: 1, kind: 'environmentValues',
+                    machineId: 'machine-a', installationId: 'installation-a', environmentId: environment.environment.id, binding },
+                    installationPublicKey, content: { kind: 'environmentValues', definition, binding: { ...binding, name } } }));
+            }
+        }
         const previewNativeStates = new Map<string, Readonly<{ receipt: typeof receipt; serving: typeof serving;
             grants: typeof runtimeGrants }>>();
         const previewReceipts = new Map<string, typeof receipt>();
@@ -4354,6 +4369,19 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
             if (telemetry) {
                 const delivered = scenario === 'telemetry_delivery';
                 const nativeEnvironment = await docker.readRuntimeEnvironment('app');
+                if (scenario === 'telemetry_own_collector') {
+                    expect(nativeEnvironment).not.toHaveProperty('OTEL_TRACES_SAMPLER');
+                    expect(receipt.content.machineResults[0]).not.toHaveProperty('telemetrySampling');
+                } else {
+                    const authored = scenario === 'telemetry_no_header';
+                    expect(nativeEnvironment.OTEL_TRACES_SAMPLER).toBe(authored ? 'always_off' : 'parentbased_traceidratio');
+                    if (!authored) expect(nativeEnvironment.OTEL_TRACES_SAMPLER_ARG).toBe('0.25');
+                    expect(receipt.content.machineResults[0]).toMatchObject({
+                        currentDeploymentId: receipt.deployment.id,
+                        telemetrySampling: [{ service: 'app', provenance: authored ? 'authored' : 'managed' }],
+                    });
+                    expect(receipt.content.machineResults[0]).not.toHaveProperty('telemetrySampling.0.ratio');
+                }
                 expect.soft(Object.hasOwn(nativeEnvironment, 'OTEL_EXPORTER_OTLP_HEADERS')).toBe(delivered);
                 if (scenario === 'telemetry_own_collector') expect.soft(nativeEnvironment.OTEL_EXPORTER_OTLP_ENDPOINT)
                     .toBe('https://project-collector.example');

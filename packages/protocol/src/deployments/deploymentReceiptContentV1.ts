@@ -147,6 +147,10 @@ export type OwnServerDeploymentDetailsV1 = z.infer<typeof OwnServerDeploymentDet
 export const DeploymentMachineResultV1Schema = z.strictObject({
     machineId: id, installationId: id, steps: z.array(DeploymentStepV1Schema),
     telemetryMachineId: z.optional(id), telemetryTokenHash: z.optional(DeploymentTelemetryTokenHashV1Schema),
+    /** Applied service configuration belongs to the private Receipt. Values never enter this observation. */
+    telemetrySampling: z.optional(z.array(z.strictObject({
+        service: text, provenance: z.enum(['authored', 'managed']),
+    }))),
     actionOperationId: z.optional(id), previousDeploymentId: z.optional(id), currentDeploymentId: z.optional(id),
     activation: z.enum(['pending', 'succeeded', 'failed', 'cancelled', 'outcome_unknown']),
     health: z.enum(['unknown', 'healthy', 'unhealthy', 'unverified']),

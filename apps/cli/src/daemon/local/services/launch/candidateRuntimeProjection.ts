@@ -14,7 +14,10 @@ export type NativeComposeTelemetryProjectionFact = Readonly<{
     usesOwnCollector: boolean;
     receivesTelemetry: boolean;
     requiresTelemetryEndpoint: boolean;
+    samplingProvenance?: 'authored' | 'managed';
 }>;
+
+const samplerKeys = ['OTEL_TRACES_SAMPLER', 'OTEL_TRACES_SAMPLER_ARG'] as const;
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const unavailable = (form: string, cause?: unknown): never => {
@@ -147,17 +150,25 @@ export function createNativeRuntimeProjectionForHost(input: Readonly<{
                 // A native null/bare entry declares a slot for the binding. An
                 // authored value (including env_file) owns that telemetry key.
                 const authoredEnvironment = service.environment;
-                const authoredTelemetry = new Set([...new Set([...runtime.telemetryEnvironmentNames,
-                    ...TELEMETRY_COLLECTOR_ENDPOINT_ENVIRONMENT_KEYS_V1])].filter(key => {
+                const nativeEnvironmentNames = serviceEnvironmentNames.get(name);
+                const hasAuthoredValue = (key: string) => {
                     if (record(authoredEnvironment) && Object.hasOwn(authoredEnvironment, key)) return authoredEnvironment[key] !== null;
                     if (Array.isArray(authoredEnvironment) && authoredEnvironment.some(value => value === key)) return false;
-                    return serviceEnvironmentNames.get(name)?.has(key) === true;
-                }));
+                    return nativeEnvironmentNames?.has(key) === true;
+                };
+                const authoredTelemetry = new Set([...new Set([...runtime.telemetryEnvironmentNames,
+                    ...TELEMETRY_COLLECTOR_ENDPOINT_ENVIRONMENT_KEYS_V1])].filter(hasAuthoredValue));
                 const usesOwnCollector = usesOwnTelemetryCollectorV1(authoredTelemetry);
                 const serviceTelemetryNames = runtime.telemetryEnvironmentNames.filter(key => !usesOwnCollector
                     && !authoredTelemetry.has(key) && serviceEnvironmentNames.get(name)?.has(key));
                 for (const key of serviceTelemetryNames) selectedTelemetryNames.add(key);
+                const receivesAuthoredSampling = samplerKeys.some(key => hasAuthoredValue(key)
+                    || (!runtime.telemetryEnvironmentNames.includes(key) && runtime.environmentNames.includes(key)
+                        && nativeEnvironmentNames?.has(key)));
+                const samplingProvenance = receivesAuthoredSampling ? 'authored'
+                    : samplerKeys.some(key => serviceTelemetryNames.includes(key)) ? 'managed' : undefined;
                 telemetryFacts.push({ service: name, usesOwnCollector,
+                    ...(bindRuntimeEnvironment && samplingProvenance ? { samplingProvenance } : {}),
                     requiresTelemetryEndpoint: serviceTelemetryNames.includes('OTEL_EXPORTER_OTLP_ENDPOINT'),
                     receivesTelemetry: bindRuntimeEnvironment && !usesOwnCollector
                         && runtime.telemetryEnvironmentNames.includes('OTEL_EXPORTER_OTLP_HEADERS')
