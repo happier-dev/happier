@@ -245,6 +245,24 @@ describe('TeamMembersScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-members-row:membership-24');
     });
 
+    it.each([
+        { members: 2, reserved: 2 },
+        { members: null, reserved: 0 },
+    ])('reserves as many people as the Team summary counts ($members) while the roster is read', async ({ members, reserved }) => {
+        const serverId = await addHome(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({}),
+            counts: members === null ? null : { members, suspendedMembers: 0, groups: 0, archivedGroups: 0, waitingInvitations: 0 },
+        }));
+        harness.answer(serverId, MEMBERS_LIST_PATH, {
+            body: { items: [], nextCursor: null },
+            respondAfter: new Promise<void>(() => {}),
+        });
+        const screen = await renderMembers(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(MEMBERS_LIST_PATH).length).toBeGreaterThan(0));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.filter((id) => /^team-members-loading-skeleton:\d+$/.test(id))).toHaveLength(reserved);
+    });
+
     it('reads the roster for a plain viewer and offers no add control', async () => {
         // Exactly what the Home projects for an ordinary member: it authorizes
         // the roster read on `viewTeam` and withholds every mutation.

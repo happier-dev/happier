@@ -77,6 +77,18 @@ describe('Team collection draft row', () => {
     });
 });
 
+describe('Team collection first read', () => {
+    it('guesses no Team rows while the directory is read: one quiet line waits where they will arrive', async () => {
+        const home = await addHome('held-home');
+        await harness.selectHomes([home]);
+        harness.answer(home, LIST_PATH, { body: { items: [], nextCursor: null }, respondAfter: new Promise<void>(() => {}) });
+        const screen = await renderScreen(<TeamsCollectionRail />);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-directory-loading'));
+        // How many Teams there are is the directory's answer: nothing on screen claims a count.
+        expect(collectRenderedTestIds(screen.tree.toJSON()).filter((id) => /-skeleton:\d+$/.test(id))).toEqual([]);
+    });
+});
+
 describe('Team collection loaded-page search', () => {
     it('updates only the changed mounted Team row on a 400-Team page arrival', async () => {
         const home = await addHome('row-cost-home');

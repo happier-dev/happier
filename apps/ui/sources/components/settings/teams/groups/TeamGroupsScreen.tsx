@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { TeamGroupV1 } from '@happier-dev/protocol/teams';
+import { TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1, type TeamGroupV1 } from '@happier-dev/protocol/teams';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -106,6 +106,10 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     const activeNames = useTeamGroupDisplayNames({ scope: context.scope, groups: active.rows });
     const archivedNames = useTeamGroupDisplayNames({ scope: context.scope, groups: archived.rows });
     const archivedCount = context.team.counts?.archivedGroups ?? 0;
+    // The Team summary already counts the active Groups: the first page holds at most its page of them.
+    const groupCount = context.team.counts?.groups ?? null;
+    const reservedGroups = Math.min(groupCount ?? 0, TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1);
+    const knownNoGroups = groupCount === 0;
     const offerArchived = archivedCount > 0;
     const activeRows = React.useMemo(
         () => presentTeamGroups(active.rows, activeNames, query),
@@ -162,23 +166,25 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
             return result;
         }
 
-        // One sheet, with no title repeating the page's (lab `tsGroups-A`). Its rows hold their
-        // place while the first page is read.
-        if (active.status === 'loading' && active.rows.length === 0) {
+        // While the first page is read, the Groups the Team summary counts hold their place, flat as the list lies
+        // (lab `tsGroups-A`). An unknown count reserves nothing rather than a guess.
+        const firstRead = active.status === 'loading' && active.rows.length === 0;
+        if (firstRead && reservedGroups > 0) {
             add('loading', () => (
-                <ItemGroup>
+                <ItemGroup surface="none">
                     <ItemLoadStateRows
                         testID="team-groups-loading"
                         state={{ kind: 'loading' }}
-                        rows={3}
+                        rows={reservedGroups}
                         accessibilityLabel={t('teams.loading')}
                     />
                 </ItemGroup>
             ));
         }
 
-        // No Groups yet (lab `tsGroups-E`): what a Group is for, and the one action that starts.
-        if (active.rows.length === 0 && active.status === 'ready') {
+        // No Groups yet (lab `tsGroups-E`): what a Group is for, and the one action that starts. A Team whose
+        // summary already counts none says so at once.
+        if (active.rows.length === 0 && (active.status === 'ready' || (firstRead && knownNoGroups))) {
             add('empty', () => (
                 <SurfaceStateCard
                     testID="team-groups-empty"
@@ -302,7 +308,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         }
 
         return result;
-    }, [active, activeRows, archived, archivedCount, archivedRows, canCreate, canRead, context, moreRowsMayMatch, offerArchived, queryHasNoVisibleRows, router, showArchived]);
+    }, [active, activeRows, archived, archivedCount, archivedRows, canCreate, canRead, context, knownNoGroups, moreRowsMayMatch, offerArchived, queryHasNoVisibleRows, reservedGroups, router, showArchived]);
 
     const renderRow = React.useCallback(
         ({ item }: Readonly<{ item: GroupVirtualizedRow }>) => item.render(),

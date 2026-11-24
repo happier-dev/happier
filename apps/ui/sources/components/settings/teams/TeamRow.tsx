@@ -10,8 +10,8 @@ import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { HAPPIER_COLLECTION_LIST_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
-/** Fits the rail's mark box, so Team names align with the rest of the rail. */
-const TEAM_RAIL_AVATAR_SIZE = 28;
+/** The column's identity-mark box, so Team names align with the rest of the rail. */
+const TEAM_RAIL_AVATAR_SIZE = HAPPIER_COLLECTION_LIST_METRICS.markSize;
 
 /**
  * One Team in the directory.

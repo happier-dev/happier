@@ -1,7 +1,7 @@
 import * as React from 'react';
-import type { TeamMembershipV1 } from '@happier-dev/protocol/teams';
+import { TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1, type TeamMembershipV1 } from '@happier-dev/protocol/teams';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -27,7 +27,8 @@ import { TeamMemberAddAction } from './TeamMemberAddAction';
 import { teamMemberRowSubtitle } from './teamMemberPresentation';
 
 /** Fits the rail's mark box, so names align with the rest of the rail. */
-const MEMBER_RAIL_AVATAR_SIZE = 28;
+/** The column's identity-mark box, so names align with the rest of the rail. */
+const MEMBER_RAIL_AVATAR_SIZE = HAPPIER_COLLECTION_LIST_METRICS.markSize;
 
 type RailRow = Readonly<{ key: string; render: () => React.ReactElement }>;
 const railRowKey = (row: RailRow) => row.key;
@@ -112,12 +113,17 @@ export const TeamMembersCollectionRail = React.memo(
     const rows: RailRow[] = [];
     const add = (key: string, render: () => React.ReactElement) =>
       rows.push({ key, render });
-    if (roster.status === 'loading' && roster.rows.length === 0) {
+    // While the first page is read, the people the Team summary counts hold their place in the rail's own rows (the
+    // avatar, the name and role); an unknown count, or a search, reserves nothing rather than a guess.
+    const reservedPeople = searching ? 0 : Math.min(team?.counts?.members ?? 0, TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1);
+    if (roster.status === 'loading' && roster.rows.length === 0 && reservedPeople > 0) {
       add('loading', () => (
         <ItemLoadStateRows
           testID="team-members-rail-loading"
           state={{ kind: 'loading' }}
-          rows={4}
+          rows={reservedPeople}
+          rowRole="catalogRow"
+          hasLeadingMark
           accessibilityLabel={t('teams.loading')}
         />
       ));

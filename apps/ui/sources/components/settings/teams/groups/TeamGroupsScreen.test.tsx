@@ -98,6 +98,31 @@ describe('TeamGroupsScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-groups-toggle-archived');
     });
 
+    it.each([
+        { groups: 2, reserved: 2 },
+        { groups: 0, reserved: 0 },
+        { groups: null, reserved: 0 },
+    ])('reserves as many Group rows as the Team summary counts ($groups) while they are read', async ({ groups, reserved }) => {
+        const serverId = await addManagedHome(0);
+        harness.answer(serverId, TEAM_GET_PATH, {
+            body: teamSummaryFixture({
+                capabilities: teamCapabilitiesFixture({ manageGroups: true }),
+                counts: { members: 1, suspendedMembers: 0, groups, archivedGroups: 0, waitingInvitations: 0 },
+            }),
+        });
+        harness.answer(serverId, GROUPS_LIST_PATH, {
+            body: { items: [], nextCursor: null },
+            respondAfter: new Promise<void>(() => {}),
+        });
+        const screen = await renderGroups(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(GROUPS_LIST_PATH).length).toBeGreaterThan(0));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids.filter((id) => /^team-groups-loading-skeleton:\d+$/.test(id))).toHaveLength(reserved);
+        // A Team that has no Groups says so at once, instead of reserving rows that never arrive.
+        if (groups === 0) expect(ids).toContain('team-groups-empty');
+        else expect(ids).not.toContain('team-groups-empty');
+    });
+
     it('shows the summary count before loading any archived Group rows', async () => {
         const serverId = await addManagedHome(3);
         harness.answer(serverId, GROUPS_LIST_PATH, {

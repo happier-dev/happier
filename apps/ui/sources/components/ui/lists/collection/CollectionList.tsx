@@ -908,17 +908,36 @@ const COLLECTION_LIST_SKELETON_GEOMETRY = Object.freeze({
     gap: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
 });
 
+/** The same geometry for rows that carry an identity mark: the mark's box is the leading column. */
+const COLLECTION_LIST_MARKED_SKELETON_GEOMETRY = Object.freeze({
+    ...COLLECTION_LIST_SKELETON_GEOMETRY,
+    glyphColumn: Math.max(HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, HAPPIER_COLLECTION_LIST_METRICS.markSize),
+});
+
 /**
  * A list's first load: the shared loading rows in the column's one-line navigation rows (the compact
  * row height, the glyph column), so the real rows replace them without a jump. Shown only while nothing
  * is known yet; known rows stay while they refresh.
  */
-export function CollectionSkeletonRows(props: Readonly<{ count: number; rowRole?: HappierCollectionRowRole }>) {
+export function CollectionSkeletonRows(props: Readonly<{
+    count: number;
+    rowRole?: HappierCollectionRowRole;
+    /**
+     * The arriving rows carry an identity mark (a Team's logo, a person's avatar): in a column it widens the leading
+     * column to the mark's box (`markSize`, as `HappierCollectionListMark` draws it), so the bars start on the names.
+     */
+    hasLeadingMark?: boolean;
+    testID?: string;
+    accessibilityLabel?: string;
+}>) {
     const described = props.rowRole === 'catalogRow';
     // In a column a described row keeps the column's glyph column; only a page's catalog row has the catalog box.
     const pageCatalog = described && !useHappierCollectionListRow();
+    const testID = props.testID;
     return (
         <SkeletonRows
+            {...(testID === undefined ? {} : { testID, rowTestID: (index: number) => `${testID}-skeleton:${index}` })}
+            {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
             rows={props.count}
             rowHeight={pageCatalog ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight
                 : described ? HAPPIER_COLLECTION_LIST_METRICS.describedRowMinHeight : HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight}
@@ -926,7 +945,7 @@ export function CollectionSkeletonRows(props: Readonly<{ count: number; rowRole?
             geometry={pageCatalog ? { ...COLLECTION_LIST_SKELETON_GEOMETRY,
                 glyphColumn: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox,
                 gap: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap,
-            } : COLLECTION_LIST_SKELETON_GEOMETRY}
+            } : props.hasLeadingMark ? COLLECTION_LIST_MARKED_SKELETON_GEOMETRY : COLLECTION_LIST_SKELETON_GEOMETRY}
         />
     );
 }

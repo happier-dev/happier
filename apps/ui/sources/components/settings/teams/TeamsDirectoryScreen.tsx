@@ -13,7 +13,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { CollectionRows } from '@/components/ui/lists/collection/CollectionList';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { teamAddressKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -318,13 +317,15 @@ function useTeamsDirectoryRows(input: Readonly<{
         // Homes still being read are covered by the loading row; only an answer that failed is named.
         const answeredUnavailableHomes = active.unavailableHomes.filter((home) => home.reason !== 'loading');
         if (waiting) {
+            // How many Teams there are is the directory's answer: one quiet line waits, and no rows are guessed.
             add('loading', () => (
-                <ItemGroup>
-                    <ItemLoadStateRows
+                <ItemGroup surface="none">
+                    <SurfaceStateCard
                         testID="teams-directory-loading"
-                        state={{ kind: 'loading' }}
-                        rows={3}
-                        accessibilityLabel={t('teams.directory.loading')}
+                        size="line"
+                        kind="loading"
+                        title={t('teams.directory.loading')}
+                        accessibilitySemantics="status"
                     />
                 </ItemGroup>
             ));

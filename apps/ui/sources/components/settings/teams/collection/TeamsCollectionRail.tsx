@@ -5,7 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { View } from 'react-native';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { teamAddressKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { t } from '@/text';
@@ -119,8 +119,11 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
     };
     if (drafting) add('draft', () => <TeamDraftRow />);
     if (active.kind === 'loading' && total === 0) {
-        add('loading', () => <ItemLoadStateRows testID="teams-directory-loading" state={{ kind: 'loading' }} rows={3}
-            accessibilityLabel={t('teams.directory.loading')} />);
+        // How many Teams there are is the directory's answer: one quiet line waits, and no rows are guessed.
+        add('loading', () => <View style={collectionListStyles.stateLine}>
+            <SurfaceStateCard testID="teams-directory-loading" size="line" kind="loading" title={t('teams.directory.loading')}
+                accessibilitySemantics="status" />
+        </View>);
     }
     // An empty collection is said once, by its page beside the rail (DR-19); the rail adds no line.
     if (noMatches) {

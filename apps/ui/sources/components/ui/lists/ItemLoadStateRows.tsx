@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
+import { CollectionSkeletonRows } from '@/components/ui/lists/collection/CollectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { happierPageRowDividerWidth, resolveHappierItemBehavior } from '@happier-dev/plugin-ui/presentation';
@@ -128,6 +129,12 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     hasLeadingMark?: boolean;
     /** The rows' shape: `list` for a compact list's rows (`ItemGroup density="compact"`). */
     shape?: PageRowShape;
+    /**
+     * `catalogRow`: the arriving rows are catalog records (a Team, a person in a rail): the reserve takes the catalog
+     * row's own pitch, leading column and rule (`CollectionSkeletonRows`), in a column or on a page, instead of a
+     * settings row's.
+     */
+    rowRole?: 'catalogRow';
     /** Names what is loading for assistive technology ("Loading machine pools"). */
     accessibilityLabel?: string;
     /**
@@ -178,6 +185,18 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
 
     if (props.state.kind === 'failed') {
         return <FailedRow testID={testID} state={props.state} />;
+    }
+
+    if (props.rowRole === 'catalogRow') {
+        return (
+            <CollectionSkeletonRows
+                count={Math.max(1, Math.floor(props.rows ?? 2))}
+                rowRole="catalogRow"
+                hasLeadingMark={hasLeadingMark}
+                {...(testID === undefined ? {} : { testID })}
+                {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
+            />
+        );
     }
 
     const skeleton = (

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Redirect, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentation';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
-import type { TeamMembersListFilterV1 } from '@happier-dev/protocol/teams';
+import { TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1, type TeamMembersListFilterV1 } from '@happier-dev/protocol/teams';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -109,6 +109,12 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
     }, [router, addressServerId, teamId]);
     const canRead = context.team.capabilities.viewRoster;
     const searchTerm = query.trim();
+    // While the first page is read, the people the Team summary counts hold their place (every membership, as the
+    // whole roster lists them), at most the roster's first page. A narrowed or searched roster, or a Team whose
+    // summary withholds its counts, reserves nothing rather than a guess.
+    const reservedPeople = filter === 'all' && searchTerm === ''
+        ? Math.min(context.team.counts?.members ?? 0, TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1)
+        : 0;
 
     // The recovery candidates are exactly the rows the Home says may be given a
     // role — never a role comparison made here. "No candidate" is claimed only
@@ -172,13 +178,15 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
 
         // The roster's known rows hold their place while the first page is read; an answered
         // roster with nobody to show says so on one line, where the rows would be.
-        if (roster.status === 'loading' && roster.rows.length === 0) {
+        if (roster.status === 'loading' && roster.rows.length === 0 && reservedPeople > 0) {
             add('loading', () => (
                 <ItemGroup surface="none" virtualizedSegment={{ first: false, last: true }}>
                     <ItemLoadStateRows
                         testID="team-members-loading"
                         state={{ kind: 'loading' }}
-                        rows={4}
+                        rows={reservedPeople}
+                        // Every person's row carries their avatar, so the bars start where the names will.
+                        hasLeadingMark
                         accessibilityLabel={t('teams.loading')}
                     />
                 </ItemGroup>
@@ -255,6 +263,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
         noOwnerCandidate,
         query,
         setQuery,
+        reservedPeople,
         roster,
         openMember,
         language,
