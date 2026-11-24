@@ -74,6 +74,7 @@ describe('handleAuthEnrollRemote cancellation ownership', () => {
             machineId: 'machine',
             encryptionType: 'tokenOnly',
             pairingAuthentication: 'v3',
+            remoteProfileId: 'home',
           };
         },
         useHomeProfile,

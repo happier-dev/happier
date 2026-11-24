@@ -7,7 +7,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { createHappierJsonExecutorFromTextRunner } from '../executors/happierJsonExecutorFromTextRunner.js';
 import { createSystemTasksRunner } from '../interactiveTaskKinds.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
-import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
+import { resolveHomeTarget, resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import {
   materializeSshIdentityPrivateKeyToTempFile,
 } from '../ssh/materializeSshIdentityPrivateKeyToTempFile.js';
@@ -737,14 +737,16 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     expect(steps).not.toContain('server.configure');
   });
 
-  it('enrolls an Iroh-only Home through the single-process streaming owner without public URL configuration', async () => {
+  it.each(['iroh', 'https'] as const)('enrolls an explicit %s Home before using any retained remote authentication', async (carrier) => {
     const startedAt = Date.now();
     let controllerDeadline: number | undefined;
     const endpointId = 'c'.repeat(64);
-    const target = resolveHomeTargetFromDescriptor({
+    const homeServerIdentityId = 'srv_enrollment_home';
+    const target = carrier === 'https' ? await resolveHomeTarget({ input: { kind: 'https_url', url: 'https://home.example.test' },
+      readSavedProfile: async () => null }) : resolveHomeTargetFromDescriptor({
       descriptor: {
         v: 1,
-        homeServerIdentityId: 'srv_iroh_only_home',
+        homeServerIdentityId,
         canonicalServerUrl: 'http://localhost:3010',
         revision: 1,
         endpoints: [{ kind: 'iroh', endpointId }],
@@ -764,7 +766,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
             kind: 'remote_home_enrollment_pairing_request',
             protocolVersion: 1,
             publicKey: Buffer.alloc(32, 1).toString('base64'),
-            homeServerIdentityId: target.homeServerIdentityId,
+            homeServerIdentityId,
             pairing: { secretB64Url: Buffer.alloc(32, 2).toString('base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 15 * 60_000 },
             supportsTokenOnly: true,
             pairingRequirement: 'v3',
@@ -773,7 +775,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
             kind: 'remote_home_enrollment_result',
             protocolVersion: 1,
             success: true,
-            homeServerIdentityId: target.homeServerIdentityId,
+            homeServerIdentityId,
             machineId: 'machine-iroh',
             encryptionType: 'tokenOnly',
             pairingAuthentication: 'v3',
@@ -785,6 +787,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
       }),
       runRemoteCommand: async ({ label }) => {
         labels.push(label);
+        if (label === 'server.configure') return { ok: true, data: { profile: { id: 'custom-2' } } };
         if (label === 'auth.status') {
           return { ok: true, data: {
             authenticated: true,
@@ -798,7 +801,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     });
     const runner = createSystemTasksRunner({ kinds: { 'remote.ssh.bootstrapMachine.v1': kind } });
     await runner.start({
-      taskId: 'iroh-only-enrollment',
+      taskId: 'explicit-home-enrollment',
       kind: 'remote.ssh.bootstrapMachine.v1',
       params: {
         ssh: { target: 'dev@example.test', auth: 'agent' },
@@ -810,7 +813,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
         },
       },
     });
-    const completed = await waitForResult(runner, { taskId: 'iroh-only-enrollment', cursor: 0 });
+    const completed = await waitForResult(runner, { taskId: 'explicit-home-enrollment', cursor: 0 });
     expect(completed.result).toMatchObject({ ok: true, data: { machineId: 'machine-iroh' } });
     expect(controllerDeadline).toBeGreaterThanOrEqual(startedAt + 15 * 60_000);
     expect(controllerDeadline).toBeLessThanOrEqual(Date.now() + 15 * 60_000);
@@ -976,7 +979,7 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('does not let an already-authenticated daemon on Home A satisfy an explicit URL target for Home B', async () => {
+  it('does not let a daemon on Home A satisfy approved enrollment for a URL target on Home B', async () => {
     const homeB = {
       profileId: null,
       homeServerIdentityId: null,
@@ -991,14 +994,9 @@ describe('createRemoteSshBootstrapMachineTaskKind', () => {
     const kind = createRemoteSshBootstrapMachineTaskKind({
       resolveHostTrust: async () => ({ status: 'trusted' }),
       installRemoteCli: async () => undefined,
-      approveLocalAuthRequest: async () => {
-        throw new Error('already-authenticated target must not request another approval');
-      },
-      remoteEnrollment: { daemonActiveServerId: 'home-a' },
+      approveLocalAuthRequest: async () => undefined,
+      remoteEnrollment: { daemonActiveServerId: 'home-a', resultData: { machineId: 'machine-home-b', remoteProfileId: 'home-b' } },
       runRemoteCommand: async ({ label }) => {
-        if (label === 'server.configure') {
-          return { ok: true, data: { active: { id: 'home-b' } } };
-        }
         if (label === 'daemon.service.list') return { ok: true, data: { services: [] } };
         if (label === 'daemon.service.install' || label === 'daemon.service.start') return { ok: true, data: {} };
         if (label === 'auth.status') return { ok: true, data: {

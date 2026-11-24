@@ -48,7 +48,8 @@ describe('managed remote terminal enrollment', () => {
     { mode: 'plain', refused: false, postClaimDescriptor: false, enrollment: correlation },
     { mode: 'plain', refused: false, postClaimDescriptor: true, enrollment: deploymentAppCorrelation },
     { mode: 'e2ee', refused: false, postClaimDescriptor: true, enrollment: deploymentAppCorrelation },
-  ] as const)('persists only the requester $mode credential after managed registration (refused=$refused, post-claim descriptor=$postClaimDescriptor)', async ({ mode, refused, postClaimDescriptor, enrollment }) => {
+    { mode: 'plain', refused: false, postClaimDescriptor: true, enrollment: undefined },
+  ] as const)('persists the approved $mode credential in the selected Home (refused=$refused, descriptor=$postClaimDescriptor, managed=$enrollment)', async ({ mode, refused, postClaimDescriptor, enrollment }) => {
     await withTempDir('happier-requester-enrollment-', async homeDir => {
       env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: descriptor.canonicalServerUrl, HAPPIER_API_TOKEN: undefined });
       vi.resetModules();
@@ -56,9 +57,16 @@ describe('managed remote terminal enrollment', () => {
       const { configuration } = await import('@/configuration');
       const persistence = await import('@/persistence');
       const { readAccountIdFromToken } = await import('@/cloud/decodeJwtPayload');
-      const fixtureToken = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub })).toString('base64url')}.signature`;
+      const fixtureToken = (sub: string) => `header.${Buffer.from(JSON.stringify({ sub, session: 'terminal-enrollment' })).toString('base64url')}.signature`;
       const requesterToken = fixtureToken('requester-account');
       const custodianToken = fixtureToken('custodian-account');
+      const profileOwner = await import('@/server/serverProfiles');
+      const retainedDescriptor = { ...descriptor, canonicalServerUrl: 'https://old-home.example.test',
+        endpoints: [{ kind: 'https' as const, url: 'https://old-home.example.test' }] };
+      const retained = enrollment ? undefined : (await profileOwner.adoptServerProfileHomeConnectionDescriptor({
+        descriptor: retainedDescriptor, suggestedName: 'custom', observation: 'exact',
+      })).profile;
+      const observedDescriptor = retained ? { ...descriptor, revision: 2 } : descriptor;
       const approvedToken = refused ? custodianToken : requesterToken;
       const requesterKey = new Uint8Array(randomBytes(32));
       const custodianKey = new Uint8Array(randomBytes(32));
@@ -86,7 +94,7 @@ describe('managed remote terminal enrollment', () => {
           token: approvedToken, response });
         if (!path.endsWith('/v1/machines')) return httpResult({ state: 'requested', expiresAt });
         registrationAttempts++;
-        expect(await credentialFiles()).toEqual([]);
+        if (enrollment) expect(await credentialFiles()).toEqual([]);
         expect(options?.headers?.Authorization).toBe(`Bearer ${approvedToken}`);
         if (!body || typeof body !== 'object') throw new Error('Expected registration body');
         const input = body as Record<string, unknown>;
@@ -94,7 +102,7 @@ describe('managed remote terminal enrollment', () => {
         expect(input).not.toHaveProperty('deploymentAppBinding');
         expect(input).not.toHaveProperty('serviceName');
         expect(input).not.toHaveProperty('port');
-        expect(JSON.stringify(input.managedEnrollment)).not.toContain(deploymentAppBinding.serviceName);
+        if (enrollment) expect(JSON.stringify(input.managedEnrollment)).not.toContain(deploymentAppBinding.serviceName);
         if (mode === 'plain') expect(input.contentPublicKey).toBeUndefined();
         else expect(input.contentPublicKey).toBe(Buffer.from(tweetnacl.box.keyPair.fromSecretKey(issuedKey).publicKey).toString('base64'));
         if (refused) throw new transport.AxiosError('Wrong enrollment Account', 'ERR_BAD_REQUEST', undefined, undefined, {
@@ -102,7 +110,7 @@ describe('managed remote terminal enrollment', () => {
           config: { headers: new AxiosHeaders() },
         });
         if (typeof input.metadata !== 'string') throw new Error('Expected published Machine metadata');
-        if (mode === 'plain') expect(decodePlainMachineStoredContent(input.metadata)).toMatchObject({ displayName: 'Managed design box' });
+        if (mode === 'plain' && enrollment) expect(decodePlainMachineStoredContent(input.metadata)).toMatchObject({ displayName: 'Managed design box' });
         else {
           expect(input.metadata).not.toContain('Managed design box');
           expect(JSON.stringify(input)).not.toContain(deploymentAppBinding.serviceName);
@@ -112,12 +120,12 @@ describe('managed remote terminal enrollment', () => {
       });
       vi.stubGlobal('fetch', vi.fn<typeof fetch>(async url => new Response(JSON.stringify({ features: {},
         capabilities: { serverIdentity: { serverIdentityId: descriptor.homeServerIdentityId } },
-        ...(postClaimDescriptor && String(url).endsWith('/v1/features/authenticated') ? { homeConnectionDescriptor: descriptor } : {}),
+        ...(postClaimDescriptor && String(url).endsWith('/v1/features/authenticated') ? { homeConnectionDescriptor: observedDescriptor } : {}),
       }), { status: 200 })));
       const { runRemoteTerminalEnrollment } = await import('./remoteTerminalEnrollment');
       const enrollmentInput = { target, managedEnrollment: enrollment, timeoutMs: 5_000,
         machineDisplayName: 'Managed design box',
-        ...('source' in enrollment ? { deploymentAppBinding } : {}),
+        ...(enrollment && 'source' in enrollment ? { deploymentAppBinding } : {}),
         onPairingRequest(request: Parameters<Parameters<typeof runRemoteTerminalEnrollment>[0]['onPairingRequest']>[0]) {
           const context = { terminalEphemeralPublicKey: Buffer.from(request.publicKey, 'base64'),
             pairingSecret: Buffer.from(request.pairing.secretB64Url, 'base64url'), createdAtMs: request.pairing.createdAtMs,
@@ -126,6 +134,27 @@ describe('managed remote terminal enrollment', () => {
             : sealTerminalProvisioningV3Payload({ ...context, contentPrivateKey: issuedKey })).toString('base64');
         },
       };
+      if (retained) {
+        const { handleAuthEnrollRemote } = await import('@/cli/commands/auth/enrollRemote');
+        const output: unknown[] = [];
+        await handleAuthEnrollRemote(['--json-lines', '--home-target-stdin'], undefined, {
+          readHomeTargetInput: async () => ({ kind: 'https_url', url: descriptor.canonicalServerUrl }),
+          writeOutput: async value => {
+            output.push(value);
+            if (output.length === 1) {
+              expect(value).toMatchObject({ kind: 'remote_home_enrollment_pairing_request' });
+              enrollmentInput.onPairingRequest(value as Parameters<typeof enrollmentInput.onPairingRequest>[0]);
+            }
+          },
+        });
+        await expect(profileOwner.adoptServerProfileHomeConnectionDescriptor({ descriptor: observedDescriptor,
+          observation: 'exact', expectedProfileId: (await profileOwner.getActiveServerProfile()).id }))
+          .resolves.toMatchObject({ outcome: 'unchanged' });
+        expect(output.at(-1)).toMatchObject({ success: true, remoteProfileId: retained.id });
+        expect(await persistence.readStoredCredentialsForServerId(retained.id)).toMatchObject({ token: requesterToken });
+        expect((await profileOwner.listServerProfiles()).map(profile => profile.id)).toEqual([retained.id]);
+        return;
+      }
       const completion = runRemoteTerminalEnrollment(enrollmentInput);
       if (!postClaimDescriptor) {
         await expect(completion).rejects.toMatchObject({ code: 'HOME_AUTHORITY_MISMATCH', authorityReason: 'descriptor' });
@@ -144,7 +173,7 @@ describe('managed remote terminal enrollment', () => {
         expect(credentials?.token).toBe(requesterToken);
         expect(readAccountIdFromToken(credentials!.token)).toBe('requester-account');
         expect(await credentialFiles()).toHaveLength(1);
-        if ('source' in enrollment) {
+        if (enrollment && 'source' in enrollment) {
           const { ApiClient } = await import('@/api/api');
           const api = await ApiClient.create(credentials!);
           expect((await api.getMachine(String(registeredRow!.id)))?.metadata?.deploymentApp).toEqual(deploymentAppBinding);

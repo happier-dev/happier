@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { MachineEnrollmentCorrelationV1Schema, type MachineEnrollmentCorrelationV1, type ManagedEnrollmentMachineMetadataV1 } from '@happier-dev/protocol/machines/enrollmentV1';
+import { assertOrganizationPolicyEndpointAllowed } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -15,6 +16,7 @@ import {
   claimTerminalAuthRequest,
   createTerminalAuthRequest,
   readTerminalAuthRequestStatus,
+  resolveAuthenticatedExactHomeConnectionDescriptorObservation,
   verifyTerminalAuthEnrollmentRuntime,
 } from '@/auth/terminalAuthEnrollmentClient';
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
@@ -26,8 +28,12 @@ import {
 import {
   fetchServerFeaturesSnapshot,
   observeServerFeaturesSnapshot,
+  type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import { retryHomeOperation, REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS } from '@/api/client/retryHomeOperation';
+import { configuration } from '@/configuration';
+import { adoptServerProfileHomeConnectionDescriptor, readExactServerProfileForHomeIdentity, setServerProfileEndpointsById, upsertServerProfileByUrl } from '@/server/serverProfiles';
+import { runWithServerProfileSelection } from '@/server/serverSelection';
 
 const MAX_PROVISIONING_RESPONSE_B64_CHARS = 4096;
 
@@ -55,6 +61,7 @@ export type RemoteTerminalEnrollmentResult = Readonly<{
   machineId: string;
   encryptionType: 'dataKey' | 'tokenOnly';
   pairingAuthentication: 'v3';
+  remoteProfileId: string;
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,6 +99,27 @@ async function delayWithSignal(ms: number, signal: AbortSignal | undefined): Pro
   });
 }
 
+async function selectRemoteUrlEnrollmentProfile(target: ResolvedHomeTarget, homeServerIdentityId: string, snapshot: CliServerFeaturesSnapshot): Promise<string> {
+  const observation = resolveAuthenticatedExactHomeConnectionDescriptorObservation({ snapshot, expectedHomeServerIdentityId: homeServerIdentityId });
+  if (observation.kind === 'available') {
+    const { profile, outcome } = await adoptServerProfileHomeConnectionDescriptor({
+      descriptor: observation.descriptor, suggestedName: 'custom', webappUrl: target.webappUrl, observation: 'exact',
+    });
+    if (outcome !== 'stale') {
+      await setServerProfileEndpointsById({ id: profile.id, serverUrl: profile.serverUrl,
+        localServerUrl: target.applicationUrl, webappUrl: profile.webappUrl });
+    }
+    return profile.id;
+  }
+  // Without a published descriptor, authenticated identity can select an existing scope but cannot replace its routes.
+  if (snapshot.status === 'ready' && snapshot.provenance === 'authenticated') {
+    const retained = await readExactServerProfileForHomeIdentity(homeServerIdentityId);
+    if (retained) return retained.id;
+  }
+  return (await upsertServerProfileByUrl({ name: 'custom', serverUrl: target.canonicalAuthUrl,
+    localServerUrl: target.applicationUrl, webappUrl: target.webappUrl })).id;
+}
+
 /**
  * SSH automation's canonical terminal enrollment owner. Ephemeral key, claim,
  * and v3 pairing secrets never leave this process. Only the short-lived v3
@@ -116,6 +144,9 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
     : MachineEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
   if (managedEnrollment && params.target.homeServerIdentityId !== managedEnrollment.homeId) {
     throw enrollmentError('AUTH_ENROLL_REMOTE_IDENTITY_MISMATCH', 'Managed enrollment does not match the selected Home.');
+  }
+  if (!params.target.descriptor) {
+    assertOrganizationPolicyEndpointAllowed(configuration.organizationPolicy, 'home', params.target.canonicalAuthUrl);
   }
 
   const acquired = await acquireTerminalAuthEnrollmentRuntime(
@@ -216,7 +247,7 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
       if (!token || !responseB64 || responseB64.length > MAX_PROVISIONING_RESPONSE_B64_CHARS) {
         throw enrollmentError('AUTH_ENROLL_REMOTE_INVALID_RESPONSE', 'Remote Home enrollment returned an invalid provisioning response.');
       }
-      await retryHomeOperation(homeRetry, async () => {
+      const authenticatedSnapshot = await retryHomeOperation(homeRetry, async () => {
         throwIfStopped(params.signal, deadlineMs);
         const authenticatedSnapshot = await observeServerFeaturesSnapshot({
           serverUrl: acquired.runtime.runtimeOrigin,
@@ -224,12 +255,16 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
           timeoutMs: remainingMs(deadlineMs),
           signal: params.signal,
         });
-        verifyTerminalAuthEnrollmentRuntime({
+        const observed = verifyTerminalAuthEnrollmentRuntime({
           target: params.target,
           runtime: acquired.runtime,
           snapshot: authenticatedSnapshot,
           phase: 'post_claim',
         });
+        if (observed.homeServerIdentityId !== claimedIdentity) {
+          throw enrollmentError('AUTH_ENROLL_REMOTE_IDENTITY_MISMATCH', 'Authenticated Home identity changed during remote enrollment.');
+        }
+        return authenticatedSnapshot;
       });
       const opened = openTerminalProvisioningResponse({
         payload: decodeBase64(responseB64),
@@ -243,24 +278,29 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
         throw enrollmentError('AUTH_ENROLL_REMOTE_PAIRING_REQUIRED', 'Authenticated terminal pairing v3 is required.');
       }
       throwIfStopped(params.signal, deadlineMs);
-      let completion: Readonly<{ machineId: string; encryptionType: 'dataKey' | 'tokenOnly' }>;
-      if (managedEnrollment) {
-        completion = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
-          runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment,
-          machineDisplayName: params.machineDisplayName, initialMachineMetadata: params.initialMachineMetadata, deploymentAppBinding: params.deploymentAppBinding,
-          homeRetry,
-          assertCurrent: () => throwIfStopped(params.signal, deadlineMs) });
-      } else {
+      const complete = async () => {
+        throwIfStopped(params.signal, deadlineMs);
+        if (managedEnrollment) {
+          return await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
+            runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment,
+            machineDisplayName: params.machineDisplayName, initialMachineMetadata: params.initialMachineMetadata, deploymentAppBinding: params.deploymentAppBinding,
+            homeRetry,
+            assertCurrent: () => throwIfStopped(params.signal, deadlineMs) });
+        }
         const persisted = await persistTerminalEnrollmentCredential({ token, opened });
         const machineId = await registerTerminalEnrollmentMachine(persisted.credentials, acquired.runtime.runtimeOrigin, undefined, homeRetry);
         throwIfStopped(params.signal, deadlineMs);
-        completion = { machineId, encryptionType: persisted.encryptionType };
-      }
+        return { machineId, encryptionType: persisted.encryptionType };
+      };
+      const remoteProfileId = params.target.descriptor ? configuration.activeServerId
+        : await selectRemoteUrlEnrollmentProfile(params.target, claimedIdentity, authenticatedSnapshot);
+      const completion = params.target.descriptor ? await complete() : await runWithServerProfileSelection(remoteProfileId, complete);
       return {
         success: true,
         homeServerIdentityId: verified.homeServerIdentityId,
         ...completion,
         pairingAuthentication: 'v3',
+        remoteProfileId,
       };
     }
   } finally {

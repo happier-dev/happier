@@ -1046,7 +1046,9 @@ async function runRemoteMachineBootstrapRecipe({
       const flowResult: EnrollMachineFlowResult = resumeMachineId ? { machineId: resumeMachineId, publicKey: null } : await runEnrollMachineFlow({
         relayProfile,
         executor: flowExecutor,
-        ...(initialAuthStatus ? { initialAuthStatus } : parsedRemote.homeTarget?.descriptor
+        // Explicit Home enrollment selects the guest profile from pairing authority.
+        // A URL-only `server set` would select a credential scope before that identity is known.
+        ...(initialAuthStatus ? { initialAuthStatus } : parsedRemote.homeTarget
           ? {
               initialAuthStatus: {
                 authenticated: false,
@@ -1057,7 +1059,7 @@ async function runRemoteMachineBootstrapRecipe({
             }
           : {}),
         steps: {
-          configureRelay: !parsedRemote.homeTarget?.descriptor,
+          configureRelay: !parsedRemote.homeTarget,
           installService: false,
           startService: false,
           verifyService: false,

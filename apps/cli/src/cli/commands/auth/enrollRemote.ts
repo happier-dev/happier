@@ -23,7 +23,7 @@ const DEFAULT_REMOTE_ENROLLMENT_TIMEOUT_MS = 10 * 60_000;
 
 type EnrollRemoteDeps = Readonly<{
   readHomeTargetInput: () => Promise<HomeTargetInput>;
-  prepareHomeTarget: typeof prepareRemoteEnrollmentHomeTarget;
+  prepareHomeTarget: (input: HomeTargetInput) => Promise<Readonly<{ target: Awaited<ReturnType<typeof resolveCliHomeTarget>> }>>;
   runEnrollment: typeof runRemoteTerminalEnrollment;
   useHomeProfile: typeof useServerProfile;
   writeOutput: typeof writeJsonStdout;
@@ -89,15 +89,19 @@ function parseTimeoutMs(args: readonly string[]): number {
   return value;
 }
 
-export async function prepareRemoteEnrollmentHomeTarget(input: HomeTargetInput): Promise<Readonly<{
-  profileId: string;
-  target: Awaited<ReturnType<typeof resolveCliHomeTarget>>;
-}>> {
+async function resolveTransferableRemoteEnrollmentInput(input: HomeTargetInput) {
   if (input.kind === 'saved_profile') {
     throw new Error('Remote enrollment input must contain a transferable Home descriptor or HTTPS URL.');
   }
   // Use the same transfer decision for stdin URL inputs and controller-produced profiles.
-  input = createTransferableHomeTargetInput(await resolveCliHomeTarget(input));
+  return createTransferableHomeTargetInput(await resolveCliHomeTarget(input));
+}
+
+export async function prepareRemoteEnrollmentHomeTarget(input: HomeTargetInput): Promise<Readonly<{
+  profileId: string;
+  target: Awaited<ReturnType<typeof resolveCliHomeTarget>>;
+}>> {
+  input = await resolveTransferableRemoteEnrollmentInput(input);
   const guestTarget = await resolveCliHomeTarget(input);
   const adopted = input.kind === 'descriptor'
     ? (await adoptServerProfileHomeConnectionDescriptor({
@@ -150,7 +154,9 @@ export async function handleAuthEnrollRemote(
   const timeoutMs = parseTimeoutMs(args);
   const deps: EnrollRemoteDeps = {
     readHomeTargetInput: readHomeTargetInputFromStdin,
-    prepareHomeTarget: prepareRemoteEnrollmentHomeTarget,
+    prepareHomeTarget: async input => input.kind === 'https_url'
+      ? { target: await resolveCliHomeTarget(await resolveTransferableRemoteEnrollmentInput(input)) }
+      : await prepareRemoteEnrollmentHomeTarget(input),
     runEnrollment: runRemoteTerminalEnrollment,
     useHomeProfile: useServerProfile,
     writeOutput: writeJsonStdout,
@@ -185,13 +191,12 @@ export async function handleAuthEnrollRemote(
       },
     });
     signal.throwIfAborted();
-    await deps.useHomeProfile(prepared.profileId);
+    await deps.useHomeProfile(result.remoteProfileId);
     signal.throwIfAborted();
     await deps.writeOutput({
       kind: 'remote_home_enrollment_result',
       protocolVersion: 1,
       ...result,
-      remoteProfileId: prepared.profileId,
     });
   } finally {
     process.removeListener('SIGINT', onSignal);

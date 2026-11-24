@@ -10707,8 +10707,13 @@ Doctor repair's auth context uses the process's selected Home unless an explicit
 saved selection. It probes only that Home's API endpoint and renders other stored
 credentials as unverified. Successful `auth status --json` includes `serverId`.
 Plain Accounts report `encryption.type: "none"` in the v1 success envelope.
-SSH enrollment carries `auth_status_unavailable` from the guest to the task result. Pairing
-continues on the separate signed-out result when the guest reports missing credentials.
+In 0.3 development, SSH enrollment with an explicit Home pairs before using
+guest credentials. For a URL-only Home, the authenticated pairing result selects
+the guest's saved profile by Home identity before credential persistence. A
+repeat enrollment signs in to that profile in place, even when the address
+changed. The daemon starts in the profile selected by enrollment. Older SSH
+tasks without an explicit Home carry `auth_status_unavailable` from the guest
+and pair on the separate signed-out result when credentials are missing.
 The identity-free env-derived-profile adoption path carries the credential's machine,
 account and reconnect-cursor maps into an empty named profile. It leaves existing
 destination state alone and remains disabled after a Home identity is observed;

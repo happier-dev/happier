@@ -259,6 +259,24 @@ function findProfilesByHomeServerIdentityId(
   });
 }
 
+function findUniqueProfileByHomeServerIdentityId(
+  servers: NonNullable<Settings['servers']>,
+  homeServerIdentityId: string,
+): (readonly [string, ServerProfile]) | undefined {
+  const matches = findProfilesByHomeServerIdentityId(servers, homeServerIdentityId);
+  if (matches.length > 1) {
+    throw new ServerProfileIdentityConflictError(homeServerIdentityId, matches.map(([id]) => id).sort());
+  }
+  return matches[0];
+}
+
+/** Selects the saved credential scope for a verified Home identity without inferring routes. */
+export async function readExactServerProfileForHomeIdentity(homeServerIdentityId: string): Promise<ServerProfile | null> {
+  const servers = (await readSettings()).servers ?? {};
+  const profile = findUniqueProfileByHomeServerIdentityId(servers, homeServerIdentityId)?.[1];
+  return profile?.homeConnectionDescriptorAuthority === 'exact' ? profile : null;
+}
+
 /** Exact Home target admission, without treating profile names or URLs as authority. */
 export async function isServerProfileHomeIdentity(profileId: string, homeServerIdentityId: string): Promise<boolean> {
   return (await selectServerProfileHomeIdentityMatches([profileId], homeServerIdentityId)).has(profileId);
@@ -608,15 +626,8 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
   await updateSettings((current: any) => {
     const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
     assertValidStoredHomeDescriptors(servers);
-    const identityMatches = findProfilesByHomeServerIdentityId(servers, incoming.homeServerIdentityId);
-    if (identityMatches.length > 1) {
-      throw new ServerProfileIdentityConflictError(
-        incoming.homeServerIdentityId,
-        identityMatches.map(([id]) => id).sort(),
-      );
-    }
-
-    const identityMatchId = identityMatches[0]?.[0] ?? null;
+    const identityMatch = findUniqueProfileByHomeServerIdentityId(servers, incoming.homeServerIdentityId);
+    const identityMatchId = identityMatch?.[0] ?? null;
     if (opts.replacesHomeServerIdentityId && identityMatchId && identityMatchId !== expectedProfileId) {
       throw new ServerProfileIdentityMismatchError(
         `Observed Home identity belongs to profile ${identityMatchId}, not ${expectedProfileId}`,
@@ -625,8 +636,8 @@ export async function adoptServerProfileHomeConnectionDescriptor(opts: Readonly<
     let descriptor = incoming;
     // Cross-profile observations may reuse saved routes, but only the owner's
     // own observation may change its endpoints.
-    if (expectedProfileId && identityMatchId && expectedProfileId !== identityMatchId) {
-      const owner = identityMatches[0]![1];
+    if (expectedProfileId && identityMatch && expectedProfileId !== identityMatchId) {
+      const owner = identityMatch[1];
       const saved = owner.homeConnectionDescriptor!;
       const knownUrls = [owner.serverUrl, owner.localServerUrl, saved.canonicalServerUrl,
         ...saved.endpoints.flatMap(endpoint => endpoint.kind === 'https' ? [endpoint.url] : [])];

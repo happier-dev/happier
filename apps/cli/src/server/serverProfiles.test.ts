@@ -422,7 +422,8 @@ describe('server profiles', () => {
       envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
       vi.resetModules();
       const { adoptServerProfileHomeConnectionDescriptor, listServerProfiles,
-        upsertServerProfileByUrl, setServerProfileEndpointsById, getServerProfile } = await import('./serverProfiles');
+        upsertServerProfileByUrl, setServerProfileEndpointsById, getServerProfile,
+        readExactServerProfileForHomeIdentity } = await import('./serverProfiles');
       const base = { v: 1 as const, canonicalServerUrl: 'https://shared.example.test', revision: 1, endpoints: [{ kind: 'https' as const, url: 'https://shared.example.test' }] };
       const first = await adoptServerProfileHomeConnectionDescriptor({
         descriptor: { ...base, homeServerIdentityId: 'srv_home_alpha' }, suggestedName: 'Alpha', observation: 'exact',
@@ -431,10 +432,15 @@ describe('server profiles', () => {
       mkdirSync(firstCredentialDir, { recursive: true });
       await import('node:fs/promises').then(({ writeFile }) => writeFile(join(firstCredentialDir, 'access.key'), 'alpha-secret'));
       const second = await adoptServerProfileHomeConnectionDescriptor({
-        descriptor: { ...base, homeServerIdentityId: 'srv_home_beta' }, suggestedName: 'Beta', observation: 'exact',
+        descriptor: { ...base, homeServerIdentityId: 'srv_home_beta' }, suggestedName: 'Alpha', observation: 'exact',
       });
 
       expect(second.profile.id).not.toBe(first.profile.id);
+      expect(await readExactServerProfileForHomeIdentity('srv_home_beta')).toMatchObject({ id: second.profile.id });
+      expect(await readExactServerProfileForHomeIdentity('Alpha')).toBeNull();
+      await expect(adoptServerProfileHomeConnectionDescriptor({
+        descriptor: second.profile.homeConnectionDescriptor!, expectedProfileId: first.profile.id, observation: 'exact',
+      })).rejects.toMatchObject({ code: 'identity_mismatch' });
       expect((await listServerProfiles()).filter((profile) => profile.serverUrl === 'https://shared.example.test')).toHaveLength(2);
       expect(existsSync(join(homeDir, 'servers', second.profile.id, 'access.key'))).toBe(false);
       expect(await readFile(join(firstCredentialDir, 'access.key'), 'utf8')).toBe('alpha-secret');
