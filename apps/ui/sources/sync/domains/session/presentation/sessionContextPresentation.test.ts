@@ -6,6 +6,7 @@ import {
 import {
     type SessionViewerProjectionV1,
 } from '@happier-dev/protocol/sessions/personal/viewer';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { afterEach, describe, expect, it } from 'vitest';
 import { teamGroupFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { t } from '@/text';
@@ -139,7 +140,7 @@ describe('sessionContextPresentation', () => {
         applyTeamGroupProjection({
             scope, address: { serverId: scope.serverId, teamId: 'team' }, observedAt: 1,
             group: teamGroupFixture({ id: 'group', teamId: 'team', name: { kind: 'available', label: {
-                content: { t: 'encrypted', c: 'opaque-private-group-ciphertext' }, recipientEnvelope: null,
+                content: { t: 'encrypted', c: encodeBase64(new Uint8Array(40), 'base64') }, recipientEnvelope: null,
             } } }),
         });
         const facts = buildSessionContextFacts({
