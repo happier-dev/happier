@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
+import { createDeploymentEnvironmentContentArtifactIdV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1,
     type ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentPrincipalsV1Schema, DeploymentPreviewDataTargetsV1Schema,
     type DeploymentEnvironmentCreateResultV1, type DeploymentEnvironmentCreateStorageInputV1 } from '@happier-dev/protocol';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { resolveDeploymentStoredDefinitionRevisionV1, isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1, applyOwnServerEnvironmentConfigurationPatchV1, isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1 } from '@happier-dev/deployments/contracts/v1';
 import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
-    isOwnServerDataRoleBindingRemovalV1, readRemovedDataRoleSecretResourcesV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+    isManagedDeploymentDataRoleBindingV1, isOwnServerDataRoleBindingRemovalV1, readRemovedDataRoleSecretResourcesV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
@@ -681,11 +682,15 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         where: { id: loaded.row.runtimeTargetLinkId, environmentId: loaded.row.id, deletedAt: null },
         include: { machines: { orderBy: { position: 'asc' } } },
     }) : null;
-    const platformVariables = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
+    const platformRuntime = link?.sourceKind === 'plugin' && !placement && !databaseReadBinding;
     const linkCandidate = input.targetLinkContent;
-    if (platformVariables && !linkCandidate || linkCandidate && (!platformVariables || !link
+    const platformVariables = platformRuntime && linkCandidate !== undefined;
+    const managedPlatformBindings = platformRuntime && linkCandidate === undefined;
+    if (linkCandidate && (!platformRuntime
         || linkCandidate.targetLinkId !== link.id || linkCandidate.expectedTargetLinkRevision !== link.revision
         || link.detachedAt !== null)) return deploymentFailure('deployment_conflict');
+    if (managedPlatformBindings && (telemetryChanged || telemetryCapabilitiesChanged || link.detachedAt !== null))
+        return deploymentFailure('deployment_conflict');
     if (linkCandidate && link) {
         const candidate = await readPlainDeploymentTargetLinkContentInTx(tx, actorAccountId, loaded.admission.owner, linkCandidate);
         if (!candidate.ok) return candidate;
@@ -718,7 +723,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     if (!previous.ok) return previous;
     if (preparedContent.content && (!previous.content || (!placement
         && !isDeploymentEnvironmentBindingsOnlyUpdateV1(previous.content, preparedContent.content,
-            input.telemetryCapabilities === undefined ? 'bindings' : 'telemetry')))) {
+            managedPlatformBindings || input.telemetryCapabilities === undefined ? 'bindings' : 'telemetry')))) {
         return deploymentFailure('deployment_conflict');
     }
     if (databaseReadBinding && preparedContent.content && previous.content) {
@@ -751,16 +756,34 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         // can only retain stored envelopes byte for byte or delete them with the removed resources.
         input = { ...input, grants: existingGrants.filter(grant => grant.kind !== 'secret' || !removed.has(grant.resourceId)) };
     }
-    if (platformVariables && previous.content === null && previousBindingCaptures.some(capture => !capture.requiredBindings))
-        return deploymentFailure('deployment_conflict');
-    const nonVariableCaptures = (captures: typeof input.referencedSavedSecretRevisions) =>
+    const capturesOutsideWriter = (captures: typeof input.referencedSavedSecretRevisions) =>
         normalizeDeploymentBindingSavedSecretRevisionsV1(captures.flatMap(capture => {
-            const requiredBindings = capture.requiredBindings?.filter(binding => binding.purpose !== 'variable') ?? [];
+            const requiredBindings = capture.requiredBindings?.filter(binding => binding.purpose !== (platformVariables ? 'variable' : 'dataRole')) ?? [];
             return requiredBindings.length ? [{ ...capture, requiredBindings }] : [];
         }));
-    const retainedCaptures = platformVariables ? nonVariableCaptures(previousBindingCaptures) : [];
-    if (platformVariables && !isDeepStrictEqual(retainedCaptures, nonVariableCaptures(input.referencedSavedSecretRevisions)))
+    const retainedCaptures = platformVariables || managedPlatformBindings ? capturesOutsideWriter(previousBindingCaptures) : [];
+    if ((platformVariables || managedPlatformBindings) && previous.content === null
+        && previousBindingCaptures.some(capture => !capture.requiredBindings)) return deploymentFailure('deployment_conflict');
+    if ((platformVariables || managedPlatformBindings)
+        && !isDeepStrictEqual(retainedCaptures, capturesOutsideWriter(input.referencedSavedSecretRevisions)))
         return deploymentFailure('deployment_conflict');
+    const managedPlatformCaptures = new Map(managedPlatformBindings ? input.referencedSavedSecretRevisions.flatMap(capture =>
+        capture.requiredBindings?.some(binding => binding.purpose === 'dataRole') ? [[capture.resourceId, capture.revision] as const] : []) : []);
+    if (managedPlatformBindings) {
+        if (preparedContent.content && previous.content) {
+            if (![...previous.content.bindings, ...preparedContent.content.bindings].some(isManagedDeploymentDataRoleBindingV1))
+                return deploymentFailure('deployment_conflict');
+        } else if (!executionBinding || executionBinding.actionId !== DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+            || executionBinding.environmentId !== input.environmentId || input.contentHeaderVersion !== 1 || input.contentBodyVersion !== 1
+            || createDeploymentEnvironmentContentArtifactIdV1({ ...executionBinding, environmentId: input.environmentId }) !== input.contentArtifactId
+            || !controllerInstallation || input.referencedSavedSecretRevisions.some(capture => !capture.requiredBindings)
+            || managedPlatformCaptures.size === 0 && !previousBindingCaptures.some(capture =>
+                capture.requiredBindings?.some(binding => binding.purpose === 'dataRole'))) {
+            // For opaque content the signed writer owns private binding scope. Home protects its exact
+            // Environment candidate, retained public references, and controller-only grant delivery.
+            return deploymentFailure('deployment_conflict');
+        }
+    }
     const retainedPlatformGrants = platformVariables ? existingGrants.filter((grant): grant is Extract<typeof grant, { kind: 'secret' }> => grant.kind === 'secret'
         && retainedCaptures.some(capture => capture.resourceId === grant.resourceId
             && capture.revision === grant.resourceRevision)) : [];
@@ -771,9 +794,13 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     }
     const retainedGrants = preparedContent.content && previous.content
         ? readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: previous.content.bindings,
-            bindings: preparedContent.content.bindings, existingGrants, writer: platformVariables ? 'variables' : placement ? 'environment' : 'bindings' })
+            bindings: preparedContent.content.bindings, existingGrants, writer: platformVariables ? 'variables'
+                : managedPlatformBindings ? 'managedDataRoles' : placement ? 'environment' : 'bindings' })
         // Opaque binding semantics belong to the admitted content owner. Existing exact seals add no delivery authority.
         : platformVariables ? retainedPlatformGrants
+        : managedPlatformBindings ? existingGrants.filter(grant => grant.kind === 'environmentValues'
+            || grant.kind === 'secret' && retainedCaptures.some(capture =>
+                capture.resourceId === grant.resourceId && capture.revision === grant.resourceRevision))
         : existingGrants.filter(existing => input.grants.some(grant => isDeepStrictEqual(existing, grant)));
     if (retainedGrants === null) return deploymentFailure('deployment_conflict');
     const retainedSubjects = new Map(retainedGrants.map(grant => [machineSecretGrantSubjectKey(grant), grant]));
@@ -793,6 +820,9 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         const build = buildMachineId === grant.machineId;
         const controllerRecipient = grant.kind === 'secret' && controllerInstallation !== null && controllerInstallation.machineId === grant.machineId
             && controllerInstallation.installationId === grant.installationId;
+        if (managedPlatformBindings && !retained && (!controllerRecipient || grant.kind !== 'secret'
+            || managedPlatformCaptures.get(grant.resourceId) !== grant.resourceRevision))
+            return deploymentFailure('deployment_conflict');
         if (!retained && (grant.kind === 'environmentValues' ? grant.binding.phase === 'runtime' ? !runtime : !build
             : !runtime && !build && !controllerRecipient)) {
             return deploymentFailure('deployment_conflict');
@@ -807,6 +837,11 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             secretRevisions.set(grant.resourceId, grant.resourceRevision);
         }
     }
+    if (managedPlatformBindings && (retainedGrants.some(grant => !subjects.has(machineSecretGrantSubjectKey(grant)))
+        || !preparedContent.content && controllerInstallation && [...managedPlatformCaptures].some(([resourceId, resourceRevision]) =>
+            !subjects.has(machineSecretGrantSubjectKey({ ...controllerInstallation, v: 1, kind: 'secret',
+                environmentId: input.environmentId, resourceId, resourceRevision })))))
+        return deploymentFailure('deployment_conflict');
     if (secretRevisions.size !== input.referencedSavedSecretRevisions.length
         || input.referencedSavedSecretRevisions.some(ref => secretRevisions.get(ref.resourceId) !== ref.revision)) {
         return deploymentFailure('deployment_conflict');
@@ -831,6 +866,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
                 if (previous !== undefined && previous !== binding.source.resourceRevision) return deploymentFailure('deployment_conflict');
                 contentReferences.set(resourceId, binding.source.resourceRevision);
             }
+            if (managedPlatformBindings && !isManagedDeploymentDataRoleBindingV1(binding)) continue;
             if (platformVariables && binding.purpose !== 'variable') continue;
             if (!isEnvironmentSecretBindingManagedByBindingsWriterV1(binding, placement ? 'environment' : 'bindings')) continue;
             if (binding.purpose === 'registry') registryTargetIds.add(binding.targetLinkId);

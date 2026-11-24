@@ -15,6 +15,7 @@ import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowI
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/protocol';
 import type { MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { isManagedDeploymentDataRoleBindingV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, EnvironmentVariableBindingInputV1Schema, EnvironmentVariableBindingGrantReferenceV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, EnvironmentVariableBindingGrantReferenceV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
@@ -115,10 +116,13 @@ export type DeploymentEnvironmentContentV1 = z.infer<typeof DeploymentEnvironmen
 
 /** The credential writer also authors backup and data-role references. Combined definition
  * updates preserve them, alongside the other operational owners' rows. */
+type EnvironmentBindingWriter = 'environment' | 'bindings' | 'variables' | 'managedDataRoles';
+
 export function isEnvironmentSecretBindingManagedByBindingsWriterV1(binding: EnvironmentSecretBindingV1,
-    writer: 'environment' | 'bindings' | 'variables' = 'environment'):
+    writer: EnvironmentBindingWriter = 'environment'):
     binding is Extract<EnvironmentSecretBindingV1, { purpose: 'variable' | 'registry' | 'backupDestination' }>
         | Extract<EnvironmentSecretBindingV1, { purpose: 'dataRole' }> {
+    if (writer === 'managedDataRoles') return isManagedDeploymentDataRoleBindingV1(binding);
     return binding.purpose === 'variable' || writer !== 'variables' && binding.purpose === 'registry'
         || writer === 'bindings' && (binding.purpose === 'backupDestination'
             || binding.purpose === 'dataRole');
@@ -130,7 +134,7 @@ export function readRetainedOperationalEnvironmentBindingGrantsV1(input: Readonl
     bindings: readonly EnvironmentSecretBindingV1[];
     existingGrants: readonly MachineSecretGrantV1[];
     /** Only the explicit credential writer may edit backup and data-role references. */
-    writer?: 'environment' | 'bindings' | 'variables';
+    writer?: EnvironmentBindingWriter;
 }>): readonly MachineSecretGrantV1[] | null {
     const operational = (bindings: readonly EnvironmentSecretBindingV1[]) => bindings
         .filter(binding => !isEnvironmentSecretBindingManagedByBindingsWriterV1(binding, input.writer))
@@ -144,7 +148,8 @@ export function readRetainedOperationalEnvironmentBindingGrantsV1(input: Readonl
         if (source.kind === 'shared_resource') resources.set(source.resourceId, binding.source.resourceRevision);
     }
     return input.existingGrants.filter(grant => grant.kind === 'secret'
-        && resources.get(grant.resourceId) === grant.resourceRevision);
+        ? resources.get(grant.resourceId) === grant.resourceRevision
+        : input.writer === 'managedDataRoles' && grant.kind === 'environmentValues');
 }
 
 /** A reviewed definition may retire a local database; its metadata cannot keep naming the removed service.

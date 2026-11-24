@@ -3,6 +3,7 @@ import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetVariablesReadResult
     DeploymentTargetVariablesSyncResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { DeploymentObservationGetResultV1Schema, type DeploymentBindingsSetInputV1,
     DeploymentObservationGetInputV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
+import { isManagedDeploymentDataRoleBindingPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { usesOwnTelemetryCollectorV1 } from '@happier-dev/deployments/telemetry';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
@@ -20,6 +21,7 @@ export function createPlatformVariablesForHost(host: Host) {
     const runtime = (environment: DeploymentEnvironmentDetailV1) => environment.targetLinks.find(row =>
         row.targetLink.id === environment.environment.runtimeTargetLinkId && row.targetLink.source.kind === 'plugin');
     async function prepareBindingsChildren(request: Readonly<{ input: DeploymentBindingsSetInputV1; context: ActionExecutorContext }>) {
+        if (isManagedDeploymentDataRoleBindingPatchV1(request.input)) return null;
         const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
         const row = runtime(environment);
         if (!row) return null;

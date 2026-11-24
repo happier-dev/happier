@@ -6495,6 +6495,71 @@ describe('deployment children retain their controller Action authority', () => {
             body: preparation, routeInput: preparation, reviewedChild })).toBe(true);
     });
 
+    it.each(['plain', 'e2ee'] as const)('settles the reviewed managed writer binding without publishing a Railway runtime Link (%s)', async contentMode => {
+        const f = await fixture('account', 'account', { readableEnvironment: true, platformTarget: 'vercel', contentMode });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id },
+            data: { pluginId: 'happier.deploy.railway', contributionLocalId: 'railway' } });
+        const runtime = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
+        const managedLink = await db.deploymentTargetLink.create({ data: {
+            environmentId: f.environment.id, createdByAccountId: f.account.id, ...await f.content('deployment-target-link.v1'),
+            role: 'data', state: 'deployed', sourceKind: 'plugin', targetKind: 'platform',
+            pluginId: 'happier.deploy.railway', contributionLocalId: 'railway-postgres',
+        } });
+        const resourceId = crypto.randomUUID();
+        const secret = { v: 1 as const, kind: 'password' as const, name: 'Writer login', value: 'fixture-write-login' };
+        const resourceKey = nacl.randomBytes(32);
+        expect(await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: f.account.id, resourceId,
+            displayName: secret.name, kind: secret.kind, encryptionMode: contentMode,
+            storedContent: sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                ? { resourceId, mode: contentMode, content: secret }
+                : { resourceId, mode: contentMode, content: secret, resourceDataKey: resourceKey, randomBytes: nacl.randomBytes }),
+            ...(contentMode === 'e2ee' ? { keyEnvelopes: [{ recipientAccountId: f.account.id,
+                encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: resourceKey, recipientPublicKey: f.accountKeys.publicKey,
+                    randomBytes: nacl.randomBytes }), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(f.accountKeys.publicKey) }] } : {}) })))
+            .toMatchObject({ ok: true });
+        const selected = { purpose: 'dataRole', targetLinkId: managedLink.id, role: 'write',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } } as const;
+        const actionId = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+        const input = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, set: [selected], remove: [] };
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const requestId = crypto.randomUUID();
+        const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId, machineId: f.controller.id, target, requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input }) }, { input });
+        const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+            machineId: f.controller.id, installationId: f.controller.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: f.controller.keys.publicKey, content: { kind: 'secret', value: secret.value } });
+        const content = { ...createDeploymentEnvironmentDetailV1().content, bindings: [selected] };
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding, environmentId: f.environment.id });
+        const payload = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: f.environment.id,
+            expectedRevision: f.environmentRevision, ...await f.content('deployment-environment.v1', content, artifactId),
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings), grants: [grant] });
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const save = (body: typeof payload) => app.inject({ method: 'POST', url: path, payload: body, headers: {
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId,
+                    method: 'POST', path, body, privateKey: f.controller.keys.secretKey }),
+            } });
+            const wrongRecipient = await save({ ...payload,
+                grants: [{ ...grant, machineId: f.builder.id, installationId: f.builder.installationId }] });
+            expect(wrongRecipient.statusCode, wrongRecipient.body).toBe(409);
+            const saved = await save(payload);
+            expect(saved.statusCode, saved.body).toBe(200);
+            expect(saved.json()).toMatchObject({ ok: true, revision: f.environmentRevision + 1 });
+            expect((await save(payload)).statusCode).toBe(409);
+        }, { authentication: 'real' });
+        expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } })).toEqual(runtime);
+        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).toMatchObject({
+            revision: f.environmentRevision + 1, contentArtifactId: artifactId, runtimeTargetLinkId: runtime.id });
+        expect(await readEnvironmentMachineSecretGrantsInTx(db, { environmentId: f.environment.id })).toEqual([grant]);
+    });
+
     it('admits only an Environment manager’s reviewed managed database read binding', async () => {
         const f = await fixture('team', 'account', { readableEnvironment: true, platformTarget: 'vercel' });
         const contribution = { pluginId: 'happier.deploy.railway', contributionId: 'railway-postgres' };

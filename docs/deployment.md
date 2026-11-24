@@ -1128,7 +1128,9 @@ environment before trying again. You can link a service you confirm there.
 For a Railway app in the same project and environment, the Variables flow adds
 a private service reference using the linked database. Review the variable
 name and any replacement before saving. Apply the app's Railway changes to
-use the new value.
+use the new value. Saving only a managed database login updates the Environment
+binding and seals the Saved Secret to its controller. The Railway app's Variables
+and runtime Link revision stay as they were.
 
 Workbench can list the linked database. Its read path returns
 `database_transport_unavailable` until Workbench can open a limited Railway

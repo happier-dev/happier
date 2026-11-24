@@ -146,7 +146,7 @@ export function isOwnServerDataRoleBindingRemovalV1(
 export function applyEnvironmentSecretBindingsPatchV1(bindings: readonly EnvironmentSecretBindingV1[], patch: Readonly<{
     set: readonly EnvironmentSecretBindingInputV1[];
     remove: readonly EnvironmentSecretBindingIdentityV1[];
-}>, createVariableGrantReference: () => string): EnvironmentSecretBindingV1[] {
+}>, createVariableGrantReference: () => string, options: Readonly<{ upgradeRetainedVariableRefs?: boolean }> = {}): EnvironmentSecretBindingV1[] {
     const current = new Map(bindings.map(binding => [environmentSecretBindingIdentityV1(binding), binding]));
     const replacements = new Map(patch.set.map(value => {
         const binding = EnvironmentSecretBindingInputV1Schema.parse(value);
@@ -164,7 +164,7 @@ export function applyEnvironmentSecretBindingsPatchV1(bindings: readonly Environ
         if (removed.has(identity)) continue;
         const replacement = replacements.get(identity);
         const saved = replacement && !sameStrictJsonValue(binding, replacement) ? replacement : binding;
-        result.push(saved.purpose === 'variable' && !saved.grantRef
+        result.push(options.upgradeRetainedVariableRefs !== false && saved.purpose === 'variable' && !saved.grantRef
             ? EnvironmentSecretBindingV1Schema.parse({ ...saved, grantRef: createVariableGrantReference() }) : saved);
         replacements.delete(identity);
     }
@@ -208,3 +208,16 @@ export const DeploymentBindingsSetInputV1Schema = lazyZodSchema(() => z.union([
   DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsPatchInputV1Schema,
 ]));
 export type DeploymentBindingsSetInputV1 = z.infer<typeof DeploymentBindingsSetInputV1Schema>;
+
+export function isManagedDeploymentDataRoleBindingV1<T extends EnvironmentSecretBindingIdentityV1>(binding: T):
+    binding is Extract<T, { purpose: 'dataRole'; targetLinkId: string }> {
+    return binding.purpose === 'dataRole' && 'targetLinkId' in binding;
+}
+
+/** Managed database custody is independent of the selected runtime's Variables writer. */
+export function isManagedDeploymentDataRoleBindingPatchV1(input: DeploymentBindingsSetInputV1): boolean {
+    return 'set' in input && input.providerVariables === undefined && input.telemetry === undefined
+        && input.telemetryMachineId === undefined && input.telemetryCollector === undefined
+        && input.set.length + input.remove.length > 0
+        && input.set.every(isManagedDeploymentDataRoleBindingV1) && input.remove.every(isManagedDeploymentDataRoleBindingV1);
+}

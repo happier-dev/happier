@@ -5,6 +5,7 @@ import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1,
+    isManagedDeploymentDataRoleBindingPatchV1,
     isOwnServerDataRoleBindingRemovalV1, readRemovedDataRoleSecretResourcesV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentGetInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
@@ -127,6 +128,10 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             if (response.status !== 200 || !loaded.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
             if (loaded.environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
             const targetLinkId = loaded.environment.runtimeTargetLinkId;
+            const runtimeLink = loaded.targetLinks.find(link => link.id === targetLinkId);
+            const platformLink = runtimeLink?.source.kind === 'plugin' ? runtimeLink : undefined;
+            const platformBindingWrite = platformLink && !request.buildMachineId && !request.environmentUpdate && !databaseReadAccessChild;
+            const managedPlatformBindings = platformBindingWrite && isManagedDeploymentDataRoleBindingPatchV1(input);
             const open = (id: string) => artifacts.read(id, { signal: context.signal, prepareRecipients: false,
                 includeSharedAudience: false, authorizationHeaders: headers });
             const [currentArtifact, candidateArtifact] = await Promise.all([
@@ -139,7 +144,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 : input.telemetryCollector === null ? unpinned : { ...current.content, telemetryCollector: input.telemetryCollector }),
                 ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
-                    { set: input.set, remove: input.remove }, randomUUID) } }
+                    { set: input.set, remove: input.remove }, randomUUID, { upgradeRetainedVariableRefs: !managedPlatformBindings }) } }
                 : readDeploymentEnvironmentArtifactV1(input, candidateArtifact);
             if (!candidate.ok) return refuseDeploymentArtifactRead(candidate);
             if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
@@ -189,9 +194,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                     contentBodyVersion: created.revision.bodyVersion, referencedSavedSecretRevisions: selectedCaptures }), grants };
             };
-            const runtimeLink = loaded.targetLinks.find(link => link.id === targetLinkId);
-            const platformLink = runtimeLink?.source.kind === 'plugin' ? runtimeLink : undefined;
-            if (platformLink && !request.buildMachineId && !request.environmentUpdate && !databaseReadAccessChild) {
+            if (platformBindingWrite && !managedPlatformBindings) {
                 if (!host.preparePlatformBindings) return refuse('unsupported_action');
                 if (readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
                     bindings: candidate.content.bindings, existingGrants: [], writer: 'variables' }) === null) return refuse('deployment_invalid');
@@ -247,25 +250,31 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     path: `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`, body }),
                 expectedRevision: input.expectedRevision, ...(request.buildMachineId ? { buildMachineId: request.buildMachineId } : {}),
                 ...(request.environmentUpdate ? { environmentUpdate: true } : {}),
-                domainIds: request.environmentUpdate ? [] : [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
+                domainIds: request.environmentUpdate || managedPlatformBindings ? [] : [...new Set([...candidate.content.bindings, ...current.content.bindings].flatMap(binding =>
                     binding.purpose === 'domainCredential' ? [binding.domainId] : []))],
                 dataRoleTargetLinkIds,
                 context, signal: context.signal ?? new AbortController().signal });
             const retainedAdmission = admission;
-            const retainedOperationalGrants = request.environmentUpdate
+            const writer = managedPlatformBindings ? 'managedDataRoles' : request.environmentUpdate ? 'environment' : undefined;
+            const retainedOperationalGrants = writer
                 ? readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
-                    bindings: candidate.content.bindings, existingGrants: retainedAdmission.grants }) : [];
+                    bindings: candidate.content.bindings, existingGrants: retainedAdmission.grants, writer }) : [];
             if (retainedOperationalGrants === null) return refuse('deployment_invalid');
             if (retainedAdmission.bindingPreparation.buildInstallation?.machineId !== loaded.environment.buildMachineId
                 || request.buildMachineId && retainedAdmission.bindingPreparation.proposedBuildInstallation?.machineId !== request.buildMachineId) {
                 return refuse('deployment_conflict');
             }
+            const scopedBindings = (bindings: DeploymentEnvironmentContentV1['bindings']) => writer
+                ? bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding, writer)) : bindings;
+            const preparedBindings = scopedBindings(candidate.content.bindings);
+            const previousBindings = scopedBindings(current.content.bindings);
             const materializer = operation ? async () => {
                 if (!await operation.isCurrent(context.signal)) return refuse('action_forbidden');
                 const snapshot = operation.readSnapshot();
                 if (!snapshot?.scopeKey) return refuse('client_required');
                 const admitted = await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
-                    operationContext: operation, signal: context.signal, references: candidate.content.bindings.flatMap(binding =>
+                    operationContext: operation, signal: context.signal,
+                    references: (managedPlatformBindings ? preparedBindings : candidate.content.bindings).flatMap(binding =>
                         binding.source.kind === 'secret' ? [{ ref: binding.source.ref, revision: binding.source.resourceRevision }] : []) });
                 return admitted.materializer;
             } : undefined;
@@ -278,10 +287,6 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const decodedDomainDestinations = domainDestinations ? { status: domainDestinations.status,
                 domains: domainDestinations.domains.map(domain => ({ domainId: domain.domainId,
                     installations: domain.installations.map(decodeInstallation) })) } : undefined;
-            const preparedBindings = request.environmentUpdate
-                ? candidate.content.bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) : candidate.content.bindings;
-            const previousBindings = request.environmentUpdate
-                ? current.content.bindings.filter(binding => isEnvironmentSecretBindingManagedByBindingsWriterV1(binding)) : current.content.bindings;
             const controllerInstallation = retainedAdmission.bindingPreparation.controllerInstallation;
             const managedDataRoleDestinations = controllerInstallation
                 ? [...preparedBindings, ...previousBindings].flatMap(binding => binding.purpose === 'dataRole'
@@ -309,7 +314,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                         ? { buildInstallation: decodeInstallation(retainedAdmission.bindingPreparation.buildInstallation) } : {}),
                 } } : {}),
                 existingGrants: retainedAdmission.grants, materializer, assertCurrent });
-            if (!matchesDeploymentBindingSavedSecretCapturesV1(request.environmentUpdate
+            if (!matchesDeploymentBindingSavedSecretCapturesV1(writer
                 ? captureDeploymentBindingSavedSecretRevisionsV1(preparedBindings) : selectedCaptures,
                 prepared.referencedSavedSecretRevisions)) return refuse('deployment_invalid');
             const grants = new Map([...prepared.grants, ...retainedOperationalGrants]

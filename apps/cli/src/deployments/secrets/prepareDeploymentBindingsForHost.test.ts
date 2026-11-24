@@ -75,6 +75,8 @@ it.each([
         name: 'refuses missing requester custody before plain owner material can be acquired' },
     { placementChange: false, mode: 'plain' as const, external: false, managedDataRole: true,
         name: 'seals a managed read role only to its admitted controller' },
+    { placementChange: false, mode: 'plain' as const, external: false, managedDataRole: true, providerRuntime: true,
+        name: 'saves an authored managed writer role next to a Railway runtime without publishing provider Variables' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, managedDataRole: true,
         name: 'seals a managed read role to its admitted controller without a runtime target' },
     { placementChange: false, mode: 'e2ee' as const, external: false, replay: true, missingCustody: true,
@@ -83,7 +85,7 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole, removeOwnDataRole, uncodedReadFailure }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole, removeOwnDataRole, uncodedReadFailure, providerRuntime }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
@@ -133,6 +135,12 @@ it.each([
     const managedDataLink = managedDataRole ? createDeploymentTargetLinkHeaderV1({ id: 'managed-data-link',
         environmentId: detail.environment.id, role: 'data', targetKind: 'database', machines: [], members: [],
         source: { kind: 'plugin', contribution: { pluginId: 'fixture.data', localId: 'database' } } }) : undefined;
+    if (providerRuntime) {
+        const row = detail.targetLinks[0]!;
+        row.targetLink = createDeploymentTargetLinkHeaderV1({ ...row.targetLink, role: 'runtime',
+            targetKind: 'platform', machines: [], members: [],
+            source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.railway', localId: 'railway' } } });
+    }
     if (managedDataLink) detail.targetLinks.push({ targetLink: managedDataLink, content: detail.targetLinks[0]!.content });
     let environment = { ...detail.environment, revision: configureChild ? 2 : detail.environment.revision, buildMachineId: preTarget && !preTargetWithBuilder ? undefined : placementChange ? builder.machineId : installation.machineId,
         runtimeTargetLinkId: preTarget ? undefined : detail.environment.runtimeTargetLinkId };
@@ -156,12 +164,15 @@ it.each([
             source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('write-credential'), resourceRevision: 1 } },
     ];
     const bindings: EnvironmentSecretBindingV1[] = ownDataRole ? [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
-            source: { kind: 'secret', ref, resourceRevision: 1 } }] : managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } }] : managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: providerRuntime ? 'write' : 'readOnlyPassword',
             source: { kind: 'secret', ref, resourceRevision: 1 } }]
         : preTarget ? [{ purpose: 'backupDestination', configKey: 'destination',
             role: 'repositoryPassword', source: { kind: 'secret', ref, resourceRevision: 1 } }]
             : [{ purpose: 'variable', phase: 'runtime', name: 'SECRET', grantRef: bindingGrantRef(1),
                 source: { kind: 'secret', ref, resourceRevision: 1 } }];
+    const providerVariable = { purpose: 'variable', phase: 'build', name: 'RAILWAY_PROFILE',
+        source: { kind: 'value', value: 'fixture-provider-value' } } as const;
+    if (providerRuntime) detail.content.bindings = [providerVariable];
     if (preTargetWithBuilder) {
         const build: EnvironmentSecretBindingV1 = { purpose: 'variable', phase: 'build', name: 'BUILD_SECRET',
             grantRef: bindingGrantRef(2), source: { kind: 'secret', ref, resourceRevision: 1 } };
@@ -282,7 +293,7 @@ it.each([
             if (dataRoleTargetLinkIds.some(targetLinkId => targetLinkId !== managedDataLink?.id))
                 return { status: 403, data: { ok: false, error: 'secret_missing' } };
             return { status: 200, data: { ok: true, grants,
-            bindingPreparation: { runtimeInstallations: preTarget ? [] : [installation],
+            bindingPreparation: { runtimeInstallations: preTarget || providerRuntime ? [] : [installation],
                 ...(environment.buildMachineId ? { buildInstallation: environment.buildMachineId === builder.machineId ? builder : installation } : {}),
                 ...(buildMachineId === installation.machineId ? { proposedBuildInstallation: installation } : {}),
                 ...(dataRoleTargetLinkIds.length ? { controllerInstallation: controller } : {}) } } };
@@ -525,10 +536,26 @@ it.each([
         const input = { serverId: 'home', environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
             contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1,
             referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1 }] };
-        const result = await prepare({ input, context: {} });
+        const authored = { serverId: input.serverId, environmentId: input.environmentId,
+            expectedRevision: input.expectedRevision, set: bindings, remove: [] };
+        if (providerRuntime) {
+            expect(await daemon.prepareHostReviewedChildren!({ actionId: 'deployments.bindings.set', input: authored, context: {} }))
+                .toBeNull();
+        }
+        const result = await prepare({ input: providerRuntime ? authored : input, context: {} });
         if (managedDataLink) expect(dataRoleTargetLinkIdsByAdmission).toEqual([[managedDataLink.id]]);
         expect(result).not.toHaveProperty('errorCode');
         if ('errorCode' in result) throw new Error(result.errorCode);
+        if (providerRuntime) {
+            expect(result.targetLinkContent).toBeUndefined();
+            expect(result.referencedSavedSecretRevisions).toEqual([{ resourceId: 'credential', revision: 1,
+                requiredBindings: [{ purpose: 'dataRole' }] }]);
+            const opened = readDeploymentEnvironmentArtifactV1(result,
+                await createCredentialedAccountArtifactStore(credentials).read(result.contentArtifactId, {
+                    prepareRecipients: false, includeSharedAudience: false,
+                }));
+            expect(opened).toMatchObject({ ok: true, content: { bindings: [providerVariable, ...bindings] } });
+        }
         grants = result.grants;
         expect(materialReads).toBe(1);
         expect(nativeVaultReads).toBe(external ? 1 : 0);
