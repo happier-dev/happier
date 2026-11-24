@@ -1,29 +1,24 @@
-import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
-  type ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, bindWorkflowActionAutomationChecksV1, createActionAutomationHttpPortV1,
+  readActionAutomationIndexUpdateV1, type MatchingActionAutomationPortV1, type WorkflowActionAutomationChecksV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { readServerUnreachableFetchCode } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import type { LazyActionAccountContext } from './actionAccountContext';
-import type { UiWorkflowAction } from './workflowActionDeps';
+import { createUiWorkflowAction } from './workflowActionDeps';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { listCurrentUiContextContributedActionDefinitions } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 type HostedIndex = Readonly<{ token: string; port: ReturnType<typeof createActionAutomationHttpPortV1> }>;
 const indexes = new Map<string, HostedIndex>();
 
 /** The Account owns the index; mounted executor instances borrow it. */
 export function createUiActionAutomationPortV1(account: LazyActionAccountContext,
-  checks?: UiWorkflowAction['actionAutomationChecks']): ActionAutomationPortV1 {
+  checks: WorkflowActionAutomationChecksV1 = createUiWorkflowAction({ account,
+    listContributedActionDefinitions: listCurrentUiContextContributedActionDefinitions,
+  }).actionAutomationChecks): MatchingActionAutomationPortV1 {
   const key = serverAccountScopeKeySuffix({ serverId: account.serverId, accountId: account.accountId });
   const current = indexes.get(key);
-  const bind = (port: ReturnType<typeof createActionAutomationHttpPortV1>): ActionAutomationPortV1 => ({ ...port, ...checks,
-    select: args => port.select({ ...args, ...(checks ? { resolveConsent: checks.resolveConsent, prepareMatching: checks.prepareMatching } : {}) }),
-    ...(checks ? { allowConsent: async (args: Parameters<NonNullable<ActionAutomationPortV1['allowConsent']>>[0]) => {
-      const consent = await checks.allowConsent(args);
-      port.retainConsent(consent);
-      return consent;
-    } } : {}),
-  });
-  if (current?.token === account.credentials.token) return bind(current.port);
+  if (current?.token === account.credentials.token) return bindWorkflowActionAutomationChecksV1(current.port, checks);
   current?.port.dispose();
   const port = createActionAutomationHttpPortV1({ accountId: account.accountId,
     readHomeFeatures: (signal, onWait) => getReadyServerFeatures({ serverId: account.serverId, signal, onWait }),
@@ -57,7 +52,7 @@ export function createUiActionAutomationPortV1(account: LazyActionAccountContext
     if (indexes.get(key)?.port === port) indexes.delete(key);
     port.dispose();
   });
-  return bind(port);
+  return bindWorkflowActionAutomationChecksV1(port, checks);
 }
 
 /** Existing synced structural upserts are sufficient; no fetch is made for a push. */

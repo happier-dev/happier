@@ -205,6 +205,7 @@ import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountAr
 import { createCliInboxReadAction } from './inboxActions';
 import { createRoleSourceReader, type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken, decodeJwtPayload } from '@/cloud/decodeJwtPayload';
+import { notEvaluatedActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/runtime/session/follow/createSessionFollowSourceKeyPreparationAfterSet';
 import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
@@ -1175,11 +1176,11 @@ export function createCliActionDeps(params: CliActionDepsParams,
     },
   } : null;
   const actionDeps: CliActionDeps = {
-    actionAutomations: createCliActionAutomationPortV1({ token: params.token,
-      serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-      isCredentialCurrent: params.isCredentialCurrent,
-      ...(workflowFamily.actionAutomationChecks ? { checks: workflowFamily.actionAutomationChecks } : {}),
-    }),
+    actionAutomations: homeCredentials && workflowFamily.actionAutomationChecks
+      ? createCliActionAutomationPortV1({ token: homeCredentials.token,
+        serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+        isCredentialCurrent: params.isCredentialCurrent, checks: workflowFamily.actionAutomationChecks })
+      : notEvaluatedActionAutomationPortV1,
     prepareNativeGoalOwner,
     machinePresetPrepare: params.machinePresetPrepare,
     machinePresetArchive: params.machinePresetArchive,

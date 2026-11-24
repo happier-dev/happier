@@ -11,10 +11,21 @@ import { readAccountStoredActionTriggerV1 } from '@happier-dev/protocol/actions/
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
-import { applyCliActionAutomationUpdateV1, createCliActionAutomationPortV1,
+import { applyCliActionAutomationUpdateV1, createCliActionAutomationPortV1 as createCheckedPort,
+  readCliHasAfterActionAutomationsV1,
   refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
 
 afterEach(() => vi.restoreAllMocks());
+
+function createCliActionAutomationPortV1(input: Omit<Parameters<typeof createCheckedPort>[0], 'checks'>,
+  prepareMatching = createActionAutomationPrivateMatchingV1({ accountId: 'owner',
+    readDefinition: async () => null, openTrigger: async () => { throw new Error('No private rows served'); },
+  })) {
+  return createCheckedPort({ ...input, checks: { prepareMatching,
+    resolveConsent: async () => ({ current: false }),
+    allowConsent: async () => { throw new Error('No shared rows served'); },
+  } });
+}
 
 function serveHomeFeatures(workflowsEnabled: boolean) {
   const features = FeaturesResponseSchema.parse({ features: { workflows: { enabled: workflowsEnabled } } });
@@ -29,7 +40,8 @@ it('skips selection and native completion demand for an Action on a Workflows-di
   if (!port?.hasAfterActions) throw new Error('Expected the Account Action port');
   const args = { actionId: 'machines.command.run', input: {}, context: { defaultSessionMachineId: 'invoking-machine' } };
   expect(await port.select(args)).toMatchObject({ status: 'ready', before: [], after: [], notices: [] });
-  expect(await port.hasAfterActions([args.actionId])).toBe(false);
+  expect(await readCliHasAfterActionAutomationsV1({ token, serverHttpBaseUrl: 'https://workflows-disabled.test' }, [args.actionId]))
+    .toBe(false);
   expect(request).not.toHaveBeenCalled();
 });
 
@@ -189,10 +201,10 @@ it('settles an admitted after check with its originating caller credential after
   let pause = false;
   let release: (() => void) | undefined;
   const original = createCliActionAutomationPortV1({ token: originalToken, serverHttpBaseUrl,
-    isCredentialCurrent: async () => { if (pause) await new Promise<void>(resolve => { release = resolve; }); return true; } });
+    isCredentialCurrent: async () => { if (pause) await new Promise<void>(resolve => { release = resolve; }); return true; } }, prepareMatching);
   if (!original) throw new Error('Original Account port unavailable');
   const selection = await original.select({ actionId: 'machines.command.run', input: {},
-    context: { defaultSessionMachineId: 'invoking-machine' }, prepareMatching });
+    context: { defaultSessionMachineId: 'invoking-machine' } });
   pause = true;
   const pending = original.settle({ selection, context: {}, event: { v: 1, kind: 'action', actionId: 'machines.command.run',
     requestId: 'settled-request', phase: 'after', status: 'succeeded', occurredAt: 1, subjects: [] } });

@@ -2370,33 +2370,127 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
     it.each([
         { state: 'failed', entry: 'UI' }, { state: 'succeeded', entry: 'UI' },
         { state: 'failed', entry: 'Voice' }, { state: 'succeeded', entry: 'Voice' },
+        { state: 'failed', entry: 'Plugin' }, { state: 'succeeded', entry: 'Plugin' },
+        { state: 'shared', entry: 'Plugin' },
     ] as const)('honors a $state admitted before-wait for a $entry-hosted contributed effect', async ({ state, entry }) => {
-        const home = rpcHomes.get('server-client-action')!;
+        const fromPlugin = entry === 'Plugin';
+        const home = fromPlugin ? await network.addHome(`https://warm-check-${state}.test`, 'test-account', {
+            serverIdentityId: `srv_plugin_before_${state}`,
+        })
+            : rpcHomes.get('server-client-action')!;
         const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(home.id));
         let effects = 0;
         const events: ActionSettlementV1[] = [];
         let stored: ApprovalRequest | null = null;
-        const activation = createClientActionActivation({ pluginId: `acme.ui-before-${entry.toLowerCase()}-${state}`, localId: 'effect',
+        const pluginId = `acme.ui-before-${entry.toLowerCase()}-${state}`;
+        const activation = createClientActionActivation({ pluginId, localId: 'effect',
             accountPlacement: true, invokingUi: true, accountLifetime: lifetime, readOnly: false, surfaces: ['ui', 'voice'],
+            ...(home.serverIdentityId ? { machineExecutionOrigin: { ...clientActionExecutionOrigin(pluginId),
+                serverIdentityId: home.serverIdentityId } } : {}),
             inputSchema: { type: 'object', additionalProperties: false },
             accountHandler: async () => { effects++; return { applied: true }; } });
         const identity = { pluginId: activation.action.pluginId, localId: activation.action.id };
         const actionId = formatQualifiedPluginActionId(identity);
+        const workflowId = '00000000-0000-4000-8000-000000000091';
+        const machineId = CLIENT_ACTION_ORIGIN.materializationRef.machineId;
         const rows = [{ automationId: 'automation', triggerId: 'before', triggerRevision: 1,
-                workflowId: 'workflow', workflowRevision: 1, ownerAccountId: lifetime.scope.accountId,
+                workflowId, workflowRevision: 1, ownerAccountId: lifetime.scope.accountId,
                 actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'refuse' },
                 { automationId: 'automation', triggerId: 'after', triggerRevision: 1, workflowId: 'workflow',
                     workflowRevision: 1, ownerAccountId: lifetime.scope.accountId, actionIds: [actionId], phase: 'after' }] as const;
         const { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
-        network.setHttpResponder(async (url, init) => new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1
-            ? Response.json({ v: 1, rows })
-            : createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema } =
+            await import('@happier-dev/protocol/automations/automationActionOccurrenceV1');
+        const { sealAutomationTriggerDefinitionStoredEnvelopeV1 } =
+            await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
+        const { automationSubjectKeyV1 } = await import('@happier-dev/protocol/automations/automationSubjectV1');
+        const { AutomationDefinitionDetailSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
+        const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+        const shared = state === 'shared';
+        const before = rows[0];
+        const subject = { kind: 'machine', serverId: home.serverIdentityId ?? lifetime.scope.serverId, machineId } as const;
+        const consent = { automationId: 'actor-consent', triggerId: 'consent', triggerRevision: 1, workflowId, workflowRevision: 1,
+            ownerAccountId: lifetime.scope.accountId, consentFor: { automationId: before.automationId, triggerId: before.triggerId },
+            consentedWorkflowRevision: 1 };
+        const triggerDefinition = sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            mode: 'plain', binding: { v: 1, automationId: before.automationId, triggerId: before.triggerId,
+                triggerRevision: 1, triggerKind: 'action' },
+            definition: { kind: 'action', phase: before.phase, mode: before.mode, onFailure: before.onFailure, actionIds: [actionId],
+                ...(shared ? { subject } : {}) },
+        });
+        const sharedTrigger = { ...before, ownerAccountId: 'check-author', reachesOthers: true,
+            subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject, workflowId),
+            sharedDefinitionEnvelope: triggerDefinition };
+        const definition = fromPlugin ? AutomationDefinitionDetailSchema.parse({
+            id: shared ? consent.automationId : before.automationId,
+            name: 'Before check', description: null, enabled: true,
+            targetType: null, existingSessionId: null, templateVersion: 1, workflowDefinitionId: workflowId,
+            scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
+            executionRecipe: {
+                v: 2, templateVersion: 1, triggerEvidence: null, visibleTeamId: null,
+                workflow: { t: 'plain', v: {
+                    workspace: { directory: '/repo' }, executionTarget: { kind: 'detached_run' },
+                    ...(shared ? {
+                        actorConsent: { actionIds: [actionId], phase: before.phase, subject, agentSteps: [], childRevisions: [] },
+                        actionApprovals: [{ triggerId: consent.triggerId, operation: {
+                            parent: { actionId: 'workflow.trigger.add', input: {} },
+                            approvedBy: { accountId: consent.ownerAccountId }, steps: [],
+                        } }],
+                    } : {}),
+                } },
+            },
+            triggers: [{
+                id: shared ? consent.triggerId : before.triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+                kind: 'action', ...(shared
+                    ? { consentFor: consent.consentFor, consentedWorkflowRevision: 1, triggerDefinitionEnvelope: null }
+                    : { actionIds: [actionId], phase: before.phase, mode: before.mode, onFailure: before.onFailure,
+                        triggerDefinitionEnvelope: JSON.stringify(triggerDefinition) }),
+            }],
+        }) : null;
+        const beforeRun = state === 'failed' ? 'failed' : 'succeeded';
+        let indexReads = 0;
+        const admissions: unknown[] = [];
+        network.setHttpResponder(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+                indexReads++;
+                return Response.json({ v: 1, rows: shared ? [sharedTrigger, consent] : fromPlugin ? [before] : rows });
+            }
+            if (fromPlugin && (path === '/v1/features' || path === '/v1/features/authenticated')) {
+                return Response.json(FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } } }));
+            }
+            if (shared && path === `/v1/artifacts/${workflowId}`) {
+                const artifact = createPlainArtifactHttpFixture({ id: workflowId, isDecrypted: true, rawHeader: {
+                    kind: 'workflow-definition.v1', definitionId: workflowId, revision: { headerVersion: 1, bodyVersion: 1 },
+                    metadata: { title: 'Shared before check' },
+                }, title: 'Shared before check', body: null, access: 'view', ownerAccountId: 'check-author', seq: 1, createdAt: 1,
+                    updatedAt: 1, headerVersion: 1, bodyVersion: 1 }, 'check-author');
+                return Response.json(artifact);
+            }
+            if (definition && path === `/v3/automations/${definition.id}`) return Response.json(definition);
+            if (fromPlugin && path === AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1) {
+                const admitted = AutomationActionAdmitRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                admissions.push(admitted);
+                return Response.json({ results: admitted.triggers.map(trigger => ({
+                    automationId: trigger.automationId, triggerId: trigger.triggerId,
+                    kind: 'admitted', runId: `${state}-run`,
+                })) });
+            }
+            return createEmptyAccountBootstrapHttpResponse(path, init);
+        });
         const port = createActionAutomationPortV1({ accountId: lifetime.scope.accountId,
             seed: async () => ({ v: 1, rows }),
             start: async ({ selected }) => ({ runs: selected.map(row => ({ automationId: row.automationId,
                 triggerId: row.triggerId, runId: `${state}-run` })), notices: [] }),
             settle: async ({ event }) => { events.push(event); } });
-        const actionAutomations = { ...port, wait: async () => ({ state, ...(state === 'failed' ? { errorCode: 'step_failed' } : {}) }) };
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { createUiActionAutomationPortV1 } = await import('@/sync/ops/actions/actionAutomations');
+        const { createUiWorkflowAction } = await import('@/sync/ops/actions/workflowActionDeps');
+        const account = fromPlugin ? await captureLazyActionAccountContext(lifetime.scope.serverId) : null;
+        const appPort = account ? createUiActionAutomationPortV1(account, createUiWorkflowAction({ account }).actionAutomationChecks) : port;
+        const actionAutomations = { ...appPort, wait: async () => ({ state: beforeRun,
+            ...(state === 'failed' ? { errorCode: 'step_failed' } : {}) }) };
         const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
             invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
             reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
@@ -2413,15 +2507,21 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
         }));
         try {
             expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+            if (fromPlugin) {
+                expect(await appPort.select({ actionId: 'session.open', input: {}, context: {} }))
+                    .toMatchObject({ status: 'ready', notices: [] });
+                expect(indexReads).toBe(1);
+            }
             const hostAction = { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
-                surface: entry === 'UI' ? 'ui' as const : 'voice' as const,
-                authority: entry === 'UI' ? 'present_user' as const : 'account_automation' as const,
+                surface: entry === 'Voice' ? 'voice' as const : 'ui' as const,
+                authority: entry === 'Voice' ? 'account_automation' as const : 'present_user' as const,
                 externalActionTarget: { kind: 'machine' as const, machineId: CLIENT_ACTION_ORIGIN.materializationRef.machineId },
                 serverId: lifetime.scope.serverId, serverIdentityId: home.serverIdentityId,
-                runtimeAccountId: lifetime.scope.accountId, actionRequestId: 'ui-before-original', actionAutomationPort: actionAutomations,
+                runtimeAccountId: lifetime.scope.accountId, actionRequestId: 'ui-before-original',
+                ...(fromPlugin ? {} : { actionAutomationPort: actionAutomations }),
             } };
             const { createAppShellPluginUiInvocationHost } = await import('@/components/appShell/plugins/pluginUiInvocationHost');
-            const operation = entry === 'UI'
+            const operation = entry !== 'Voice'
                 ? dispatchPluginSurfaceAction({ action: identity, input: {}, clientAction: {},
                     pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
                     actionAccountLifetime: lifetime, hostAction })
@@ -2437,16 +2537,25 @@ describe('cold mounted caller Actions through the executable dispatcher', () => 
                 return;
             }
             const result = await operation;
+            if (fromPlugin) {
+                expect(indexReads, 'Plugin matching must reuse the warm App index').toBe(1);
+                expect(admissions, JSON.stringify(result)).toMatchObject([{
+                    evidence: { actionId, phase: 'before' }, triggers: [{
+                        automationId: shared ? consent.automationId : before.automationId,
+                        triggerId: shared ? consent.triggerId : before.triggerId,
+                    }],
+                }]);
+            }
             if (state === 'failed') {
                 expect(effects, 'A failed before check must refuse the UI handler before its native effect').toBe(0);
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: false, reason: 'action_interception_rejected', effectAttempted: false });
-                expect(events).toMatchObject([{ actionId, status: 'failed', errorCode: 'action_interception_rejected' }]);
+                if (!fromPlugin) expect(events).toMatchObject([{ actionId, status: 'failed', errorCode: 'action_interception_rejected' }]);
             } else {
-                expect(result, JSON.stringify(result)).toMatchObject(entry === 'UI' ? { ok: true, result: { applied: true } } : { applied: true });
+                expect(result, JSON.stringify(result)).toMatchObject(entry !== 'Voice' ? { ok: true, result: { applied: true } } : { applied: true });
                 expect(effects, 'A successful before check must resume the admitted UI handler once').toBe(1);
-                expect(events).toMatchObject([{ actionId, status: 'succeeded' }]);
+                if (!fromPlugin) expect(events).toMatchObject([{ actionId, status: 'succeeded' }]);
             }
-        } finally { unregister(); port.dispose(); await activation.composition.unload(); lifetime.retire(); }
+        } finally { account?.dispose(); unregister(); port.dispose(); await activation.composition.unload(); lifetime.retire(); }
     });
 
     it('dispatches ordinary daemon and client Actions from the real caller-scoped producer', async () => {

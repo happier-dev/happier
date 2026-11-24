@@ -41,7 +41,7 @@ import type { WorkflowAccountRunActionDeps, WorkflowCombinedRunStartV1 } from '@
 import type { CombinedMachineSetupInvocationRead } from '@/machines/setup/composeMachineSetup';
 import { createWorkflowActorConsentPortV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
-import type { ActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import type { WorkflowActionAutomationChecksV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from './workflowMaterializationHost';
 import type { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
@@ -114,7 +114,7 @@ export type CliWorkflowFamilyHost = Readonly<{
   readExecutionRunTransportMachineId: (transport: ResolvedSessionTransport) => string | null;
 }>;
 export type CliWorkflowFamily = Readonly<{
-  actionAutomationChecks: (ReturnType<typeof createWorkflowActorConsentPortV1> & Pick<ActionAutomationPortV1, 'wait' | 'cancel'>) | null;
+  actionAutomationChecks: WorkflowActionAutomationChecksV1 | null;
   workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null;
   prepareNativeGoalOwner: (signal?: AbortSignal) => Promise<void>;
   resolveWorkflowMaterializer: ReturnType<typeof createCredentialedWorkflowMaterializationHostV1> | null;

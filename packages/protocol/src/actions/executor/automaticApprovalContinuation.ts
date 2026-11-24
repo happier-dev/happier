@@ -14,6 +14,8 @@ import { deriveActionActorV1 } from '../actionRequestAttributionV1.js';
 import { resolveHostStampedAuthority } from '../invocationAuthority.js';
 import { findActionSpec } from '../actionSpecs.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
+import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
+import { formatQualifiedPluginActionId } from '../../plugins/actions/invocation.js';
 
 /** Host-local subject matching stays with selected triggers, outside the structural actor-row reference. */
 function projectActorConsentReferenceV1(reference: ActionAutomationTriggerReferenceV1) {
@@ -274,6 +276,12 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
   return { admit, resume, cancel, write };
 }
 
+/** Contributed Actions retain their qualified identity behind the stored invocation wrapper. */
+export function readApprovalAutomaticActionIdV1(request: Pick<StoredApprovalRequestV2, 'actionId' | 'actionArgs'>): string {
+  const invocation = request.actionId === 'action.invoke' ? ActionInvokeInputSchema.safeParse(request.actionArgs) : null;
+  return invocation?.success ? formatQualifiedPluginActionId(invocation.data.action) : request.actionId;
+}
+
 /** Existing Action Artifact ownership adapter; no internal stored-read revalidation. */
 export function createAutomaticApprovalContinuation(deps: Pick<ActionExecutorDeps,
   'approvalsUpdate' | 'approvalsGet' | 'actionAutomations'>, writeApprovedDecision: (
@@ -284,7 +292,7 @@ export function createAutomaticApprovalContinuation(deps: Pick<ActionExecutorDep
     parse: input => ApprovalRequestV2Schema.parse(input),
     invocation: request => {
       const admitted = resolveApprovalRequestExecutionInput({ ...request, decision: request.automaticChecks?.humanDecision });
-      return admitted.ok ? { actionId: request.actionId, input: admitted.input } : admitted;
+      return admitted.ok ? { actionId: readApprovalAutomaticActionIdV1(request), input: admitted.input } : admitted;
     },
     ...(deps.approvalsGet ? { read: async (artifactId: string, request: StoredApprovalRequestV2) => {
       const latest = await deps.approvalsGet!({ artifactId, serverId: request.executionOriginV1.serverId });

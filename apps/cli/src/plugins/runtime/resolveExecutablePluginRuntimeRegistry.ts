@@ -4,7 +4,7 @@ import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createDatabaseEnginesService } from './lifecycle/contributions/databaseEngines';
-import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
+import { readCliHasAfterActionAutomationsV1 } from '@/api/actionAutomations';
 import { prepareServiceLaunchEnvironments } from './lifecycle/contributions/targetServiceLaunchEnvironments';
 import { deploymentUnavailableDiagnostic } from '@/deployments/deploymentFailure';
 import { createAccountMachineSourceDeclarationReader } from './invocation/actions/accountMachineSourceDeclarations';
@@ -1677,9 +1677,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
             event.kind === 'event' && event.automation?.completionOutcome !== undefined
                 ? event.automation.completesActionIds ?? [] : []))];
         if (actionIds.length > 0) {
-            const port = createCliActionAutomationPortV1({ token: credentials.token, serverHttpBaseUrl: resolveServerHttpBaseUrl() });
-            if (!port?.hasAfterActions) throw new Error('automation_action_index_unavailable');
-            return await port.hasAfterActions(actionIds);
+            return await readCliHasAfterActionAutomationsV1({
+                token: credentials.token, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+            }, actionIds);
         }
         return false;
     }

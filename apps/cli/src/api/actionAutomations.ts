@@ -5,12 +5,15 @@ import { readHttpStatus } from '@/api/client/httpStatusError';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationHttpPortV1, readActionAutomationIndexUpdateV1,
-  type ActionAutomationPortV1, type ActionAutomationSelectArgsV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, bindWorkflowActionAutomationChecksV1, createActionAutomationHttpPortV1,
+  notEvaluatedActionAutomationPortV1, readActionAutomationIndexUpdateV1,
+  type MatchingActionAutomationPortV1, type NotEvaluatedActionAutomationPortV1,
+  type WorkflowActionAutomationChecksV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 
 type CredentialBinding = Readonly<{ token: string; isCredentialCurrent?: () => boolean | Promise<boolean> }>;
+type HomeBinding = CredentialBinding & Readonly<{ serverHttpBaseUrl: string }>;
 type HostedIndex = { token: string; port: ReturnType<typeof createActionAutomationHttpPortV1> };
 // One index for each exact Account and Home endpoint in this host process.
 const indexes = new Map<string, HostedIndex>();
@@ -18,46 +21,43 @@ const indexes = new Map<string, HostedIndex>();
 const requestCredential = new AsyncLocalStorage<CredentialBinding>();
 const indexKey = (serverHttpBaseUrl: string, accountId: string) => JSON.stringify([normalizeServerHttpBaseUrl(serverHttpBaseUrl), accountId]);
 
-export function createCliActionAutomationPortV1(input: Readonly<{
-  token: string; serverHttpBaseUrl: string;
-  isCredentialCurrent?: () => boolean | Promise<boolean>;
-  checks?: Pick<ActionAutomationPortV1, 'start' | 'wait' | 'cancel'> & Readonly<{
-    allowConsent: NonNullable<ActionAutomationPortV1['allowConsent']>;
-    prepareMatching: NonNullable<ActionAutomationPortV1['prepareMatching']>;
-    resolveConsent: NonNullable<ActionAutomationSelectArgsV1['resolveConsent']>;
-  }>;
-}>): ActionAutomationPortV1 | undefined {
+export function createCliActionAutomationPortV1(input: HomeBinding & Readonly<{
+  checks: WorkflowActionAutomationChecksV1;
+}>): MatchingActionAutomationPortV1 | NotEvaluatedActionAutomationPortV1 {
+  const index = readCliActionAutomationIndex(input);
+  if (!index) return notEvaluatedActionAutomationPortV1;
+  const port = bindWorkflowActionAutomationChecksV1(index, input.checks);
+  const { start, admitOccurrence, hasAfterActions } = port;
+  return {
+    ...port,
+    select: args => requestCredential.run(input, () => port.select(args)),
+    settle: args => requestCredential.run(input, () => port.settle(args)),
+    ...(start ? { start: (args: Parameters<typeof start>[0]) => requestCredential.run(input, () => start(args)) } : {}),
+    ...(admitOccurrence ? { admitOccurrence: (occurrence: Parameters<typeof admitOccurrence>[0],
+      context: Parameters<typeof admitOccurrence>[1]) => requestCredential.run(input, () => admitOccurrence(occurrence, context)) } : {}),
+    ...(hasAfterActions ? { hasAfterActions: (actionIds: readonly string[]) =>
+      requestCredential.run(input, () => hasAfterActions(actionIds)) } : {}),
+  };
+}
+
+/** Native Event demand reads the structural index and has no Action execution authority. */
+export async function readCliHasAfterActionAutomationsV1(input: HomeBinding, actionIds: readonly string[]): Promise<boolean> {
+  const read = readCliActionAutomationIndex(input)?.hasAfterActions;
+  if (!read) throw new Error('automation_action_index_unavailable');
+  return requestCredential.run(input, () => read(actionIds));
+}
+
+function readCliActionAutomationIndex(input: HomeBinding): HostedIndex['port'] | undefined {
   const accountId = readAccountIdFromToken(input.token);
   if (!accountId) return undefined;
   const key = indexKey(input.serverHttpBaseUrl, accountId);
   const current = indexes.get(key);
-  const checks = input.checks;
-  const bind = (port: ReturnType<typeof createActionAutomationHttpPortV1>): ActionAutomationPortV1 => {
-    const start = checks?.start ?? port.start;
-    const hasAfterActions = port.hasAfterActions;
-    const admitOccurrence = port.admitOccurrence;
-    return { ...port, ...checks,
-      select: args => requestCredential.run(input, () => port.select({ ...args,
-        ...(checks ? { resolveConsent: checks.resolveConsent, prepareMatching: checks.prepareMatching } : {}) })),
-      ...(hasAfterActions ? { hasAfterActions: (actionIds: readonly string[]) =>
-        requestCredential.run(input, () => hasAfterActions(actionIds)) } : {}),
-      settle: args => requestCredential.run(input, () => port.settle(args)),
-      ...(start ? { start: (args: Parameters<typeof start>[0]) => requestCredential.run(input, () => start(args)) } : {}),
-      ...(admitOccurrence ? { admitOccurrence: (occurrence: Parameters<typeof admitOccurrence>[0],
-        context: Parameters<typeof admitOccurrence>[1]) => requestCredential.run(input, () => admitOccurrence(occurrence, context)) } : {}),
-      ...(checks ? { allowConsent: async (args: Parameters<NonNullable<ActionAutomationPortV1['allowConsent']>>[0]) => {
-        const consent = await checks.allowConsent(args);
-        port.retainConsent(consent);
-        return consent;
-      } } : {}),
-    };
-  };
   if (current) {
     if (current.token !== input.token) {
       current.token = input.token;
       current.port.reconnect();
     }
-    return bind(current.port);
+    return current.port;
   }
   const port = createActionAutomationHttpPortV1({ accountId, async readHomeFeatures(signal) {
     const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: input.serverHttpBaseUrl, signal });
@@ -86,7 +86,7 @@ export function createCliActionAutomationPortV1(input: Readonly<{
     return response.data;
   } });
   indexes.set(key, { token: input.token, port });
-  return bind(port);
+  return port;
 }
 
 /** Existing Account and Machine socket owners deliver structural rows without fetching. */

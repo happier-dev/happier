@@ -7,7 +7,8 @@ import {
   type ActionExecutorContext,
 } from './actionExecutor.js';
 import { listActionSpecs } from './actionSpecs.js';
-import { createActionAutomationHttpPortV1, createActionAutomationPortV1, unavailableActionAutomationMatchingV1 } from './executor/actionAutomationAdmission.js';
+import { createActionAutomationHttpPortV1, createActionAutomationPortV1, notEvaluatedActionAutomationPortV1,
+  unavailableActionAutomationMatchingV1 } from './executor/actionAutomationAdmission.js';
 import { readActionAutomationExecutionMachineV1 } from './executor/actionSettlement.js';
 import { readActionOperandExecutionMachineV1 } from './executor/actionOperandExecutionMachine.js';
 
@@ -122,7 +123,7 @@ function context(
 }
 
 describe('Before checks on the Action operand Machine', () => {
-  it.each(['matching absent', 'matching installed'] as const)('decides a terminal approval with %s', async (capability) => {
+  it.each(['no Account credentials', 'lost matching', 'unreadable content'] as const)('decides a terminal approval with %s', async capability => {
     const port = createActionAutomationHttpPortV1({
       accountId: 'actor',
       request: async (_path, request) => {
@@ -135,11 +136,11 @@ describe('Before checks on the Action operand Machine', () => {
     });
     let stored: Request | null = null;
     const effect = vi.fn(async () => ({ ok: true }));
-    const executor = createActionExecutor({
-      actionAutomations: capability === 'matching absent' ? port : {
-        ...port,
-        prepareMatching: async () => unavailableActionAutomationMatchingV1('content_unavailable'),
-      },
+    const withMatching = { ...port,
+      prepareMatching: async () => unavailableActionAutomationMatchingV1('content_unavailable'),
+    };
+    const createExecutor = (actionAutomations: ActionExecutorDeps['actionAutomations']) => createActionExecutor({
+      actionAutomations,
       approvalsCreate: async ({ request }) => {
         stored = request;
         return { artifactId: 'approval' };
@@ -156,13 +157,15 @@ describe('Before checks on the Action operand Machine', () => {
       v: 1, actions: { [TERMINAL_OPEN]: { approvalRequiredSurfaces: ['cli'] } },
     }) });
     try {
-      const requested = await executor.execute(TERMINAL_OPEN, operands[TERMINAL_OPEN], caller);
+      const requested = await createExecutor(withMatching).execute(TERMINAL_OPEN, operands[TERMINAL_OPEN], caller);
       expect(requested).toMatchObject({
         ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' },
       });
       expect(stored).toMatchObject({ automaticChecks: { selected: [{ triggerId: 'before' }], consents: [] } });
-      const result = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, caller);
-      if (capability === 'matching absent') {
+      const decidingPort = capability === 'no Account credentials' ? notEvaluatedActionAutomationPortV1
+        : capability === 'lost matching' ? port : withMatching;
+      const result = await createExecutor(decidingPort).execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, caller);
+      if (capability === 'no Account credentials') {
         expect(result).toMatchObject({ ok: true,
           automationNotices: [{ code: 'action_automations_not_checked', reason: 'matching_unavailable' }],
         });

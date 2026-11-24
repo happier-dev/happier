@@ -1,5 +1,5 @@
 import { isModelRefGrantedByConstraintsV1 } from '../auth/apiTokenGrant.js';
-import { createAutomaticApprovalContinuation, createApprovalAutomaticChecksV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1, canAuthorApprovalAutomaticConsentV1, hasApprovalAutomaticConsentPersonAuthorityV1 } from './executor/automaticApprovalContinuation.js';
+import { createAutomaticApprovalContinuation, createApprovalAutomaticChecksV1, answerApprovalAutomaticConsentV1, restoreApprovalAutomaticContextV1, canAuthorApprovalAutomaticConsentV1, hasApprovalAutomaticConsentPersonAuthorityV1, readApprovalAutomaticActionIdV1 } from './executor/automaticApprovalContinuation.js';
 import { ApprovalRequestDecideInputSchema } from './specs/approvals.js';
 import type { StoredApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { isApprovalRequestExecutionApproved } from '../approvals/approvalAutomaticChecks.js';
@@ -885,9 +885,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   };
   const automaticApproval = createAutomaticApprovalContinuation(deps, writeApprovedDecision);
   const automaticContinuationContext = (request: StoredApprovalRequestV2, context: ActionExecutorContext): ActionExecutorContext => {
-    const invocation = request.actionId === 'action.invoke' ? ActionInvokeInputSchema.safeParse(request.actionArgs) : null;
-    const actionId = invocation?.success ? formatQualifiedPluginActionId(invocation.data.action) : request.actionId;
-    return restoreApprovalAutomaticContextV1(request, actionId, context, deps.actionAutomations);
+    return restoreApprovalAutomaticContextV1(request, readApprovalAutomaticActionIdV1(request), context, deps.actionAutomations);
   };
   /**
    * One human Approve of an open Ask that carries automatic checks. The decide Action and the
@@ -3819,7 +3817,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // An externally admitted effect must settle its before-Action checks before
     // reaching the host. Missing the canonical port is an unavailable target,
     // never an implicit empty selection that can run the effect.
-    if (requiresExternalActionAutomationAdmission && !deps.actionAutomations) {
+    if (requiresExternalActionAutomationAdmission
+      && (!deps.actionAutomations || deps.actionAutomations.capability === 'notEvaluated')) {
       return actionAutomationAdmissionUnavailableV1('owner_unavailable');
     }
     if (deps.actionAutomations) {

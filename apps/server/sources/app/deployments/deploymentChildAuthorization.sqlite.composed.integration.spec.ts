@@ -34,7 +34,7 @@ import { createManagedPresetHydrator } from '../../../../cli/src/machines/manage
 import { createAdmittedPluginRuntimeFixture } from '../../../../cli/src/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '../../../../cli/src/plugins/runtime/reload/singleton';
 import { createDaemonExternalActionContributedInvoker } from '../../../../cli/src/daemon/externalActions/createDaemonExternalActionContributedInvoker';
-import { createCliActionAutomationPortV1 } from '../../../../cli/src/api/actionAutomations';
+import { createCliActionDeps } from '../../../../cli/src/session/actions/createCliActionDeps';
 import { createUnavailableActionTransportDeps } from '../../../../cli/src/testkit/actionTransportDeps';
 import { createActionSettingsProvider } from '../../../../cli/src/settings/actionsSettingsProvider';
 import { withConfiguredDaemonTestHome } from '../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -2282,7 +2282,8 @@ describe('deployment children retain their controller Action authority', () => {
                     const deployment = createDaemonDeploymentActionDeps({ ...controllerHost, runtime: native });
                     const asks: unknown[] = [];
                     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deployment,
-                        actionAutomations: createCliActionAutomationPortV1({ token: credentials.token, serverHttpBaseUrl: baseUrl }),
+                        actionAutomations: createCliActionDeps({ credentials, token: credentials.token, serverId,
+                            serverHttpBaseUrl: baseUrl, sessionId: '' }).actionAutomations,
                         approvalsCreate: async ({ request }) => { asks.push(request); return { artifactId: 'two-machine-deploy-ask' }; } });
                     const response = await runWithServerHttpBaseUrl(baseUrl, () => executor.execute(actionId, input, {
                         surface: 'cli', authority: 'present_user', runtimeAccountId: f.account.id, actionCaller: { kind: 'host' },
@@ -2526,7 +2527,8 @@ describe('deployment children retain their controller Action authority', () => {
                         signExternalActionApprovalInputV1({ ...request, authorizationToken: root.token, privateKey: f.controller.keys.secretKey });
                     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deployment,
                         serverId, machineId: f.controller.id, runActionOperation: operations.runActionOperation,
-                        actionAutomations: createCliActionAutomationPortV1({ token: credentials.token, serverHttpBaseUrl: baseUrl }),
+                        actionAutomations: createCliActionDeps({ credentials, token: credentials.token, serverId,
+                            serverHttpBaseUrl: baseUrl, sessionId: '' }).actionAutomations,
                         approvalsCreate: approvals.approvalsCreate, approvalsGet: approvals.approvalsGet, approvalsUpdate: approvals.approvalsUpdate,
                         isApprovalExecutionOriginCurrent: async ({ origin }) => origin.accountId === f.account.id && origin.requestId === envelope.requestId,
                         prepareApprovalExecutionAuthorization: async ({ authorization: stored }) => stored.token === root.token

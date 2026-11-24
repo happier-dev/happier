@@ -140,6 +140,8 @@ export type ActionAutomationWaitV1 = (args: Readonly<{
 }>) => Promise<ActionAutomationRunObservationV1>;
 export type ActionAutomationCancelV1 = (args: Parameters<ActionAutomationWaitV1>[0]) => Promise<void>;
 export type ActionAutomationPortV1 = Readonly<{
+  /** Explicit inability to read Account check content, independent of a failed attempt to start a check. */
+  capability?: 'notEvaluated';
   prepareMatching?: ActionAutomationPrepareMatchingV1;
   select(args: ActionAutomationSelectArgsV1): Promise<ActionAutomationSelectionV1>;
   hasAfterActions?: (actionIds: readonly string[]) => Promise<boolean>;
@@ -152,6 +154,31 @@ export type ActionAutomationPortV1 = Readonly<{
   /** Terminal native Event consumers reuse this port's authenticated occurrence transport. */
   admitOccurrence?: (input: AutomationActionAdmitRequestV1, context: ActionExecutorContext) => Promise<AutomationActionAdmitResultV1>;
 }>;
+
+export type WorkflowActionAutomationChecksV1 = Readonly<{
+  prepareMatching: ActionAutomationPrepareMatchingV1;
+  resolveConsent: NonNullable<ActionAutomationSelectArgsV1['resolveConsent']>;
+  allowConsent: ActionAutomationAllowConsentV1;
+}> & Pick<ActionAutomationPortV1, 'wait' | 'cancel'>;
+
+export type MatchingActionAutomationPortV1 = ActionAutomationPortV1 &
+  Readonly<{ capability?: never; prepareMatching: ActionAutomationPrepareMatchingV1 }>;
+
+export type NotEvaluatedActionAutomationPortV1 = ActionAutomationPortV1 &
+  Readonly<{ capability: 'notEvaluated'; prepareMatching?: never }>;
+
+/** Hosts without Account credentials cannot read either the index or private matching. */
+export const notEvaluatedActionAutomationPortV1: NotEvaluatedActionAutomationPortV1 = Object.freeze({
+  capability: 'notEvaluated' as const,
+  async select(args: ActionAutomationSelectArgsV1): Promise<ActionAutomationSelectionV1> {
+    return { status: 'unavailable', subjects: projectActionAutomationSubjectsV1(args), before: [], after: [],
+      notices: [{ code: 'action_automations_not_checked', reason: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 }] };
+  },
+  async start(): Promise<ActionAutomationStartResultV1> {
+    return { runs: [], notices: [], notEvaluated: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 };
+  },
+  async settle() {},
+});
 
 /** The Session binder, approval-scope owner and profile binding supply all identities. */
 export function projectActionAutomationSubjectsV1(args: ActionAutomationSelectArgsV1): readonly AutomationSubjectContextV1[] {
@@ -500,9 +527,6 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
       const selection = context.actionAutomationAdmission?.selection;
       const requestId = context.actionRequestId;
       if (!selection || !requestId || selected.length === 0) return { runs: [], notices: [] };
-      if (!selection.privateMatching) {
-        return { runs: [], notices: [], notEvaluated: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 };
-      }
       const selectedKeys = new Set(selected.map(row => JSON.stringify([row.automationId, row.triggerId])));
       const admitted = selection.before.flatMap(row => {
         if (!selectedKeys.has(JSON.stringify([row.automationId, row.triggerId]))) return [];
@@ -556,4 +580,22 @@ export function createActionAutomationHttpPortV1(options: Readonly<{
     },
   });
   return { ...port, admitOccurrence };
+}
+
+/** Each executable Account port binds Workflow matching to the Home's retained index. */
+export function bindWorkflowActionAutomationChecksV1(
+  { capability: _capability, ...port }: ReturnType<typeof createActionAutomationHttpPortV1>,
+  checks: WorkflowActionAutomationChecksV1,
+): MatchingActionAutomationPortV1 {
+  const { resolveConsent, ...execution } = checks;
+  return {
+    ...port,
+    ...execution,
+    select: args => port.select({ ...args, resolveConsent, prepareMatching: checks.prepareMatching }),
+    async allowConsent(args) {
+      const consent = await checks.allowConsent(args);
+      port.retainConsent(consent);
+      return consent;
+    },
+  };
 }

@@ -54,6 +54,7 @@ import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/prot
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { executeSessionDelete } from '@happier-dev/protocol/actions/executor/session/delete';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -62,6 +63,18 @@ describe('CLI Session target composition', () => {
   const sessionId = 'c111111111111111111111111';
   const managerId = 'c222222222222222222222222';
   const context = { surface: 'cli', authority: 'present_user', serverId: 'srv_target_home' } as const;
+
+  it('proceeds with the not-checked note when there is no Account credential', async () => {
+    const deps = createCliActionDeps({ token: '', sessionId, serverId: context.serverId, serverHttpBaseUrl: home });
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'account.name.set': ['cli'] } });
+    const profile = { name: 'Checked', firstName: 'Checked', lastName: null, timestamp: 1 };
+    const executor = createActionExecutor({ actionAutomations: deps.actionAutomations, homeDomainAction: async () => profile });
+    await expect(executor.execute('account.name.set', { name: profile.name }, {
+      ...context, serverIdentityId: 'home', runtimeAccountId: 'owner', actionsSettings: settings,
+    })).resolves.toEqual({ ok: true, result: profile, automationNotices: [
+      { code: 'action_automations_not_checked', reason: ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 },
+    ] });
+  });
 
   it('resolves restricted native targets only through the server-proved own subtree', async () => {
     const credentials = { token: 'restricted-runtime', encryption: null };

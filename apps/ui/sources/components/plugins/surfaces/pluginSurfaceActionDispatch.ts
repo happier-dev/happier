@@ -1635,16 +1635,15 @@ async function executeClientContributedAction(
         ? automationContext.actionAutomationAdmission : undefined;
     input = { ...input, actionRequestId: automationContext.actionRequestId ?? undefined,
         ...(input.hostAction ? { hostAction: { ...input.hostAction, context: automationContext } } : {}) };
+    let automationAccount: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
     try {
         if (!preparedInput.isReadOnly && !input.readObservation && !automationInvocation) {
             let port = automationContext.actionAutomationPort;
             if (!port) {
-                const account = await captureLazyActionAccountContext(authority.serverId, input.signal);
-                try {
-                    port = createUiActionAutomationPortV1(account);
-                    automationContext.serverIdentityId = account.serverIdentityId;
-                    automationContext.runtimeAccountId = account.accountId;
-                } finally { account.dispose(); }
+                automationAccount = await captureLazyActionAccountContext(authority.serverId, input.signal);
+                port = createUiActionAutomationPortV1(automationAccount);
+                automationContext.serverIdentityId = automationAccount.serverIdentityId;
+                automationContext.runtimeAccountId = automationAccount.accountId;
                 automationContext.actionAutomationPort = port;
             }
             const projectedSubjects = projectPluginActionApprovalScopeV1({
@@ -1667,6 +1666,8 @@ async function executeClientContributedAction(
         }
     } catch (error) {
         return clientActionPreparationFailure(error);
+    } finally {
+        automationAccount?.dispose();
     }
     if (automationInvocation && !automationContext.approvedActionReplay) {
         const selection = automationInvocation.selection;

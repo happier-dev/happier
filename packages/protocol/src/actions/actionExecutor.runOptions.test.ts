@@ -1107,12 +1107,16 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     );
   });
 
-  it('identifies the missing Action Automation owner before an external detached start dispatches', async () => {
+  it.each(['absent', 'notEvaluated'] as const)('identifies the %s Action Automation owner before an external detached start dispatches', async capability => {
+    const { notEvaluatedActionAutomationPortV1 } = await import('./executor/actionAutomationAdmission.js');
     const starts: unknown[] = [];
-    const executor = createActionExecutor(createDeps({ executionRunStart: async (_sessionId, input) => {
-      starts.push(input);
-      return { runId: 'unexpected', callId: 'unexpected', sidechainId: 'unexpected' };
-    } }));
+    const executor = createActionExecutor(createDeps({
+      ...(capability === 'notEvaluated' ? { actionAutomations: notEvaluatedActionAutomationPortV1 } : {}),
+      executionRunStart: async (_sessionId, input) => {
+        starts.push(input);
+        return { runId: 'unexpected', callId: 'unexpected', sidechainId: 'unexpected' };
+      },
+    }));
     const result = await executor.execute('execution.run.start', { ...RUN_START_BASE, sessionId: null }, {
       surface: 'api', authority: 'account_automation', executionRunTargetMachineId: 'm1',
       externalActionTarget: { kind: 'machine', machineId: 'm1' },
