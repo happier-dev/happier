@@ -265,8 +265,18 @@ An Environment manager can choose **Clear capture** in the **Telemetry** tab
 and confirm to delete that Environment's retained capture. New telemetry can
 still arrive while the app continues exporting.
 
-Happier leaves the app's SDK sampling default unchanged unless you choose a
-sampling ratio. An app's authored collector configuration takes precedence at
+Under **Telemetry settings**, open **Trace sampling** and enter the percentage
+of traces to keep. The change applies at the next deploy. Without an Environment
+sampler, the SDK uses its default unless the app defines its own sampling.
+For Compose services, declare `OTEL_TRACES_SAMPLER` and
+`OTEL_TRACES_SAMPLER_ARG` without values to receive the setting. Values you
+set explicitly in Compose take precedence at deployment.
+
+If a Team Environment has no collector, **Deploy a collector next to your relay**
+opens the collector App review in the same Project. Choose the Machine that will
+run it and review the install.
+
+An app's authored collector configuration takes precedence at
 deployment. Telemetry reads and the Environment screens are still under
 development; this section does not certify the complete telemetry journey.
 

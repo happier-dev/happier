@@ -3272,7 +3272,14 @@ and `none` otherwise. A same-Machine container reaches the
 loopback receiver through `privateServiceContainerBridge`. Sampling variables
 remain absent unless a person selects a ratio; explicit sampling uses the
 standard `parentbased_traceidratio` sampler and argument through ordinary
-Environment bindings.
+Environment bindings. **Trace sampling** in the Environment's Telemetry settings
+sets those variables for the next deploy. Native Compose services receive them
+through declared `OTEL_TRACES_SAMPLER` and `OTEL_TRACES_SAMPLER_ARG` slots.
+Saving the collector configuration preserves the sampling choice.
+
+When a Team Environment has no collector,
+**Deploy a collector next to your relay** opens the existing Store review in
+that Project and asks the person to choose the destination Machine.
 
 The in-development platform integration resolves an explicitly selected
 telemetry Domain through the same owner. The Domain must be active and its

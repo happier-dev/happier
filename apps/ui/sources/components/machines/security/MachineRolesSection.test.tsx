@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it } from 'vitest';
 
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
@@ -11,9 +11,8 @@ installMachinesSettingsCommonModuleMocks();
 
 async function render(metadataPatch: Record<string, unknown>, online: boolean | null) {
   const { MachineRolesSection } = await import('./MachineRolesSection');
-  const base = createMachineFixture({ id: 'shop-prod' });
-  // An owned Machine (legacy custody projection): Manage.
-  const machine = { ...base, isShared: false, metadata: { ...base.metadata!, ...metadataPatch } };
+  const base = createHydratedPlainMachineFixture({ id: 'shop-prod', accountId: 'account-a' });
+  const machine = { ...base, metadata: { ...base.metadata!, ...metadataPatch } };
   return await renderScreen(React.createElement(MachineRolesSection, { serverId: 'home', machine, machineName: 'shop-prod', online }));
 }
 const toggle = (screen: Awaited<ReturnType<typeof render>>, roleId: string) => {
