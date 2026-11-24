@@ -4,7 +4,17 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 // Native layout delivery is the platform boundary; the responsive header and control stay real.
-vi.mock('react-native', () => ({ View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false } }));
+vi.mock('react-native', () => ({
+  View: 'View', Text: 'Text', Pressable: 'Pressable', Platform: { OS: 'ios' }, I18nManager: { isRTL: false },
+  // A pending fact's bar pulses through the platform's animation driver; the test only needs it to mount.
+  Animated: {
+    Value: class { constructor(readonly value: number) {} },
+    View: 'AnimatedView',
+    loop: () => ({ start: () => {}, stop: () => {} }),
+    sequence: (items: unknown[]) => items,
+    timing: (_value: unknown, config: unknown) => config,
+  },
+}));
 
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { HappierPageHeader } from './PageHeader.js';
@@ -188,6 +198,26 @@ describe('page header facts line', () => {
 
     expect(separatorHidden('presence')).toBe(false);
     expect(separatorHidden('uptime')).toBe(true);
+  });
+
+  it('holds a pending fact\'s place with its representative words hidden, before the facts that follow it', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<HappierPageHeader testID="header" title="Northwind"
+        meta={[{ key: 'role', testID: 'role', text: 'Member', pending: true }, { key: 'home', testID: 'home', text: 'Studio' }]} />);
+    });
+    onTestFinished(() => { act(() => renderer.unmount()); });
+    const role = renderer.root.find(node => node.props.testID === 'role' && typeof node.type === 'string');
+    const home = renderer.root.find(node => node.props.testID === 'home' && typeof node.type === 'string');
+    const line = role.parent!;
+    // The pending fact is first on the line, so the Home after it stands where it will stand.
+    expect(line.children.indexOf(role)).toBeLessThan(line.children.indexOf(home));
+    // Its stand-in words keep their width but are neither drawn nor read.
+    const hidden = role.findAll(node => node.props['aria-hidden'] === true && node.props.accessibilityElementsHidden === true);
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(hidden[0]!.findAll(node => node.props.style?.opacity === 0).length).toBeGreaterThan(0);
+    // A fact that is known draws its words.
+    expect(home.findAll(node => node.props['aria-hidden'] === true)).toHaveLength(0);
   });
 
   it('draws no meta line for an empty list of facts', () => {

@@ -6,9 +6,8 @@ import type {
     SessionViewerProjectionV1,
 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
-import { teamDirectoryQueryKeyV1 } from '@happier-dev/protocol/teams';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { getTeamSnapshot, getTeamsDirectorySnapshot, readTeamGroup } from '@/sync/store/teams/teamsSnapshots';
+import { getTeamSnapshot, readTeamGroup, readTeamsDirectoryRow } from '@/sync/store/teams/teamsSnapshots';
 import { resolveSessionAwarenessContentLabel } from '@/sync/domains/session/awareness/sessionAwarenessContentLabels';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -119,12 +118,7 @@ function resolveAudience(params: Readonly<{
         if (!readTeamGroup(scope, address, context.groupId)) return null;
         return { kind: 'group', label: normalizeLabel(params.audienceLabel) ?? t('common.unavailable') };
     }
-    let team = getTeamSnapshot(scope, address)?.data ?? null;
-    for (const archived of ['active', 'archived'] as const) {
-        if (team) break;
-        const queryKey = teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived });
-        team = getTeamsDirectorySnapshot(scope, queryKey)?.data?.find(row => row.id === context.teamId) ?? null;
-    }
+    const team = getTeamSnapshot(scope, address)?.data ?? readTeamsDirectoryRow(scope, context.teamId);
     const label = normalizeLabel(team?.name);
     return label ? { kind: 'team', label } : null;
 }

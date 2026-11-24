@@ -1,7 +1,8 @@
 import { createContext, isValidElement, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
-import { useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
+import { useOptionalHappierUiPalette, useOptionalHappierUiTheme, useOptionalHappierUiTypography } from '../../environment/context.js';
+import { HAPPIER_SKELETON_BAR, HappierSkeletonBlock } from '../feedback/Skeleton.js';
 import type { HappierFocusable, HappierLayoutChangeEvent, HappierStyleProp } from '../portableTypes.js';
 import { HappierMiddleEllipsisText, HappierPageHeaderMetaId, HappierPageHeaderMetaIdAnchor, type HappierPageHeaderMetaIdCopy } from './PageHeaderMetaId.js';
 import { HappierText, useHappierTextPresentation } from '../text/Text.js';
@@ -23,6 +24,11 @@ export type HappierPageHeaderMetaFact = Readonly<{
   icon?: ReactNode;
   /** The fact is an address, path or id: drawn in the mono face. */
   mono?: boolean;
+  /**
+   * The fact is still being read: a quiet bar as wide as `text` (a representative value, such as a role's name) holds
+   * its place, so the facts after it stand where they will stand when it arrives.
+   */
+  pending?: boolean;
   testID?: string;
   /**
    * The fact leads to the thing it names (the session a Run came from): the fact itself is the
@@ -617,7 +623,10 @@ function PageHeaderMetaLine(props: Readonly<{
   /** Directly under the description or title; an identifier row above is already padded by its button. */
   spaced: boolean;
 }>) {
-  const focusColor = useOptionalHappierUiTheme()?.colors.focus;
+  const theme = useOptionalHappierUiTheme();
+  const focusColor = theme?.colors.focus;
+  const palette = useOptionalHappierUiPalette();
+  const skeletonColor = palette?.skeleton ?? theme?.colors.control ?? 'transparent';
   // Each fact's vertical centre in the line; facts on one wrapped row share it.
   const [centres, setCentres] = useState<Readonly<Record<string, number>>>({});
   // A fact reports its layout when its own size changes, not when a narrower line or a grown neighbour
@@ -652,7 +661,16 @@ function PageHeaderMetaLine(props: Readonly<{
         // A fact and the separator that closes it wrap as one group: the fact's words never break
         // across lines, so a line never ends on a lone "·" after half a fact.
         <View key={`${fact.key}@${lineWidth}@${factsSignature}`} testID={fact.testID} onLayout={measureFact(fact.key)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0, maxWidth: '100%' }}>
-          {fact.onPress === undefined ? <>
+          {fact.pending === true ? (
+            <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ position: 'relative' }}>
+              <View style={{ opacity: 0 }}>
+                {props.renderText({ role: 'meta', text: fact.text, header: false, ...(fact.mono ? { mono: true } : {}) })}
+              </View>
+              <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, justifyContent: 'center' }}>
+                <HappierSkeletonBlock color={skeletonColor} width="100%" height={HAPPIER_SKELETON_BAR.height} radius={HAPPIER_SKELETON_BAR.radius} />
+              </View>
+            </View>
+          ) : fact.onPress === undefined ? <>
             {fact.icon ?? null}
             {props.renderText({ role: 'meta', text: fact.text, header: false, ...(fact.mono ? { mono: true } : {}) })}
           </> : (

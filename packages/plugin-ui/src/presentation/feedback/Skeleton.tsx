@@ -156,7 +156,8 @@ const SKELETON_TITLE_WIDTHS: readonly HappierDimension[] = ['62%', '48%', '71%',
 /** The meta line under a two-line row's title. */
 const SKELETON_META_WIDTH: HappierDimension = '34%';
 /** One quiet bar: the lab's thin line (8 px, radius 4), the same for title and meta. */
-const SKELETON_BAR = Object.freeze({ height: 8, radius: 4 });
+export const HAPPIER_SKELETON_BAR = Object.freeze({ height: 8, radius: 4 });
+const SKELETON_BAR = HAPPIER_SKELETON_BAR;
 /**
  * A loaded row whose name is still arriving (a record that is still decrypting): its title line holds the loading
  * rows' own title bar, centred in the title's line box, so the row keeps its height and the name lands in place.

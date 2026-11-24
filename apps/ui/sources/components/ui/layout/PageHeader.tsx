@@ -43,6 +43,8 @@ export type PageHeaderMetaFact = Readonly<{
     icon?: IconName;
     /** The fact is an address, path or id: drawn in the mono face. */
     mono?: boolean;
+    /** Still being read: a quiet bar as wide as `text` (a representative value) holds its place (`HappierPageHeader`). */
+    pending?: boolean;
     testID?: string;
     /** The fact is the link to what it names; `accessibilityLabel` says where it goes. */
     onPress?: () => void;
@@ -194,6 +196,7 @@ function usePageHeaderMeta(facts: readonly PageHeaderMetaFact[] | undefined) {
         key: fact.key,
         text: fact.text,
         ...(fact.mono ? { mono: true } : {}),
+        ...(fact.pending ? { pending: true } : {}),
         ...(fact.testID === undefined ? {} : { testID: fact.testID }),
         ...(fact.onPress === undefined ? {} : { onPress: fact.onPress }),
         ...(fact.accessibilityLabel === undefined ? {} : { accessibilityLabel: fact.accessibilityLabel }),

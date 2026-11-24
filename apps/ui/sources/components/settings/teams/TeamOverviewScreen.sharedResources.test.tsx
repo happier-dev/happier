@@ -291,6 +291,43 @@ describe('Team overview: Shared with this Team', () => {
     expect(reserved()).toEqual([]);
   });
 
+  it('paints the held header whole from the Teams directory row the rail already holds', async () => {
+    const serverId = await addHome([]);
+    const { applyTeamsDirectoryPage } = await import('@/sync/store/teams/teamsSnapshots');
+    const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+    const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
+    applyTeamsDirectoryPage({
+      scope: createServerAccountScope(serverId, 'account-ada')!,
+      queryKey: teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
+      items: [teamSummaryFixture({ name: 'Northwind Platform', viewerRole: 'owner' })],
+      observedAt: 1,
+    });
+    harness.answer(serverId, '/v1/teams/get', {
+      body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageMembers: true }) }),
+      respondAfter: new Promise<void>(() => {}),
+    });
+    const screen = await renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-role'));
+    // The row the rail draws is the Team's identity: no title bar, the name, its role and its Home at once.
+    expect(ids(screen)).not.toContain('team-overview-identity-loading');
+    expect(JSON.stringify(screen.tree.toJSON())).toContain('Northwind Platform');
+    expect(ids(screen)).toContain('team-overview-home');
+    expect(ids(screen)).toContain('team-loading');
+  });
+
+  it('holds a role-wide fact before the Home when no directory row is known, so the Home stands still', async () => {
+    const serverId = await addHome([]);
+    harness.answer(serverId, '/v1/teams/get', {
+      body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageMembers: true }) }),
+      respondAfter: new Promise<void>(() => {}),
+    });
+    const screen = await renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity-loading'));
+    const order = ids(screen);
+    expect(order).toContain('team-overview-role');
+    expect(order.indexOf('team-overview-role')).toBeLessThan(order.indexOf('team-overview-home'));
+  });
+
   it('keeps the last-known invitation to share while a refresh runs', async () => {
     const serverId = await addHome([
       { kind: 'sessions', status: 'available', count: 0 },

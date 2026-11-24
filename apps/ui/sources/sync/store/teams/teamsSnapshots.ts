@@ -1,4 +1,5 @@
 import {
+    teamDirectoryQueryKeyV1,
     teamGroupsQueryKeyV1,
     type TeamMembersListFilterV1,
     type TeamMembershipV1,
@@ -439,6 +440,27 @@ export function getTeamsDirectorySnapshot(
 ): TeamsDirectorySnapshot | null {
     if (!scope) return null;
     return directories.get(directoryKey(scope, queryKey)) ?? null;
+}
+
+const MEMBER_DIRECTORY_QUERY_KEYS = Object.freeze([
+    teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
+    teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'archived' }),
+]);
+
+/**
+ * One Team's row in this Account's own Teams directory (active, then archived): the projection the Teams rail draws.
+ * A surface that opens before the Team itself is read (its header) shows what the rail already shows. A directory
+ * the Home refused says nothing about its Teams.
+ */
+export function readTeamsDirectoryRow(scope: ServerAccountScope | null | undefined, teamId: string): TeamSummaryV1 | null {
+    if (!scope) return null;
+    for (const queryKey of MEMBER_DIRECTORY_QUERY_KEYS) {
+        const snapshot = getTeamsDirectorySnapshot(scope, queryKey);
+        if (!snapshot || isAuthoritativeScopedSnapshotRefusal(snapshot.error)) continue;
+        const row = snapshot.data?.find(team => team.id === teamId);
+        if (row) return row;
+    }
+    return null;
 }
 
 /** Read a retained setup offer's Team even after the step has been dismissed. */

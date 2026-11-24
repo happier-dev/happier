@@ -37,7 +37,10 @@ import { TeamSharedResourcesSection, isTeamSharedResourcesSummaryPending } from 
 import { TeamSharedKindBody, TeamSharedKindShareAction, useTeamSharedPresetScroll } from './shared/TeamSharedKindScreen';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
-import { isTeamViewerSuspended, teamViewerStandingLabel } from './teamLabels';
+import { isTeamViewerSuspended, teamRoleLabel, teamViewerStandingLabel } from './teamLabels';
+import type { TeamSummaryV1 } from '@happier-dev/protocol/teams';
+import { useTeamsDirectoryRow } from '@/hooks/teams/useTeamsDirectoryRow';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { TeamOwnerRequiredNotice } from './members/TeamOwnerRequiredNotice';
 import { TeamLeaveAction } from './members/TeamLeaveAction';
 import { TeamSuspendedNotice } from './members/TeamSuspendedNotice';
@@ -93,39 +96,57 @@ const TeamOverviewHeader = React.memo(function TeamOverviewHeader(
   }>,
 ) {
   const { team, address, homeName } = props.context;
+  return (
+    <TeamOverviewIdentityHeader
+      testID="team-overview-identity"
+      address={address}
+      team={team}
+      homeName={homeName}
+      invite={teamOverviewOffersInvite(team, props.context.archived)}
+      inviteDisabled={!props.context.canMutate}
+    />
+  );
+});
+
+/** Inviting is offered once the Team is set up and in use, to a viewer who manages invitations. */
+function teamOverviewOffersInvite(team: TeamSummaryV1, archived: boolean): boolean {
+  return team.capabilities.manageInvitations && !archived && resolveTeamSetupSteps(team) === null;
+}
+
+/**
+ * The Team's identity header: its mark, name and purpose, then the viewer's standing and its Home. The same header
+ * stands while the Team is read when the Teams directory already holds the Team's row, so the two never differ.
+ */
+const TeamOverviewIdentityHeader = React.memo(function TeamOverviewIdentityHeader(
+  props: Readonly<{
+    testID: string;
+    address: TeamAddress;
+    team: TeamSummaryV1;
+    homeName: string | undefined;
+    invite: boolean;
+    inviteDisabled: boolean;
+  }>,
+) {
+  const { team, address, homeName } = props;
   const standing = teamViewerStandingLabel(team);
-  const invite = team.capabilities.manageInvitations && !props.context.archived && resolveTeamSetupSteps(team) === null;
   return (
     <PageHeader
-      testID="team-overview-identity"
+      testID={props.testID}
       alwaysShowTitle
       title={team.name}
       description={team.description ?? undefined}
       leading={<TeamHeaderAvatar address={address} team={team} />}
       meta={[
-        ...(standing
-          ? [
-              {
-                key: 'role',
-                testID: 'team-overview-role',
-                text: standing,
-              },
-            ]
-          : []),
-        {
-          key: 'home',
-          testID: 'team-overview-home',
-          icon: 'house' as const,
-          text: homeName,
-        },
+        ...(standing ? [{ key: 'role', testID: 'team-overview-role', text: standing }] : []),
+        ...(homeName ? [{ key: 'home', testID: 'team-overview-home', icon: 'house' as const, text: homeName }] : []),
       ]}
       primaryAction={
-        invite
+        props.invite
           ? teamInvitePeopleAction({
               serverId: address.serverId,
               teamId: address.teamId,
               testID: 'team-overview-invite',
-              disabled: !props.context.canMutate,
+              disabled: props.inviteDisabled,
             })
           : undefined
       }
@@ -483,20 +504,43 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
 });
 
 /**
- * While the Team is read only its identity is known: its mark (the artwork comes from the Team id) and its Home.
- * The header holds them with the title's line; which sections follow (setup or shared, attention) is the Team's
- * answer, so one quiet line waits where they begin and nothing below the header is guessed.
+ * The Team's header while the Team is read. When the Teams directory already holds its row (the rail beside it draws
+ * that row), the header stands whole from it: name, mark, role and Home, with Invite held until the Team answers.
+ * Otherwise only its identity is known: its mark (the artwork comes from the Team id) and its Home, with a role-wide
+ * bar before the Home so the Home stands where it lands. Which sections follow is the Team's answer, so one quiet line
+ * waits where they begin and nothing below the header is guessed.
  */
-function renderTeamOverviewLoadingHeader(address: TeamAddress | null, homeName: string | undefined) {
+const TeamOverviewLoadingHeader = React.memo(function TeamOverviewLoadingHeader(props: Readonly<{
+  address: TeamAddress | null;
+  homeName: string | undefined;
+  scope: ServerAccountScope | null;
+}>) {
+  const { address, homeName } = props;
+  const row = useTeamsDirectoryRow(props.scope, address?.teamId ?? '');
+  if (address && row) {
+    return (
+      <TeamOverviewIdentityHeader
+        testID="team-overview-identity"
+        address={address}
+        team={row}
+        homeName={homeName}
+        invite={teamOverviewOffersInvite(row, row.archivedAt !== null)}
+        inviteDisabled
+      />
+    );
+  }
   return (
     <PageHeaderPlaceholder
       testID="team-overview-identity-loading"
       alwaysShowTitle
       leading={address ? <TeamHeaderAvatar address={address} team={null} /> : undefined}
-      meta={homeName ? [{ key: 'home', testID: 'team-overview-home', icon: 'house', text: homeName }] : undefined}
+      meta={homeName ? [
+        { key: 'role', testID: 'team-overview-role', text: teamRoleLabel('member'), pending: true },
+        { key: 'home', testID: 'team-overview-home', icon: 'house', text: homeName },
+      ] : undefined}
     />
   );
-}
+});
 
 function TeamOverviewLoading() {
   return <SurfaceStateCard testID="team-loading" size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />;
@@ -557,7 +601,9 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
       teamId={props.teamId}
       renderHeader={(context) => <TeamOverviewHeader context={context} />}
       renderLoading={TeamOverviewLoading}
-      renderLoadingHeader={(homeName) => renderTeamOverviewLoadingHeader(createTeamAddress(props.serverId, props.teamId), homeName)}
+      renderLoadingHeader={(known) => (
+        <TeamOverviewLoadingHeader address={createTeamAddress(props.serverId, props.teamId)} homeName={known.homeName} scope={known.scope} />
+      )}
     >
       {(context) => (
         <>

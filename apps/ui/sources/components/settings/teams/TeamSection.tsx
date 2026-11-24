@@ -23,6 +23,7 @@ import { useTeamReadFailureAction } from './useTeamReadFailureAction';
 import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * A read the page makes itself (a Group, its roster) that is not current: the page keeps what it
@@ -142,7 +143,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
      * An entity page's own header while the Team is read: what is already known of it (its mark, its Home), so
      * the header that arrives stands where this one stood. Without it the page title stands above the wait.
      */
-    renderLoadingHeader?: (homeName: string | undefined) => React.ReactNode;
+    renderLoadingHeader?: (known: Readonly<{ homeName: string | undefined; scope: ServerAccountScope | null }>) => React.ReactNode;
     /** Quiet actions at the head of a sub-page whose content has no section title to carry them. */
     renderHeaderActions?: (context: TeamSectionContext) => React.ReactNode;
     /**
@@ -217,7 +218,10 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     );
     const loadingPage = (testID: string) => conditionPage(
         props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID={testID} />,
-        props.renderLoadingHeader?.(projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined)) ?? plainHeader,
+        props.renderLoadingHeader?.({
+            homeName: projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined),
+            scope: projection?.scope ?? null,
+        }) ?? plainHeader,
     );
 
     if (!projection) {
