@@ -1,4 +1,4 @@
-import type { DiscardedPendingMessage, PendingMessage, Session } from '@/sync/domains/state/storageTypes';
+import type { PendingMessage, Session } from '@/sync/domains/state/storageTypes';
 import { canSteerUserMessageNow } from '@/sync/domains/session/control/submitMode';
 import { isSessionRuntimeRunning, projectUiSessionRuntimeAwareness } from '@/sync/domains/session/attention/runtimePresentation';
 import { readLatestLocalOutboundPendingUserMessageAt } from '@/sync/domains/messages/outgoingUserMessageActivity';
@@ -37,13 +37,12 @@ export async function sendPendingMessageWithIntent(opts: {
     executor: Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute'>;
     isCurrent?: () => boolean;
     session: Session | null;
-    message: PendingMessage | DiscardedPendingMessage;
+    message: PendingMessage;
     deliveryIntent: 'steer_now' | 'interrupt_and_send';
 }): Promise<void> {
     const { message } = opts;
     if (opts.isCurrent?.() === false) return;
-    const discarded = 'discardedAt' in message;
-    if (!discarded && !canUseDirectPendingDeliveryActions(message, undefined, opts.session)) return;
+    if (!canUseDirectPendingDeliveryActions(message, undefined, opts.session)) return;
     if (opts.deliveryIntent === 'interrupt_and_send') {
         const presentation = getPendingMessageSendPresentation(opts.session);
         if (presentation.sendNowConfirmationBody !== null

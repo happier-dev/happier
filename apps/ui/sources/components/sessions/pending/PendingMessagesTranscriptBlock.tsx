@@ -559,21 +559,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         if (message) await handleRemove(message);
     }, [discardedMessages, handleRemove]);
 
-    const handleSteerDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
-        if (!accountActorViewerScope) return;
-        await sendPendingMessageWithIntent({
-        sessionId: props.sessionId, serverId: exactPendingQueueOwner?.serverId, session, message, deliveryIntent: 'steer_now',
-        executor: pendingRecoveryExecutor, expectedAccountId: accountActorViewerScope.accountId,
-        });
-    }, [props.sessionId, exactPendingQueueOwner, session, pendingRecoveryExecutor, accountActorViewerScope]);
-    const handleSendDiscardedNow = React.useCallback(async (message: DiscardedPendingMessage) => {
-        if (!accountActorViewerScope) return;
-        await sendPendingMessageWithIntent({
-        sessionId: props.sessionId, serverId: exactPendingQueueOwner?.serverId, session, message, deliveryIntent: 'interrupt_and_send',
-        executor: pendingRecoveryExecutor, expectedAccountId: accountActorViewerScope.accountId,
-        });
-    }, [props.sessionId, exactPendingQueueOwner, session, pendingRecoveryExecutor, accountActorViewerScope]);
-
     const renderMessage = React.useCallback((args: {
         message: PendingMessage;
         index: number;
@@ -1085,9 +1070,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const menuAnchor = menuPressAnchor?.menuKey === menuKey ? menuPressAnchor.anchor : undefined;
         const isArchivedUncertainty = message.discardedReason === 'dismissed_uncertain'
             || message.discardedReason === 'resent_as_new';
-        // A message the Agent never received (refused before any effect) has one next step: send it again.
-        // While a turn runs, waiting (Re-queue) and interrupting (Send now) stay distinct choices.
-        const offersSendAgain = isRetainedSendFailure(message) && !runtimeWorking;
         // Under a "Not sent" title, a cause the Session's transcript already says is not repeated on the row.
         const causeSaidBySession = all.every(isRetainedSendFailure)
             && admissionFailure !== null && session?.lastRuntimeIssue?.code === message.discardedReason;
@@ -1099,14 +1081,8 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                 title: t('common.copy'),
                 icon: <Icon name="copy" size={16} color={theme.colors.text.secondary} />,
             } as const] : []),
-            ...(offersSendAgain ? [
-                { id: 'sendNow', testID: `pendingMessages.discarded.menu.sendAgain:${message.id}`, title: t('session.pendingMessages.actions.sendAgain'), icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} /> },
-                { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
-            ] : []),
-            ...(!isArchivedUncertainty && !offersSendAgain ? [
+            ...(!isArchivedUncertainty ? [
                 { id: 'requeue', title: t('session.pendingMessages.actions.requeue'), icon: <Icon name="arrow-elbow-up-left" size={16} color={theme.colors.text.secondary} /> },
-                ...(canSteerNow ? [{ id: 'steerNow', title: t('session.pendingMessages.actions.steerNow'), icon: <Icon name="navigation-arrow" size={16} color={theme.colors.text.secondary} /> } as const] : []),
-                { id: 'sendNow', title: sendNowActionLabel, icon: <Icon name="paper-plane" size={16} color={theme.colors.text.secondary} /> },
                 // Remove stays last, as on a queued row.
                 { id: 'remove', title: t('common.remove'), icon: <Icon name="trash" size={16} color={theme.colors.text.secondary} /> },
             ] : []),
@@ -1128,8 +1104,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                     if (itemId === 'copy') await copyPendingMessageText(message, writeClipboard);
                     if (itemId === 'requeue') await handleRequeueDiscarded(message.id);
                     if (itemId === 'remove') await handleRemoveDiscarded(message.id);
-                    if (itemId === 'steerNow') await handleSteerDiscardedNow(message);
-                    if (itemId === 'sendNow') await handleSendDiscardedNow(message);
                 }}
                 popoverAnchor={menuAnchor}
                 placement="auto-vertical"
@@ -1207,42 +1181,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         message={message}
                                     />
                                 ) : null}
-                                {offersSendAgain ? (
-                                    <>
-                                        <IconAction
-                                            testID={`pendingMessages.discarded.sendAgain:${message.id}`}
-                                            accessibilityLabel={t('session.pendingMessages.actions.sendAgain')}
-                                            icon="paper-plane"
-                                            onPress={() => handleSendDiscardedNow(message)}
-                                        />
-                                        <IconAction
-                                            testID={`pendingMessages.discarded.remove:${message.id}`}
-                                            accessibilityLabel={t('common.remove')}
-                                            icon="trash"
-                                            onPress={() => handleRemoveDiscarded(message.id)}
-                                        />
-                                    </>
-                                ) : !isArchivedUncertainty ? (
+                                {!isArchivedUncertainty ? (
                                     <>
                                         <IconAction
                                             testID={`pendingMessages.discarded.requeue:${message.id}`}
                                             accessibilityLabel={t('session.pendingMessages.actions.requeue')}
                                             icon="arrow-elbow-up-left"
                                             onPress={() => handleRequeueDiscarded(message.id)}
-                                        />
-                                        {canSteerNow ? (
-                                            <IconAction
-                                                testID={`pendingMessages.discarded.steerNow:${message.id}`}
-                                                accessibilityLabel={t('session.pendingMessages.actions.steerNow')}
-                                                icon="navigation-arrow"
-                                                onPress={() => handleSteerDiscardedNow(message)}
-                                            />
-                                        ) : null}
-                                        <IconAction
-                                            testID={`pendingMessages.discarded.sendNow:${message.id}`}
-                                            accessibilityLabel={sendNowActionLabel}
-                                            icon="paper-plane"
-                                            onPress={() => handleSendDiscardedNow(message)}
                                         />
                                         <IconAction
                                             testID={`pendingMessages.discarded.remove:${message.id}`}
@@ -1262,18 +1207,13 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         accountActorViewerScope,
         writeClipboard,
         authorship.hasOtherNamedCollaborator,
-        canSteerNow,
         collapsedLines,
         hoveredMessageId,
         handleRequeueDiscarded,
         handleRemoveDiscarded,
-        handleSendDiscardedNow,
-        handleSteerDiscardedNow,
         isWeb,
         menuPressAnchor,
         openMenuKey,
-        runtimeWorking,
-        sendNowActionLabel,
         session?.lastRuntimeIssue?.code,
         theme.colors.input.background,
         theme.colors.text.primary,

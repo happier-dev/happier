@@ -11,7 +11,6 @@ const transport = vi.hoisted(() => ({
   sendPendingMessageNow: vi.fn(),
   deletePendingMessage: vi.fn(),
   discardPendingMessage: vi.fn(),
-  deleteDiscardedPendingMessage: vi.fn(),
 }));
 vi.mock('@/sync/sync', () => ({ sync: transport }));
 
@@ -146,37 +145,5 @@ describe('session.pending.sendNow cleanup', () => {
 
     expect(transport.deletePendingMessage).not.toHaveBeenCalled();
     expect(transport.discardPendingMessage).not.toHaveBeenCalled();
-  });
-
-  it('retires a discarded row through the discarded owner after a provider-direct steer', async () => {
-    storage
-      .getState()
-      .applyPendingSnapshot(sessionId, {
-        messages: [],
-        discarded: [
-          { ...queued('d1'), discardedAt: 2, discardedReason: 'manual' },
-        ],
-      });
-    transport.sendPendingMessageNow.mockResolvedValueOnce({
-      type: 'committed',
-      persistence: 'provider_direct',
-    });
-
-    await sendNow('local-d1', 'steer_now');
-
-    expect(transport.sendPendingMessageNow).toHaveBeenCalledWith(
-      sessionId,
-      expect.objectContaining({
-        localId: 'local-d1',
-        deliveryIntent: 'steer_now',
-      }),
-      owner,
-    );
-    expect(transport.deleteDiscardedPendingMessage).toHaveBeenCalledWith(
-      sessionId,
-      'd1',
-      owner,
-    );
-    expect(transport.deletePendingMessage).not.toHaveBeenCalled();
   });
 });

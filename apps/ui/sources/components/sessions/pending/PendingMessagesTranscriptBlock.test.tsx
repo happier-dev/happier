@@ -378,13 +378,12 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(allText.split(t('session.pendingMessages.discarded.failedTitle')).length - 1).toBe(1);
 
         await hoverDiscardedMessageRow(screen, 'reset');
-        expect(screen.findByTestId('pendingMessages.discarded.requeue:reset')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.discarded.sendAgain:reset')).toBeNull();
         expect(screen.findByTestId('pendingMessages.discarded.sendNow:reset')).toBeNull();
         expect(screen.findByTestId('pendingMessages.discarded.remove:reset')).toBeTruthy();
-        await screen.pressByTestIdAsync('pendingMessages.discarded.sendAgain:reset');
-        // Nothing runs, so sending again interrupts nothing and asks nothing.
-        expect(modalConfirm).not.toHaveBeenCalled();
-        expectSendNowAction({ localId: 'reset', deliveryIntent: 'interrupt_and_send' });
+        await screen.pressByTestIdAsync('pendingMessages.discarded.requeue:reset');
+        expect(executeDefaultAction).toHaveBeenCalledExactlyOnceWith('session.pending.requeue',
+            expect.objectContaining({ localId: 'reset' }), expect.anything());
     });
 
     it('names a reset Team binding in words on a refused message whose cause the Session does not already say', async () => {
@@ -1053,7 +1052,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         expect(modalAlert).toHaveBeenCalledTimes(1);
     });
 
-    it('sends discarded steer-now directly without confirmation', async () => {
+    it('offers Re-queue as the only recovery for a manual discard even on a steerable Session', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         sessionValue = createFreshSteerCapableSession();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
@@ -1066,16 +1065,12 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await hoverDiscardedMessageRow(screen, 'discarded-projection-d1');
 
-        const steerNow = screen.findByTestId('pendingMessages.discarded.steerNow:discarded-projection-d1');
-        expect(steerNow).toBeTruthy();
+        expect(screen.findByTestId('pendingMessages.discarded.steerNow:discarded-projection-d1')).toBeNull();
+        expect(screen.findByTestId('pendingMessages.discarded.sendNow:discarded-projection-d1')).toBeNull();
 
-        await screen.pressByTestIdAsync('pendingMessages.discarded.steerNow:discarded-projection-d1');
-
-        expect(sessionAbort).toHaveBeenCalledTimes(0);
-        expect(modalConfirm).toHaveBeenCalledTimes(0);
-        // The discarded row's retirement after the commit is the Action owner's (pendingSendNow.test.ts).
-        expectSendNowAction({ localId: 'canonical-local-d1', deliveryIntent: 'steer_now' });
-        expect(deleteDiscardedPendingMessage).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('pendingMessages.discarded.requeue:discarded-projection-d1');
+        expect(executeDefaultAction).toHaveBeenCalledExactlyOnceWith('session.pending.requeue',
+            expect.objectContaining({ localId: 'canonical-local-d1' }), expect.anything());
     });
 
     it.each(['dismissed_uncertain', 'resent_as_new'] as const)(

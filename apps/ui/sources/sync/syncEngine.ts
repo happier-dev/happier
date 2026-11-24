@@ -929,7 +929,7 @@ function logSessionTranscriptReadFailure(sessionId: string, error: unknown, issu
 }
 
 function createSessionMessageSubmitFailureError(
-    result: SubmitSessionUserMessageResult,
+    result: Pick<SubmitSessionUserMessageResult, 'errorCode' | 'errorMessage' | 'wakeFailureReceipt'>,
     fallbackMessage: string,
 ): Error {
     const { errorCode, errorMessage, wakeFailureReceipt } = result;
@@ -5219,13 +5219,17 @@ class Sync {
         const { recipient, outboxScope, session } = await this.withPendingQueueOwnerContext(
             sessionId,
             async ({ outboxScope, isCurrent }) => {
-                const { recipient } = await resolvePendingMutationIdentity(sessionId, pending.localId, outboxScope, options?.targetExecutionRunId);
+                const { target, recipient } = await resolvePendingMutationIdentity(sessionId, pending.localId, outboxScope, options?.targetExecutionRunId);
                 const ownerAddress = normalizeSessionAddress(outboxScope.serverId, sessionId);
                 if (!ownerAddress) throw new Error('Pending action requires an exact Session address');
                 if (requestedAddress && sessionAddressKey(ownerAddress) !== sessionAddressKey(requestedAddress)) {
                     throw new Error('Pending action owner does not match the requested Session address');
                 }
                 if (!await isCurrent()) throw new Error('Pending owner server-account scope changed');
+                // Home's requested-action owner only promotes queued custody. Discarded input must be restored first.
+                if (target && 'discardedAt' in target) {
+                    throw createSessionMessageSubmitFailureError({ errorCode: 'action-conflict' }, 'Message send rejected');
+                }
                 const exactSession = embedScope
                     ? await this.refreshSessionForSubmit(sessionId)
                     : requestedAddress

@@ -3814,7 +3814,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(storage.getState().sessionPending[sessionId]?.messages).toEqual([original]);
     });
 
-    it('send-now reads and updates the mounted exact Home without touching the active duplicate Session state', async () => {
+    it.each(['queued', 'blocked', 'discarded'] as const)('settles Send now for %s input through its exact Home without touching the active duplicate Session', async (status) => {
         const sessionId = 'duplicate-send-now-session';
         const activeServer = await upsertServerProfile({ serverUrl: 'https://home-a.example', name: 'Home A' });
         const mountedServer = await upsertServerProfile({ serverUrl: 'https://home-b.example', name: 'Home B' });
@@ -3828,11 +3828,23 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             optimisticThinkingAt: null,
         } as Session]);
         const mountedScope = createServerAccountScope(mountedServer.id, 'account-b')!;
-        storage.getState().upsertPendingMessage(sessionId, {
+        const row = {
             id: 'home-b-send-now', localId: 'home-b-send-now', createdAt: 1, updatedAt: 1,
-            source: 'server_pending', deliveryStatus: 'accepted', text: 'send from B',
+            source: 'server_pending' as const, deliveryStatus: 'accepted' as const, text: 'send from B',
             rawRecord: { role: 'user', content: { type: 'text', text: 'send from B' }, meta: {} },
             pendingOutboxScope: mountedScope,
+        };
+        storage.getState().applyPendingSnapshot(sessionId, {
+            messages: status === 'discarded' ? [] : [{
+                ...row,
+                ...(status === 'blocked' ? {
+                    pendingDeliveryStatus: 'blocked',
+                    pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance',
+                } : {}),
+            }],
+            discarded: status === 'discarded' ? [{
+                ...row, discardedAt: 2, discardedReason: 'team_credential_binding_not_current',
+            }] : [],
         });
 
         const mountedToken = buildTokenWithSub('account-b');
@@ -3860,23 +3872,42 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     pendingVersion: 1,
                 } });
             }
-            if (url.endsWith(`/pending/home-b-send-now/action`)) return pendingActionAcknowledgement(init);
+            if (url.endsWith('/pending/home-b-send-now/action')) {
+                return status === 'discarded'
+                    ? Response.json({ error: 'action-conflict' }, { status: 409 })
+                    : pendingActionAcknowledgement(init);
+            }
             if (url.endsWith(`/v1/sessions/${sessionId}/turns`)) return emptySessionTurnsResponse(sessionId);
             return new Response(null, { status: 404 });
         });
 
-        const { sync } = await import('./sync');
-        await expect(sync.sendPendingMessageNow(sessionId, {
-            localId: 'home-b-send-now',
-            createdAt: 1,
-            rawRecord: { role: 'user', content: { type: 'text', text: 'send from B' }, meta: {} },
-            text: 'send from B',
-        }, { serverId: mountedServer.id })).resolves.toEqual({ type: 'retry_scheduled' });
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { captureLazyActionAccountContext } = await import('./ops/actions/actionAccountContext');
+        const { createUiPendingSendNowAction } = await import('./ops/actions/pendingSendNow');
+        const account = await captureLazyActionAccountContext(mountedServer.id);
+        onTestFinished(() => account.dispose());
+        const executor = createActionExecutor({ sessionPendingSendNow: createUiPendingSendNowAction(account) });
+        const result = await executor.execute('session.pending.sendNow', {
+            sessionId, localId: row.localId, deliveryIntent: 'interrupt_and_send', serverId: mountedServer.id,
+        }, { surface: 'ui', authority: 'present_user', serverId: mountedServer.id });
+
+        if (status === 'discarded') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'action-conflict' });
+            const writes = runtimeFetchMock.mock.calls.filter(([, init]) =>
+                init?.method && init.method !== 'GET');
+            expect(writes.map(([url, init]) => [new URL(String(url)).pathname, init?.method])).toEqual([]);
+            expect(storage.getState().sessionPending[sessionId]?.discarded).toEqual([
+                expect.objectContaining({ localId: row.localId, discardedAt: 2 }),
+            ]);
+            return;
+        }
+        expect(result).toMatchObject({ ok: true, result: { type: 'retry_scheduled' } });
 
         expect(requestMock).not.toHaveBeenCalled();
         const actionCall = findRuntimeFetchCall(
             `https://home-b.example/v2/sessions/${sessionId}/pending/home-b-send-now/action`,
         );
+        expect(runtimeFetchMock.mock.calls.filter(([url]) => String(url).endsWith('/pending/home-b-send-now/action'))).toHaveLength(1);
         expectHeaderValue(actionCall?.[1]?.headers, 'Authorization', `Bearer ${mountedToken}`);
         expect(JSON.parse(String(actionCall?.[1]?.body))).toEqual({ requestedAction: { v: 1, kind: 'send_now' } });
         expect(storage.getState().sessions[sessionId]).toMatchObject({

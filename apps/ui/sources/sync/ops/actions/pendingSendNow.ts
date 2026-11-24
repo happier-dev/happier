@@ -21,14 +21,11 @@ export function createUiPendingSendNowAction(account: LazyActionAccountContext):
         // Only positively confirmed legacy provider delivery retires a legacy row.
         // Durable/acceptance-pending inputs keep their existing custody settlement.
         if (result.type === 'committed' && result.persistence === 'provider_direct' && result.providerAcceptancePending !== true) {
-            if ('discardedAt' in target) await sync.deleteDiscardedPendingMessage(input.sessionId, target.id, owner);
-            else {
-                try { await sync.deletePendingMessage(input.sessionId, target.id, owner); }
-                catch (deleteError) {
-                    account.assertCurrent();
-                    try { await sync.discardPendingMessage(input.sessionId, target.id, owner); }
-                    catch { throw deleteError; }
-                }
+            try { await sync.deletePendingMessage(input.sessionId, target.id, owner); }
+            catch (deleteError) {
+                account.assertCurrent();
+                try { await sync.discardPendingMessage(input.sessionId, target.id, owner); }
+                catch { throw deleteError; }
             }
         }
         return result;
