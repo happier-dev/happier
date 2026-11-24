@@ -7,7 +7,7 @@ import { expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
 
-import { refuseExternalActionPhase, runTracedExternalActionStage, runTracedExternalActionInnerStage, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
+import { refuseExternalActionPhase, runTracedExternalActionStage, runTracedExternalActionInnerStage, traceExternalActionInnerStage, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
 import { executeExternalAction } from './executeExternalAction';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
@@ -231,5 +231,14 @@ it.each(MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1)('traces the managed enrol
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '0');
     traceExternalActionStage(actionId, rootRequestId, 'rpc.received');
     expect(log.mock.calls).toEqual([['[external-action-stage]', { actionId, rootRequestId, stage: 'rpc.received' }]]);
+  } finally { log.mockRestore(); vi.unstubAllEnvs(); }
+});
+
+it('names no Action for an inner stage outside any traced Action, so it cannot read as a wrapped call', () => {
+  const log = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
+  try {
+    vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+    traceExternalActionInnerStage('requester.root_verification.http', { httpStatus: 200 });
+    expect(log.mock.calls).toEqual([['[external-action-stage]', { stage: 'requester.root_verification.http', httpStatus: 200 }]]);
   } finally { log.mockRestore(); vi.unstubAllEnvs(); }
 });

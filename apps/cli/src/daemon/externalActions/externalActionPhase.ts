@@ -43,13 +43,16 @@ export function logExternalActionCurrentIntentMismatch(field: CurrentIntentMisma
   }); } catch { /* File diagnostics cannot change admission. */ }
 }
 
-/** Host-only phase facts; never pass plugin input, results, URLs or thrown values. */
+/**
+ * Host-only phase facts; never pass plugin input, results, URLs or thrown values.
+ * Outside a traced Action the record names no Action rather than guessing one.
+ */
 export function traceExternalActionInnerStage(stage: string,
   diagnostic: ExternalActionInnerDiagnostic & Readonly<{ elapsedMs?: number }> = {}): void {
   if (!isWebLatencyTraceEnabled()) return;
   try {
     logger.debugLocalFile('[external-action-stage]', {
-      actionId: 'action.invoke', ...innerStageContext.getStore(), stage, ...diagnostic,
+      ...innerStageContext.getStore(), stage, ...diagnostic,
     });
   } catch { /* Diagnostic failure cannot change execution. */ }
 }
