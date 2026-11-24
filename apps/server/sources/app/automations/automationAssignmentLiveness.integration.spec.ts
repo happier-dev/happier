@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { createAutomationSessionLifecycleFixtureFields } from "@/testkit/automationSessionLifecycleFixture";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { runAutomationNow } from "./automationCrudService";
@@ -100,12 +101,11 @@ describe("automation assignment liveness (integration)", () => {
      */
     async function seedEnabledAutomationWithZeroEnabledAssignments(params: Readonly<{
         accountId: string;
-        trigger?: Readonly<{
-            kind: "schedule" | "pluginEvent" | "sessionLifecycle";
-            nextRunAt?: Date;
-            sourceSessionId?: string;
-            sourceTurnId?: string;
-        }>;
+        trigger?: Readonly<
+            | { kind: "schedule"; nextRunAt: Date }
+            | { kind: "pluginEvent" }
+            | { kind: "sessionLifecycle"; sourceSessionId: string; sourceTurnId: string }
+        >;
     }>): Promise<{
         automationId: string;
         triggerId: ReturnType<typeof AutomationTriggerIdSchema.parse> | null;
@@ -153,12 +153,12 @@ describe("automation assignment liveness (integration)", () => {
                                 : {}),
                             ...(params.trigger.kind === "sessionLifecycle"
                                 ? {
-                                    sessionLifecycleEventsJson: JSON.stringify(["parentTurnCompleted"]),
-                                    sessionLifecyclePolicyKind: "currentTurn" as const,
-                                    sessionLifecycleMatchCount: null,
-                                    remainingOccurrences: 1,
-                                    sourceSessionId: params.trigger.sourceSessionId ?? null,
-                                    sourceTurnId: params.trigger.sourceTurnId ?? null,
+                                    ...await createAutomationSessionLifecycleFixtureFields({
+                                        automationId, triggerId, revision: 0, kind: "sessionLifecycle",
+                                        sourceSessionId: params.trigger.sourceSessionId,
+                                        events: ["parentTurnCompleted"],
+                                        policy: { kind: "currentTurn", sourceTurnId: params.trigger.sourceTurnId },
+                                    }),
                                 }
                                 : {}),
                         },
@@ -276,7 +276,7 @@ describe("automation assignment liveness (integration)", () => {
         const suffix = randomUUID();
         const sourceSessionId = `session-${suffix}`;
         const sourceTurnId = `turn-${suffix}`;
-        await db.session.create({
+        const sourceSession = await db.session.create({
             data: {
                 id: sourceSessionId,
                 tag: `liveness-${suffix}`,
@@ -305,6 +305,8 @@ describe("automation assignment liveness (integration)", () => {
         const results = await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
             accountId,
+            sourceSession,
+            recipientAccountIds: [],
             occurrence: {
                 v: 1,
                 kind: "sessionLifecycle",
@@ -468,7 +470,7 @@ describe("automation assignment liveness (integration)", () => {
                 metadata: "{}",
             }],
         });
-        await db.session.create({
+        const sourceSession = await db.session.create({
             data: {
                 id: sourceSessionId,
                 tag: `replacement-exact-turn-${suffix}`,
@@ -502,16 +504,12 @@ describe("automation assignment liveness (integration)", () => {
                 assignments: { create: { machineId: replacedMachineId, enabled: true } },
                 triggers: {
                     create: {
-                        id: triggerId,
                         kind: "sessionLifecycle",
                         enabled: true,
-                        revision: 0,
-                        sessionLifecycleEventsJson: JSON.stringify(["parentTurnCompleted"]),
-                        sessionLifecyclePolicyKind: "currentTurn",
-                        sessionLifecycleMatchCount: null,
-                        remainingOccurrences: 1,
-                        sourceSessionId,
-                        sourceTurnId,
+                        ...await createAutomationSessionLifecycleFixtureFields({
+                            automationId, triggerId, revision: 0, kind: "sessionLifecycle", sourceSessionId,
+                            events: ["parentTurnCompleted"], policy: { kind: "currentTurn", sourceTurnId },
+                        }),
                     },
                 },
             },
@@ -520,6 +518,8 @@ describe("automation assignment liveness (integration)", () => {
         const [admission] = await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
             accountId,
+            sourceSession,
+            recipientAccountIds: [],
             occurrence: {
                 v: 1,
                 kind: "sessionLifecycle",
@@ -554,12 +554,11 @@ describe("automation assignment liveness (integration)", () => {
     });
 
     it.each([
-        { policyKind: "firstMatch" as const, matchCount: null, remainingOccurrences: 1 },
-        { policyKind: "nextMatches" as const, matchCount: 2, remainingOccurrences: 2 },
-        { policyKind: "everyMatch" as const, matchCount: null, remainingOccurrences: null },
-    ])("preserves a $policyKind occurrence with only a reversibly replaced assignment", async ({
-        policyKind,
-        matchCount,
+        { policy: { kind: "firstMatch" as const }, remainingOccurrences: 1 },
+        { policy: { kind: "nextMatches" as const, count: 2 }, remainingOccurrences: 2 },
+        { policy: { kind: "everyMatch" as const }, remainingOccurrences: null },
+    ])("preserves a $policy.kind occurrence with only a reversibly replaced assignment", async ({
+        policy,
         remainingOccurrences,
     }) => {
         const accountId = await createAccount();
@@ -581,7 +580,7 @@ describe("automation assignment liveness (integration)", () => {
                 metadata: "{}",
             }],
         });
-        await db.session.create({
+        const sourceSession = await db.session.create({
             data: {
                 id: sourceSessionId,
                 tag: `replacement-future-lifecycle-${suffix}`,
@@ -607,7 +606,7 @@ describe("automation assignment liveness (integration)", () => {
             data: {
                 id: automationId,
                 accountId,
-                name: `Future ${policyKind} replacement continuity`,
+                name: `Future ${policy.kind} replacement continuity`,
                 enabled: true,
                 targetType: "new_session",
                 templateCiphertext: storedRecipe(1),
@@ -615,16 +614,12 @@ describe("automation assignment liveness (integration)", () => {
                 assignments: { create: { machineId: replacedMachineId, enabled: true } },
                 triggers: {
                     create: {
-                        id: triggerId,
                         kind: "sessionLifecycle",
                         enabled: true,
-                        revision: 0,
-                        sessionLifecycleEventsJson: JSON.stringify(["parentTurnCompleted"]),
-                        sessionLifecyclePolicyKind: policyKind,
-                        sessionLifecycleMatchCount: matchCount,
-                        remainingOccurrences,
-                        sourceSessionId,
-                        sourceTurnId: null,
+                        ...await createAutomationSessionLifecycleFixtureFields({
+                            automationId, triggerId, revision: 0, kind: "sessionLifecycle", sourceSessionId,
+                            events: ["parentTurnCompleted"], policy,
+                        }),
                     },
                 },
             },
@@ -641,6 +636,8 @@ describe("automation assignment liveness (integration)", () => {
         const [admission] = await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
             accountId,
+            sourceSession,
+            recipientAccountIds: [],
             occurrence,
         }));
         expect(admission?.result).toMatchObject({ kind: "admitted", run: { state: "queued" } });
@@ -659,6 +656,8 @@ describe("automation assignment liveness (integration)", () => {
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
                 tx,
                 accountId,
+                sourceSession,
+                recipientAccountIds: [],
                 occurrence,
         }))).resolves.toEqual([{
             triggerId,

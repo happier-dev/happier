@@ -3866,7 +3866,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           && (ctx.externalActionExecutionAuthorization !== undefined || ctx.externalActionCredential !== undefined)) {
           return actionAutomationAdmissionUnavailableV1('selection_unavailable');
         }
-        ctx = withInvocationRequestId(ctx);
+        if (selection.before.length > 0 || selection.after.length > 0) {
+          ctx = withInvocationRequestId(ctx);
+        }
         ctx = { ...ctx, actionAutomationAdmission: createActionAutomationInvocationV1({
           actionId, context: ctx, selection, port: deps.actionAutomations,
         }) };

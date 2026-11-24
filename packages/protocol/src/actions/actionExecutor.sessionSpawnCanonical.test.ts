@@ -326,7 +326,7 @@ describe('session.spawn_new canonical execution', () => {
       if (custody === 'aborted') {
         lifetime.abort();
         const result = await pending;
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'action_failed' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'cancelled' });
         expect(effects).toBe(0);
         return;
       }
