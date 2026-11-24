@@ -1,9 +1,8 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetVariablesReadResultV1Schema,
     DeploymentTargetVariablesSyncResultV1Schema, type DeploymentTargetVariablesSyncInputV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
-import { DeploymentObservationGetResultV1Schema, type DeploymentBindingsSetInputV1,
+import { DeploymentObservationGetResultV1Schema,
     DeploymentObservationGetInputV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
-import { isManagedDeploymentDataRoleBindingPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1, usesOwnTelemetryCollectorV1 } from '@happier-dev/deployments/telemetry';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
@@ -18,21 +17,6 @@ type Host = Readonly<{
 
 /** Variables spend the existing reviewed Action child and same Environment/Link custody. */
 export function createPlatformVariablesForHost(host: Host) {
-    const runtime = (environment: DeploymentEnvironmentDetailV1) => environment.targetLinks.find(row =>
-        row.targetLink.id === environment.environment.runtimeTargetLinkId && row.targetLink.source.kind === 'plugin');
-    async function prepareBindingsChildren(request: Readonly<{ input: DeploymentBindingsSetInputV1; context: ActionExecutorContext }>) {
-        if (isManagedDeploymentDataRoleBindingPatchV1(request.input)) return null;
-        return prepareSyncChildren({ environmentId: request.input.environmentId, context: request.context });
-    }
-    async function prepareSyncChildren(request: Readonly<{ environmentId: string; context: ActionExecutorContext }>) {
-        const environment = await host.readEnvironment(request);
-        const row = runtime(environment);
-        if (!row) return null;
-        return host.withTargetRole({ environmentId: environment.environment.id, targetLinkId: row.targetLink.id,
-            context: request.context }, environment, 'variables.sync', async scope => {
-                return { children: scope.children };
-            });
-    }
     const sync: PreparePlatformBindingsForHost = async request => {
         const environment: DeploymentEnvironmentDetailV1 = { environment: request.environment.environment,
             content: request.previousContent, targetLinks: request.environment.targetLinks.map(targetLink => ({ targetLink,
@@ -132,5 +116,5 @@ export function createPlatformVariablesForHost(host: Host) {
                     } };
             });
     }
-    return { prepareBindingsChildren, prepareSyncChildren, sync, prepareRead };
+    return { sync, prepareRead };
 }

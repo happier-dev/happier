@@ -2,7 +2,7 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { createServer } from 'node:http';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretDeleteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretUpdateInputV1Schema, SharedSavedSecretDeleteInputV1Schema, type SharedSavedSecretCreateInputV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { sealSavedSecretResourceStoredContentV1, openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -29,7 +29,8 @@ export async function createSavedSecretsCliHttpFixture(options: Readonly<{ loseC
     'registries.sources.create': ['cli'], 'registries.sources.token.set': ['cli'],
   } } };
   const resources = new Map<string, { resourceId: string; displayName: string; kind: 'apiKey' | 'token' | 'password' | 'other';
-    encryptionMode: 'plain' | 'e2ee'; revision: number; storedContent: ReturnType<typeof sealSavedSecretResourceStoredContentV1> }>();
+    encryptionMode: 'plain' | 'e2ee'; revision: number; storedContent: ReturnType<typeof sealSavedSecretResourceStoredContentV1>;
+    keyEnvelopes?: SharedSavedSecretCreateInputV1['keyEnvelopes'] }>();
   resources.set('resource-id', { resourceId: 'resource-id', displayName: 'Acme', kind: 'token', encryptionMode: 'plain', revision: 37,
     storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'resource-id', mode: 'plain',
       content: { v: 1, name: 'Acme', kind: 'token', value: 'incumbent-value' } }) });
@@ -60,10 +61,12 @@ export async function createSavedSecretsCliHttpFixture(options: Readonly<{ loseC
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
       if (url.pathname.startsWith('/v1/features')) return send({ features: { teams: { enabled: true } }, capabilities: { serverIdentity: { serverIdentityId: options.serverIdentityId ?? 'srv_fixture' } } });
       if (url.pathname === '/v2/account/settings') return send({ content: { t: 'plain', v: rawSettings }, version: 7 });
-      if (url.pathname === '/v1/account/saved-secrets/resources/materials') return send({ resources: [...resources.values()].map(resource => ({
-        resourceId: resource.resourceId, encryptionMode: resource.encryptionMode, storedContent: resource.storedContent,
-        recipientEnvelope: null, entry: entry(resource),
-      })) });
+      if (url.pathname === '/v1/account/saved-secrets/resources/materials') return send({ resources: [...resources.values()].map(resource => {
+        const key = resource.keyEnvelopes?.find(envelope => envelope.recipientAccountId === 'account-cli-fixture');
+        return { resourceId: resource.resourceId, encryptionMode: resource.encryptionMode, storedContent: resource.storedContent,
+          recipientEnvelope: key ? { encryptedDataKey: key.encryptedDataKey,
+            recipientContentPublicKeyFingerprint: key.recipientContentPublicKeyFingerprint } : null, entry: entry(resource) };
+      }) });
       if (url.pathname === '/v1/account/saved-secrets/resources' && request.method === 'GET') return send({ resources: [...resources.values()].map(entry) });
       if (url.pathname === '/v1/account/saved-secrets/resources' && request.method === 'POST') {
         const input = SharedSavedSecretCreateInputV1Schema.parse(JSON.parse(bytes));

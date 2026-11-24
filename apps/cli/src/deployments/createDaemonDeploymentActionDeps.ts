@@ -2,6 +2,7 @@ import { readDeploymentDefinitionSourceKindV1, readDeploymentTargetSourceCheckV1
 import { createEnvironmentTelemetrySetForHost } from './telemetry/setForHost';
 import { executeOwnServerDatabaseOperationForHost } from './targets/ownServer/databaseConnection';
 import { ApiClient } from '@/api/api';
+import { isManagedDeploymentDataRoleBindingPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createOwnServerDataRoleBindingsForHost } from './targets/ownServer/dataRoleBindings';
@@ -1711,7 +1712,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (request.actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) {
                 try {
                     const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
-                    const platform = await platformVariables.prepareSyncChildren({ environmentId: input.environmentId, context: request.context });
+                    const platform = await contributedTarget.prepareVariablesSyncChild({ environmentId: input.environmentId, context: request.context });
                     // The bindings child retains this reviewed sibling plan. Admit its
                     // provider effect before the root creates or rotates any secret.
                     return { children: [
@@ -1720,11 +1721,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ] };
                 } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
-            if (request.actionId === 'deployments.bindings.set' || request.actionId === 'deployments.observation.get') {
+            if (request.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || request.actionId === 'deployments.observation.get') {
                 try {
-                    if (request.actionId === 'deployments.bindings.set') {
+                    if (request.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) {
                         const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
-                        return await platformVariables.prepareBindingsChildren({ input, context: request.context });
+                        if (isManagedDeploymentDataRoleBindingPatchV1(input)) return null;
+                        return await contributedTarget.prepareVariablesSyncChild({ environmentId: input.environmentId,
+                            context: request.context });
                     }
                     const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
                     return await platformVariables.prepareRead({ input, context: request.context });

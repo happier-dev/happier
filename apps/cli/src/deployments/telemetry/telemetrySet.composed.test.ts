@@ -3,13 +3,20 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createSavedSecretsCliHttpFixture } from '@/cli/actions/adapters/savedSecretsCliHttpFixture';
@@ -23,11 +30,19 @@ import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActio
 
 afterEach(() => vi.restoreAllMocks());
 
-it('sets, repeats, rotates, moves and turns off telemetry through the real Action and bindings writer', async () => {
+it.each(['plain', 'e2ee'] as const)('sets, repeats, rotates, moves and turns off native telemetry in %s under Home Artifact admission', async mode => {
     const fixture = await createSavedSecretsCliHttpFixture();
     try {
-        const credentials = await fixture.deps.readCredentialsFn?.();
-        if (!credentials) throw new Error('Missing credentials');
+        const fixtureCredentials = await fixture.deps.readCredentialsFn?.();
+        if (!fixtureCredentials) throw new Error('Missing credentials');
+        const encryption = mode === 'plain' ? null : { type: 'legacy' as const, secret: tweetnacl.randomBytes(32) };
+        const credentials = { ...fixtureCredentials, encryption };
+        const currentness = createAccountEncryptionCurrentnessFixture({ mode, settingsVersion: 7,
+            ...(encryption ? { contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: encryption }).contentPublicKeyFingerprint) } : {}) });
+        const machineCodec = createMachineContentCodec(encryption
+            ? { encryptionMode: 'e2ee', encryptionKey: encryption.secret, encryptionVariant: 'legacy' } : { encryptionMode: 'plain' });
+        const artifactStore = createCredentialedAccountArtifactStore(credentials);
         const identity = await fixture.inHome(() => readOrCreateInstallationIdentity());
         const current = createDeploymentEnvironmentDetailV1();
         current.environment.owner = { kind: 'account', accountId: 'account-cli-fixture' };
@@ -45,37 +60,61 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         link.targetLink.members = [{ machineId: 'target', installationId: identity.installationId, state: 'active' }];
         current.environment.projectSourceId = 'project';
         const rows = new Map<string, Record<string, unknown>>();
-        const seed = (id: string, kind: string, content: unknown) => rows.set(id, { id, ownerAccountId: 'account-cli-fixture',
-            access: 'owner', publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-            header: encodePlainArtifactStoredContent({ kind, title: 'Telemetry app' }),
-            body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-        seed(current.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, current.content);
-        seed(link.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, link.content);
+        const seed = async (id: string, kind: string, content: unknown) => {
+            const resource = await createResourceDataKey({ credentials, mode });
+            const encode = resource.mode === 'plain' ? encodePlainArtifactStoredContent
+                : (value: unknown) => encodeBase64(encryptWithDataKey(value, resource.dataKey), 'base64');
+            rows.set(id, { id, ownerAccountId: 'account-cli-fixture', access: 'owner', publicAudience: 'none',
+                encryptionMode: resource.mode, dataEncryptionKey: resource.mode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : resource.dataEncryptionKey,
+                header: encode({ kind, title: 'Telemetry app' }), body: encode({ body: JSON.stringify(content) }),
+                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        };
+        expect(link.targetLink.source.kind).toBe('host');
+        await seed(current.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, current.content);
+        await seed(link.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, link.content);
         const originalGet = axios.get.bind(axios);
         const originalPost = axios.post.bind(axios);
         const originalRequest = axios.request.bind(axios);
-        let roleOn = true;
+        let roleOn = false;
+        const deniedLinkReads: string[] = [];
         const writes: Record<string, unknown>[] = [];
-        const collectorKeys = new Map(['target', 'other'].map(id => [id, tweetnacl.sign.keyPair().publicKey]));
+        const collectorKeys = new Map(['target', 'other'].map((id, index) => [
+            id, tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(index + 1)).publicKey,
+        ]));
         const pinOf = (machineId: string) => ({ machineId,
             installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(collectorKeys.get(machineId)!) });
-        const persistedContent = (write: Record<string, unknown>) => {
-            const stored = decodePlainArtifactStoredContent(String(rows.get(String(write.contentArtifactId))?.body));
-            if (!stored || typeof stored !== 'object' || !('body' in stored) || typeof stored.body !== 'string') throw new Error('Missing persisted Environment body');
+        const persistedContent = async (write: Record<string, unknown>) => {
+            const id = String(write.contentArtifactId);
+            expect(rows.get(id)?.encryptionMode).toBe(mode);
+            expect(rows.get(id)?.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER).toBe(mode === 'plain');
+            const stored = await fixture.inHome(() => artifactStore.read(id, { prepareRecipients: false, includeSharedAudience: false }));
+            if (!stored || typeof stored.body !== 'string') throw new Error('Missing persisted Environment body');
             return DeploymentEnvironmentContentV1Schema.parse(JSON.parse(stored.body));
         };
-        // HTTP and persisted Artifact/Saved Secret storage are genuine boundaries;
-        // Action policy, host composition, binding preparation and secret custody stay real.
+        // Home admits the Environment Artifact under the telemetry root. This
+        // native journey needs no private runtime Link read, in either mode.
         vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
-            if (url.includes('/v1/machines/')) return { status: 200, data: { machine: { id: url.split('/').at(-1),
-                active: true, kind: 'persistent', installationId: identity.installationId, revokedAt: null, replacedByMachineId: null,
-                installationPublicKey: Buffer.from(collectorKeys.get(url.split('/').at(-1)!)!).toString('base64'),
-                storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 0,
-                daemonState: encodePlainMachineStoredContent(MachinePublishedDaemonStateV1Schema.parse({ status: 'running' })),
-                metadata: encodePlainMachineStoredContent({ host: 'collector', homeDir: '/home/collector', platform: 'linux',
-                    happyCliVersion: 'test', happyHomeDir: '/home/collector/.happier',
-                    rolesV1: { active: roleOn ? ['happier.telemetry/telemetry'] : [] } }) } } };
-            const row = rows.get(decodeURIComponent(new URL(url).pathname.split('/').at(-1)!));
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+            if (path.startsWith('/v1/machines/')) {
+                const machineId = path.split('/').at(-1)!;
+                const installationPublicKey = encodeBase64(collectorKeys.get(machineId)!, 'base64url');
+                return { status: 200, data: { machine: { id: machineId, active: true, kind: 'persistent',
+                    installationId: identity.installationId, revokedAt: null, replacedByMachineId: null,
+                    installationPublicKey, storageMode: mode, dataEncryptionKey: mode === 'plain' ? MACHINE_PLAIN_DATA_KEY_MARKER : null,
+                    metadataVersion: 1, daemonStateVersion: 0,
+                    daemonState: machineCodec.encodeStored(MachinePublishedDaemonStateV1Schema.parse({ status: 'running' })),
+                    metadata: machineCodec.encodeStored({ host: 'collector', homeDir: '/home/collector', platform: 'linux',
+                        happyCliVersion: 'test', happyHomeDir: '/home/collector/.happier', installationPublicKey,
+                        rolesV1: { active: roleOn ? ['happier.telemetry/telemetry'] : [] } }) } } };
+            }
+            const id = decodeURIComponent(path.split('/').at(-1)!);
+            if (path.startsWith('/v1/artifacts/') && id === link.targetLink.contentArtifactId) {
+                deniedLinkReads.push(id);
+                return { status: 403, data: { error: 'action_forbidden' } };
+            }
+            const row = rows.get(id);
             return row ? { status: 200, data: row } : originalGet(url, config);
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, raw, config) => {
@@ -83,11 +122,12 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
             const mutation = readCarrierMutation(raw);
             const id = String(mutation.id);
             rows.set(id, { ...mutation, id, ownerAccountId: 'account-cli-fixture', access: 'owner', publicAudience: 'none',
-                encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+                encryptionMode: mode, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
             return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
         });
         vi.spyOn(axios, 'request').mockImplementation(async request => {
             const path = new URL(request.url!).pathname;
+            if (request.method === 'GET' && path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
             if (request.method === 'GET' && path === '/v1/projects/sources/project') return { status: 200, data: { ok: true, canManage: true,
                 source: { id: 'project', revision: 1, name: 'Project', createdByAccountId: 'account-cli-fixture', audience: [], owner: { kind: 'account', accountId: 'account-cli-fixture' } } } };
             if (request.method === 'GET' && path.endsWith('/deployment-defaults')) return { status: 200,
@@ -124,8 +164,15 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         const set = (extra: Record<string, unknown> = {}) => fixture.inHome(() => executor.execute('deployments.environments.telemetry.set', {
             serverId: 'home', environmentId: current.environment.id, expectedRevision: current.environment.revision,
             collector: { machineId: 'target' }, ...extra }, context));
-        expect(await set({ collector: undefined })).toEqual(expect.objectContaining({ ok: true,
-            result: expect.objectContaining({ ok: true, state: 'redeploy_required' }) }));
+        const inactive = await set();
+        expect.soft(inactive, JSON.stringify(inactive)).toMatchObject({ ok: false, errorCode: 'telemetry_role_inactive' });
+        expect(writes).toHaveLength(0);
+        expect(fixture.writes).toHaveLength(0);
+        roleOn = true;
+        const enabled = await set({ collector: undefined });
+        expect.soft(enabled, JSON.stringify(enabled)).toMatchObject({ ok: true, result: { ok: true, state: 'redeploy_required' } });
+        expect.soft(deniedLinkReads).toEqual([]);
+        if (!enabled.ok) return;
         expect(writes).toHaveLength(1);
         expect(fixture.writes).toHaveLength(1);
         // D29: after the personal control, a Team Environment without a
@@ -146,9 +193,7 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         }, context))).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
         expect(writes).toHaveLength(1);
         expect(fixture.writes).toHaveLength(1);
-        const body = decodePlainArtifactStoredContent(String(rows.get(String(writes[0]!.contentArtifactId))?.body));
-        if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string') throw new Error('Missing persisted Environment body');
-        const content = DeploymentEnvironmentContentV1Schema.parse(JSON.parse(body.body));
+        const content = await persistedContent(writes[0]!);
         expect(content.bindings).toEqual(expect.arrayContaining([
             expect.objectContaining({ name: 'OTEL_SERVICE_NAME', source: { kind: 'value', value: 'Project/QA, branch=1' } }),
             expect.objectContaining({ name: 'OTEL_RESOURCE_ATTRIBUTES', source: { kind: 'value', value: 'deployment.environment.name=QA%2C%20branch%3D1' } }),
@@ -160,7 +205,8 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(fixture.writes).toHaveLength(1);
         expect(writes[0]).toMatchObject({ telemetryMachineId: 'target' });
         roleOn = false;
-        expect(await set({ collector: { machineId: 'other' } })).toMatchObject({ ok: false, errorCode: 'telemetry_role_inactive' });
+        expect(await set({ collector: { machineId: 'other' }, confirmDelete: true }))
+            .toMatchObject({ ok: false, errorCode: 'telemetry_role_inactive' });
         roleOn = true;
         expect(await set({ collector: { machineId: 'other' } })).toMatchObject({ ok: false, errorCode: 'telemetry_deletion_confirmation_required' });
         expect(await set({ rotate: true })).toMatchObject({ ok: true });
@@ -171,8 +217,8 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(writes).toHaveLength(3);
         expect(fixture.writes).toHaveLength(2);
         // Installing and moving the collector bind its key into the private content readers verify.
-        expect(persistedContent(writes[0]!).telemetryCollector).toEqual(pinOf('target'));
-        expect(persistedContent(writes[2]!).telemetryCollector).toEqual(pinOf('other'));
+        expect((await persistedContent(writes[0]!)).telemetryCollector).toEqual(pinOf('target'));
+        expect((await persistedContent(writes[2]!)).telemetryCollector).toEqual(pinOf('other'));
         expect(await set({ collector: undefined, rotate: true })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(4);
         expect(writes[3]).toMatchObject({ telemetryMachineId: 'other' });
@@ -182,7 +228,7 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(await set({ collector: null, confirmDelete: true })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(5);
         expect(writes[4]).toMatchObject({ telemetryMachineId: null });
-        expect(persistedContent(writes[4]!)).not.toHaveProperty('telemetryCollector');
+        expect(await persistedContent(writes[4]!)).not.toHaveProperty('telemetryCollector');
         // Copy preserves chosen variables, but the new Environment has no
         // admitted collector or token identity yet.
         current.environment.id = 'copied-environment';
@@ -194,7 +240,7 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
                 source: { kind: 'secret', ref: 'happier:shared-secret:v1:resource-id', resourceRevision: 37 } }),
                 managedBy: 'telemetry', valueFormat: 'otelAuthorizationHeader' },
         ] });
-        seed(current.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, copiedContent);
+        await seed(current.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, copiedContent);
         expect(await set()).toMatchObject({ ok: true });
         expect(fixture.writes).toHaveLength(4);
         expect(fixture.writes[3]!.resourceId).not.toBe('resource-id');
@@ -208,23 +254,18 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(await set({ capabilities })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(7);
         expect(writes[6]).toHaveProperty('telemetryCapabilities', capabilities);
-        const selectedBody = decodePlainArtifactStoredContent(String(rows.get(String(writes[6]!.contentArtifactId))?.body));
-        if (!selectedBody || typeof selectedBody !== 'object' || !('body' in selectedBody)
-            || typeof selectedBody.body !== 'string') throw new Error('Missing selected Environment body');
-        expect(JSON.parse(selectedBody.body)).toMatchObject({ telemetry: capabilities });
-        expect(JSON.parse(selectedBody.body).bindings).toContainEqual(expect.objectContaining({ name: 'OTEL_METRICS_EXPORTER',
+        expect(await persistedContent(writes[6]!)).toMatchObject({ telemetry: capabilities });
+        expect((await persistedContent(writes[6]!)).bindings).toContainEqual(expect.objectContaining({ name: 'OTEL_METRICS_EXPORTER',
             source: { kind: 'value', value: 'otlp' } }));
         expect(await set({ capabilities })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(7);
         expect(await set({ capabilities: { metrics: false } })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(8);
         expect(writes[7]).toHaveProperty('telemetryCapabilities', { ...capabilities, metrics: false });
-        const disabledBody = decodePlainArtifactStoredContent(String(rows.get(String(writes[7]!.contentArtifactId))?.body));
-        if (!disabledBody || typeof disabledBody !== 'object' || !('body' in disabledBody)
-            || typeof disabledBody.body !== 'string') throw new Error('Missing updated Environment body');
-        expect(JSON.parse(disabledBody.body)).toMatchObject({ telemetry: { ...capabilities, metrics: false } });
-        expect(JSON.parse(disabledBody.body).bindings).toContainEqual(expect.objectContaining({ name: 'OTEL_METRICS_EXPORTER',
+        expect(await persistedContent(writes[7]!)).toMatchObject({ telemetry: { ...capabilities, metrics: false } });
+        expect((await persistedContent(writes[7]!)).bindings).toContainEqual(expect.objectContaining({ name: 'OTEL_METRICS_EXPORTER',
             source: { kind: 'value', value: 'none' } }));
+        expect(deniedLinkReads).toEqual([]);
         expect(JSON.stringify(writes)).not.toContain('Bearer');
     } finally { await fixture.close(); }
 });

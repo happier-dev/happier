@@ -90,7 +90,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 if (contentPin === null) return refuse('installation_key_unbound', { machineId, recovery: 'restart_daemon' });
                 const rowKey = machine.installationPublicKey;
                 const pin = contentPin ?? (rowKey ? { machineId,
-                    installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(decodeBase64(rowKey, 'base64')) } : undefined);
+                    installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(decodeBase64(rowKey, 'base64url')) } : undefined);
                 if (!pin) return refuse('machine_unavailable', { role: 'telemetry', machineId });
                 collectorPin = pin;
                 if (worker || runtimeLink?.source.kind === 'plugin' && runtimeLink.targetKind === 'vercel') {

@@ -115,6 +115,48 @@ export const deploymentTeardownDetachPreview = {
 };
 
 export function createContributedDeploymentTargetForHost(host: Host) {
+    function readRuntimeDescriptor(link: DeploymentTargetLinkHeaderV1, registry: PluginRuntimeRegistryLease['registry']['contributes']) {
+        const descriptor = readDeploymentTargetV1(link.source, registry.deploymentTargets);
+        if (!descriptor || descriptor.role !== 'runtime' || descriptor.targetKind !== link.targetKind)
+            return refuse('deployment_target_role_unavailable');
+        return descriptor;
+    }
+
+    function readRoleAction(descriptor: ReturnType<typeof readRuntimeDescriptor>, role: Role,
+        registry: PluginRuntimeRegistryLease['registry']['contributes']) {
+        const [group, leaf] = role.split('.');
+        // The admitted runtime-role grammar owns which paths are leaves.
+        type Reference = typeof descriptor.actions.deploy;
+        const value = descriptor.actions[group as keyof typeof descriptor.actions];
+        const reference = leaf
+            ? (value as Readonly<Record<string, Reference | undefined>> | undefined)?.[leaf]
+            : value as Reference | undefined;
+        if (!reference || reference.kind !== 'plugin') return refuse('unsupported_action');
+        const action = parseQualifiedPluginActionId(reference.actionId);
+        if (!action) return refuse('deployment_target_role_unavailable');
+        const declaration = readResolvedActionContribution(registry, action);
+        const executionTarget = declaration?.admittedTarget?.declaration.execution.target;
+        if (executionTarget !== 'account' && executionTarget !== 'daemon') return refuse('deployment_target_role_unavailable');
+        return { action, declaration, executionTarget };
+    }
+
+    async function prepareVariablesSyncChild(request: Pick<ScopeRequest, 'environmentId' | 'context'>):
+        Promise<HostReviewedChildrenPlanV1 | null> {
+        // Review can plan from the Home headers. Only the admitted bindings
+        // effect may open the private runtime Link for a telemetry write.
+        const environment = await host.readEnvironmentMetadata(request);
+        const link = environment.targetLinks.find(item => item.id === environment.environment.runtimeTargetLinkId);
+        if (link?.source.kind !== 'plugin') return null;
+        if (!host.acquirePluginRuntimeRegistryLease) return refuse('unsupported_action');
+        const lease = await host.acquirePluginRuntimeRegistryLease();
+        try {
+            const role = 'variables.sync';
+            const registry = lease.registry.contributes;
+            const descriptor = readRuntimeDescriptor(link, registry);
+            return { children: [{ action: readRoleAction(descriptor, role, registry).action, role }] };
+        } finally { await lease.release(); }
+    }
+
     async function withRole<T>(request: ScopeRequest, environment: DeploymentTargetRoleEnvironment, role: Role,
         run: (scope: SourceScope & Readonly<{
             common: ReturnType<typeof DeploymentTargetRoleCommonInputV1Schema.parse> & { targetLinkId: string; expectedTargetLinkRevision: number };
@@ -132,31 +174,15 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const row = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId);
             if (!row || row.targetLink.source.kind !== 'plugin') return refuse('target_mismatch');
             const link = row.targetLink;
-            const descriptor = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
-            if (!descriptor || descriptor.role !== 'runtime' || descriptor.targetKind !== link.targetKind) return refuse('deployment_target_role_unavailable');
-            const readAction = (role: Role) => {
-                const [group, leaf] = role.split('.');
-                // The admitted runtime-role grammar owns which paths are leaves.
-                type Reference = typeof descriptor.actions.deploy;
-                const value = descriptor.actions[group as keyof typeof descriptor.actions];
-                const reference = leaf
-                    ? (value as Readonly<Record<string, Reference | undefined>> | undefined)?.[leaf]
-                    : value as Reference | undefined;
-                if (!reference || reference.kind !== 'plugin') return refuse('unsupported_action');
-                const action = parseQualifiedPluginActionId(reference.actionId);
-                if (!action) return refuse('deployment_target_role_unavailable');
-                const declaration = readResolvedActionContribution(lease.registry.contributes, action);
-                const executionTarget = declaration?.admittedTarget?.declaration.execution.target;
-                if (executionTarget !== 'account' && executionTarget !== 'daemon') return refuse('deployment_target_role_unavailable');
-                return { action, declaration, executionTarget };
-            };
+            const registry = lease.registry.contributes;
+            const descriptor = readRuntimeDescriptor(link, registry);
             if (absent && role === 'cancel' && descriptor.actions.cancel === undefined) return absent();
-            const { action, declaration, executionTarget } = readAction(role);
+            const { action, declaration, executionTarget } = readRoleAction(descriptor, role, registry);
             // A retry can observe the retained receipt instead of sending it again.
             // Both declarations come from this same selected target and registry lease.
             const children: HostReviewedChildrenPlanV1['children'] = [{ action, role },
                 ...(role !== 'observe' && !role.includes('.') && descriptor.actions.observe
-                    ? [{ action: readAction('observe').action, role: 'observe' }] : [])];
+                    ? [{ action: readRoleAction(descriptor, 'observe', registry).action, role: 'observe' }] : [])];
             const principal = row.content?.credentialPrincipal;
             const credentialRef = principal?.kind === 'team' && principal.selection.deliveryMode === 'direct'
                 ? principal.selection.disclosedMember
@@ -771,5 +797,5 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 remedy: 'Choose a log kind declared by this deployment target.' } } : failure(code, error);
         }
     }
-    return { withTargetRole: withRole, prepareCandidate, prepareAction, prepareTeardown, prepareTeardownChildren, prepareCancellation, prepareObservation, prepareLogs, execute };
+    return { withTargetRole: withRole, prepareVariablesSyncChild, prepareCandidate, prepareAction, prepareTeardown, prepareTeardownChildren, prepareCancellation, prepareObservation, prepareLogs, execute };
 }
