@@ -6,7 +6,7 @@ import { DeploymentTargetLinkContentV1Schema, DeploymentTargetLinkHeaderV1Schema
 import { DeploymentContentV1Schema, DeploymentReceiptFailureV1Schema, DeploymentReceiptHeaderV1Schema, DeploymentStepV1Schema } from '../artifacts/deploymentReceiptRecord.js';
 import { DeploymentIdentifierV1Schema } from '../artifacts/deploymentIdentity.js';
 import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import { DeploymentReviewRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { DeploymentReviewRevisionV1Schema, projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationConsequenceV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import { DeploymentControllerAvailabilityV1Schema, hasDeploymentReceiptContentV1, type DeploymentReceiptGetInputV1, type DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -127,14 +127,17 @@ export async function readDeploymentReceiptActionFactsV1(
     if (!hasDeploymentReceiptContentV1(deployment)) return receipt;
     const opened = await open(deployment);
     if ('errorCode' in opened) return opened;
-    const { sourceIntent, failure: recorded, platform } = opened.content;
+    const { sourceIntent, sourceMethod, failure: recorded, platform } = opened.content;
     const projected = { ...receipt,
         ...(address.projection === 'investigation' ? {
-            investigation: projectDeploymentReceiptInvestigationV1({
-                ...(sourceIntent === undefined ? {} : { sourceIntent }),
-                ...(recorded === undefined ? {} : { failure: recorded }),
-                ...(platform === undefined ? {} : { platform }),
-            }),
+            investigation: {
+                ...projectDeploymentReceiptInvestigationV1({
+                    ...(sourceIntent === undefined ? {} : { sourceIntent }),
+                    ...(recorded === undefined ? {} : { failure: recorded }),
+                    ...(platform === undefined ? {} : { platform }),
+                }),
+                sourceLabel: projectDeploymentReviewRevisionV1({ sourceIntent, sourceMethod, platform }),
+            },
         } : {}),
         ...(opened.cancellationConsequence ? { cancellationConsequence: opened.cancellationConsequence } : {}) };
     if (deployment.state !== 'failed') return projected;

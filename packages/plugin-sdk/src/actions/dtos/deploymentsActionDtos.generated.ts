@@ -14871,6 +14871,26 @@ export type DeploymentsActionResultById = {
             remedy?: string | undefined;
         };
         investigation?: undefined | {
+            sourceLabel?: null | undefined | {
+                kind: 'folder';
+                manifestFingerprint: string;
+                fileCount: number;
+                totalBytes: number;
+                excludedPaths: string[];
+                unsupportedFilePaths?: string[] | undefined;
+                exclusionReasons?: undefined | {
+                    path: string;
+                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                }[];
+            } | {
+                kind: 'repository';
+                sha: string;
+                subject?: string | undefined;
+            } | {
+                kind: 'stored';
+                contentRevision: number;
+                composeDigest: string;
+            };
             source?: undefined | {
                 kind: 'repository';
                 projectSourceId: string;

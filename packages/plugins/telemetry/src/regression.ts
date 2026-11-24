@@ -1,7 +1,7 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import { areDeploymentSourceLabelsEqualV1, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { compareDatabaseEvidenceWindowsV1 } from '@happier-dev/databases/stats-comparisons';
 import { databaseActionLocalIdV1, databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
@@ -11,6 +11,8 @@ import { regressionCompareInputSchema, regressionCompareResultSchema, regression
     regressionScheduleResultSchema } from './regressionSchemas.js';
 
 type Receipt = Extract<PluginActionResultById['deployments.receipts.list'], { ok: true }>['items'][number];
+type SettledReceipt = Receipt & { settledAtMs: number };
+type EnvironmentAddress = { serverId: string; environmentId: string };
 
 function metadata(id: typeof TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 | typeof TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1) {
     const declaration = databaseActionMetadata[id];
@@ -19,8 +21,8 @@ function metadata(id: typeof TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 | typeof
 }
 
 /** History is read at firing. Receipt ids are display evidence, never metric cohort identities. */
-async function successfulDeployments(context: PluginInvocationContext, input: { serverId: string; environmentId: string }) {
-    const receipts: Receipt[] = [];
+async function successfulDeployments(context: PluginInvocationContext, input: EnvironmentAddress) {
+    const receipts: SettledReceipt[] = [];
     let cursor: string | undefined;
     do {
         const result = await context.services.actions.execute('deployments.receipts.list', { ...input, state: 'succeeded',
@@ -28,10 +30,19 @@ async function successfulDeployments(context: PluginInvocationContext, input: { 
         if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({
             code: 'ok' in result ? result.error : 'approval_required',
         }), { phase: 'telemetry.regressions.history', causeKind: 'native_failure', error: result });
-        receipts.push(...result.items.filter(item => item.operation !== 'teardown' && item.settledAtMs !== undefined));
+        receipts.push(...result.items.filter((item): item is SettledReceipt => item.operation !== 'teardown' && item.settledAtMs !== undefined));
         cursor = result.nextCursor ?? undefined;
     } while (cursor);
-    return receipts.sort((a, b) => b.settledAtMs! - a.settledAtMs!);
+    return receipts.sort((a, b) => b.settledAtMs - a.settledAtMs);
+}
+
+async function readDeploymentSourceLabel(context: PluginInvocationContext, address: EnvironmentAddress, deploymentId: string) {
+    const result = await context.services.actions.execute('deployments.receipts.get', { ...address, deploymentId,
+        projection: 'investigation' }, { signal: context.signal });
+    if (!('ok' in result) || !result.ok) throw withActionFailureDiagnostic(new PluginError({
+        code: 'ok' in result ? result.error : 'approval_required',
+    }), { phase: 'telemetry.regressions.receipt', causeKind: 'native_failure', error: result });
+    return result.investigation?.sourceLabel;
 }
 
 export const telemetryRegressionActions = {
@@ -48,15 +59,31 @@ export const telemetryRegressionActions = {
             if (disabled) return inconclusive(disabled);
             const runtime = localCaptureBackground.readRuntime();
             if (!runtime) return inconclusive('collector_unavailable');
-            const history = await successfulDeployments(context, { serverId: input.serverId, environmentId: input.environmentId });
+            const address = { serverId: input.serverId, environmentId: input.environmentId };
+            const history = await successfulDeployments(context, address);
             const live = history[0];
-            const previous = history.find(item => item.id !== live?.id && item.settledAtMs! < live!.settledAtMs!);
-            if (!live || !previous) return inconclusive('previous_deployment_required');
-            const boundary = live.settledAtMs!;
+            if (!live) return inconclusive('previous_deployment_required');
+            const older = history.filter(item => item.settledAtMs < live.settledAtMs);
+            if (!older.length) return inconclusive('previous_deployment_required');
+            const source = await readDeploymentSourceLabel(context, address, live.id);
+            if (!source) return inconclusive('deployment_source_unavailable');
+            let boundary = live.settledAtMs;
+            let previous: SettledReceipt | undefined;
+            // A repeat Receipt keeps the previous start of this release. Stop at the first different release.
+            for (const receipt of older) {
+                const sameRelease = areDeploymentSourceLabelsEqualV1(source, await readDeploymentSourceLabel(context, address, receipt.id));
+                if (sameRelease === null) return inconclusive('deployment_source_unavailable');
+                if (!sameRelease) {
+                    previous = receipt;
+                    break;
+                }
+                boundary = receipt.settledAtMs;
+            }
+            if (!previous) return inconclusive('previous_deployment_required');
             const duration = Math.min(input.windowMs, context.invokedAtMs - boundary);
             const basis = { liveDeploymentId: live.id, previousDeploymentId: previous.id };
             if (duration <= 0) return { ...basis, ...inconclusive('observation_window_empty') };
-            if (boundary - duration < previous.settledAtMs!) return { ...basis, ...inconclusive('previous_window_incomplete') };
+            if (boundary - duration < previous.settledAtMs) return { ...basis, ...inconclusive('previous_window_incomplete') };
             const selected = { environmentId: input.environmentId, serviceName: input.serviceName, measure: input.measure };
             const [before, after] = await readKeyFlowWindows(runtime, [
                 { ...selected, since: boundary - duration, until: boundary },

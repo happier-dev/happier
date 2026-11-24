@@ -207,6 +207,7 @@ export {
     DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE,
     ProtocolCloudflareTunnelConnectorsPerMachineV1Schema,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+    areDeploymentSourceLabelsEqualV1,
     deploymentRevisionShortLabelV1,
     readDeploymentFailureRecoveryV1,
     formatSharedSavedSecretRefV1,

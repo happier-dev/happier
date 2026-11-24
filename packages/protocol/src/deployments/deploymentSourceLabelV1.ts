@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ScmCommitOidSchema } from '../scm/commitPublication.js';
 import { DeploymentDigestV1Schema as digest, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentFolderReviewRevisionV1Schema, projectDeploymentFolderReviewRevisionV1 } from './deploymentFolderReviewRevisionV1.js';
@@ -6,11 +7,11 @@ import type { DeploymentSourceIntentV1 } from './storedAppInputV1.js';
 import type { DeploymentContentV1 } from './deploymentReceiptContentV1.js';
 
 /** Display identity only; stored Compose documents and private binding sources never enter review. */
-export const DeploymentReviewRevisionV1Schema = z.discriminatedUnion('kind', [
+export const DeploymentReviewRevisionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('repository'), sha: ScmCommitOidSchema, subject: z.optional(z.string()) }),
   z.strictObject({ kind: z.literal('stored'), contentRevision: revision, composeDigest: digest }),
   DeploymentFolderReviewRevisionV1Schema,
-]);
+]));
 export type DeploymentReviewRevisionV1 = z.infer<typeof DeploymentReviewRevisionV1Schema>;
 
 export function projectDeploymentReviewRevisionV1(source: Extract<DeploymentSourceIntentV1, { kind: 'folder' }>): Extract<DeploymentReviewRevisionV1, { kind: 'folder' }>;

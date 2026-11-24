@@ -109,7 +109,7 @@ it('P7-F16 an approved scheduled Run adds one once trigger to its own saved Work
 // Docker and the coding vendor executable are the only substituted boundaries.
 // Account credentials, Home/Postgres, enrolled daemon, deployment receipts,
 // exporter-token admission, retained metrics, Workflow worker and Session run real.
-it('P7-F16 a deployment schedules one check whose firing compares the intervening live deployment and starts a diagnosis Session', async () => {
+it('P7-F16 a deployment schedules one check that treats a repeated release as one cohort and starts a diagnosis Session', async () => {
   const testDir = run.testDir('dbw-regression-f16-journey');
   const docker = await createOwnServerDockerBoundary(join(testDir, 'docker-boundary'));
   const image = await docker.registerImage('checkout', 'f16');
@@ -210,6 +210,21 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       expect(Boolean(delivered.OTEL_EXPORTER_OTLP_ENDPOINT && delivered.OTEL_EXPORTER_OTLP_HEADERS),
         'The active checkout deployment must receive its declared collector endpoint and auth headers').toBe(true);
       return receipt.deploymentId;
+    }
+    async function configureRelease(imageReference: string) {
+      const currentEnvironment = await account.execute('deployments.environments.get', address);
+      if (!currentEnvironment.ok) throw new Error(`F16 release Environment read refused (${currentEnvironment.errorCode})`);
+      const current = DeploymentActionOutputSchemasV1['deployments.environments.get'].parse(currentEnvironment.result);
+      if (!current.ok) throw new Error(`F16 release Environment unavailable (${current.error})`);
+      const updated = await account.executeReviewed('deployments.environments.update', {
+        ...address, expectedRevision: current.environment.revision,
+        contentArtifactId: current.environment.contentArtifactId,
+        contentHeaderVersion: current.environment.contentHeaderVersion,
+        contentBodyVersion: current.environment.contentBodyVersion,
+        patch: { definition: { from: 'compose', profiles: [], services: ['checkout'],
+          document: checkoutComposeDocument(imageReference) } },
+      }, { ...onMachine, presentUserConfirmation: { actionId: 'deployments.environments.update' } });
+      expect(updated.ok, JSON.stringify(updated)).toBe(true);
     }
     const baselineId = await deploy();
 
@@ -374,7 +389,12 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
       return lastExportAt >= since + windowMs;
     }, { context, timeoutMs: observationDelayMs });
     await readTrafficWindow(Date.now(), 'F16 same-route baseline traffic');
+    const slowImage = await docker.registerImage('checkout', 'f16-regression');
+    await configureRelease(slowImage.registryReference);
     const armedId = await deploy();
+    expect(await docker.readRunningImageConfig('checkout')).toBe(slowImage.configDigest);
+    slow = true;
+    exporterVersion = 'exporter-fixture-regression';
     let schedulingRunId: string | undefined;
     await waitFor(async () => {
       const admitted = await runs(saved.set.automationId);
@@ -425,7 +445,7 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
 
     const liveId = await deploy();
     expect(new Set([baselineId, armedId, liveId]).size).toBe(3);
-    slow = true;
+    expect(await docker.readRunningImageConfig('checkout')).toBe(slowImage.configDigest);
     await waitFor(async () => (await readTriggers()).filter(row => row.kind === 'schedule').length === 2,
       { context: 'F16 intervening deployment has its own single finite schedule' });
     let diagnosisSessionId: string | undefined;
@@ -441,7 +461,8 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
         const compared = regressionCompareResultSchema.parse(comparison.progress.result);
         expect(compared, compared.status === 'inconclusive' ? compared.reasons.join(', ') : undefined)
           .toMatchObject({ status: 'comparable', liveDeploymentId: liveId,
-            previousDeploymentId: armedId, changePercent: expect.any(Number) });
+            previousDeploymentId: baselineId, changePercent: expect.any(Number),
+            before: { measurements: { window: { until: finished.deployment.settledAtMs } } } });
         const diagnosis = history.invocationDetails?.find(row => row.progress.execution?.kind === 'session');
         if (diagnosis?.progress.execution?.kind !== 'session') continue;
         diagnosisSessionId = diagnosis.progress.execution.sessionId;
@@ -482,19 +503,7 @@ it('P7-F16 a deployment schedules one check whose firing compares the intervenin
     // it through the same native owner. No Workflow, metric or comparison state
     // is altered by the fixture, and the same /checkout workload verifies it.
     const fixedImage = await docker.registerImage('checkout', 'f16-fixed');
-    const currentEnvironment = await account.execute('deployments.environments.get', address);
-    if (!currentEnvironment.ok) throw new Error(`F16 fix Environment read refused (${currentEnvironment.errorCode})`);
-    const current = DeploymentActionOutputSchemasV1['deployments.environments.get'].parse(currentEnvironment.result);
-    if (!current.ok) throw new Error(`F16 fix Environment unavailable (${current.error})`);
-    const updated = await account.executeReviewed('deployments.environments.update', {
-      ...address, expectedRevision: current.environment.revision,
-      contentArtifactId: current.environment.contentArtifactId,
-      contentHeaderVersion: current.environment.contentHeaderVersion,
-      contentBodyVersion: current.environment.contentBodyVersion,
-      patch: { definition: { from: 'compose', profiles: [], services: ['checkout'],
-        document: checkoutComposeDocument(fixedImage.registryReference) } },
-    }, { ...onMachine, presentUserConfirmation: { actionId: 'deployments.environments.update' } });
-    expect(updated.ok, JSON.stringify(updated)).toBe(true);
+    await configureRelease(fixedImage.registryReference);
     const fixedId = await deploy();
     expect(fixedId).not.toBe(liveId);
     expect(await docker.readRunningImageConfig('checkout')).toBe(fixedImage.configDigest);

@@ -8,6 +8,9 @@ import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import type { NormalizedMetricPoint } from './otlp/types.js';
 import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 
+const oldLabel = { kind: 'repository', sha: 'a'.repeat(40) } as const;
+const liveLabel = { kind: 'repository', sha: 'b'.repeat(40) } as const;
+
 describe('retained regression Actions', () => {
     it('compares cost-only retained windows with one invoking viewer pricing context and preserves its evidence', async () => {
         const fixture = createCaptureSqliteFixture();
@@ -18,12 +21,15 @@ describe('retained regression Actions', () => {
             provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1, revision: 'regression-cost-fixture', fetchStatus: 'ready' } };
         // Only the authenticated host Action and daemon SQLite adapters are substituted.
         // Retained operands, viewer overrides, Usage pricing and the comparator stay real.
-        const actions = { execute: async (id: string) => {
+        const actions = { execute: async (id: string, input: { deploymentId?: string }) => {
             calls.push(id);
             if (id === 'deployments.receipts.list') return { ok: true, items: [
                 { id: 'live', state: 'succeeded', operation: 'deploy', settledAtMs: 2000 },
                 { id: 'old', state: 'succeeded', operation: 'deploy', settledAtMs: 500 },
             ], nextCursor: null };
+            if (id === 'deployments.receipts.get') return { ok: true, investigation: {
+                sourceLabel: input.deploymentId === 'old' ? oldLabel : liveLabel,
+            } };
             if (id === 'settings.get') return { anchor: 'usage.modelPrices', value: { 'private-model': { kind: 'map', modelId: 'reference' } } };
             if (id === 'usage.prices.get') return catalog;
             throw new Error(`Unexpected host Action ${id}`);
@@ -61,7 +67,8 @@ describe('retained regression Actions', () => {
                 ]));
             }
             expect(admissions).toBe(1);
-            expect(calls).toEqual(['deployments.receipts.list', 'settings.get', 'usage.prices.get']);
+            expect(calls).toEqual(['deployments.receipts.list', 'deployments.receipts.get', 'deployments.receipts.get',
+                'settings.get', 'usage.prices.get']);
             appLlmCost = false; calls.length = 0;
             expect(await compare()).toEqual({ status: 'inconclusive', reasons: ['app_llm_cost_disabled'] });
             expect(calls).toEqual([]);
@@ -76,13 +83,24 @@ describe('retained regression Actions', () => {
         const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
         const calls: string[] = [];
         let liveFinish = 2000;
+        let repeatFinish: number | null = null;
+        let repeatHasLabel = true;
         let metricsEnabled = true;
         let windowMs = 1000;
-        const actions = { execute: async (id: string, input: { cursor?: string }) => {
+        const actions = { execute: async (id: string, input: { cursor?: string; deploymentId?: string; projection?: string }) => {
             calls.push(id);
+            if (id === 'deployments.receipts.get') {
+                expect(input.projection).toBe('investigation');
+                const sourceLabel = input.deploymentId === 'old' ? oldLabel
+                    : input.deploymentId === 'repeat' && !repeatHasLabel ? null : liveLabel;
+                return { ok: true, investigation: { sourceLabel } };
+            }
             if (id !== 'deployments.receipts.list') throw new Error(`Unexpected effect: ${id}`);
             return input.cursor ? { ok: true, items: [{ id: 'old', state: 'succeeded', operation: 'deploy', settledAtMs: 500 }], nextCursor: null }
-                : { ok: true, items: [{ id: 'live', state: 'succeeded', operation: 'deploy', settledAtMs: liveFinish }], nextCursor: 'older' };
+                : { ok: true, items: [
+                    ...(repeatFinish === null ? [] : [{ id: 'repeat', state: 'succeeded', operation: 'deploy', settledAtMs: repeatFinish }]),
+                    { id: 'live', state: 'succeeded', operation: 'deploy', settledAtMs: liveFinish },
+                ], nextCursor: 'older' };
         } } as unknown as PluginServices['actions'];
         const deploymentDatabases = { admitTelemetryRead: async () => ({
             environment: { serverId: 'home', environmentId: 'env', revision: 1 }, collectorMachineId: 'collector',
@@ -113,7 +131,15 @@ describe('retained regression Actions', () => {
                 before: { measurements: { window: { since: 1000, until: 2000 }, value: expect.closeTo(9.5) } },
                 after: { measurements: { window: { since: 2000, until: 3000 }, value: expect.closeTo(95.5) } },
                 changePercent: expect.closeTo(905.2631579) });
-            expect(calls).toEqual(['deployments.receipts.list', 'deployments.receipts.list']);
+            expect(calls.splice(0)).toEqual(['deployments.receipts.list', 'deployments.receipts.list',
+                'deployments.receipts.get', 'deployments.receipts.get']);
+            repeatFinish = 2700;
+            expect(await compare()).toMatchObject({ status: 'comparable', liveDeploymentId: 'repeat', previousDeploymentId: 'old',
+                before: { measurements: { window: { since: 1000, until: 2000 }, value: expect.closeTo(9.5) } },
+                after: { measurements: { window: { since: 2000, until: 3000 }, value: expect.closeTo(95.5) } } });
+            repeatHasLabel = false;
+            expect(await compare()).toMatchObject({ status: 'inconclusive', reasons: ['deployment_source_unavailable'] });
+            repeatFinish = null;
             expect(fixture.statements.every(sql => !/^\s*(INSERT|UPDATE|DELETE)/i.test(sql))).toBe(true);
             windowMs = 1200; vi.setSystemTime(3200);
             expect(await compare()).toMatchObject({ status: 'comparable', changePercent: expect.closeTo(905.2631579),

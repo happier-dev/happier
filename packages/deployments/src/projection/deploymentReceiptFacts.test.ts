@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentDataTeardownContentV1Schema, readDeploymentReceiptActionFactsV1 } from '@happier-dev/deployments/contracts/v1';
 import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, selectDeploymentReceiptRetainedHistoryV1 } from './deploymentReceiptFacts';
 
 describe('receipt facts', () => {
@@ -72,7 +72,7 @@ describe('receipt facts', () => {
         expect(projectDeploymentReceiptFactsV1(receipt).builtInUrls).toBeNull();
     });
 
-    it.each([{ builtSha: 'b'.repeat(40) }, { builtSha: undefined }])('labels Pages Git History with the observed built commit $builtSha', ({ builtSha }) => {
+    it.each([{ builtSha: 'b'.repeat(40) }, { builtSha: undefined }])('labels Pages Git History and private Action investigation with the observed built commit $builtSha', async ({ builtSha }) => {
         const receipt = createDeploymentReceiptDetailV1();
         receipt.content.ownServer = undefined;
         receipt.content.sourceMethod = 'gitIntegration';
@@ -93,6 +93,10 @@ describe('receipt facts', () => {
             historyTitle: builtSha?.slice(0, 7) ?? null,
         });
         expect(receipt.content.sourceIntent).toMatchObject({ kind: 'repository', sha: 'a'.repeat(40) });
+        const investigation = await readDeploymentReceiptActionFactsV1({ ok: true, deployment: receipt.deployment }, {
+            deploymentId: receipt.deployment.id, projection: 'investigation',
+        }, async () => receipt);
+        expect(investigation).toMatchObject({ investigation: { sourceLabel: builtSha ? { kind: 'repository', sha: builtSha } : null } });
         receipt.content.sourceMethod = 'upload';
         expect(projectDeploymentReceiptHistoryEntryV1(receipt).historyTitle).toBe('aaaaaaa · Requested commit');
     });

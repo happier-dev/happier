@@ -18,6 +18,7 @@ import { AutomationEventSourceInstanceIdV1Schema } from '../automations/automati
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
 import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
+import { DeploymentReviewRevisionV1Schema } from './deploymentSourceLabelV1.js';
 import { DeploymentReceiptOperationV1Schema, DeploymentStateV1Schema } from './deploymentStateV1.js';
 import * as receiptResult from './deploymentReceiptResultV1.js';
 import { DeploymentFolderSourceIntentV1Schema, DeploymentRepositorySourceIntentV1Schema,
@@ -71,6 +72,8 @@ export const DeploymentReceiptFailureSummaryV1Schema = lazyZodSchema(() => z.str
 
 /** Exact native receipt evidence without the private Compose document, selectors or logs. */
 export const DeploymentReceiptInvestigationV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Exact Account-host source label; null means the Receipt did not establish it. */
+  sourceLabel: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)),
   source: z.optional(z.discriminatedUnion('kind', [
     z.extend(z.pick(DeploymentRepositorySourceIntentV1Schema, { kind: true, projectSourceId: true, sourceRevision: true, sha: true }),
       z.pick(DeploymentTargetRoleResultV1Schema, { builtSha: true }).shape),

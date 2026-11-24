@@ -5,6 +5,7 @@ import { DeploymentDeploySemanticInputV1Schema, type DeploymentDeploySemanticInp
 import { DeploymentCorrelationV1Schema, type DeploymentCorrelationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
 import { DeploymentEnvironmentHeaderV1Schema, type DeploymentEnvironmentHeaderV1, DeploymentReceiptHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { EnvironmentVariableBindingV1Schema, type EnvironmentVariableBindingV1, DeploymentSecretBindingSourceV1Schema, type DeploymentSecretBindingSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { areDeploymentSourceLabelsEqualV1 as canonicalCompareSourceLabels } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { deploymentRevisionShortLabelV1 as canonicalRevisionLabel } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { readDeploymentFailureRecoveryV1 as canonicalReadFailureRecovery } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { formatSharedSavedSecretRefV1 as canonicalFormatSavedSecretRef } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -88,6 +89,7 @@ export const ProtocolDeploymentVariableBindingV1Schema: ProtocolComposableSchema
 export const ProtocolDeploymentSecretBindingSourceV1Schema: ProtocolComposableSchema<unknown, DeploymentSecretBindingSourceV1> = projectZodProtocolSchema(DeploymentSecretBindingSourceV1Schema);
 
 /** Presentation derives from captured revision and failure facts without opening the host store. */
+export const areDeploymentSourceLabelsEqualV1: typeof canonicalCompareSourceLabels = projectProtocolValue(canonicalCompareSourceLabels);
 export const deploymentRevisionShortLabelV1: typeof canonicalRevisionLabel = projectProtocolValue(canonicalRevisionLabel);
 export const readDeploymentFailureRecoveryV1: typeof canonicalReadFailureRecovery = projectProtocolValue(canonicalReadFailureRecovery);
 

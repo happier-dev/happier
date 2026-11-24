@@ -215,7 +215,7 @@ export { defineProtocolUniqueArray } from './protocolFacade.js';
 export { defineProtocolUtf8String } from './protocolFacade.js';
 export { defineTriageCompositeIdentifierStringV1 } from './triageEntryRef.js';
 export { defineTriageSingleLineStringV1 } from './triageEntryRef.js';
-export { deploymentRevisionShortLabelV1 } from './deployment.js';
+export { areDeploymentSourceLabelsEqualV1, deploymentRevisionShortLabelV1 } from './deployment.js';
 export { embedProtocolJsonSchema } from './protocolFacade.js';
 export { encodeBase64 } from './encoding.js';
 export { forgeCiRepositoryIdentityV1Schema } from './channelsForgeCi.js';
