@@ -136,6 +136,7 @@ allowBuilds:
   "@prisma/client": true
   "@happier-dev/cli": false
 patchedDependencies:
+  tsx@4.23.12: patches/tsx@4.23.12.patch
   expo@55.0.11: patches/expo@55.0.11.patch
   expo-modules-core@55.0.20: patches/expo-modules-core@55.0.20.patch
   metro-file-map@0.83.5: patches/metro-file-map@0.83.5.patch

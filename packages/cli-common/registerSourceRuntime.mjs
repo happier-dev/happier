@@ -55,6 +55,8 @@ const overrides = new Map();
 if (tsconfig) overrides.set('TSX_TSCONFIG_PATH', tsconfig);
 if (revisionCacheRoot) {
   for (const key of ['TMPDIR', 'TMP', 'TEMP']) overrides.set(key, revisionCacheRoot);
+  // Keep the revision's disk reuse without retaining completed transform payloads.
+  overrides.set('HAPPIER_TSX_FILE_CACHE_RELEASE_TRANSFORMS', '1');
 }
 const inheritedEnvironment = new Map();
 try {

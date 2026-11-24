@@ -1732,7 +1732,9 @@ workspace source resolver before the tool entry is linked. In current 0.3
 development it selects the cache before loading the adapter. CLI entrypoints in
 Stack's immutable source revision trees reuse tsx's content-keyed transforms from
 a private directory inside that tree. The tree's existing retirement removes its
-cache, and only tsx registration uses the private temp directory. When that
+cache, and only tsx registration uses the private temp directory. The tsx disk
+cache releases completed transform payloads after successful writes and serves
+warm payloads from disk in these revision trees. When that
 directory cannot be created, the CLI logs the failure and uses in-process
 transforms. In ordinary checkouts, the existing CLI lifetime policy controls
 shared disk reuse. Source tools and the daemon-hosted roles detected by that
