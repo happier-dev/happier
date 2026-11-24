@@ -31,7 +31,12 @@ vi.mock('../paths', () => ({ repoRootDir: () => testRepository.rootDir }));
 
 vi.mock('./spawnProcess', () => {
   return {
-    runLoggedCommand: runLoggedCommandMock,
+    runLoggedCommand: async (params: RunLoggedCommandMockParams) => {
+      await runLoggedCommandMock(params);
+      if (isWorkspacePrebuildInvocation(params)) {
+        await writeFile(params.args!.at(-1)!, resolve(testRepository.rootDir, 'export-inventory.js'));
+      }
+    },
   };
 });
 
@@ -225,6 +230,8 @@ describe('uiWebExport (cache clearing)', () => {
     expect(calls.length).toBeGreaterThanOrEqual(2);
     expect(isWorkspacePrebuildInvocation(calls[0]?.[0])).toBe(true);
     expect(isWorkspacePrebuildInvocation(calls[1]?.[0])).toBe(false);
+    expect(calls[1]?.[0]?.env?.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY)
+      .toBe(resolve(testRepository.rootDir, 'export-inventory.js'));
   });
 
   it('still runs export preflight when the shared CLI dist build lock is active', async () => {

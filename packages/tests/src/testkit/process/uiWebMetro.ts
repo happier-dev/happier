@@ -871,16 +871,16 @@ async function startUiWebMetroSingleAttempt(params: UiWebMetroStartParams): Prom
   const noDev = noDevRaw === '1' || noDevRaw === 'true' || noDevRaw === 'yes' || noDevRaw === 'y';
 
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
-  if (shouldRunWorkspacePrebuild(params)) {
-    await ensureUiWebWorkspacePrebuild({
-      testDir: params.testDir,
-      env: params.env,
-      workspaceRootDir: uiWorkspaceDir,
-      logPrefix: 'ui-web-metro',
-      stdoutPath,
-      stderrPath,
-    });
-  }
+  const expoEnv = shouldRunWorkspacePrebuild(params)
+    ? await ensureUiWebWorkspacePrebuild({
+        testDir: params.testDir,
+        env: params.env,
+        workspaceRootDir: uiWorkspaceDir,
+        logPrefix: 'ui-web-metro',
+        stdoutPath,
+        stderrPath,
+      })
+    : params.env;
 
   const expoCliPath = resolveExpoCliPath({ rootDir: repoRootDir(), uiWorkspaceDir });
   const tmpDir = resolvePath(params.testDir, 'ui.web.tmp');
@@ -905,7 +905,7 @@ async function startUiWebMetroSingleAttempt(params: UiWebMetroStartParams): Prom
     command: process.execPath,
     cwd: uiWorkspaceDir,
     env: resolveUiWebMetroSpawnEnv({
-      env: params.env,
+      env: expoEnv,
       tmpDir,
       metroCacheVersionBust,
       noDev,

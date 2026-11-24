@@ -1,4 +1,4 @@
-import { appendFile, mkdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -15,12 +15,15 @@ export async function ensureUiWebWorkspacePrebuild(params: {
   stderrPath: string;
   prebuildStdoutPath?: string;
   prebuildStderrPath?: string;
-}): Promise<void> {
+}): Promise<NodeJS.ProcessEnv> {
   const prebuildStdoutPath = params.prebuildStdoutPath ?? resolvePath(params.testDir, 'ui.web.prebuild.stdout.log');
   const prebuildStderrPath = params.prebuildStderrPath ?? resolvePath(params.testDir, 'ui.web.prebuild.stderr.log');
 
+  const inventoryPathResult = `${prebuildStdoutPath}.inventory-path`;
+
   await mkdir(params.testDir, { recursive: true });
   await Promise.all([
+    rm(inventoryPathResult, { force: true }),
     writeFile(params.stdoutPath, '', 'utf8').catch(() => {}),
     writeFile(params.stderrPath, '', 'utf8').catch(() => {}),
     writeFile(prebuildStdoutPath, '', 'utf8').catch(() => {}),
@@ -54,14 +57,17 @@ export async function ensureUiWebWorkspacePrebuild(params: {
         args: [
           '--eval',
           [
+            "import { writeFile } from 'node:fs/promises';",
             `const uiWorkspaceBuildModuleUrl = ${JSON.stringify(uiWorkspaceBuildModuleUrl)};`,
             'const { ensureUiWorkspacePackagesBuilt } = await import(uiWorkspaceBuildModuleUrl);',
             'const uiPackageDir = process.argv[1];',
             "if (!uiPackageDir) throw new Error('missing uiPackageDir');",
             'const res = await ensureUiWorkspacePackagesBuilt({ uiPackageDir, env: process.env, source: true });',
+            "await writeFile(process.argv[2], res.outputPath, 'utf8');",
             'process.stdout.write(`${JSON.stringify(res)}\\n`);',
           ].join('\n'),
           params.workspaceRootDir,
+          inventoryPathResult,
         ],
       }),
       cwd: repoDir,
@@ -73,10 +79,12 @@ export async function ensureUiWebWorkspacePrebuild(params: {
       // otherwise a queued nested publisher looks like a hung test.
       echoStderrLine: (line) => line.startsWith('[preferred-execution] '),
     });
+    const inventoryPath = await readFile(inventoryPathResult, 'utf8');
     await appendFile(
       params.stderrPath,
       `[${params.logPrefix}] workspace build preflight completed: ${params.workspaceRootDir}\n`,
     ).catch(() => {});
+    return { ...params.env, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const normalizedError = error instanceof Error ? error : new Error(message);

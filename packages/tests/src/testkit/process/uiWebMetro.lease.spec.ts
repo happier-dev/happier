@@ -67,6 +67,7 @@ vi.mock('./spawnProcess', () => ({
     runLoggedCommand: async (params: RunLoggedCommandMockParams) => {
         startOrder.push('workspace-prebuild');
         runLoggedCommandCalls.push(params);
+        writeFileSync(params.args!.at(-1)!, join(tmpdir(), 'metro-inventory.js'));
     },
 }));
 
@@ -201,6 +202,7 @@ describe('startUiWebMetro', () => {
             expect(isWorkspacePrebuildInvocation(runLoggedCommandCalls[0])).toBe(true);
             expect(runLoggedCommandCalls[0]?.timeoutMs).toBe(null);
             expect(startOrder).toEqual(['workspace-prebuild', 'spawn']);
+            expect(lastSpawnEnv?.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY).toBe(join(tmpdir(), 'metro-inventory.js'));
 
             await started.stop();
         } finally {

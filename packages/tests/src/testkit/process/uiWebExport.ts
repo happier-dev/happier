@@ -725,8 +725,9 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
   }
 
   const workspaceRootDir = resolvePath(repoRootDir(), 'apps', 'ui');
+  let expoEnv: NodeJS.ProcessEnv;
   try {
-    await ensureUiWebWorkspacePrebuild({
+    expoEnv = await ensureUiWebWorkspacePrebuild({
       testDir: params.testDir,
       env: params.env,
       workspaceRootDir,
@@ -763,7 +764,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
 
     for (;;) {
       try {
-        const exportEnv = buildExportEnv(params.env);
+        const exportEnv = buildExportEnv(expoEnv);
         const shouldPinMetroPort = !exportEnv.RCT_METRO_PORT && !exportEnv.EXPO_METRO_PORT && !exportEnv.METRO_PORT;
         const metroPort = shouldPinMetroPort ? await reserveAvailablePort() : null;
         const pinnedExportEnv = shouldPinMetroPort && metroPort != null

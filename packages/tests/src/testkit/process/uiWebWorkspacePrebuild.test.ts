@@ -29,6 +29,10 @@ describe('ensureUiWebWorkspacePrebuild', () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-prebuild-test-'));
     testDirs.push(testDir);
 
+    runLoggedCommandMock.mockImplementationOnce(async ({ args }) => {
+      await writeFile(args.at(-1)!, join(testDir, 'source-inventory.js'));
+    });
+
     await ensureUiWebWorkspacePrebuild({
       testDir,
       env: process.env,
@@ -48,14 +52,15 @@ describe('ensureUiWebWorkspacePrebuild', () => {
     expect(evalSource).not.toContain('ensureWorkspacePackagesBuiltForComponent');
   });
 
-  it('selects source preparation in Node with the workspace TypeScript loader', async () => {
+  it('returns the inventory produced by source preparation in Node', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-prebuild-source-'));
     testDirs.push(testDir);
     const modulePath = join(testDir, 'ensureWorkspacePackagesBuilt.mjs');
+    const inventoryPath = join(testDir, 'source-inventory.js');
     await writeFile(modulePath, `
       import { definition } from './definition.js';
       export async function ensureUiWorkspacePackagesBuilt({ source = false }) {
-        return { ...definition, source };
+        return { ...definition, source, outputPath: ${JSON.stringify(inventoryPath)} };
       }
     `);
     await writeFile(join(testDir, 'definition.ts'), `
@@ -74,7 +79,7 @@ describe('ensureUiWebWorkspacePrebuild', () => {
       return runLoggedCommand({ ...invocation, args });
     });
 
-    await ensureUiWebWorkspacePrebuild({
+    const expoEnv = await ensureUiWebWorkspacePrebuild({
       testDir,
       env: { ...process.env, NODE_OPTIONS: '' },
       workspaceRootDir: resolve(repoRootDir(), 'apps', 'ui'),
@@ -84,6 +89,7 @@ describe('ensureUiWebWorkspacePrebuild', () => {
     });
 
     expect(JSON.parse(await readFile(join(testDir, 'ui.web.prebuild.stdout.log'), 'utf8')))
-      .toEqual({ value: 'staged-source', source: true });
+      .toEqual({ value: 'staged-source', source: true, outputPath: inventoryPath });
+    expect(expoEnv).toMatchObject({ NODE_OPTIONS: '', HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath });
   });
 });
