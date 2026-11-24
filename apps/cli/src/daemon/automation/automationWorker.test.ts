@@ -67,6 +67,12 @@ function startCapacityAutomationWorker(params: Parameters<typeof startAutomation
 // the worker, Account Actions and predecessor converter remain real.
 vi.mock('@/persistence', async importOriginal => ({ ...await importOriginal<typeof import('@/persistence')>(),
   readStoredCredentials: async () => migrationBoundary.credentials }));
+// These scheduler cases have no installation registered on disk. Keep that
+// storage result deterministic while fake time controls the request deadlines.
+vi.mock('@/daemon/machineIdentity/machineRegistrationStore', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/machineIdentity/machineRegistrationStore')>(),
+  readActiveMachineId: async () => null,
+}));
 vi.mock('@/api/automations', async importOriginal => ({ ...await importOriginal<typeof import('@/api/automations')>(),
   listAutomationDefinitions: migrationBoundary.list, listAutomationDefinitionDetails: migrationBoundary.list, getAutomationDefinition: migrationBoundary.get,
   reconcileAutomationDefinition: migrationBoundary.reconcile }));

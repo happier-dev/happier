@@ -1971,13 +1971,12 @@ describe('createDefaultActionExecutor approvals', () => {
             return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
                 requestId: envelope.requestId, execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' } }) };
         } });
-        expect(await executor.execute('approval.request.decide', { artifactId: 'signed-machine-approval', decision: 'approve' }, context()))
-            .toMatchObject({ ok: true, result: { status: 'outcome_unknown', execution: {
-                ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown',
-                details: { reasonCode: 'target_unavailable' },
-            } } });
-        await executor.execute('approval.request.decide', { artifactId: 'signed-machine-approval', decision: 'approve' }, context());
+        await expect(executor.execute('approval.request.decide', { artifactId: 'signed-machine-approval', decision: 'approve' }, context()))
+            .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(persistedApproval('signed-machine-approval')).toEqual(machineRequest);
         expect(homes.requestsFor(path)).toHaveLength(1);
+        await executor.execute('approval.request.decide', { artifactId: 'signed-machine-approval', decision: 'approve' }, context());
+        expect(homes.requestsFor(path)).toHaveLength(2);
         expect(outgoing).toEqual([]);
         expect(homes.requestsFor('/v1/teams/invitations/create')).toEqual([]);
     });

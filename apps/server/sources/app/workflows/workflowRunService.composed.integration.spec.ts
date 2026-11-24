@@ -980,8 +980,12 @@ describe("workflowRunService (integration)", () => {
         expect((await getWorkflowRun(seeded)).run.revision).toBe(0);
         const { app, headers } = await createReviewStorageApp(seeded.accountId);
         const signal = new AbortController().signal;
+        const { createSessionFollowWakeSignal, publishSessionFollowWakeInvalidation } = await import(
+            "../../../../cli/src/agent/runtime/session/follow/sessionFollowWakeSignal"
+        );
+        const followWake = createSessionFollowWakeSignal(() => seeded.sessionId);
         const originOptions = {
-            accountId: seeded.accountId, originSessionId: seeded.sessionId, machineId: seeded.machineId,
+            accountId: seeded.accountId, originSessionId: seeded.sessionId, machineId: seeded.machineId, followWake,
             resolveEncryption: async (): Promise<ValidatedAutomationAccountEncryptionV1> => {
                 const witness = await accountCurrentness(seeded.accountId);
                 if (witness.mode !== "plain" || witness.contentKeyFingerprint !== null) throw new Error("expected plain fixture Account");
@@ -1019,8 +1023,9 @@ describe("workflowRunService (integration)", () => {
             expect((await workflowRunService.pullWorkflowRunOriginDelivery(request)).runs).toMatchObject([
                 { run: { id: seeded.runId, revision: 1, originDeliveryAckRevision: 0, attentionRequired: true } },
             ]);
-            // An offline origin connects only after the hold is durable. Both
-            // paths pull without receiving any Session hint through the harness.
+            // Deliver the Session invalidation at the transport boundary. An offline
+            // origin connects after the hold is durable and reads it on first pull.
+            publishSessionFollowWakeInvalidation(seeded.sessionId);
             let origin = onlineOrigin ?? connectOrigin();
             const first = await origin.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 });
             expect(first).toHaveLength(1);
@@ -1046,6 +1051,7 @@ describe("workflowRunService (integration)", () => {
             expect((await getWorkflowRun(seeded)).run.revision).toBe(2);
             expect(await origin.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 })).toEqual([]);
             await commitWorkflowInvocationFact({ ...seeded.fact, expectedLifecycle: "running", lifecycle: "waiting_for_approval" });
+            publishSessionFollowWakeInvalidation(seeded.sessionId);
             const second = await origin.prepareWorkerUpdates!({ signal, maxUtf8Bytes: 65536 });
             expect(second).toHaveLength(1);
             expect(await second[0]!.recheckAdmission(signal)).toBe(true);
@@ -1066,6 +1072,7 @@ describe("workflowRunService (integration)", () => {
             await transitionWorkflowRun({ ...seeded, parentAttempt: 1, expectedRevision: 4, state: "succeeded", custodyState: "settled",
                 checkpointEnvelope: checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n), resultEnvelope: terminalResult,
                 invocationTransitions: [{ id: seeded.rootId, expectedLifecycle: "pending", lifecycle: "completed" }] });
+            publishSessionFollowWakeInvalidation(seeded.sessionId);
             if (offline) origin = connectOrigin();
             // Finished is quiet under Important: retain its result for context
             // without starting another origin turn.
@@ -1079,6 +1086,7 @@ describe("workflowRunService (integration)", () => {
             expect(await origin.take(signal)).toBeNull();
             expect((await getWorkflowRun(seeded)).run).toMatchObject({ revision: 5, originDeliveryAckRevision: 5, workflowCustodyState: "settled" });
         } finally {
+            followWake.dispose();
             await app.close();
         }
     });
@@ -1887,7 +1895,7 @@ describe("workflowRunService (integration)", () => {
             allocation: "bound", desired: "stop", retention: { kind: "until-delete" }, wakeOnAcceptedMessage: true,
             launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "Origin", choices: {} },
             resource: { contributionRef: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, value: { id: "origin-native" } },
-            observation: { observedAt: 1, availability: "present", power: "stopped" } } });
+            observation: { observedAt: 1, availability: "present", power: "stopped", storage: "retained" } } });
         const publisher = createSessionPublisherPresence();
         const socket = createFakeSocket();
         await expect(publisher.registerPublisher({ socket,
@@ -4411,7 +4419,10 @@ describe("workflowRunService (integration)", () => {
             if (scenario === "aggregate") expect((await writer.readInvocation(rootId))?.progress.stepProgress).toMatchObject({ completed: 1, total: 1 });
             else {
                 expect((await writer.readInvocation(childId))?.index.lifecycle).toBe("failed");
-                expect((await writer.readInvocation(childId))?.progress.reason).toEqual({ code: "ECONNABORTED", message: "startup transport failed" });
+                expect((await writer.readInvocation(childId))?.progress.reason).toEqual({
+                    code: "ECONNABORTED", message: "startup transport failed",
+                    failureCause: { errorClass: "Error", errorCode: null, httpStatus: null, phase: "session.spawn_new" },
+                });
             }
             expect(await db.workflowRunInvocation.count({ where: { runId } })).toBe(2);
         } finally { await app.close(); }
