@@ -1436,19 +1436,52 @@ export async function resolveExecutablePluginRuntimeRegistry(
             readDemandAccountId: () => !params?.accountExecution && !scopedActionRuntime && sessionCredentials
                 && getActiveAccountSettingsSnapshot()?.scopeKey === resolveAccountSettingsScopeKey(sessionCredentials)
                 ? readAccountIdFromToken(sessionCredentials.token) : null,
-            bindDynamicResourceCustody: binding => {
-                const services = createProjectionPluginServices({ pluginId: binding.pluginId, signal: binding.signal,
-                    ...(binding.approvalContext ? { approvalContext: binding.approvalContext } : {}) });
-                if (services?.availability('secrets').status !== 'available') return undefined;
-                const machineId = params?.resolveCurrentMachineId?.();
-                const identity = readInstallationIdentityIfExistsSync();
-                return Object.freeze({ secrets: Object.freeze({ readSavedSecret: services.secrets.readSavedSecret }),
-                    ...(machineId && identity ? { chosenMachine: Object.freeze({ machineId, installationId: identity.installationId }) } : {}),
-                    ...(services.availability('storage').status === 'available' ? { daemonStorage: services.storage.daemon } : {}),
-                    ...(services.availability('deploymentDatabases').status === 'available' ? { deploymentDatabases: services.deploymentDatabases } : {}),
-                    ...(services.databaseEngines ? { databaseEngines: services.databaseEngines } : {}),
-                    ...(services.worktreeEnvironment ? { worktreeEnvironment: services.worktreeEnvironment } : {}),
-                });
+            bindDynamicResourceCustody: async binding => {
+                const authorization = binding.approvalContext?.externalActionExecutionAuthorization;
+                if (authorization && authorization.binding.accountId !== binding.requesterAccountId) {
+                    throw new PluginError({ code: 'plugin_resource_demand_unavailable', message: 'Resource demand belongs to another requester' });
+                }
+                const requester = readRequesterAccountActionContext(authorization);
+                if (authorization && !requester?.retainForOperation) return undefined;
+                // Keep the installed occurrence while replacing the finite
+                // ingress lifetime with its already-admitted requester custody.
+                const retained = await requester?.retainForOperation?.(binding.signal);
+                const captured = readRequesterAccountActionContext(retained?.authorization);
+                if (binding.signal.aborted || (retained && !captured)) {
+                    await retained?.dispose();
+                    return undefined;
+                }
+                const release = async () => {
+                    binding.signal.removeEventListener('abort', onAbort);
+                    await retained?.dispose();
+                };
+                const onAbort = () => {
+                    void release().catch(() => logger.debug('[PLUGIN RESOURCE] Requester custody cleanup failed'));
+                };
+                if (retained) binding.signal.addEventListener('abort', onAbort, { once: true });
+                try {
+                    const services = createProjectionPluginServices({ pluginId: binding.pluginId, signal: binding.signal,
+                        ...(binding.approvalContext ? { approvalContext: { ...binding.approvalContext,
+                            ...(retained ? { externalActionExecutionAuthorization: retained.authorization } : {}),
+                            signal: binding.signal } } : {}),
+                        ...(captured ? { requesterAccount: captured.savedSecretOperationContext } : {}) });
+                    if (services?.availability('secrets').status !== 'available') {
+                        await release();
+                        return undefined;
+                    }
+                    const machineId = params?.resolveCurrentMachineId?.();
+                    const identity = readInstallationIdentityIfExistsSync();
+                    return Object.freeze({ secrets: Object.freeze({ readSavedSecret: services.secrets.readSavedSecret }),
+                        ...(machineId && identity ? { chosenMachine: Object.freeze({ machineId, installationId: identity.installationId }) } : {}),
+                        ...(services.availability('storage').status === 'available' ? { daemonStorage: services.storage.daemon } : {}),
+                        ...(services.availability('deploymentDatabases').status === 'available' ? { deploymentDatabases: services.deploymentDatabases } : {}),
+                        ...(services.databaseEngines ? { databaseEngines: services.databaseEngines } : {}),
+                        ...(services.worktreeEnvironment ? { worktreeEnvironment: services.worktreeEnvironment } : {}),
+                    });
+                } catch (error) {
+                    onAbort();
+                    throw error;
+                }
             },
             invokeDemand: input => uiResourceWatches.invokeDemand(input),
             // The Account activation source and invocation own this registry's
@@ -6598,6 +6631,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         pluginId: string;
         signal?: AbortSignal;
         approvalContext?: ActionExecutorContext;
+        requesterAccount?: PluginInvocationServicesSeed['requesterAccount'];
     }>): PluginInvocationServicesSeed | null => {
         // Descriptor-only plugins have admitted declarations and occurrences but
         // no executable activation target. Settings consume that same authority.
@@ -6621,6 +6655,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             correlationId: randomUUID(),
             surface: 'ui' as const,
             ...(input.approvalContext ? { approvalContext: input.approvalContext } : {}),
+            ...(input.requesterAccount ? { requesterAccount: input.requesterAccount } : {}),
             signal,
             isOccurrenceCurrent: () => (
                 !signal.aborted && isPluginConsumerCurrent(input.pluginId)
@@ -6637,6 +6672,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         pluginId: string;
         signal?: AbortSignal;
         approvalContext?: ActionExecutorContext;
+        requesterAccount?: PluginInvocationServicesSeed['requesterAccount'];
     }>) => {
         const seed = createProjectionPluginInvocationSeed(input);
         if (!seed) return null;

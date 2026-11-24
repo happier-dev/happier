@@ -357,10 +357,14 @@ export type PluginResourceDemandInvocation = Readonly<{
     subscriptionId: string; resourceId: string; input: JsonValue; signal?: AbortSignal;
 }>;
 
+type DynamicResourceCustody = Pick<PluginDynamicResourceInvocationOptionsV1,
+    'secrets' | 'chosenMachine' | 'daemonStorage' | 'deploymentDatabases' | 'databaseEngines' | 'worktreeEnvironment'>;
+
 type ResourceDemandHost = Readonly<{
     readDemandAccountId?(): string | null;
-    bindDynamicResourceCustody?(binding: Parameters<BindDynamicResourceActions>[0]):
-        Pick<PluginDynamicResourceInvocationOptionsV1, 'secrets' | 'chosenMachine' | 'daemonStorage' | 'deploymentDatabases' | 'databaseEngines' | 'worktreeEnvironment'> | undefined;
+    bindDynamicResourceCustody?(binding: Parameters<BindDynamicResourceActions>[0] & Readonly<{
+        requesterAccountId: string;
+    }>): DynamicResourceCustody | undefined | Promise<DynamicResourceCustody | undefined>;
     invokeDemand?(input: PluginResourceDemandInvocation): Promise<JsonValue>;
 }>;
 
@@ -1538,8 +1542,11 @@ async function createStablePluginResourcesOwnerFromNormalized(
                     ...(context.requesterContext?.approvalContext ? { approvalContext: context.requesterContext.approvalContext } : {}),
                     isOccurrenceCurrent: composeAccountStorageCurrentness(resource, isCurrent), retireObservation: retireAuthority };
                 const accountId = context.requesterAccountId;
-                const custody = accountId && params.readDemandAccountId?.() === accountId
-                    ? params.bindDynamicResourceCustody?.(binding) : undefined;
+                const custody = accountId && (binding.approvalContext?.externalActionExecutionAuthorization
+                    || params.readDemandAccountId?.() === accountId)
+                    ? await params.bindDynamicResourceCustody?.({ ...binding, requesterAccountId: accountId })
+                    : undefined;
+                if (controller.signal.aborted) return fail('plugin_resource_context_unavailable', 'Resource context is unavailable');
                 held.requesterAccountId = custody?.secrets ? accountId : null;
                 const producer = await createProducer.call(resource.runtime, {
                     signal: controller.signal, context: context.context,

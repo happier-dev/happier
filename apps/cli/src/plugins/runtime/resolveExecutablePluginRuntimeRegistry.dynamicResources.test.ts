@@ -2,16 +2,22 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import axios from 'axios';
 import fastify from 'fastify';
+import nacl from 'tweetnacl';
 
 import { describe, expect, it, vi } from 'vitest';
 import { transform } from 'esbuild';
 import { ConversationProvidersContributionProtocolV1 } from '@happier-dev/channels-protocol/v1';
 import { buildQualifiedPluginContributionKey, PluginCollectionMutationRequestV1Schema } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { UsageCoachFindingSchema } from '@happier-dev/protocol/usage/coach/coachFinding';
 import { DaemonPluginUiResourceReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handlers/daemonContributionRegistryProjection';
 
 import {
@@ -22,6 +28,7 @@ import {
 import * as persistence from '@/persistence';
 import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import {
     createResolvedContributionRegistry,
@@ -69,6 +76,7 @@ const BUNDLED_CHANNELS_PLUGIN_ID = 'happier.channels';
 const CHANNELS_PLUGIN_ID = BUNDLED_CHANNELS_PLUGIN_ID;
 const CHANNELS_PROVIDER_FIXTURE_ID = 'acme.channel.resource-test';
 const FIXTURE_HAPPIER_ENGINE = '^0.3.0';
+const REQUESTER_SECRET_REF = formatSharedSavedSecretRefV1('dynamic-resource-fixture');
 const CHANNELS_PROVIDER_OPERATIONS = ConversationProvidersContributionProtocolV1.operations;
 
 function resolveExecutablePluginRuntimeRegistry(
@@ -123,6 +131,7 @@ async function seedFixture(options: Readonly<{
     activationFailure?: boolean;
     dormantAction?: boolean;
     contextProducer?: boolean;
+    requesterCustody?: boolean;
 }> = {}): Promise<Readonly<{ happyHomeDir: string; pluginRoot: string }>> {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-live-resources-home-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-live-resources-plugin-'));
@@ -243,8 +252,15 @@ async function seedFixture(options: Readonly<{
                 ${options.contextProducer ? `createProducer(options) {
                     control.factoryCreations = (control.factoryCreations ?? 0) + 1;
                     control.producerSignal = options.signal;
+                    ${options.requesterCustody ? `if (!options.requesterAccount || !options.secrets) {
+                        throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
+                    }` : ''}
                     return {
-                        read: () => control.value,
+                        ${options.requesterCustody ? `async read() {
+                            const value = await options.secrets.readSavedSecret(${JSON.stringify(REQUESTER_SECRET_REF)});
+                            return JSON.stringify({ accountId: options.requesterAccount.accountId,
+                                usesRequesterMaterial: value === 'requester-fixture-material' });
+                        },` : 'read: () => control.value,'}
                         observe(invalidate) { listeners.add(invalidate); return { dispose() { listeners.delete(invalidate); } }; },
                         dispose() { control.producerDisposals = (control.producerDisposals ?? 0) + 1; },
                     };
@@ -361,6 +377,105 @@ describe('executable plugin dynamic resource observation (EU-4b)', () => {
         } finally {
             await runtime?.dispose();
             await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    }, 60_000);
+
+    it('retains the admitted requester until its declared Resource watch closes', async () => {
+        const { happyHomeDir, pluginRoot } = await seedFixture({ contextProducer: true, requesterCustody: true });
+        const channel = await createRequesterCurrentnessSocketHarness();
+        const ingress = new AbortController();
+        const accountId = 'resource-requester';
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const currentness = { mode: 'plain', version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 };
+        const resource = { resourceId: 'dynamic-resource-fixture', encryptionMode: 'plain', recipientEnvelope: null,
+            storedContent: { t: 'plain', v: { v: 1, name: 'Fixture', kind: 'apiKey', value: 'requester-fixture-material' } },
+            entry: { ref: REQUESTER_SECRET_REF, source: 'shared_resource', relationship: 'owner', ownerAccountId: accountId,
+                name: 'Fixture', kind: 'apiKey', revision: 1, materialStatus: 'ready',
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } };
+        // Stub Home HTTP only. The requester projection, installed Resource factory and saved-secret reader are real.
+        const reads = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+            switch (new URL(String(url)).pathname) {
+                case '/v1/account/profile': return { status: 200, data: { id: accountId } };
+                case '/v2/account/settings': return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+                case '/v1/account/encryption/currentness': return { status: 200, data: currentness };
+                case '/v1/account/encryption': return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+                case '/v2/changes': return { status: 200, data: { changes: [], nextCursor: 0 } };
+                case '/v1/account/saved-secrets/resources/materials':
+                    expect(config?.headers?.Authorization === `Bearer ${token}`).toBe(true);
+                    return { status: 200, data: { resources: [resource] } };
+                default: throw new Error(`Unexpected Home read: ${new URL(String(url)).pathname}`);
+            }
+        });
+        const verify = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
+        let prepared: Awaited<ReturnType<typeof prepareRequesterAccountActionContext>> = null;
+        try {
+            prepared = await prepareRequesterAccountActionContext({
+                authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-root', binding: {
+                    accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 1 },
+                    accountEncryptionMode: 'plain', serverIdentityId: 'fixture-home', machineId: 'fixture-machine',
+                    installationId: 'fixture-installation', actionId: 'projects.context.update', requestId: 'fixture-request',
+                    requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'fixture-machine' },
+                } }),
+                purpose: { kind: 'external_action' }, machineId: 'fixture-machine', installationId: 'fixture-installation',
+                installationPrivateKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(31)).secretKey,
+                serverId: 'fixture-profile', serverIdentityId: 'fixture-home', serverHttpBaseUrl: 'https://resource-home.test',
+                ownCredentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+                isCurrent: async () => !ingress.signal.aborted, isRetainedCustodyCurrent: async () => true, signal: ingress.signal,
+                createExecutor: () => ({ execute: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }) }),
+            });
+            const requester = readRequesterAccountActionContext(prepared?.authorization);
+            if (!prepared || !requester) throw new Error('Missing admitted requester');
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir,
+                contributes: await resolveScopedDynamicResourceFixtureContributes(happyHomeDir) });
+            const request = { expectedCallerOccurrenceId: requirePluginOccurrenceId(runtime, PLUGIN_ID),
+                callerPluginId: PLUGIN_ID, resourceId: 'live-status', requesterAccountId: accountId,
+                context: { kind: 'surface' as const, mountInstanceKey: 'requester-custody', launchInput: null } };
+            const requesterContext = { approvalContext: { surface: 'ui' as const, signal: ingress.signal,
+                externalActionExecutionAuthorization: prepared.authorization } };
+            const admissions = verify.mock.calls.length;
+            expect(admissions).toBeGreaterThan(0);
+            await runtime.openUiResourceWatch!({ ...request, subscriptionId: 'original', requesterContext });
+            await expect(runtime.openUiResourceWatch!({ ...request, subscriptionId: 'foreign',
+                requesterAccountId: 'another-account', requesterContext }))
+                .rejects.toMatchObject({ code: 'plugin_resource_demand_unavailable' });
+            await expect(runtime.openUiResourceWatch!({ ...request, subscriptionId: 'foreign',
+                requesterAccountId: 'another-account', requesterContext,
+                context: { ...request.context, mountInstanceKey: 'foreign-custody' },
+            })).rejects.toMatchObject({ code: 'plugin_resource_demand_unavailable' });
+            ingress.abort();
+            await prepared.dispose();
+            expect(control().producerSignal?.aborted).toBe(false);
+            // Read through the live producer after ingress cleanup, including its private SDK service.
+            const value = await runtime.readUiResource!(request);
+            expect(JSON.parse(new TextDecoder().decode(value.bytes))).toEqual({ accountId, usesRequesterMaterial: true });
+            expect(verify.mock.calls).toHaveLength(admissions);
+            expect(control().factoryCreations).toBe(1);
+            expect(runtime.closeUiResourceWatch!({ callerPluginId: PLUGIN_ID, requesterAccountId: accountId,
+                subscriptionId: 'original' })).toBe(true);
+            expect(control().producerSignal?.aborted).toBe(true);
+            await vi.waitFor(async () => {
+                const release = (() => {
+                    try { return requester.retain(); }
+                    catch (error) {
+                        expect(error).toMatchObject({ errorCode: 'requester_account_context_unavailable' });
+                        return null;
+                    }
+                })();
+                if (release) await release();
+                expect(release).toBeNull();
+            });
+        } finally {
+            ingress.abort();
+            await runtime?.dispose();
+            await prepared?.dispose();
+            await channel.close();
+            reads.mockRestore();
+            verify.mockRestore();
+            delete globalThis.__HAPPIER_LIVE_RESOURCE_FIXTURE__;
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
         }
     }, 60_000);
 
