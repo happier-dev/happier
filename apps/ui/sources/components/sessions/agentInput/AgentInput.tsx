@@ -3257,12 +3257,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         if (props.engineLabel !== undefined) return props.engineLabel;
         if (engineChipMarkAgentId === null) return t('status.unknown');
         const picker = props.modelPickerPresentation;
-        if (picker?.selected && isSessionModelRefSourceBound(picker.selected) && (
+        const sourceBoundModel = picker?.selectedTeamCredentialModel
+            ?? (picker?.selected && isSessionModelRefSourceBound(picker.selected) ? picker.selected : null);
+        if (picker && sourceBoundModel && (
             !armedComposerTarget || armedComposerTarget.backendTargetKey === picker.agentTargetKey
         )) {
             const name = buildSessionModelSelectedTriggerPresentation(picker).subtitle;
             // An id is not a name: until the projection answers, the chip stays on the Agent.
-            return !picker.providerProjectionAuthoritative && !picker.providerProjectionFailed && name === picker.selected.modelId
+            return !picker.selectedTeamCredentialModel && !picker.providerProjectionAuthoritative
+                && !picker.providerProjectionFailed && name === sourceBoundModel.modelId
                 ? resolvedAgentLabel
                 : withEffort(name);
         }

@@ -341,6 +341,42 @@ describe('New workflow entry', () => {
         expect(screen.getTextContent()).toContain('Loading model');
         expect(screen.getTextContent()).not.toContain(ref.modelId);
     });
+    it('names the inherited brokered Team model on the Project composer chip', async () => {
+        const { TeamCredentialResourceCatalogEntryV1Schema } = await import('@happier-dev/protocol/teams');
+        const selection = { kind: 'team_credential_provider_model' as const, teamId: 'team-1', resourceId: 'resource-1',
+            expectedResourceRevision: 1, deliveryMode: 'brokered' as const,
+            agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'spark-contributor' };
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: selection.resourceId, teamId: selection.teamId, resourceRevision: selection.expectedResourceRevision,
+            displayName: { content: { t: 'plain', v: 'Team model pool' }, recipientEnvelope: null, legacyPlaintext: true },
+            readiness: { kind: 'available' }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            providerModels: [{
+                selection, descriptor: { id: selection.modelId, name: 'Spark Contributor' }, availability: 'available',
+                application: { agentTargetKey: selection.agentTargetKey,
+                    implementationIdentity: { pluginId: 'provider.example', localId: 'example' },
+                    endpointTemplateId: 'messages', protocol: 'anthropic-messages' },
+                sourceRevision: 'source-v1',
+            }],
+            sourcePresentation: { kind: 'provider', provider: {
+                identity: { pluginId: 'provider.example', localId: 'example' }, definitionRevision: 1,
+            } },
+        });
+        const props = {
+            ...panelProps(), agentType: 'claude',
+            modelOptions: [{ value: 'default', label: 'Use CLI settings', description: '' }],
+            agentPickerOptions: [{ id: selection.agentTargetKey, label: 'Claude' }],
+            modelPickerPresentation: {
+                agentTargetKey: selection.agentTargetKey, declarationContext: { kind: 'account' as const },
+                nativeModels: [], providerGroups: [], hiddenNativeModelKeys: new Set<string>(),
+                selected: null, selectedTeamCredentialModel: selection, teamCredentialResources: [resource],
+                providerProjectionAuthoritative: false, fallbackLabel: 'Unavailable', fieldLabel: 'Model',
+            },
+        } satisfies NewSessionSimplePanelProps;
+        const screen = await renderScreen(<NewSessionComposerCard panelProps={props} layout="screen" attachments={false} />);
+        const chip = screen.findByTestId('agent-input-agent-chip');
+        expect(chip?.props.accessibilityLabel).toContain('Spark Contributor');
+    });
     it('names an inherited Team permission default in the permission picker, not as a row above the composer', async () => {
         await withPopoverWebGlobals(async () => {
             const props = { ...panelProps(), permissionModeAttribution: 'Acme', handlePermissionModeChange: () => {} };

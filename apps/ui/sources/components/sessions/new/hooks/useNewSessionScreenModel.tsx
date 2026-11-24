@@ -2460,8 +2460,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
         providerModelProjection.pendingApproval, providerModelProjection.refresh, providerModelProjection.refreshFailures, providerModelProjection.status,
         selectCreationModel, selectedBackendTargetKey, selectedUiAgentType]);
     const modelPickerPresentation = React.useMemo<React.ComponentProps<typeof AgentInput>['modelPickerPresentation']>(() => {
-        if (!pickerModelSelection || isTeamCredentialProviderModelPickerValue(pickerModelSelection)
-            || !isSessionModelRefSourceBound(pickerModelSelection)) return undefined;
+        if (!pickerModelSelection) return undefined;
+        const isTeamModel = isTeamCredentialProviderModelPickerValue(pickerModelSelection);
+        const selectedTeam = isTeamModel ? pickerModelSelection : null;
+        const selected = isTeamModel ? null : pickerModelSelection;
+        if (selected && !isSessionModelRefSourceBound(selected)) return undefined;
         const picker = creationModelPickerProps;
         return {
             agentTargetKey: selectedBackendTargetKey,
@@ -2472,14 +2475,24 @@ export function useNewSessionScreenModel(input?: Readonly<{
             providerProjectionAuthoritative: selectedConnectedAccount ? selectedAccountProjection.status === 'success'
                 : picker?.providerProjectionAuthoritative ?? providerModelProjection.status === 'success',
             providerProjectionFailed: (selectedConnectedAccount ? selectedAccountProjection.status : providerModelProjection.status) === 'error',
-            selected: pickerModelSelection,
+            selected,
+            ...(selectedTeam ? {
+                selectedTeamCredentialModel: selectedTeam,
+                teamCredentialResources: teamCredentialCatalog.resources,
+                teamCredentialDisplayNames: teamCredentialCatalog.displayNames,
+                teamNameById: teamCredentialCatalog.teamNameById,
+                homeNameByTeamId: teamCredentialCatalog.homeNameByTeamId,
+                teamCredentialResourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
+            } : {}),
             currentSelectionRecovery: picker?.currentSelectionRecovery ?? providerModelProjection.data?.currentSelectionRecovery,
             fallbackLabel: t('agentInput.model.unavailable'),
             fieldLabel: t('newSession.selectModelTitle'),
         };
     }, [agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedMachineId, creationModelPickerProps, hiddenNativeModelKeys,
         modelOptions, pickerModelSelection, providerModelProjection.data, providerModelProjection.status, selectedAccountProjection.status,
-        selectedBackendTargetKey, selectedConnectedAccount, selectedRouteProviderSources]);
+        selectedBackendTargetKey, selectedConnectedAccount, selectedRouteProviderSources, teamCredentialCatalog.displayNames,
+        teamCredentialCatalog.homeNameByTeamId, teamCredentialCatalog.resourceStatusByKey, teamCredentialCatalog.resources,
+        teamCredentialCatalog.teamNameById]);
 
     const newSessionComposerReferenceSearchIsCurrent = newSessionComposerDocument.isReferenceSearchCurrent;
     const newSessionComposerReferenceHostRef = React.useRef<ComposerReferenceSearchHost | null>(null);
