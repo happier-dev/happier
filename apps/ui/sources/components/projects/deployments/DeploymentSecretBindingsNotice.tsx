@@ -1,42 +1,46 @@
 import * as React from 'react';
-import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentSecretScopeV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
-import { sharedSecretStatusLabel } from '@/components/secrets/savedSecretRowCopy';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 import { DeploymentWithdrawnSecretControl, type DeploymentSecretControlTarget } from './DeploymentWithdrawnSecretControl';
 
-/** Overview and Variables consume the catalog's same metadata-only withdrawal result. */
+const id = 'project-deployments.environment.secret-scope';
+
+/** The Environment read checks installed workload seals. The viewer's picker says only what they can choose. */
 export function DeploymentSecretBindingsNotice(props: Readonly<{
-    bindings: readonly EnvironmentSecretBindingV1[];
-    scope: AccountSettingsScope | null;
+    secretScope: DeploymentEnvironmentSecretScopeV1 | undefined;
+    canManageBindings: boolean;
+    refresh?: () => void;
+    useNewRevision?: () => void;
     controlTarget?: DeploymentSecretControlTarget;
 }>) {
     const router = useRouter();
-    const reader = useSavedSecretReferenceResolver({ scope: props.scope, includeMaterial: false });
-    const seen = new Set<string>();
-    let withdrawn = false;
-    const notices = props.bindings.map(binding => {
-        if (binding.purpose !== 'variable' || binding.source.kind !== 'secret' || !props.scope) return null;
-        const ref = binding.source.ref;
-        const key = JSON.stringify([binding.name, ref]);
-        if (seen.has(key)) return null;
-        seen.add(key);
-        const resolution = reader.resolve(ref);
-        const status = resolution.displayStatus ?? resolution.status;
-        if (status === 'ready') return null;
-        if (resolution.status === 'access_removed' || resolution.status === 'deleted') withdrawn = true;
-        const id = `project-deployments.environment.variable.${binding.name}.unavailable`;
-        return <SurfaceStateCard key={key} testID={id} size="line" kind="warning"
-            title={binding.name} reason={sharedSecretStatusLabel(status)} diagnosticCode={status}
-            note={t('projects.deployments.factSecretsValue')}
-            action={{ label: t('settings.secrets'), testID: `${id}.repair`,
-                onPress: () => router.push({ pathname: SETTINGS_ROUTES.secrets, params: { secret: ref } }) }} />;
-    });
-    return <>{notices}{withdrawn && props.controlTarget
-        ? <DeploymentWithdrawnSecretControl target={props.controlTarget} /> : null}</>;
+    const scope = props.secretScope;
+    if (!scope || scope.status === 'ready') return null;
+
+    // The reason describes aggregate coverage and cannot identify the affected binding.
+    const resourceUnavailable = scope.reason === 'secret_scope_resource_unavailable';
+    const revisionChanged = scope.reason === 'secret_scope_resource_revision_changed';
+    const grantsRequired = scope.reason === 'secret_scope_grants_required';
+    const reason = resourceUnavailable ? t('projects.deployments.editors.bindingScope.resourceUnavailable')
+        : revisionChanged ? t('projects.deployments.editors.bindingScope.revisionChanged')
+            : grantsRequired ? t('projects.deployments.editors.bindingScope.grantsRequired')
+                : t('projects.deployments.editors.bindingScope.requirementsUnavailable');
+    const needsBindingRepair = resourceUnavailable || revisionChanged || grantsRequired;
+    const repair = revisionChanged && props.useNewRevision
+        ? { label: t('projects.deployments.editors.useNewRevision'), onPress: props.useNewRevision }
+        : needsBindingRepair && props.canManageBindings
+            ? { label: t('settings.secrets'), onPress: () => router.push(SETTINGS_ROUTES.secrets) }
+            : props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined;
+    const note = needsBindingRepair && !props.useNewRevision
+        ? t(props.canManageBindings ? 'projects.deployments.editors.bindingScope.reviewBindings' : 'projects.deployments.editors.bindingScope.askManager')
+        : undefined;
+    return <>
+        <SurfaceStateCard testID={id} size="line" kind="warning" title={t('projects.deployments.editors.bindingScope.title')}
+            reason={reason} diagnosticCode={scope.reason} note={note} action={repair && { ...repair, testID: id + '.repair' }} />
+        {resourceUnavailable && props.controlTarget ? <DeploymentWithdrawnSecretControl target={props.controlTarget} /> : null}
+    </>;
 }

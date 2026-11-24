@@ -1042,6 +1042,12 @@ again. Secret bindings retain their explicitly selected revisions: update the
 reference through the existing binding editor and `deployments.bindings.set`, then
 deploy. An ordinary redeploy does not silently select a newer saved revision.
 Unavailable evidence does not claim a change or unchanged material.
+Overview and Variables show a binding warning from the Environment read's
+secret scope, the same grant-coverage decision launch preparation consumes.
+An installed seal can cover a Team member's deploy even when their Saved
+Secrets picker has no entry for the owner's secret. The warning describes the
+Environment's aggregate scope, without attributing a missing grant to a named
+binding.
 Agents compose the existing independently authorized Environment, content Artifact,
 selected receipt and receipt Artifact reads, then use the same shared comparison.
 

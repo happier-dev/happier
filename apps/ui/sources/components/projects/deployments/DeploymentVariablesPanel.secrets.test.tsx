@@ -14,7 +14,7 @@ import { measureMountedCollections } from '@/dev/testkit/render/renderInCollecti
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { resetSavedSecretCatalogEngineForTests, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
-import { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { getSavedSecretCatalogSnapshot, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { resetTeamActionClientForTests } from '@/sync/ops/teams/teamActionClient';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -56,15 +56,26 @@ afterEach(async () => {
 async function mount(phone = true, referenceTargets?: readonly unknown[],
   rotation?: Readonly<{ secretRevisions: readonly unknown[]; onDeploy?: () => void; bindingRevision?: number;
     additionalBindings?: readonly EnvironmentSecretBindingV1[] }>, referenceEnvironments?: VariableReferenceEnvironments,
-  reference?: Readonly<{ readEnvironment: DeploymentReadTransportV1['readEnvironment']; setBindings: EnvironmentBindingsCommit }>) {
+  reference?: Readonly<{ readEnvironment: DeploymentReadTransportV1['readEnvironment']; setBindings: EnvironmentBindingsCommit }>,
+  admission?: Readonly<{ scope: NonNullable<ReturnType<typeof createDeploymentEnvironmentDetailV1>['secretScope']>; teamMember?: boolean }>) {
   home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }),
-    handleRequest: async path => path === '/v1/account/saved-secrets/resources/activity'
-      ? Response.json({ historyEntryId: 'disclosure-entry' }) : null });
+    ...(admission?.teamMember ? { accountId: 'team-member', mode: 'e2ee' } : {}),
+    handleRequest: async (path, init) => {
+      if (admission?.teamMember && path.split('?')[0] === '/v1/account/saved-secrets/resources'
+        && (!init?.method || init.method === 'GET')) return Response.json({ resources: [] });
+      if (path === '/v1/account/saved-secrets/resources/activity') return Response.json({ historyEntryId: 'disclosure-entry' });
+      return null;
+    } });
   const { entry } = await home.addOwnerResource();
   const binding = createDeploymentSecretVariableBindingV1({ name: 'API_KEY', phase: 'runtime', resourceId: 'resource-a',
     resourceRevision: rotation?.bindingRevision ?? 3 });
   const base = createDeploymentEnvironmentDetailV1();
-  const detail = { ...base, content: { ...base.content, bindings: [binding, ...(rotation?.additionalBindings ?? [])] } };
+  const detail = { ...base,
+    ...(admission?.teamMember ? { environment: { ...base.environment, owner: { kind: 'team' as const, teamId: 'team' },
+      capabilities: { ...base.environment.capabilities, role: 'deployer' as const, manage: false, manageBindings: false,
+        manageTargets: false, delete: false } } } : {}),
+    secretScope: admission?.scope,
+    content: { ...base.content, bindings: [binding, ...(rotation?.additionalBindings ?? [])] } };
   const scope = home.scope;
   const controller = reference ? createDeploymentReadControllerV1({ scope, transport: {
     readEnvironment: reference.readEnvironment,
@@ -88,7 +99,7 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
       referenceTargets={referenceTargets as never}
       referenceEnvironments={referenceEnvironments}
       domainRead={controller ? { controller, demand: { mounted: true, visible: true, focused: true } } : undefined}
-      secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
+      secretScope={detail.secretScope} secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
   }
   const render = () => renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
     // Test Renderer has no layout engine; this is the platform's measured anchor.
@@ -154,13 +165,30 @@ it('links Rotate to the selected Saved secret without reading its value', async 
   expect(materialReads()).toBe(0);
 });
 
-it.each(['access_removed', 'deleted'] as const)('keeps a withdrawn binding visible with its typed %s reason and recovery', async materialStatus => {
-  const { screen, entry, scope } = await mount();
-  await act(async () => applySavedSecretCatalogPage({ scope, entries: [{ ...entry, materialStatus }], observedAt: 2, includesMaterial: false }));
-  await vi.waitFor(() => expect(screen.findByTestId(`${prefix}.unavailable`)).not.toBeNull());
-  expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${prefix}.unavailable`)?.props.diagnosticCode).toBe(materialStatus);
-  await screen.pressByTestIdAsync(`${prefix}.unavailable.repair`);
-  expect(routing.spies.push).toHaveBeenCalledWith({ pathname: SETTINGS_ROUTES.secrets, params: { secret: entry.ref } });
+const scopeNoticeId = 'project-deployments.environment.secret-scope';
+
+it('keeps an admitted owner-bound secret available to a Team member with an empty picker catalog', async () => {
+  const { screen, scope } = await mount(true, undefined, undefined, undefined, undefined, {
+    teamMember: true, scope: { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 2, missingGrantCount: 0 },
+  });
+  expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', data: [] });
+  expect(screen.findByTestId(prefix)).not.toBeNull();
+  expect(screen.findByTestId(`${prefix}.unavailable`)).toBeNull();
+  expect(screen.findByTestId(scopeNoticeId)).toBeNull();
+  expect(materialReads()).toBe(0);
+});
+
+it('shows a withdrawn binding scope once with its typed reason and recovery even while the picker can use the secret', async () => {
+  const reason = 'secret_scope_resource_unavailable';
+  const { screen, scope } = await mount(true, undefined, undefined, undefined, undefined, {
+    scope: { status: 'unavailable', reason, requiredGrantCount: 2, missingGrantCount: 1 },
+  });
+  expect(getSavedSecretCatalogSnapshot(scope)?.data).not.toHaveLength(0);
+  expect(screen.findByTestId(prefix)).not.toBeNull();
+  expect(screen.findAllByType(SurfaceStateCard).filter(node => node.props.diagnosticCode === reason)
+    .map(node => node.props.testID)).toEqual([scopeNoticeId]);
+  await screen.pressByTestIdAsync(`${scopeNoticeId}.repair`);
+  expect(routing.spies.push).toHaveBeenCalledWith(SETTINGS_ROUTES.secrets);
   expect(materialReads()).toBe(0);
 });
 
@@ -330,6 +358,20 @@ it('names a rotated secret from the controller facts and re-binds the newest rev
   await screen.pressByTestIdAsync('project-deployments.environment.variables.rotated.action');
   await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.variables.save')).not.toBeNull());
   expect(onDeploy).not.toHaveBeenCalled();
+});
+
+it('offers the same rebind once when the new revision is also blocking launch', async () => {
+  const reason = 'secret_scope_resource_revision_changed';
+  const { screen, readBindings } = await mount(false, undefined, { secretRevisions: rotatedFact(4) }, undefined, undefined, {
+    scope: { status: 'actionNeeded', reason, requiredGrantCount: 1, missingGrantCount: 1 },
+  });
+  expect(screen.findAllByType(SurfaceStateCard).filter(node => node.props.diagnosticCode === reason)
+    .map(node => node.props.testID)).toEqual([scopeNoticeId]);
+  expect(screen.findByTestId('project-deployments.environment.variables.rotated')).toBeNull();
+  await screen.pressByTestIdAsync(`${scopeNoticeId}.repair`);
+  expect(readBindings()[0]?.source).toEqual({ kind: 'secret', ref: formatSharedSavedSecretRefV1('resource-a'), resourceRevision: 4 });
+  expect(screen.findByTestId('project-deployments.environment.variables.save')).not.toBeNull();
+  expect(materialReads()).toBe(0);
 });
 
 it('updates every stale variable sharing a saved secret in one revision edit', async () => {

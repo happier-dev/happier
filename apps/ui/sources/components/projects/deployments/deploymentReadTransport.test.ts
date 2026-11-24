@@ -694,8 +694,9 @@ describe('deployment scoped read transport', () => {
                 c: await new ArtifactEncryption(resource.dataKey!).encryptHeader(intent) };
             const pendingAdmission = { requesterAccountId: 'account-owner', serverId, requestKey: intent.requestKey,
                 actionOperationId: intent.actionOperationId, controller: { machineId: 'machine-a', installationId: 'installation-a' }, environmentRevision: 1 };
+            const secretScope = { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 2, missingGrantCount: 0 };
             const answer = (pending: unknown, admission: unknown = pendingAdmission) => homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`,
-                { body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink), pendingDeploy: pending, pendingAdmission: admission ?? undefined } });
+                { body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink), pendingDeploy: pending, pendingAdmission: admission ?? undefined, secretScope } });
             answer(pendingDeploy);
             const transport = createDeploymentReadTransport(account.accountLifetime);
             const controller = createDeploymentReadControllerV1({ scope: account.accountLifetime.scope, transport });
@@ -703,7 +704,7 @@ describe('deployment scoped read transport', () => {
             const before = homes.requests.filter(request => request.path === '/v1/artifacts/read').length;
             try {
                 await lease.refresh();
-                expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { content: detail.content,
+                expect(lease.getSnapshot()).toMatchObject({ status: 'ready', value: { content: detail.content, secretScope,
                     pendingDeployment: { status: 'ready', intent, admission: pendingAdmission } } });
                 expect(homes.requests.filter(request => request.path === '/v1/artifacts/read').length - before).toBe(1);
                 answer(mode === 'plain' ? { t: 'encrypted', c: 'wrong-mode' } : { t: 'plain', v: intent });

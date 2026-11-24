@@ -147,6 +147,8 @@ export const DeploymentVariablesPanel = React.memo(
        * `secretRevisions` on the Environment detail); absent before the page has them.
        */
       secretRevisions?: SecretRevisions | null;
+      secretScope?: DeploymentEnvironmentReadDetailV1['secretScope'];
+      refreshSecretScope?: () => void;
       /** The page's Deploy, offered once the new revisions are saved; absent where this viewer cannot deploy. */
       onDeploy?: (() => void) | null;
       /** Declared service exports "Point at another service" offers (this Environment's and its Project's). */
@@ -195,6 +197,22 @@ export const DeploymentVariablesPanel = React.memo(
       router.push({ pathname: SETTINGS_ROUTES.secrets, params: { secret: ref } });
     }, [router]);
     const editable = draft.canEdit && !draft.saving;
+    function useNewSecretRevision() {
+      const bindings: VariableBinding[] = [];
+      const identities: string[] = [];
+      for (const row of stale) {
+        const source = row.binding.source;
+        const revision = rowRotation(row, rotated);
+        if (source.kind !== 'secret' || revision === null) continue;
+        const phases = row.phase === 'both' ? (['build', 'runtime'] as const) : [row.phase];
+        bindings.push(...phases.map(phase => ({ ...row.binding, phase, source: { ...source, resourceRevision: revision } })));
+        identities.push(...row.identities);
+      }
+      editor.putMany(bindings, identities);
+    }
+    const rebindRotated = stale.length > 0 && editable ? useNewSecretRevision : undefined;
+    const revisionRefused = props.secretScope?.status === 'actionNeeded'
+      && props.secretScope.reason === 'secret_scope_resource_revision_changed';
     // The open Add form and what was typed in it survive a width change that recomposes the page (PAGE-ACCEPT-176 R8-D3).
     const draftKey = inlineAddDraftKey(props.scope ?? null, props.environmentId, 'variables');
     const [adding, setAdding] = useInlineAddDraftField<Adding | null>(draftKey, INLINE_ADD_OPEN, null);
@@ -548,28 +566,15 @@ export const DeploymentVariablesPanel = React.memo(
             presentation="list" detail="none" scroll="page" minListWidth={TABLE_MIN_WIDTH_PX}
             minDetailWidth={TABLE_MIN_WIDTH_PX} preferredListRatio={1} />
         </CoreCollectionScope> : null}
-        {mode === 'table' && rotated.size > 0 && rows.some(row => rowRotation(row, rotated) !== null) ? (
+        {mode === 'table' && !revisionRefused && rotated.size > 0 && rows.some(row => rowRotation(row, rotated) !== null) ? (
           <AttentionBanner
             testID="project-deployments.environment.variables.rotated"
             tone="warning"
             title={t('projects.deployments.editors.rotatedTitle')}
             description={t('projects.deployments.editors.rotatedBody')}
-            action={stale.length > 0 && editable ? {
+            action={rebindRotated ? {
               label: t('projects.deployments.editors.useNewRevision'),
-              onPress: () => {
-                // One draft edit for every stale row; Save stays the one `deployments.bindings.set` write.
-                const bindings: VariableBinding[] = [];
-                const identities: string[] = [];
-                for (const row of stale) {
-                  const source = row.binding.source;
-                  const revision = rowRotation(row, rotated);
-                  if (source.kind !== 'secret' || revision === null) continue;
-                  const phases = row.phase === 'both' ? (['build', 'runtime'] as const) : [row.phase];
-                  bindings.push(...phases.map(phase => ({ ...row.binding, phase, source: { ...source, resourceRevision: revision } })));
-                  identities.push(...row.identities);
-                }
-                editor.putMany(bindings, identities);
-              },
+              onPress: rebindRotated,
             } : stale.length === 0 && !draft.dirty && props.onDeploy ? {
               label: t('projects.deployments.deploy'),
               onPress: props.onDeploy,
@@ -725,7 +730,8 @@ export const DeploymentVariablesPanel = React.memo(
           </CoreCollectionScope>
         )}
         {mode === 'table' ? <DeploymentSecretBindingsNotice
-          bindings={editor.rows.map(row => row.binding)} scope={props.scope} controlTarget={props.controlTarget} /> : null}
+          secretScope={props.secretScope} canManageBindings={draft.canEdit} refresh={props.refreshSecretScope}
+          useNewRevision={revisionRefused ? rebindRotated : undefined} controlTarget={props.controlTarget} /> : null}
         {mode === 'table' && disclosedRow && disclosedEntry && props.scope ? (
           <ItemGroup title={disclosedRow.name} action={<SectionActionButton
             testID={`project-deployments.environment.variable.${disclosedRow.name}.value.close`}

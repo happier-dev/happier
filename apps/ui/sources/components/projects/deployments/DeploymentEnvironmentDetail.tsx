@@ -1147,7 +1147,8 @@ export const DeploymentEnvironmentDetail = React.memo(
           {tab === 'overview' ? (
             <>
               {deploymentAttentionLeaves(attention, 'secretWithdrawn') ? (
-                <DeploymentSecretBindingsNotice bindings={detail.content.bindings} scope={props.lifetime?.scope ?? null}
+                <DeploymentSecretBindingsNotice secretScope={detail.secretScope} canManageBindings={detail.environment.capabilities.manageBindings}
+                  refresh={environment.refresh}
                   controlTarget={{ serverId: props.serverId, environmentId: props.environmentId, machineIds,
                     active: props.demand.mounted && props.demand.visible && props.demand.focused }} />
               ) : null}
@@ -1449,6 +1450,8 @@ export const DeploymentEnvironmentDetail = React.memo(
               providerVariablesActive={props.demand.mounted && props.demand.visible && props.demand.focused}
               providerDatabase={props.platformLink && platforms.state.status === 'ready'
                 ? { detail, declarations: platforms.state.declarations, inspect: props.platformLink.inspectPlatformTarget } : undefined}
+              secretScope={detail.secretScope}
+              refreshSecretScope={environment.refresh}
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}
