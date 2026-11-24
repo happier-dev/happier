@@ -80,6 +80,32 @@ describe('Item disabled with a reason', () => {
     expect(shownOpacity(screen, 'explained-mark')).toBe(0.5);
   });
 
+  it('announces a disabled row with a reason and keeps it inert', async () => {
+    const onPress = vi.fn();
+    const screen = await renderScreen(
+      <>
+        <Item testID="disabled" title="Orders" subtitle="Data is on Neon." disabled onPress={onPress} />
+        <Item testID="enabled" title="Archive" subtitle="Data is local." onPress={onPress} />
+      </>,
+    );
+
+    const disabled = screen.findHostByTestId('disabled')!;
+    const enabled = screen.findHostByTestId('enabled')!;
+    expect(disabled.props.accessibilityState.disabled).toBe(true);
+
+    // The native/web Pressable suppresses pointer and touch presses using this flag.
+    expect(disabled.props.disabled).toBe(true);
+    const space = { key: ' ', preventDefault: vi.fn() };
+    disabled.props.onKeyDown(space);
+    expect(onPress).not.toHaveBeenCalled();
+    enabled.props.onKeyDown(space);
+    expect(onPress).toHaveBeenCalledOnce();
+
+    const idleFill = flat(disabled.props.style).backgroundColor;
+    expect(disabled.props.onHoverIn).toBeUndefined();
+    expect(flat(disabled.props.style({ pressed: true })).backgroundColor).toBe(idleFill);
+  });
+
   it('draws a disabled row without a reason exactly as before: the whole row at half strength', async () => {
     const screen = await renderScreen(
       <Item
