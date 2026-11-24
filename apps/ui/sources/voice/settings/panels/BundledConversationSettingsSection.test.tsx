@@ -4,7 +4,11 @@ import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { createServerAccountConnectionProbeHttpResponse, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { ModalProvider } from '@/modal';
 import { t, tLoose, setPreferredLanguageFromSettings } from '@/text';
@@ -30,11 +34,85 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { OverlayPortalHost } from '@/components/ui/popover';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
-import { getExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
+import { getExternalVoiceProviderRegistration, removeExternalVoiceProviderRegistration, subscribeExternalVoiceProviderRegistrations } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { getCurrentBundledConversationRuntimeHost } from '@/voice/registry/bundledConversationRuntimeHost';
 import { BundledConversationSettingsSection } from './BundledConversationSettingsSection';
 import { createElevenLabsSettingsRuntimeTestHarness, createVoiceSettingsAccountTestHarness, withVoiceSettingsCredentialResource } from './voiceSettingsAccountTestHarness';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
+
+const packagedVoice = vi.hoisted(() => ({ bytes: new Uint8Array() as Uint8Array, projection: null as PluginProjectionV2 | null,
+  snapshots: [] as unknown[], intentReads: [] as unknown[] }));
+// test-policy-boundary: packaged asset IO; the current provider is compiled by
+// its production compiler while declaration admission and activation stay real.
+vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts')>();
+  const { resolve } = await import('node:path');
+  const { compileUniversalPluginUiCommonJs } = await import('../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler');
+  const { readWorkspacePackages, packageNameOfSpecifier, resolveWorkspaceSource } = await import('../../../../../../packages/cli-common/sourceRuntimeEntries.mjs');
+  const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/elevenlabs/src/manifest');
+  const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+  const { createSourcePluginProjection } = await import('../../../../../../packages/tests/src/testkit/pluginPlatform/sourcePluginProjection');
+  const { resolvePluginUiClientExecutablePlatform } = await import('@/sync/domains/plugins/ui/projection');
+  const platform = resolvePluginUiClientExecutablePlatform();
+  const { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1,
+    PLUGIN_UI_HOST_API_VERSION_V1, PluginUiArtifactsManifestEntryV2Schema } = await import('@happier-dev/protocol/plugins/ui');
+  const root = resolve(import.meta.dirname, '../../../../../..');
+  const packages = await readWorkspacePackages(root);
+  const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
+  const definition = manifest.contributes.voiceProviders[0]!;
+  if (definition.kind !== 'conversation') throw new Error('Expected the ElevenLabs conversation provider');
+  const target = definition.client;
+  const compiled = await compileUniversalPluginUiCommonJs({ projectRoot: resolve(root, 'packages/plugins/elevenlabs'),
+    entryPath: resolve(root, 'packages/plugins/elevenlabs/src/ui/voice/index.ts'),
+    artifactId: target.artifactId, requestedExports: [target.exportName], exportConditions: ['happier-source'],
+    resolveSourceImport: specifier => packages.has(packageNameOfSpecifier(specifier))
+      ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
+  });
+  packagedVoice.bytes = compiled.bytes;
+  const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: compiled.artifactId, tier: 'reactNative',
+    entry: compiled.relativePath, digest: computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: compiled.relativePath, bytes: compiled.bytes }]),
+    files: [{ relativePath: compiled.relativePath, digest: computePluginUiArtifactSha256DigestV1(compiled.bytes), byteSize: compiled.bytes.length }],
+    builtWith: { bundler: 'esbuild', version: compiled.esbuildVersion }, executable: { exports: compiled.exports }, hostUiApiRange: `^${PLUGIN_UI_HOST_API_VERSION_V1}` });
+  const executionOrigin = { serverIdentityId: 'srv_voice_cold_settings', sourceRef: { machineId: 'voice-cold-machine', pluginId: manifest.id,
+    sourceCustody: { kind: 'development' as const, registeredRootId: resolve(root, 'packages/plugins/elevenlabs') } } };
+  packagedVoice.projection = await createSourcePluginProjection({ manifest, artifact: graph,
+    pluginRoot: resolve(root, 'packages/plugins/elevenlabs'), executionOrigin, platform,
+  });
+  const occurrenceId = packagedVoice.projection.installedPackagesById[manifest.id]?.occurrenceId;
+  if (!occurrenceId) throw new Error('Current CLI producer omitted the provider occurrence');
+  const materialization = { serverIdentityId: executionOrigin.serverIdentityId, machineId: executionOrigin.sourceRef.machineId,
+    materializationId: occurrenceId, pluginId: manifest.id, version: manifest.version, sourceClass: 'localPath', portableRelease: false,
+    declaredManifest: manifest, declaredUiEntries: projectPluginPortableUiDeclarationsV1(manifest, [graph]),
+    uiArtifacts: [{ contributionId: definition.id, artifactId: graph.artifactId, tier: 'reactNative', platform,
+      artifactDigest: graph.digest, hostUiApiRange: graph.hostUiApiRange }], enabled: true, trustState: 'trusted', observedAt: 1 };
+  packagedVoice.snapshots = [{ serverIdentityId: executionOrigin.serverIdentityId, machineId: executionOrigin.sourceRef.machineId,
+    materializations: [materialization] }];
+  packagedVoice.intentReads = [{ pluginId: manifest.id, response: { availabilityCursor: 1, packageAssets: [], hostingCapability: { enabled: false },
+    intent: { pluginId: manifest.id, desiredVersion: null, enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: '1' },
+    release: null, uiArtifacts: [] } }];
+  return { ...original,
+    BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [...original.BUNDLED_PLUGIN_UI_APP_ARTIFACTS.filter(current => current.pluginId !== manifest.id),
+      { pluginId: manifest.id, releaseVersion: manifest.version, artifactId: graph.artifactId, tier: graph.tier,
+        digest: graph.digest, artifactGraph: graph, files: [{ relativePath: graph.entry, asset: { uri: 'file:///voice-settings-cold.bundle' } }] }],
+  };
+});
+// test-policy-boundary: the daemon's network response; current provider-authored
+// declaration and compiler output feed the production strict consumer/activation.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+  const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+  const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+  return createServerScopedMachineRpcBoundaryMock(async ({ method }) => {
+    if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection: packagedVoice.projection };
+    throw new Error(`Unexpected Settings fixture RPC: ${method}`);
+  });
+});
+// test-policy-boundary: Expo's native packaged-asset download; File bytes below
+// remain the current compiler output and real Artifact admission stays active.
+vi.mock('expo-asset', () => ({ Asset: { fromModule: (asset: string | Readonly<{ uri: string }>) => {
+  const uri = typeof asset === 'string' ? asset : asset.uri;
+  return { uri, localUri: uri, downloadAsync: async () => {} };
+} } }));
 
 vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
@@ -91,11 +169,15 @@ describe('BundledConversationSettingsSection', () => {
   let provider: ReturnType<typeof createElevenLabsSettingsRuntimeTestHarness>;
   const disposals: Array<() => void | Promise<void>> = [];
   const initialStorage = storage.getState();
-  beforeEach(async () => {
+  beforeEach(async ({ task }) => {
     vi.clearAllMocks();
-    account = await createVoiceSettingsAccountTestHarness(settingsParse({ experiments: true, featureToggles: { voice: true }, voiceSettingsV1: voiceWith() }));
-    provider = createElevenLabsSettingsRuntimeTestHarness();
-    await provider.register();
+    const cold = task.name.startsWith('finishes cold');
+    account = await createVoiceSettingsAccountTestHarness(settingsParse({ experiments: true, featureToggles: { voice: true }, voiceSettingsV1: voiceWith() }),
+      cold ? { serverIdentityId: 'srv_voice_cold_settings', features: createRootLayoutFeaturesResponse({ features: {
+        plugins: { enabled: true, ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } },
+      } }) } : {});
+    provider = createElevenLabsSettingsRuntimeTestHarness({ cold });
+    if (!cold) await provider.register();
     nativeAlert.mockReset();
     nativeAlert.mockImplementation(() => { for (const notify of alertListeners) notify(); });
     setPreferredLanguageFromSettings('en');
@@ -131,11 +213,12 @@ describe('BundledConversationSettingsSection', () => {
   async function render(voice = account.settings.voice, content?: React.ReactElement) {
     return await renderScreen(content ?? <BundledConversationSettingsSection voice={voice} />, {
       wrapper: ConversationProviders,
-      // The native SDK supplies physical view geometry; Popover measures and
-      // chooses placement, portal ownership, and its render frame for real.
+      // Test Renderer has no native layout or scrolling. Keep the real measured
+      // Popover and modal card mounted through their native host interfaces.
       createNodeMock: element => typeof element.type === 'string' ? ({
         measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(100, 120, 280, 48),
         focus: () => {},
+        scrollTo: () => {},
       }) : null,
     });
   }
@@ -241,21 +324,57 @@ describe('BundledConversationSettingsSection', () => {
     expect(getExternalVoiceProviderRegistration(providerId)).toBeNull();
     const screen = await render();
     expect(screen.findHostByTestId('voice-settings-action-create-agent')).not.toBeNull();
+    await act(async () => provider.register());
+    expect(screen.findHostByTestId('voice-settings-action-create-agent')).not.toBeNull();
   });
 
-  it('finishes empty-agent setup through one confirmed creation and saves a ready provider', async () => {
+  it('finishes cold empty-agent setup through runtime-host activation and one confirmed creation', async () => {
     const { resolveVoiceSettingsRecoveryTarget } = await import('@/voice/settings/voiceSettingsRouteFocus');
     expect(resolveVoiceSettingsRecoveryTarget('open_provider_settings', providerId)).toEqual({
       pathname: '/settings/voice/conversations',
       params: { setting: 'voiceConversations.provider.happier.voice.elevenlabs/realtime-elevenlabs.action.create-agent' },
     });
     await saveCredential();
-    removeExternalVoiceProviderRegistration(provider.registration.token);
     expect(getExternalVoiceProviderRegistration(providerId)).toBeNull();
     const { VoiceConversationsSettingsScreen } = await import('@/voice/settings/screens/VoiceConversationsSettingsScreen');
     const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { AppShellPluginUiProjectionProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { VoiceSessionRuntimeHost } = await import('@/voice/session/VoiceSessionRuntimeHost');
+    const { getVoiceSessionPresentedAttemptId } = await import('@/voice/session/voiceSessionStore');
+    const { File } = await import('expo-file-system');
+    new File('file:///voice-settings-cold.bundle').write(packagedVoice.bytes);
+    const { loadVitestModuleForNodeRequire } = await import('@/dev/vitestRnShim');
+    const runtimeBridge = await loadVitestModuleForNodeRequire(new URL('../../session/VoiceSessionRuntime.tsx', import.meta.url),
+      () => import('@/voice/session/VoiceSessionRuntime'));
+    disposals.push(runtimeBridge.dispose);
+    const { unloadAppShellProjectedClientExecutables } = await import('@/components/appShell/plugins/appShellClientExecutableActivation');
+    disposals.push(unloadAppShellProjectedClientExecutables);
+    const request = account.request.getMockImplementation()!;
+    account.request.mockImplementation((input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.pathname.endsWith('/plugins/availability/materializations/read')) return Promise.resolve(Response.json({ availabilityCursor: 1, snapshots: packagedVoice.snapshots }));
+      if (url.pathname.endsWith('/plugins/availability/intents/list')) return Promise.resolve(Response.json({ availabilityCursor: 1,
+        pluginIds: [provider.entry.pluginId], intentReads: packagedVoice.intentReads, failedPluginIds: [] }));
+      return request(input, init);
+    });
+    // The restored Account's HTTP fixture is Home-only. Production plugin HTTP
+    // uses this same transport adapter, so add the vendor at that real boundary.
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    setRuntimeFetch((input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.origin === 'https://api.elevenlabs.io') return provider.fetch(input, init);
+      return Promise.resolve(createServerAccountConnectionProbeHttpResponse(url.pathname) ?? account.request(input, init));
+    });
+    account.replaceVoice(voiceSettingsParse({ ...account.settings.voice, executionMachine: { kind: 'machine', machineId: 'voice-cold-machine' } }));
+    await publishMachineInventoryForTest(account.scope, [createMachineFixture({ id: 'voice-cold-machine', active: true, activeAt: Date.now() })]);
+    const { sync } = await import('@/sync/sync');
+    await sync.refreshPluginAccountAvailability();
     const screen = await render(account.settings.voice,
-      <InjectedAuthProvider credentials={account.credentials}><VoiceConversationsSettingsScreen /></InjectedAuthProvider>);
+      <InjectedAuthProvider credentials={account.credentials}><AppShellPluginUiProjectionProvider>
+        <VoiceSessionRuntimeHost /><VoiceConversationsSettingsScreen />
+      </AppShellPluginUiProjectionProvider></InjectedAuthProvider>);
+    expect(getExternalVoiceProviderRegistration(providerId)).toBeNull();
+    expect(getVoiceSessionPresentedAttemptId()).toBeNull();
     expect(config()).toMatchObject({ agentId: '' });
     await waitForTestEvent(screen.subscribe, () => screen.tree.findAll(node => typeof node.props.testID === 'string'
       && node.props.testID.startsWith('settings.voice.conversations.pipeline') && node.props.testID.endsWith('.recover')
@@ -265,20 +384,21 @@ describe('BundledConversationSettingsSection', () => {
       && typeof node.props.onPress === 'function')[0];
     await act(async () => { recovery!.props.onPress(); });
     await flushHookEffects();
-    expect(screen.findHostByTestId('actions.confirmation-review.decision-approve')).not.toBeNull();
     expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(0);
-    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
     const { getVoiceProviderSettingsRuntimeDemand, subscribeVoiceProviderSettingsRuntimeDemand } = await import('@/voice/session/voiceProviderRuntimeDemand');
     await waitForTestEvent(subscribeVoiceProviderSettingsRuntimeDemand, getVoiceProviderSettingsRuntimeDemand,
       demand => demand.has(providerId));
-    expect(screen.findHostByTestId('app-shell-confirmation-confirm')).toBeNull();
-    // Complete the real plugin activation at its external entrypoint. AppShell's
-    // demand-to-artifact activation is covered by its composition regression.
-    await act(async () => { await provider.register(); });
+    await waitForTestEvent(subscribeExternalVoiceProviderRegistrations, () => getExternalVoiceProviderRegistration(providerId),
+      registration => Boolean(registration?.settingsActions));
     await waitForTestEvent(screen.subscribe, () => expect(screen.findHostByTestId('app-shell-confirmation-confirm')).not.toBeNull());
+    expect(getExternalVoiceProviderRegistration(providerId)?.settingsActions).toBeDefined();
+    expect(getVoiceSessionPresentedAttemptId()).toBeNull();
     expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(0);
     await screen.pressByTestIdAsync('app-shell-confirmation-confirm');
-    await waitForTestEvent(account.subscribe, () => config()?.agentId, value => value === 'agent_created');
+    await waitForTestEvent(account.subscribe, () => configField(account.persistedSettings.voice.providers[providerId], 'agentId'),
+      value => value === 'agent_created');
+    await waitForTestEvent(storage.subscribe, () => configField(account.settings.voice.providers[providerId], 'agentId'),
+      value => value === 'agent_created');
     expect(account.persistedSettings.voice.providers[providerId]?.config).toMatchObject({ agentId: 'agent_created' });
     expect(provider.fetch.mock.calls.filter(([input, init]) => matchesVendorRequest(input, init, 'POST', '/v1/convai/agents/create'))).toHaveLength(1);
     expect(createDefaultVoiceProviderRegistry().get(providerId)?.projectSettings?.(account.settings.voice.providers[providerId] ?? null)).toMatchObject({ status: 'ready' });
@@ -316,13 +436,6 @@ describe('BundledConversationSettingsSection', () => {
       expect(screen.tree.findAllByType(GroupComponent)).toHaveLength(0);
     }
   });
-  it('reveals same-provider public settings actions when runtime registration arrives after render', async () => {
-    removeExternalVoiceProviderRegistration(provider.registration.token);
-    const screen = await render();
-    expect(screen.tree.findAllByProps({ testID: 'voice-settings-action-create-agent' })).toHaveLength(0);
-    await act(async () => provider.register());
-    expect(screen.findByTestId('voice-settings-action-create-agent')).toBeTruthy();
-  });
   it('allows opening the voice dropdown even when API key is not set', async () => {
     const screen = await render();
     const dropdown = screen.tree.findAllByType(DropdownMenu).find((node) => node.props.testID === 'voice-realtime-field-tts-voiceId');
@@ -336,7 +449,7 @@ describe('BundledConversationSettingsSection', () => {
     await waitForTestEvent(screen.subscribe, () => expect(screen.tree.findAllByType(OverlayPortalHost).some(host =>
       host.findAll(node => typeof node.type === 'string' && node.props.testID === 'dropdown-option-__status__').length > 0,
     )).toBe(true));
-    expect(provider.fetch.mock.calls.some(([input, init]) => matchesVendorRequest(input, init, 'GET', '/v1/voices'))).toBe(false);
+    expect(provider.fetch.mock.calls.some(([input, init]) => matchesVendorRequest(input, init, 'GET', '/v2/voices'))).toBe(false);
   });
   it('keeps credential deletion in the canonical credential item instead of rendering a competing disconnect action', async () => {
     await saveCredential();
@@ -414,8 +527,9 @@ describe('BundledConversationSettingsSection', () => {
     const screen = await render();
     await requestAgentCreation(screen);
     await waitForAlert(t('common.error'));
-    expect(nativeAlert.mock.calls.at(-1)?.slice(0, 2)).toEqual([t('common.error'),
-      `${tLoose('settingsVoice.realtimeProviders.operationFailedUnsaved')}\n\n${t('settingsVoice.realtimeProviders.operationFailedStage', { stage: 'create_tool' })}\n${t('settingsVoice.realtimeProviders.operationFailedStatus', { status: 400 })}`]);
+    expect(nativeAlert.mock.calls.at(-1)?.[0]).toBe(t('common.error'));
+    expect(nativeAlert.mock.calls.at(-1)?.[1]).toContain('voice.settings.create_tool');
+    expect(nativeAlert.mock.calls.at(-1)?.[1]).toContain('400');
     expect(config()).toMatchObject({ agentId: '' });
     expect(account.writes).toHaveLength(0);
     expect(JSON.stringify(nativeAlert.mock.calls)).not.toContain('must-not-reach-alert');

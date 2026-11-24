@@ -109,12 +109,12 @@ export async function withVoiceSettingsCredentialResource(account: VoiceSettings
 
 /** Real activation, Account credential admission, tools and human interactions;
  * only the vendor HTTPS transport is synthetic. */
-export function createElevenLabsSettingsRuntimeTestHarness() {
+export function createElevenLabsSettingsRuntimeTestHarness(options: Readonly<{ cold?: boolean }> = {}) {
     const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find((candidate) => candidate.declaration.id === 'realtime-elevenlabs');
     if (!entry) throw new Error('ElevenLabs runtime entry missing');
     const recipientContract = createBundledVoiceRecipientContract({ pluginId: entry.pluginId, declaration: entry.declaration });
     if (!recipientContract) throw new Error('ElevenLabs recipient contract missing');
-    const hostLease = createBundledConversationRuntimeHostLease();
+    const hostLease = options.cold ? null : createBundledConversationRuntimeHostLease();
     let scope: ReturnType<typeof createExternalVoiceProviderActivationScope> | null = null;
     let nextOccurrence = 0;
     let nextToolId = 0;
@@ -171,6 +171,6 @@ export function createElevenLabsSettingsRuntimeTestHarness() {
             scope = next;
             await previous?.unwind();
         },
-        async dispose() { await scope?.unwind(); hostLease.revoke(); },
+        async dispose() { await scope?.unwind(); hostLease?.revoke(); },
     };
 }

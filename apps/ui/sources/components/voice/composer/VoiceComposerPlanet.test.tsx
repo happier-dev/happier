@@ -21,18 +21,18 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createVoiceSettingsAccountTestHarness } from '@/voice/settings/panels/voiceSettingsAccountTestHarness';
 import { answerVoiceRealtimePreparationHttpRequest } from '@/dev/testkit/harness/voiceRealtimePreparationHttpBoundary';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
-import { createSessionFixture } from '@/dev/testkit';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { saveAndUseAccountVoiceCredential, applyAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
+import { createAccountVoiceOperationService } from '@/voice/credentials/accountVoiceOperationService';
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { createBundledConversationRuntimeHostLease, getCurrentBundledConversationRuntimeHost } from '@/voice/registry/bundledConversationRuntimeHost';
 import { createExternalVoiceProviderActivationScope } from '@/voice/registry/externalVoiceProviderActivation.testkit';
 import { getExternalVoiceProviderRegistration } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
-import { buildVoiceTranscriptHistorySessionMetadata } from '@/voice/persistence/voiceTranscriptHistorySession';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { voiceConversationRuntimeMachine } from '@/voice/runtime/machine/VoiceConversationRuntimeMachine';
 import { OPENAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/openai/src/protocol/voice/settings';
@@ -205,33 +205,36 @@ describe('VoiceComposerPlanet', () => {
         const account = await createVoiceSettingsAccountTestHarness(selected.settings);
         const request = account.request.getMockImplementation()!;
         const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
-        account.request.mockImplementation(async (url, init) => {
-            if (new URL(String(url)).pathname.startsWith('/v1/features')) return request(url, init);
+        account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path.startsWith('/v1/features')) return request(url, init);
+            if (path === '/v1/sessions' && init?.method === 'POST') return sessionHttp.createSessionFromPost('composer-hold-history', init);
             const preparation = answerVoiceRealtimePreparationHttpRequest(url, storage.getState().settings);
             if (preparation) return preparation;
             const sessionResponse = sessionHttp.handle(url, init);
             return sessionResponse ?? request(url, init);
-        });
-        storage.setState({ sessions: { 'composer-hold-history': createSessionFixture({ id: 'composer-hold-history', serverId: account.scope.serverId, encryptionMode: 'plain', active: false,
-            metadata: { path: '/voice-history', host: 'test', ...buildVoiceTranscriptHistorySessionMetadata() } }) } });
-        voiceSessionBindingStore.getState().bind({ adapterId: entry.providerId, controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
-            conversationSessionId: 'composer-hold-history', conversationSessionAddress: { serverId: account.scope.serverId, sessionId: 'composer-hold-history' },
-            targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt: 1 });
+        }));
         const browser = installVoiceWebRtcBrowserBoundary();
-        vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+        const providerFetch = vi.fn(async (url: string | URL | Request) => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/realtime/client_secrets') return Response.json({ value: 'ek_composer_hold', expires_at: Math.floor(Date.now() / 1000) + 60,
                 session: { type: 'realtime', object: 'realtime.session', id: 'composer-hold-provider', model: OPENAI_REALTIME_DEFAULT_SETTINGS.model.id } });
             if (path === '/v1/realtime/calls') return new Response('v=0\r\na=composer-hold-answer\r\n', { status: 201 });
             throw new Error(`Unexpected provider HTTP request: ${path}`);
-        }));
+        });
+        vi.stubGlobal('fetch', providerFetch);
         voiceConversationRuntimeMachine.reset();
         const hostLease = createBundledConversationRuntimeHostLease();
         const scope = createExternalVoiceProviderActivationScope({
             pluginId: entry.pluginId, occurrenceId: 'composer-openai-hold', declarations: [entry.declaration], hostPlatform: 'web',
             runtimeHost: { ...hostLease.host, createMicSession: () => browser.micSession },
             isRuntimeHostCurrent: () => getCurrentBundledConversationRuntimeHost() === hostLease.host,
-            hostBindingsByLocalId: { [entry.declaration.id]: { recipientContract: recipient, descriptor: 'bundled' } },
+            hostBindingsByLocalId: { [entry.declaration.id]: { recipientContract: recipient, descriptor: 'bundled',
+                createInvocationAccountOperations: (signal, _sessionId, isCurrent, phase) => createAccountVoiceOperationService({
+                    providerId: entry.providerId, contribution: { pluginId: entry.pluginId, localId: entry.declaration.id },
+                    declaration: entry.declaration, phase, recipientContract: recipient, signal, isCurrent, fetch: providerFetch,
+                }),
+            } },
         });
         const { loadBundledVoiceRuntimeActivate } = await import('@/dev/testkit/harness/builtinVoiceAdapters');
         (await loadBundledVoiceRuntimeActivate(entry))(scope.api);
@@ -241,7 +244,9 @@ describe('VoiceComposerPlanet', () => {
         const beginHoldToTalk = () => adapter.beginHoldToTalk?.({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID }) ?? null;
         try {
             const start = adapter.start({ sessionId: '', requestedTargetSessionAddress: null });
-            const peer = await browser.peerCreated();
+            const peer = await Promise.race([browser.peerCreated(), start.then(() => {
+                throw new Error('Voice Start settled before creating its WebRTC peer');
+            })]);
             await peer.remoteDescriptionSet;
             expect(peer.setRemoteDescription).toHaveBeenCalled();
             browser.peer.channel.open();
@@ -281,9 +286,9 @@ describe('VoiceComposerPlanet', () => {
                 { type: 'input_audio_buffer.clear' }, { type: 'input_audio_buffer.commit' }, { type: 'response.create' },
             ] : [{ type: 'input_audio_buffer.clear' }, { type: 'input_audio_buffer.clear' }]);
             expect(onPress).not.toHaveBeenCalled();
-        } finally {
             await adapter.stop({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
             expect(voiceConversationRuntimeMachine.getSnapshot().state).toBe('disconnected');
+        } finally {
             await scope.unwind();
             hostLease.revoke();
             voiceSessionBindingStore.getState().unbind('composer-hold-history');
