@@ -17,7 +17,7 @@ import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes } from 'node:crypto';
-import { createReadStream, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import * as filesystem from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -1828,7 +1828,8 @@ describe('opaque managed preset admission', () => {
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
         const preset = { id: acquisition.selection.id, homeId, revision: acquisition.selection.revision,
             owner: { kind: 'account', accountId: 'owner' }, controller, contentEncryptionMode: 'plain',
-            content: { t: 'plain', v: { v: 1, name: launch.name, launch } }, recipients: [] };
+            content: { t: 'plain', v: { v: 1, name: launch.name, launch,
+                projectFiles: { kind: 'sync', mode: 'keep_synced' } } }, recipients: [] };
         const admitted: unknown[] = [];
         vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
@@ -1846,16 +1847,17 @@ describe('opaque managed preset admission', () => {
         await expect(driver.execute('machines.managed.acquire', acquisition, { requestId,
             acquisitionMode: 'resource-bound', reuseIdle: true,
             expectedProvisioner: { pluginId: 'acme.compute', localId: kind === 'wrong-provider' ? 'another' : 'vm' },
-            onLocalSessionPlacement: placement => { placements.push(placement); },
+            onLocalSessionPlacement: (placement, projectFiles) => { placements.push({ placement, projectFiles }); },
             context: { originalActionEnvelope: { v: 1, requestId, target: { kind: 'machine', machineId: controller.machineId }, input: acquisition },
                 operationOwnerUpdate: { update: value => { if (value.progress) progress.push(value.progress); } },
                 operationAcceptance: { operationId: 'local-policy-operation', accept() {} } } })).rejects.toMatchObject({
                     code: kind === 'undeclared' ? 'provider_unavailable' : kind === 'wrong-provider' ? 'invalid_request' : 'request_conflict' });
         expect(admitted).toHaveLength(kind === 'local' ? 1 : 0);
         if (kind === 'local') expect(admitted[0]).toMatchObject({ acquisitionMode: 'resource-bound', reuseIdle: true });
-        expect(placements).toEqual(kind === 'local' ? [{ kind: 'controller-local', supportsAgentNativeSandbox: true }] : []);
+        expect(placements).toEqual(kind === 'local' ? [{ placement: { kind: 'controller-local', supportsAgentNativeSandbox: true },
+            projectFiles: { kind: 'sync', mode: 'keep_synced' } }] : []);
         expect(progress).toEqual(kind === 'local'
-            ? [expect.objectContaining({ kind: 'phase', phase: 'machines.managed.acquire' })] : []);
+            ? [expect.objectContaining({ phase: 'machines.managed.acquire' })] : []);
         expect(native.effects()).toBe(0);
     });
     it('accepts a plain preset snapshot without an enrollment identity before native work', async () => {
@@ -2647,6 +2649,7 @@ describe('opaque managed preset admission', () => {
         const signing = tweetnacl.sign.keyPair();
         const driverInput = { token: carrier.token, serverUrl: 'https://home.example', homeId, controller,
             runtimeRegistry: native.runtimeRegistry, managedProviderOperationAuthority: authority,
+            guestCliFetch: accountInputs.guestCliFetch,
             externalActionMachineRequestPrivateKey: signing.secretKey,
             credentials: { token: carrier.token, encryption: { type: 'dataKey' as const, machineKey: carrier.custodianKey,
                 publicKey: carrier.custodianPublicKey } },
@@ -3081,7 +3084,14 @@ describe('managed acquisition durable custody', () => {
             const sourceCustody = createDevelopmentPluginSourceCustody(root);
             // Only the native executable is replaced; real dependency discovery
             // and version probing qualify its declared system source.
-            await writeFile(join(root, 'lume'), `#!${process.execPath}\nif (process.argv[2] !== '--version') process.exit(9);\nprocess.stdout.write('lume version 0.6.1');\n`, { mode: 0o755 });
+            const deleteRecord = join(root, 'native-delete.json');
+            const deleteArgv = ['delete', '--force', '--storage', launch.storage, '--', vmName];
+            await writeFile(join(root, 'lume'), `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args[0] === '--version') { process.stdout.write('lume version 0.6.1'); process.exit(0); }
+if (JSON.stringify(args) !== ${JSON.stringify(JSON.stringify(deleteArgv))}) process.exit(9);
+require('node:fs').writeFileSync(${JSON.stringify(deleteRecord)}, JSON.stringify(args));
+`, { mode: 0o755 });
             const contributions = manifest.contributes.managedDependencies.map(definition => ({ pluginId,
                 provenance: 'external' as const, source: { kind: 'path' as const }, manifestPath: join(root, 'plugin.json'),
                 daemonEntryPath: null, sourceSpec: { kind: 'path' as const, locator: root, trustPolicy: 'local_trusted' as const,
@@ -3098,6 +3108,7 @@ describe('managed acquisition durable custody', () => {
                 dependencies: scope => dependencies.bind(scope.pluginId), resolveScope: scope => scope });
             const requests: { method: string; path: string; storage: string | null; body: unknown }[] = [];
             let exists = false;
+            const nativeVmPresent = () => exists && !existsSync(deleteRecord);
             let running = acquisition === 'lost-reply';
             let pullStarted!: () => void;
             const pulling = new Promise<void>(resolve => { pullStarted = resolve; });
@@ -3116,7 +3127,7 @@ describe('managed acquisition durable custody', () => {
                     };
                     else if (url.pathname === '/lume/host/status') response = { version: '0.6.1' };
                     else if (url.pathname === '/lume/config/locations') response = [{ name: 'home', path: '/native/lume' }];
-                    else if (url.pathname === '/lume/vms') response = exists ? [{ name: vmName, locationName: launch.storage,
+                    else if (url.pathname === '/lume/vms') response = nativeVmPresent() ? [{ name: vmName, locationName: launch.storage,
                         status: running ? 'running' : 'stopped', os: 'macos', cpuCount: launch.cpu }] : [];
                     else if (url.pathname === '/lume/pull') {
                         expect(body).toEqual({ image: 'macos:26-slim', name: vmName, registry: 'ghcr.io', organization: 'trycua', storage: 'home' });
@@ -3137,7 +3148,7 @@ describe('managed acquisition durable custody', () => {
                     } else if (url.pathname === '/lume/vms' && request.method === 'GET') {
                         // Start reads the host-wide native inventory first for
                         // the macOS capacity rule; model that real boundary.
-                        response = exists ? [{ name: vmName, locationName: launch.storage, status: running ? 'running' : 'stopped', os: 'macOS',
+                        response = nativeVmPresent() ? [{ name: vmName, locationName: launch.storage, status: running ? 'running' : 'stopped', os: 'macOS',
                             cpuCount: launch.cpu, memorySize: launch.memoryBytes,
                             diskSize: { allocated: 1073741824, total: launch.diskBytes },
                             ipAddress: null, sshAvailable: null, provisioningOperation: null }] : [];
@@ -3146,14 +3157,12 @@ describe('managed acquisition durable custody', () => {
                             memory: `${launch.memoryBytes}B`, diskSize: `${launch.diskBytes}B` });
                         response = {};
                     } else if (url.pathname === `/lume/vms/${vmName}/run`) {
-                        expect(exists).toBe(true); running = true; response = {};
+                        expect(nativeVmPresent()).toBe(true); running = true; response = {};
                     } else if (url.pathname === `/lume/vms/${vmName}/stop` && request.method === 'POST') {
                         expect(request.url).toBe(`${url.origin}/lume/vms/${vmName}/stop`);
                         expect(body).toEqual({ storage: launch.storage });
-                        expect(exists).toBe(true); running = false; response = {};
-                    } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'DELETE') {
-                        expect(exists).toBe(true); expect(running).toBe(false); exists = false; response = {};
-                    } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'GET' && exists) response = {
+                        expect(nativeVmPresent()).toBe(true); running = false; response = {};
+                    } else if (url.pathname === `/lume/vms/${vmName}` && request.method === 'GET' && nativeVmPresent()) response = {
                         name: vmName, locationName: 'home', status: running ? 'running' : 'stopped', os: 'macos', cpuCount: launch.cpu,
                         memorySize: launch.memoryBytes, diskSize: { allocated: 1073741824, total: launch.diskBytes }, display: '1024x768',
                     };
@@ -3220,7 +3229,7 @@ describe('managed acquisition durable custody', () => {
                     expect(settled).toBe(false);
                     expect(retained.allocation).toBe('may-exist');
                     await vi.advanceTimersByTimeAsync(1);
-                    await expect(result).resolves.toEqual({ kind: 'bound', resource, startPending: true });
+                    await expect(result).resolves.toEqual({ kind: 'bound', resource: { ...resource, origin: 'created' }, startPending: true });
                     vi.useRealTimers();
                     const bound = AcquireResultV1Schema.parse(await result);
                     if (bound.kind !== 'bound') throw new Error('Delayed native pull did not bind its exact resource');
@@ -3243,16 +3252,14 @@ describe('managed acquisition durable custody', () => {
                 const deletion = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained,
                     action: 'machines.managed.delete' }, () => retained);
                 await expect(deletion.invoke('destroy', { resource: value })).resolves.toEqual({ kind: 'confirmed' });
-                expect(exists).toBe(false);
+                expect(nativeVmPresent()).toBe(false);
+                expect(JSON.parse(await readFile(deleteRecord, 'utf8'))).toEqual(deleteArgv);
                 expect(requests.filter(request => request.path === '/lume/pull')).toHaveLength(1);
-                expect(requests.filter(request => request.method === 'DELETE')).toEqual([
-                    { method: 'DELETE', path: `/lume/vms/${vmName}`, storage: 'home', body: null },
-                ]);
-                expect(requests.slice(-4).map(({ method, path, storage }) => ({ method, path, storage }))).toEqual([
+                expect(requests.filter(request => request.method === 'DELETE')).toEqual([]);
+                expect(requests.slice(-3).map(({ method, path, storage }) => ({ method, path, storage }))).toEqual([
                     { method: 'GET', path: `/lume/vms/${vmName}`, storage: 'home' },
                     { method: 'POST', path: `/lume/vms/${vmName}/stop`, storage: null },
                     { method: 'GET', path: `/lume/vms/${vmName}`, storage: 'home' },
-                    { method: 'DELETE', path: `/lume/vms/${vmName}`, storage: 'home' },
                 ]);
                 expect(requests.filter(request => request.path.startsWith('/lume/vms/'))
                     .every(request => request.path.startsWith(`/lume/vms/${vmName}`))).toBe(true);
@@ -5183,7 +5190,7 @@ describe('managed acquisition durable custody', () => {
         }, { requestId: 'local-check' })).resolves.toEqual({ available: true });
         for (const selectors of [undefined, { transport: 'direct' }, { transport: 'coordinator', backendId: 'local-container' }]) {
             await expect(reader.execute('machines.provisioners.check', { ...probe, ...(selectors ? { selectors } : {}) },
-                { requestId: 'unqualified-check' })).rejects.toMatchObject({ code: 'credential_unavailable' });
+                { requestId: 'local-readiness-check' })).resolves.toEqual({ available: true });
         }
     });
     it('passes native options selectors in the declared Action grammar without fabricating a wrapper', async () => {

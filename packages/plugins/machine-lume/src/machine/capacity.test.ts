@@ -43,7 +43,9 @@ describe('Lume host macOS capacity', () => {
       key: 'machineLume.configure.macosVmCount', params: { count, limit: 2 },
     });
     expect(result.dimensions.image[0]?.available).toBe(count < 2);
-    if (count === 2) expect(result.dimensions.image[0]?.unavailableReason?.status).toMatchObject({ params: { count, limit: 2 } });
+    if (count === 2) expect(result.dimensions.image[0]?.unavailableReason).toMatchObject({
+      code: 'native_macos_vm_limit_reached', status: { params: { count, limit: 2 } },
+    });
     expect(requests.filter(request => request === 'GET /lume/vms')).toHaveLength(1);
     expect(requests.filter(request => request.startsWith('POST'))).toEqual([]);
   });
