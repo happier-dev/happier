@@ -13,6 +13,7 @@ import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { DestinationBodyLoading } from './DestinationBodyLoading';
 import { HomeHubLoading } from '@/components/hub/HomeHubLoading';
+import { markLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { PluginAppPageLoadingFrame } from '@/components/plugins/shared/PluginPageIdentityHeader';
 import { pluginAppPageRouteSelectsEntry, readPluginAppPageRouteView } from '@/components/plugins/pages/pluginPageRoute';
 
@@ -56,6 +57,8 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
     renderSession: (target: DestinationRef) => React.ReactNode;
     renderSessionDetails: (target: DestinationRef) => React.ReactNode;
 }>): React.ReactNode {
+    // The workspace's first body takes the launch planet over from the shell around it.
+    React.useLayoutEffect(markLaunchDestinationBodyMounted, []);
     if (props.target.kind === 'session') return props.renderSession(props.target);
     if (props.target.kind === 'sessionDetails') return props.renderSessionDetails(props.target);
     const match = matchWorkspaceDestinationRoute(props.pathname);

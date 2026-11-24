@@ -8,6 +8,7 @@ import { PageHeaderPlaceholder } from '@/components/ui/layout/PageHeader';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 
@@ -25,6 +26,8 @@ export const HomeHubLoading = React.memo(function HomeHubLoading(
 ) {
   const { theme } = useUnistyles();
   const reducedMotion = useReducedMotionPreference();
+  // At launch, the Loading planet stays over Home until Home has drawn.
+  useLaunchCurtainHold(true);
   return (
     <ItemList testID={props.testID} pageColumn="dashboard">
       <View

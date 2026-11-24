@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { Animated, AppState, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import type { WelcomePlanetState } from '@happier-dev/brand/planet-placement';
 
+import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 import { useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
@@ -172,6 +173,8 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
 
     const contentLayout = useMemo(() => phase === 'preparing'
         ? { target: layoutTarget, onLayout: onFirstLayout } : null, [layoutTarget, onFirstLayout, phase]);
+    // A cold start's Loading planet stays until the opening's first frame (or its Still) is up.
+    useLaunchCurtainHold(decision === 'in-app' && phase === 'preparing');
     const Scene = scene?.FirstOpenScene;
     const holdingDestination = decision === 'in-app' && phase === 'preparing';
     return (

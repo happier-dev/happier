@@ -135,7 +135,8 @@ it.each(['cold', 'compact arrival'] as const)('admits the first Account workspac
         }
         expect(storage.getState().isDataReady).toBe(false);
         expect(screen.root.findAllByType('AdmittedWorkspace')).toHaveLength(0);
-        await vi.waitFor(() => expect(screen.root.findAllByType('canvas').length).toBeGreaterThan(0));
+        // The restoring state holds the launch curtain, which draws the Loading planet above the app.
+        expect(screen.root.findAll(node => node.props?.testID === 'workspace-account-restoring').length).toBeGreaterThan(0);
         if (compact) {
             await act(async () => {
                 publishAppliedActiveServerRuntimeAvailability(true);
@@ -263,7 +264,6 @@ it('shows the startup state, then the Home Retry, while the first Account waits 
         expect(storage.getState().isDataReady).toBe(false);
         expect(screen.root.findAllByType('AdmittedWorkspace')).toHaveLength(0);
         expect(byTestId('workspace-account-restoring').length).toBeGreaterThan(0);
-        expect(byTestId('workspace-account-restoring-planet-still').length).toBeGreaterThan(0);
         expect(screen.root.findAll(node => typeof node.props?.testID === 'string' && node.props.testID.includes('skeleton'))).toHaveLength(0);
         // The Home stops answering: the same unreachable state and Retry the app shows elsewhere.
         await act(async () => {

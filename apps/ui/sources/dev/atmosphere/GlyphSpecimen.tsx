@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { PixelRatio, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { createLoadingPlanetScene, fieldDotLayer, frontGlyphLayer, markGlyphLayer, planetGlyphLayer, travellerGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { createLoadingPlanetScene, loadingPlanetSize, fieldDotLayer, frontGlyphLayer, markGlyphLayer, planetGlyphLayer, travellerGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import { createThemeHorizonGlyphSampler, themeHorizonGlyphCell } from '@happier-dev/brand/planet-moments';
 
@@ -44,6 +44,8 @@ export default function GlyphSpecimen() {
         if (moment === 'ripple') return [sessionRippleLayer(options, seconds * 1000, {
             width: pane.width, theme: palette, reducedMotion: false,
         })];
+        // The launch planet's first live frame, in its own box: the source of the launch posters.
+        if (moment === 'launch') return loadingFrame(0);
         if (moment === 'loading') {
             const target = { kind: 'planet', layer: planetGlyphLayer(options), pane } as const;
             const phase = loadingPlanetPhase(seconds, seconds < 1 ? null : 1, { reducedMotion: false, toPlanet: true });
@@ -70,7 +72,8 @@ export default function GlyphSpecimen() {
     >
         {moment === 'pairing' ? <PairingQrMomentCanvas size={224} theme={palette} pairing reducedMotion machines={['Desktop']}
             scene={{ kind: 'pairing', device: 'Laptop', scan: null, joinedAtMs: 0 }} />
-            : <GlyphSurface key={key} width={pane.width} height={pane.height} theme={palette} scene={layers} motion={motion}
+            : <GlyphSurface key={key} width={moment === 'launch' ? loadingPlanetSize : pane.width}
+                height={moment === 'launch' ? loadingPlanetSize : pane.height} theme={palette} scene={layers} motion={motion}
                 cell={moment === 'theme' ? themeHorizonGlyphCell : undefined} onReady={onReady} testID="glyph-specimen-surface" />}
     </View>;
 }

@@ -10,6 +10,7 @@ import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
 import { revealHomeRetryAfterPaint } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { AppLaunchState } from './AppLaunchState';
+import { useLaunchCurtainHold, useLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { useCurrentRoutePathname } from './currentRouteLocation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -75,6 +76,10 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // can replace its route once the Account is ready and its navigator will stay mounted.
     const restoring = Platform.OS === 'web' && (pendingFirstAccount || (pendingPhoneHome !== null && (!ready || !dataReady)));
     const canNavigate = presentation !== null && !restoring && ready && dataReady;
+    // After restore (whose state holds it, and gives way to the Home's Retry), a cold start's Loading planet
+    // stays until the shell's first destination body is up.
+    const bodyMounted = useLaunchDestinationBodyMounted();
+    useLaunchCurtainHold(!restoring && Platform.OS === 'web' && requestedPresentation === 'shell' && !bodyMounted);
     React.useLayoutEffect(() => {
         if (!hasWorkspace) setPendingPhoneHome(null);
     }, [hasWorkspace]);

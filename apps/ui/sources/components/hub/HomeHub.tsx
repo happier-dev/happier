@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useAtmosphereBackdrop } from '@/components/atmosphere/atmosphereBackdrop';
+import { useLaunchCurtainHold, useLaunchCurtainState } from '@/boot/launchCurtain';
 import { Platform, useWindowDimensions, View, type ScrollView } from 'react-native';
 import { useGlyphFieldTap } from '@/components/atmosphere/glyph/useHomeGlyphField';
 
@@ -78,7 +79,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
 import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
 import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry } from '@/components/atmosphere/HomePlanet';
-import { isHomeArrivalMotionPending, presentReadyHome, subscribeHomeArrival } from './homeArrival';
+import { isHomeArrivalMotionPending, isHomeArrivalSettled, presentReadyHome, subscribeHomeArrival } from './homeArrival';
 import { useHomeGlyphArrival } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { usePersonalHomeBootstrapCovered } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
@@ -567,10 +568,17 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     }), [guidance.kind, heroActive, phone, planetDigits, planetFadeFrom, planetFadeTo, planetGeometry, planetIntensity, planetPane, planetSource]);
     const [homePlanetDrawn, setHomePlanetDrawn] = React.useState(false);
     const onHomePlanetDrawn = React.useCallback(() => setHomePlanetDrawn(true), []);
+    // A cold start's Loading planet stays over Home until Home is up, then fades into it; Home's own Loading
+    // moment would only repeat it underneath.
+    const launchCurtain = useLaunchCurtainState() !== 'gone';
+    // It leaves once Home has arrived (ready and presented, its planet arriving under the fade) or says it cannot be
+    // reached; a Home that is not the one on screen (another tab, the Personal Home setup over it) does not hold it.
+    const homeArrived = React.useSyncExternalStore(subscribeHomeArrival, isHomeArrivalSettled, isHomeArrivalSettled);
+    useLaunchCurtainHold(arrivalPresented && !homeUnavailable && !homeArrived);
     const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn }),
         [homeLoading, homePlanetDrawn, momentTarget]);
     const loadingMoment = useHomeLoadingMoment({
-        waiting: homeLoading && isAtmosphereMomentOn(atmosphere.moments, 'loading'), start: 'mount', abort: homeUnavailable || firstArrival !== null, paused: false,
+        waiting: homeLoading && isAtmosphereMomentOn(atmosphere.moments, 'loading'), start: 'mount', abort: homeUnavailable || firstArrival !== null || launchCurtain, paused: false,
         reducedMotion: atmosphere.reducedMotion, theme: homeTheme, pane: hubPane,
         home: homeReport, cover: <ItemList testID="home-hub.loading-cover">{null}</ItemList>,
     });

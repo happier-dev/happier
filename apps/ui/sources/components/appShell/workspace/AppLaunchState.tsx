@@ -1,42 +1,77 @@
 import * as React from 'react';
-import { Image, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { createLoadingPlanetScene, loadingPlanetSize } from '@happier-dev/brand/glyph-scene';
 
 import type { GlyphMotion, GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
 
+import { finishLaunchCurtain, useLaunchCurtainHold, useLaunchCurtainState } from '@/boot/launchCurtain';
+
+/** Above the app's own surfaces, below the step stage's frozen and painted layers. */
+const CURTAIN_Z = 999;
+
 /**
- * Startup stays on the shell's Still frame until the Brand surface has painted.
- * Boot and initial Account restore own how long this state stays mounted.
+ * A surface that is still loading at launch (boot, Account restore). It holds the launch curtain, which draws
+ * the one Loading planet, and keeps its own words (a credential wait) above it.
  */
 export const AppLaunchState = React.memo(function AppLaunchState(
   { testID, children }: React.PropsWithChildren<Readonly<{ testID: string }>>,
 ) {
-  const { theme } = useUnistyles();
-  const colourScheme = theme.dark ? 'dark' : 'light';
-  const reduced = useReducedMotionPreference();
+  useLaunchCurtainHold(true);
   return (
-    <View style={styles.root}>
-      <View testID={testID} style={styles.planet} accessibilityRole="progressbar" accessibilityLabel={t('common.loading')}>
-        {reduced
-          ? <StillPlanet theme={colourScheme} testID={`${testID}-planet-still`} />
-          : <LivePlanet theme={colourScheme} testID={testID} />}
-      </View>
+    <View testID={testID} style={styles.state} pointerEvents="box-none"
+      accessibilityRole="progressbar" accessibilityLabel={t('common.loading')}>
       {children}
     </View>
   );
 });
 
-type LaunchPlanetProps = Readonly<{ theme: 'light' | 'dark'; testID: string }>;
-
-function StillPlanet({ theme, testID }: LaunchPlanetProps) {
-  const source = { uri: `/launch-planet-${theme}.png` };
-  return <Image accessible={false} accessibilityIgnoresInvertColors testID={testID} source={source} fadeDuration={0} style={styles.planet} />;
+/**
+ * The launch curtain (web): the canvas and the Loading planet over the app, from the first React frame until
+ * the first destination has drawn. It continues the HTML shell's Still frame in the same rect, swaps to the live
+ * planet once that has painted, and fades out when nothing holds it. Boot and Account restore mount it once.
+ */
+export function LaunchCurtain() {
+  const state = useLaunchCurtainState();
+  return state === 'gone' ? null : <CurtainLayer leaving={state === 'leaving'} />;
 }
 
-function LivePlanet({ theme, testID }: LaunchPlanetProps) {
+function CurtainLayer({ leaving }: Readonly<{ leaving: boolean }>) {
+  const { theme } = useUnistyles();
+  const colourScheme = theme.dark ? 'dark' : 'light';
+  const reduced = useReducedMotionPreference();
+  const layer = React.useRef<View>(null);
+  React.useLayoutEffect(() => {
+    if (!leaving) return;
+    const node = layer.current as unknown as HTMLElement | null;
+    if (!node?.animate) {
+      finishLaunchCurtain();
+      return;
+    }
+    const { atmosphere, easingCss } = motionTokens;
+    const fade = node.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: reduced ? atmosphere.reducedCrossFadeMs : atmosphere.leaveFadeMs, easing: easingCss.exit, fill: 'forwards',
+    });
+    fade.finished.then(finishLaunchCurtain, () => {});
+    return () => fade.cancel();
+  }, [leaving, reduced]);
+  return (
+    <View ref={layer} testID="launch-curtain" style={styles.curtain} pointerEvents={leaving ? 'none' : 'auto'}
+      aria-hidden importantForAccessibility="no-hide-descendants">
+      {reduced ? <StillPlanet theme={colourScheme} /> : <LivePlanet theme={colourScheme} />}
+    </View>
+  );
+}
+
+/** The HTML shell's own Still frame (`public/index.html`): the same image, rect and paint, with nothing to load. */
+function StillPlanet({ theme }: Readonly<{ theme: 'light' | 'dark' }>) {
+  return React.createElement('div', { className: 'launch-planet-still', 'data-theme': theme, 'data-testid': 'launch-curtain-still' });
+}
+
+function LivePlanet({ theme }: Readonly<{ theme: 'light' | 'dark' }>) {
   const [surface, setSurface] = React.useState<typeof import('@/components/atmosphere/glyph/GlyphSurface.web').GlyphSurface | null>(null);
   const [ready, setReady] = React.useState(false);
   React.useEffect(() => {
@@ -57,21 +92,22 @@ function LivePlanet({ theme, testID }: LaunchPlanetProps) {
   const onReady = React.useCallback<NonNullable<GlyphSurfaceProps['onReady']>>(status => setReady(status === 'ready'), []);
   const Surface = surface;
   return <>
-    {!ready && <StillPlanet theme={theme} testID={`${testID}-planet-still`} />}
+    {!ready && <StillPlanet theme={theme} />}
     {Surface && <View pointerEvents="none" style={[styles.live, { opacity: ready ? 1 : 0 }]}>
-      <Surface testID={`${testID}-planet-live`} theme={theme} width={loadingPlanetSize} height={loadingPlanetSize}
+      <Surface testID="launch-curtain-live" theme={theme} width={loadingPlanetSize} height={loadingPlanetSize}
         scene={scene} motion={motion} onReady={onReady} />
     </View>}
   </>;
 }
 
 const styles = StyleSheet.create((theme) => ({
-  root: {
-    flex: 1,
+  state: { ...StyleSheet.absoluteFillObject, zIndex: CURTAIN_Z + 1 },
+  curtain: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: CURTAIN_Z,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: theme.colors.background.canvas,
   },
-  planet: { width: loadingPlanetSize, height: loadingPlanetSize },
-  live: { position: 'absolute', top: 0, left: 0 },
+  live: { width: loadingPlanetSize, height: loadingPlanetSize },
 }));

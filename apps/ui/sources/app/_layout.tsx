@@ -81,7 +81,8 @@ import { configureNotificationCategories } from '@/activity/notifications/config
 import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
 import { runAppBootSequence, reportDesktopAppBootPhase, type AppBootPhase, type AppBootReadyState } from '@/boot/runAppBootSequence';
 import { AppBootPendingSurface } from '@/boot/AppBootPendingSurface';
-import { AppLaunchState } from '@/components/appShell/workspace/AppLaunchState';
+import { AppLaunchState, LaunchCurtain } from '@/components/appShell/workspace/AppLaunchState';
+import { finishLaunchCurtain } from '@/boot/launchCurtain';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { prepareWarmCacheStorage } from '@/sync/domains/state/warmCachePersistence';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
@@ -759,6 +760,11 @@ function AppBoot() {
     const firstOpenSegments = React.useRef(segments);
     firstOpenSegments.current = segments;
     const { opening, Host: OpeningHost, admitOpening } = useFirstOpenBoot();
+    // The main web window shows one Loading planet from the HTML shell to the first destination drawn.
+    const launchCurtain = primaryRealm && Platform.OS === 'web' && !isFirstOpenPresenter;
+    React.useLayoutEffect(() => {
+        if (!launchCurtain) finishLaunchCurtain();
+    }, [launchCurtain]);
     const renderFirstOpen = (content: React.ReactNode, launch?: React.ReactNode) => (
         <>
             {launch}
@@ -767,6 +773,7 @@ function AppBoot() {
             {opening ? (
                 <OpeningHost opening={opening} bootPending={launch !== undefined}>{content}</OpeningHost>
             ) : content}
+            {launchCurtain ? <LaunchCurtain /> : null}
         </>
     );
 
