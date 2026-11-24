@@ -25,6 +25,8 @@ import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import { projectManagedMachinePresetForRecipientV1, transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 
 describe('admitted Machine setup snapshot lifetime', () => {
   beforeEach(() => {
@@ -383,6 +385,36 @@ describe('admitted Machine setup snapshot lifetime', () => {
       expect(nativeTerminal.launches.slice(-3).map(launch => launch.args.at(-1)))
         .toEqual(['printf FIRST', 'printf FIXED', 'printf THIRD']);
     }
+  });
+  it('lets the person who ran a failed Setup step read its retained output and refuses everyone else', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    // The live defect needs the portable Home id to differ from the routing profile.
+    expect(configuration.activeServerId).not.toBe('srv_home');
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(23));
+    const sources = [{ kind: 'direct' as const, setup: { scripts: [{ body: 'exit 23', affects: 'none' as const }] } }];
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan'),
+    }));
+    expect(await fixture.apply({ input: { ...target, desiredRevision: plan.desiredRevision, sources: plan.sources,
+      exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed', details: { kind: 'finiteCommand', exitCode: 23 } });
+    const terminalId = fixture.client.getFiniteTerminalSessions()?.list().at(-1)?.terminalId;
+    if (!terminalId) throw new Error('Setup step terminal was not retained');
+    const manager: unknown = Reflect.get(fixture.client, 'rpcHandlerManager');
+    if (!(manager instanceof RpcHandlerManager)) throw new Error('Expected installed native RPC owner');
+    // Ingress admission already passed in the live refusal (phase rpc.handler);
+    // the real terminal read handler decides from the retained custody.
+    const read = (actorAccountId: string, role: 'use' | 'manage') => manager.invokeLocal(
+      RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES, { terminalId, byteOffset: 0 }, { admissionResult: { ok: true },
+        rpcContext: { callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId, custodianAccountId: 'alice', machineId: fixture.machine.id,
+          installationId: fixture.installation.installationId, role, encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => true } });
+    const owner = await read('alice', 'manage');
+    expect(owner, JSON.stringify(owner)).toMatchObject({ ok: true });
+    for (const role of ['use', 'manage'] as const)
+      expect(await read('mallory', role)).toMatchObject({ ok: false, code: 'terminal_forbidden' });
   });
   it('publishes successful Apply inventory once and reuses it on inert current-copy reads', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });

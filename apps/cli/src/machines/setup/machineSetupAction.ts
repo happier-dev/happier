@@ -638,7 +638,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
               serverId: input.homeId, machineId: input.machineId, serviceIds, signal: cancellationSignal,
             });
           },
-          terminalCustody: { kind: 'machine', serverId: params.homeId, machineId: params.machineId,
+          // PTY custody names the admitted runtime's routing profile, like every
+          // other terminal owner; the portable Home birth is homeServerIdentityId.
+          terminalCustody: { kind: 'machine', serverId: runtime.serverId, machineId: params.machineId,
             homeServerIdentityId: authorization.binding.serverIdentityId,
             installationId: params.installation.installationId, requesterAccountId, rootPath: homedir() } } satisfies Omit<Parameters<typeof applyMachineSetup>[0], 'setup' | 'recipePlans'>;
         const executeNative = (connectorSecretGrant?: NonNullable<typeof elevation>['connectorSecretGrant']) => {
