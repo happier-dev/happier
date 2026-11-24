@@ -11,6 +11,10 @@ import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } 
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema,
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+    type PluginAvailabilityMaterializationsReadActionOutputV1 } from '@happier-dev/protocol/plugins/availability';
 import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } from './artifactStoreBoundary';
 import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 
@@ -20,6 +24,7 @@ export function createHomeHubArtifactHttpBoundary(
     profile: ReturnType<typeof AccountProfileSchema.parse> | (() => ReturnType<typeof AccountProfileSchema.parse>) = AccountProfileSchema.parse({ id: accountId }),
     options?: Readonly<{
         machines?: readonly FetchedMachineRow[];
+        pluginMaterializations?: PluginAvailabilityMaterializationsReadActionOutputV1;
         sessionList?: (query: URLSearchParams) => readonly V2SessionRecord[];
     }>,
 ): ReturnType<typeof createLayoutArtifactHttpBoundary<HomeHubLayoutV1>> {
@@ -37,6 +42,23 @@ export function createHomeHubArtifactHttpBoundary(
             const currentProfile = AccountProfileSchema.parse(typeof profile === 'function' ? profile() : profile);
             if (currentProfile.id !== accountId) throw new Error('Home HTTP profile must belong to the signed-in Account');
             return Response.json(currentProfile);
+        }
+        if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']
+            || path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+            if (options?.pluginMaterializations) {
+                if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+                    return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(options.pluginMaterializations));
+                }
+                const { availabilityCursor } = options.pluginMaterializations;
+                const { knownPluginIds, pluginIds } = PluginAvailabilityIntentsListActionInputV1Schema.parse(JSON.parse(String(init?.body)));
+                return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor, pluginIds: [], failedPluginIds: [],
+                    intentReads: (knownPluginIds ?? pluginIds ?? []).map(pluginId => ({ pluginId, response: {
+                        availabilityCursor, hostingCapability: { enabled: false }, intent: null, release: null, packageAssets: [], uiArtifacts: [],
+                    } })),
+                }));
+            }
+            const availability = createEmptyAccountBootstrapHttpResponse(path, init);
+            if (availability) return availability;
         }
         return boundary.request(input, init);
     };

@@ -2,19 +2,21 @@ import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonPluginUiResourceReadResponseSchema,
-    DaemonPluginUiTargetedContributionsReadResponseSchema, DaemonProjectionDeferredSectionsResponseSchema,
-    demandedDaemonProjectionSections } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+    DaemonPluginUiTargetedContributionsReadResponseSchema, DaemonProjectionDeferredSectionsResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { act, renderScreen, flushHookEffects, standardCleanup, createDeferred } from '@/dev/testkit';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
-import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPluginUiExecutionOriginCandidatePublication, unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { storage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -29,8 +31,7 @@ import { registerDaemonContributionRegistryProjectionHandler, invalidateDaemonCo
 import type { RpcHandler } from '../../../../../cli/src/api/rpc/types';
 import { buildPluginMountedActionsProjectionV2, buildResourcesById } from '../../../../../cli/src/plugins/projection/registry/projection/v2';
 import { readInstalledPluginCatalog } from '../../../../../cli/src/plugins/projection/catalog/installed';
-import { PLUGIN_UI_SECTIONS } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
-import { readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
 const rpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
@@ -38,7 +39,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
-afterEach(async () => { await standardCleanup(); });
+afterEach(() => {
+    standardCleanup();
+    clearDaemonMergedProjectionCacheForTests();
+});
 
 it.each([
     { count: 1, delayed: false, targeted: false, target: 'app', retirement: 'none' },
@@ -56,10 +60,20 @@ it.each([
     const accountId = 'widget-viewer';
     const serverIdentityId = 'srv_widget_auto';
     const ids = ['widget-a', 'widget-b'].slice(0, count);
-    const http = createHomeHubArtifactHttpBoundary(accountId);
+    const machines = ids.map((id, index) => createHydratedPlainMachineFixture({ id, accountId, machine: { activeAt: Date.now() - index } }));
+    const rows = machines.map(machine => createPlainMachineRowFixture({ id: machine.id, accountId, machine }));
+    const http = createHomeHubArtifactHttpBoundary(accountId, undefined, { machines: rows, pluginMaterializations: {
+        availabilityCursor: 1,
+        snapshots: ids.map(machineId => ({ serverIdentityId, machineId, materializations: [PluginMachineMaterializationV1Schema.parse({
+            serverIdentityId, machineId, materializationId: `widget-install-${machineId}`, pluginId, version: '1.0.0',
+            sourceClass: 'localPath', portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1,
+        })] })),
+    } });
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://widget-auto.test', serverIdentityId, accountId,
-        request: async (url, init) => new URL(String(url)).pathname === '/v1/machines'
-            ? Response.json({ machines: ids.map(id => createPlainMachineRowFixture({ id, accountId })) }) : http.request(url, init) });
+        configureSocket: configureConnectedServerSocketBoundary,
+        request: async (url, init) => new URL(String(url)).pathname === '/v1/machines/read-batch'
+            ? createMachineReadBatchResponseFixture(init?.body, id => rows.find(row => row.id === id) ?? null)
+            : http.request(url, init) });
     const lifetime = captureActiveServerAccountScopeLifetime()!;
     const surface = { pluginId, localId: 'latest' };
     const contributionProtocol = { id: 'widget-details', version: 1 } as const;
@@ -107,7 +121,7 @@ it.each([
         const sourceCustody = registry.readPluginSourceCustody?.(pluginId);
         const occurrenceId = registry.readPluginOccurrenceId?.(pluginId);
         if (!sourceCustody || !occurrenceId) throw new Error('Expected admitted widget source authority');
-        return unionPluginUiProjections(ids.map(machineId => {
+        const members = ids.map(machineId => {
             const executionOrigin = PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId,
                 sourceRef: { machineId, pluginId, sourceCustody } });
             const projection = widgetProjectionOf([{ ...surface, target, occurrenceId, resources: [surface] }], {
@@ -120,10 +134,12 @@ it.each([
             const declarations = buildPluginMountedActionsProjectionV2({ registry: registry.contributes,
                 generation: 1, actions: [{ pluginId, localId: 'list' }],
                 pluginExecutionOriginsByPluginId: { [pluginId]: executionOrigin } });
+            const actionsById = delayed ? Object.fromEntries(Object.entries(declarations.actionsById)
+                .map(([id, action]) => [id, { ...action, available: false }])) : declarations.actionsById;
             const entryId = `surfacePlacement:${pluginId}:latest`;
             const entry = projection.surfacePlacementsById[entryId]!;
             return { machineId, serverId: lifetime.scope.serverId, serverIdentityId, phase: 'current' as const, interactionEnabled: true,
-                projection: { ...projection, actionsById: declarations.actionsById,
+                projection: { ...projection, actionsById,
                     resourcesById: buildResourcesById(registry.contributes, [], { [pluginId]: executionOrigin }),
                     surfacePlacementsById: { ...projection.surfacePlacementsById, [entryId]: {
                         ...entry, executionOrigin, runtime: { resourceCapability: { readable: true, dynamic: false } },
@@ -132,19 +148,27 @@ it.each([
                         renderer: { kind: 'hostedHtml', contributionId: entry.binding.renderer.localId, source: artifactHtmlBundleFromBodyV1('<p>Latest entries</p>'),
                             requiredHostMethods: ['readResource', 'executeAction'] },
                     } } } };
-        }), new Map([[pluginId, PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId,
+        });
+        const union = unionPluginUiProjections(members, new Map([[pluginId, PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId,
             sourceRef: { machineId: ids[0], pluginId, sourceCustody } })]]));
+        const projection = union.pluginUiProjection!;
+        if (delayed) {
+            // The pending row declares the Action before a Machine has supplied its executable occurrence.
+            const actionsById = Object.fromEntries(Object.entries(projection.actionsById)
+                .map(([id, { occurrenceId: _occurrenceId, executionOrigin: _executionOrigin, hostOrigin: _hostOrigin,
+                    hostSupplies: _hostSupplies, ...declaration }]) => [id, declaration]));
+            return { members, union: { ...union, pluginUiProjection: { ...projection, actionsById } } };
+        }
+        return { members, union };
     };
-    const union = buildUnion(daemon.registry);
+    const { members, union } = buildUnion(daemon.registry);
     let projection = union.pluginUiProjection!;
     const candidates = createPluginUiExecutionOriginCandidatePublication();
-    candidates.publish(projection, [], [pluginId]);
+    candidates.publish(projection, members, [pluginId]);
     const releaseProjection = publishCommittedAppShellPluginUiProjection(() => projection,
         id => candidates.getSnapshot().get(id) ?? null);
-    const machines = ids.map((id, index) => createMachineFixture({ id, activeAt: Date.now() - index }));
-    storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { [lifetime.scope.serverId]: machines }, machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' },
-        settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} } });
+    await publishMachineInventoryForTest(lifetime.scope, machines);
+    storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {} } });
     rpc.mockReset();
     const selectedRead = createDeferred<void>();
     const selectedSignals: AbortSignal[] = [];
@@ -173,6 +197,8 @@ it.each([
                     if (!manifest) throw new Error('UI discovery must negotiate its manifest before reading sections');
                     discoveryPages.push(JSON.stringify([request.machineId, manifest.projectionDigest,
                         payload.sectionRead.digest, payload.sectionRead.offset]));
+                    // A current Action can also arrive through the sectioned Machine projection.
+                    if (delayed) await selectedRead.promise;
                 }
                 const response = await handlers.get(request.method)!({ machineId: request.machineId, ...payload });
                 if (!payload.sectionRead) discoveryManifests.set(request.machineId, DaemonProjectionDeferredSectionsResponseSchema.parse(response));
@@ -221,20 +247,12 @@ it.each([
         providedContext={{}} projectContext={projectContext} appRuntime={{ ...runtime, pluginUiProjection: projection }} recordRevision="latest:1" presentation="content" testID="widget-auto" /></InjectedAuthProvider>;
     const screen = await renderScreen(renderWidget());
     try {
+        await vi.waitFor(() => expect(readPluginAccountAvailability(lifetime.scope).readInstalledPlugins()).toMatchObject({
+            kind: 'available', plugins: [expect.objectContaining({ pluginId })],
+        }));
         await flushHookEffects();
         expect(screen.tree.root.findAllByType(PluginHostedWebPane), JSON.stringify(screen.tree.root.findAll(node => node.props.diagnosticCode)
             .map(node => node.props.diagnosticCode)) + screen.getTextContent()).toHaveLength(1);
-        // Settle presented UI discovery before holding the separate mounted
-        // Action read; its initial publication can replace the mounted facade.
-        if (target === 'app') {
-            const cacheTarget = { machineId: ids[0]!, serverId: lifetime.scope.serverId, sections: PLUGIN_UI_SECTIONS };
-            await vi.waitFor(() => expect(readCachedDaemonMergedProjectionCacheEntry(cacheTarget)?.kind).toBe('ready'));
-            const acquired = readCachedDaemonMergedProjectionCacheEntry(cacheTarget);
-            const manifest = discoveryManifests.get(ids[0]!);
-            if (acquired?.kind !== 'ready' || !manifest) throw new Error('Expected settled presented UI discovery');
-            expect(new Set(acquired.deferredProjection?.loadedSections)).toEqual(new Set(demandedDaemonProjectionSections(manifest, PLUGIN_UI_SECTIONS)));
-            await flushHookEffects();
-        }
         const pane = screen.tree.root.findByType(PluginHostedWebPane);
         let props = pane.props as React.ComponentProps<typeof PluginHostedWebPane>;
         if (!props.hostApi || !props.surfaceContext) throw new Error('Widget must expose its admitted host facade');
@@ -242,16 +260,18 @@ it.each([
         const pointReads = rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ);
         if (targeted) expect(pointReads.length).toBeGreaterThan(0);
         else expect(pointReads).toHaveLength(0);
-        if (projectContext) expect(props.canonicalHostApi?.target).toEqual(projectContext.target);
+        if (projectContext) expect(props.canonicalHostApi?.target).toEqual({ ...projectContext.target, installationId: machines[0]!.installationId });
         const invocationAbort = new AbortController();
         const invoke = () => props.hostApi!.handleRequest({ version: 1, requestId: 'latest-action',
             surface: props.surfaceContext!, method: 'executeAction', payload: { action: 'list', input: {} } }, { signal: invocationAbort.signal });
         let actionResult: ReturnType<typeof invoke> | undefined;
         if (delayed) {
+            await vi.waitFor(() => expect(selectedSignals.length, JSON.stringify(rpc.mock.calls.map(([request]) => ({
+                method: request.method, selection: request.payload?.selection,
+            })))).toBeGreaterThan(0));
             actionResult = invoke();
             await flushHookEffects();
-            expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
-            await vi.waitFor(() => expect(selectedSignals.length).toBeGreaterThan(0));
+            expect(effects).toBe(0);
             const oldProps = props;
             if (retirement === 'request') invocationAbort.abort();
             if (retirement === 'unmount') await screen.unmount();
@@ -265,10 +285,10 @@ it.each([
                 currentRegistry = replacement.registry;
                 replacementOccurrenceId = currentRegistry.readPluginOccurrenceId?.(pluginId) ?? undefined;
                 if (!replacementOccurrenceId) throw new Error('Expected replacement widget source authority');
-                const replacementUnion = buildUnion(currentRegistry, '2.0.0');
+                const { union: replacementUnion, members: replacementMembers } = buildUnion(currentRegistry, '2.0.0');
                 projection = replacementUnion.pluginUiProjection!;
                 runtime = { ...runtime, ...replacementUnion };
-                candidates.publish(projection, [], [pluginId]);
+                candidates.publish(projection, replacementMembers, [pluginId]);
                 await screen.update(renderWidget());
             }
             if (retirement !== 'none') {
@@ -298,9 +318,8 @@ it.each([
             await act(async () => { selectedRead.resolve(); });
             await flushHookEffects();
             props = screen.tree.root.findByType(PluginHostedWebPane).props as typeof props;
+            expect(oldProps.mountLifetime.isCurrent(), 'the waiting Action still belongs to the mounted widget').toBe(true);
         }
-        // The mounted surface follows its new caller snapshot; a retired facade
-        // must not be revived when that snapshot changes its authority.
         expect(await (actionResult ?? invoke())).toEqual({ entries: ['latest'] });
         const response = await props.hostApi.handleRequest({ version: 1, requestId: 'latest-read',
             surface: props.surfaceContext, method: 'readResource', payload: { resource: { pluginId, localId: 'latest' } } });
