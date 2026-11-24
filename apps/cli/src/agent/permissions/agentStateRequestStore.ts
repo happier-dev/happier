@@ -1862,6 +1862,26 @@ export function isSameAgentStateRequestArguments(left: unknown, right: unknown):
 }
 
 /**
+ * A stored completed entry holds its grants (allowed tools, updated permissions, extra completion
+ * fields such as an exec-policy amendment) in their redacted stored form; a raw completion is
+ * compared after taking that same form.
+ */
+export function isSameAgentStateCompletedGrant(
+    stored: Readonly<Record<string, unknown>>,
+    completion: Readonly<{ allowedTools?: readonly string[]; updatedPermissions?: unknown; extraCompletedFields?: Readonly<Record<string, unknown>> | null }>,
+): boolean {
+    const extraKeys = Object.keys(completion.extraCompletedFields ?? {});
+    const storedForm = (source: Readonly<Record<string, unknown>>) => {
+        const record: Record<string, unknown> = Object.create(null);
+        for (const key of ['allowedTools', 'updatedPermissions', ...extraKeys]) record[key] = source[key];
+        redactAgentStateRequestContent(record);
+        return record;
+    };
+    return deepEqual(storedForm(stored), storedForm({ ...completion.extraCompletedFields,
+        allowedTools: completion.allowedTools, updatedPermissions: completion.updatedPermissions }));
+}
+
+/**
  * The one stored form of a request or completed entry: its Agent-authored content (tool input,
  * offer and question prose, and the command-derived grants a completion records: allowed tools,
  * updated permissions and an exec-policy amendment) passes the transcript redactor, while tool

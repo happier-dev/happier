@@ -21,7 +21,7 @@ import type {
     PermissionResponseClaimRejoin,
     PermissionResponseClaimSettlement,
 } from './agentStateRequestStore';
-import { isSameAgentStateRequestArguments, isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
+import { isSameAgentStateCompletedGrant, isSameAgentStateRequestArguments, isSameAgentStateRequestOccurrence } from './agentStateRequestStore';
 import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
     isPermissionRequestOwnedByPlugin,
@@ -694,11 +694,8 @@ export class PermissionRequestCoordinator<TResult> {
                     && completed.status === expected.status
                     && completed.decision === expected.decision
                     && completed.mode === expected.mode
-                    && deepEqual(completed.allowedTools, expected.allowedTools)
-                    && deepEqual(completed.updatedPermissions, expected.updatedPermissions)
-                    && Object.entries(expected.extraCompletedFields ?? {}).every(
-                        ([key, value]) => deepEqual(completed[key], value),
-                    );
+                    // The stored grants are masked; the raw completion takes the same stored form.
+                    && entry.withAdmittingSession(() => isSameAgentStateCompletedGrant(completed, expected));
             });
             entry.completionPersistence = completionPersistence;
             let didComplete = false;

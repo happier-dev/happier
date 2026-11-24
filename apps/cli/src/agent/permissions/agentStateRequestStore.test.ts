@@ -7,7 +7,7 @@ import { configuration } from '@/configuration';
 import type { PermissionRequestPushSender } from '@/settings/notifications/permissionRequestPush';
 import { logger } from '@/ui/logger';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
-import { AgentStateRequestStore, isSameAgentStateRequestOccurrence, type PermissionResponseClaim } from './agentStateRequestStore';
+import { AgentStateRequestStore, isSameAgentStateCompletedGrant, isSameAgentStateRequestOccurrence, type PermissionResponseClaim } from './agentStateRequestStore';
 import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { PermissionRequestCoordinator } from './permissionRequestCoordinator';
 import { AgentStateSchema } from '@happier-dev/session-core';
@@ -175,6 +175,24 @@ describe('AgentStateRequestStore', () => {
                 updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: `echo ${TRANSCRIPT_SECRET_REDACTED}` }] }],
                 execPolicyAmendment: { command: ['echo', TRANSCRIPT_SECRET_REDACTED] } });
             expect(JSON.stringify(state)).not.toContain('fake-completion-secret-9d2a');
+        } finally { store.dispose(); unregister(); }
+    });
+
+    it('matches a stored approve-for-session grant with the raw completion that produced it, so a response-target rejoin reports it applied', async () => {
+        const unregister = registerTranscriptSecret('fake-rejoin-secret-71c0');
+        let state: AgentState = { requests: {}, completedRequests: {} };
+        const store = new AgentStateRequestStore({ logPrefix: '[Grant rejoin]', target: {
+            scopeId: 'grant-rejoin', readState: () => state, updateState: updater => { state = updater(state); },
+        } });
+        const completion = { allowedTools: ['Bash(echo fake-rejoin-secret-71c0)'],
+            updatedPermissions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'echo fake-rejoin-secret-71c0' }] }],
+            extraCompletedFields: { execPolicyAmendment: { command: ['echo', 'fake-rejoin-secret-71c0'] } } };
+        try {
+            expect(await store.recordCompletedRequest({ requestId: 'rejoin', toolName: 'Bash', toolInput: { command: 'echo fake-rejoin-secret-71c0' },
+                createdAt: 1, status: 'approved', decision: 'approved_for_session', ...completion })).toBe(true);
+            const stored = state.completedRequests!.rejoin as Record<string, unknown>;
+            expect(isSameAgentStateCompletedGrant(stored, completion)).toBe(true);
+            expect(isSameAgentStateCompletedGrant(stored, { ...completion, allowedTools: ['Bash(echo another-command)'] })).toBe(false);
         } finally { store.dispose(); unregister(); }
     });
 
