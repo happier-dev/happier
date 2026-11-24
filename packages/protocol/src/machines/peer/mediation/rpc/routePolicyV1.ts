@@ -6,7 +6,8 @@ import { PET_DAEMON_RPC_METHODS } from '../../../../pets/daemonRpc.js';
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1, PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '../../../../actions/projectActionIdsV1.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/methodsV1.js';
-import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1 } from '../../../../actions/operations/actionIdsV1.js';
+import { ACTION_OPERATION_TASK_RESPOND_ACTION_ID_V1, PROJECT_EXECUTION_OUTPUT_COPY_ACTION_ID_V1,
+  PROJECT_EXECUTION_OUTPUT_READ_ACTION_ID_V1 } from '../../../../actions/operations/actionIdsV1.js';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '../../../../rpc/methods.js';
 import { MachineLiveStreamRelayCapsV1Schema, type MachineLiveStreamRelayCaps } from '../stream/v1.js';
 import { MACHINE_NATIVE_SECRET_SOURCE_ACCESS_POLICY_V1, resolveMachineRpcGovernance, type MachineRpcGovernanceClassification } from './governanceV1.js';
@@ -1169,6 +1170,12 @@ export function resolveMachineRpcRoutePolicy(method: string): MachineRpcRoutePol
   };
 }
 
+/** The qualified output Actions use terminal-byte admission before the installed owner resolves the attachment. */
+export function readProjectExecutionOutputMachineAdmissionMethodV1(actionId: string) {
+  return actionId === PROJECT_EXECUTION_OUTPUT_READ_ACTION_ID_V1 || actionId === PROJECT_EXECUTION_OUTPUT_COPY_ACTION_ID_V1
+    ? RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES : undefined;
+}
+
 /** Proof-aware effect projection; raw resume never becomes public fresh-spawn input. */
 export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
@@ -1295,13 +1302,14 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       || method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET && (source || target)
       ? 'session.handoff' : null;
   }
-  if (binding?.actionId === 'projects.execution.output.read' || binding?.actionId === 'projects.execution.output.copy') {
+  const projectOutputReadMethod = binding && readProjectExecutionOutputMachineAdmissionMethodV1(binding.actionId);
+  if (binding && projectOutputReadMethod) {
     // The installed output adapter derives the exact operation and terminal
     // attachment. Each phase still spends the same root's signed method/body;
     // this purpose does not grant another target or general terminal access.
     const exactTarget = binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId);
-    return exactTarget && (method === ACTION_OPERATION_RPC_METHODS_V2.get || method === RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)
+    return exactTarget && (method === ACTION_OPERATION_RPC_METHODS_V2.get || method === projectOutputReadMethod)
       ? binding.actionId : null;
   }
   if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {

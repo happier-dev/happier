@@ -413,3 +413,59 @@ it('relays the current role after Manage is narrowed to Use', async () => {
     await home.app.close();
   }
 });
+
+it('admits finite Project output at Home for the same grantee as a terminal read', async () => {
+  const home = await createTerminalHome();
+  const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+  const bearer = await auth.createToken(viewer.id, undefined, {
+    kind: 'account',
+    authority: 'present_user',
+  });
+  const serverId = await getOrCreateServerIdentityId();
+  const mint = (actionId: string, input: object) => home.app.inject({
+    method: 'POST',
+    url: `/v1/actions/${actionId}/execution-authorization`,
+    headers: { authorization: `Bearer ${bearer}` },
+    payload: { v: 1, machineId: home.machine.id, envelope: {
+      v: 1, requestId: crypto.randomUUID(),
+      target: { kind: 'machine', machineId: home.machine.id },
+      input: { serverId, machineId: home.machine.id, ...input },
+    } },
+  });
+  const outputInput = { operationId: crypto.randomUUID(), byteOffset: 0 };
+  try {
+    const ungranted = await mint('projects.execution.output.read', outputInput);
+    expect(ungranted.json().code).toBe('target_unavailable');
+
+    expect(await inTx((tx) => setEligibleMachineAccessGrantInTx(tx, {
+      actorAccountId: home.owner.id,
+      machineId: home.machine.id,
+      principal: { kind: 'account', accountId: viewer.id },
+      level: 'admin',
+    }))).toMatchObject({ kind: 'saved' });
+
+    const browser = await mint(home.actionId, { terminalId: crypto.randomUUID(), byteOffset: 0 });
+    expect(browser.statusCode).toBe(200);
+    for (const actionId of ['projects.execution.output.read', 'projects.execution.output.copy']) {
+      const response = await mint(actionId, outputInput);
+      const result = response.json();
+      expect({
+        status: response.statusCode,
+        ...(response.statusCode === 200 ? {} : { code: result.code, failureCause: result.failureCause }),
+      }).toEqual({ status: 200 });
+      const { binding } = ExternalActionExecutionAuthorizationV1Schema.parse(result);
+      expect(binding).toMatchObject({
+        actionId,
+        accountId: viewer.id,
+        custodianAccountId: home.owner.id,
+        machineId: home.machine.id,
+        installationId: home.machine.installationId,
+        admittedMachineRole: 'manage',
+      });
+      expect(binding.requesterOperationRead).toBeUndefined();
+      expect(binding.terminalSession).toBeUndefined();
+    }
+  } finally {
+    await home.app.close();
+  }
+});
