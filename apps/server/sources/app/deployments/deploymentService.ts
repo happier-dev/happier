@@ -16,7 +16,7 @@ import { admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvi
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx, deploymentContentReference, updateDeploymentStoredContentInTx } from './deploymentStoredContent';
-import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx } from './deploymentPublication';
+import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
 import { readDeploymentTargetsInTx } from './deploymentTargetLinkService';
 import { readDeploymentDomainInventoryInTx, prepareDeploymentTeardownDomainsInTx } from './deploymentDomainService';
 import { admitDeploymentPendingInTx } from './deploymentPendingService';
@@ -479,7 +479,7 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     } });
     if (changed.count !== 1) throw new Error('Locked deployment receipt changed during transition');
     if (deliveredTelemetry) {
-        await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { telemetryTokenHash: deliveredTelemetry.tokenHash } });
+        await stampDeploymentTelemetryAssignmentInTx(tx, loaded.row.id, deliveredTelemetry);
         await publishDeploymentTelemetryMachinesInTx(tx, [deliveredTelemetry.machineId]);
     }
     if (input.expectedTargetLinkRevision !== undefined) {

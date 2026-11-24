@@ -7,11 +7,16 @@ import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifact
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
 import { MachineSecretGrantV1Schema } from './machineSecretGrantV1.js';
 import { DeploymentBindingSavedSecretRevisionsV1Schema } from './deploymentBindingPatchV1.js';
+import { DeploymentTelemetryTokenHashV1Schema } from './deploymentTelemetryV1.js';
 
 /** Private prepared installation envelopes accompany the single public binding intent. */
 export const DeploymentBindingsSetStorageInputV1Schema = z.extend(DeploymentBindingsPreparedInputV1Schema, {
     grants: z.array(MachineSecretGrantV1Schema),
     retainGrantsForOwnServerDataRoleRemoval: z.optional(z.literal(true)),
+    telemetrySyncAcknowledgement: z.optional(z.strictObject({
+        telemetryMachineId: DeploymentIdentifierV1Schema,
+        telemetryTokenHash: DeploymentTelemetryTokenHashV1Schema,
+    })),
     targetLinkContent: z.optional(z.strictObject({
         targetLinkId: DeploymentIdentifierV1Schema, expectedTargetLinkRevision: DeploymentRevisionV1Schema,
         ...DeploymentArtifactContentReferenceV1Schema.shape,

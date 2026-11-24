@@ -15,6 +15,14 @@ export async function readDeploymentTelemetryPublicationAccountIdsInTx(tx: Tx, m
     return [...audiences.values()].flat();
 }
 
+/** The caller holds the Environment lock and has admitted this collector selection. */
+export async function stampDeploymentTelemetryAssignmentInTx(tx: Tx, environmentId: string,
+    stamp: Readonly<{ machineId: string; tokenHash: string }>): Promise<void> {
+    const changed = await tx.deploymentEnvironment.updateMany({ where: { id: environmentId, telemetryMachineId: stamp.machineId },
+        data: { telemetryTokenHash: stamp.tokenHash } });
+    if (changed.count !== 1) throw new Error('Locked deployment telemetry collector changed during assignment write');
+}
+
 /** Assignment changes invalidate the existing Machine projection for every affected collector audience. */
 export async function publishDeploymentTelemetryMachinesInTx(tx: Tx, machineIds: readonly (string | null)[]): Promise<void> {
     for (const [id, accountIds] of await readDeploymentTelemetryMachineAudiencesInTx(tx, machineIds)) {

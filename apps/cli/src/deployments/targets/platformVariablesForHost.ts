@@ -30,6 +30,15 @@ export function createPlatformVariablesForHost(host: Host) {
                     && binding.managedBy === 'telemetry').map(binding => binding.name));
                 const worker = request.targetLink.targetKind === 'cloudflare-workers';
                 const ownedDestinations = request.linkContent.ownedTelemetryDestinations ?? [];
+                const selectedCollector = request.input.telemetryMachineId;
+                const exporterHeader = request.content.bindings.find(binding => binding.purpose === 'variable'
+                    && binding.managedBy === 'telemetry' && binding.name === 'OTEL_EXPORTER_OTLP_HEADERS'
+                    && binding.valueFormat === 'otelAuthorizationHeader');
+                const acknowledge = async () => selectedCollector && exporterHeader?.source.kind === 'secret'
+                    && request.acknowledgeTelemetryBearer ? {
+                        telemetryMachineId: selectedCollector,
+                        telemetryTokenHash: await request.acknowledgeTelemetryBearer(exporterHeader.source),
+                    } : undefined;
                 let telemetryDestination: DeploymentTargetVariablesSyncInputV1['telemetryDestination'];
                 let bearer: Extract<NonNullable<DeploymentTargetVariablesSyncInputV1['telemetryDestination']>,
                     { decision: 'activate' }>['bearer'] | undefined;
@@ -40,12 +49,10 @@ export function createPlatformVariablesForHost(host: Host) {
                         // The reviewed telemetry parent already admitted the exact public collector Domain.
                         const endpoint = request.content.bindings.find(binding => binding.purpose === 'variable'
                             && binding.managedBy === 'telemetry' && binding.name === 'OTEL_EXPORTER_OTLP_ENDPOINT');
-                        const header = request.content.bindings.find(binding => binding.purpose === 'variable'
-                            && binding.managedBy === 'telemetry' && binding.name === 'OTEL_EXPORTER_OTLP_HEADERS');
-                        if (endpoint?.source.kind !== 'value' || header?.source.kind !== 'secret')
+                        if (endpoint?.source.kind !== 'value' || exporterHeader?.source.kind !== 'secret')
                             return refuse('deployment_content_unavailable');
                         telemetryDestination = { decision: 'allocate', collectorUrl: endpoint.source.value, owned: ownedDestinations };
-                        bearer = header.source;
+                        bearer = exporterHeader.source;
                     }
                 }
                 const set = request.content.bindings.filter(binding => {
@@ -74,20 +81,30 @@ export function createPlatformVariablesForHost(host: Host) {
                 const destination = result.telemetryDestination;
                 const providerVariables = { v: 1 as const, variables: result.variables, failures: result.failures, persisted: false,
                     ...(destination ? { telemetryDestination: destination } : {}) };
+                const vercelExporterAcknowledged = request.targetLink.targetKind === 'vercel' && !ownCollector
+                    && ['OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_HEADERS'].every(key =>
+                        set.some(binding => binding.purpose === 'variable' && binding.name === key && binding.managedBy === 'telemetry')
+                        && result.owned.some(owned => owned.key === key && owned.desiredRevision === input.desiredRevision)
+                        && !result.failures.some(failure => failure.key === key));
+                const telemetrySyncAcknowledgement = vercelExporterAcknowledged ? await acknowledge() : undefined;
                 const allocation = input.telemetryDestination;
                 const afterCommit = allocation?.decision === 'allocate' && bearer && destination?.owned.length
                     ? { collectorUrl: allocation.collectorUrl, bearer, owned: destination.owned }
                     : undefined;
                 return { linkContent: { ...request.linkContent, ownedVariables: result.owned,
                     ...(destination ? { ownedTelemetryDestinations: destination.owned } : {}) }, providerVariables,
+                    ...(telemetrySyncAcknowledgement ? { telemetrySyncAcknowledgement } : {}),
                     ...(afterCommit && destination ? { async completeProviderVariables() {
                         const activated = await invoke({ ...input, owned: result.owned, set: [], remove: [], useOurs: [], keepTheirs: [],
                             telemetryDestination: { decision: 'activate', ...afterCommit } });
                         if (!activated.telemetryDestination) return refuse('deployment_content_unavailable');
-                        return { ...providerVariables, telemetryDestination: {
-                            owned: destination.owned, configured: activated.telemetryDestination.configured,
-                            failures: [...destination.failures, ...activated.telemetryDestination.failures],
-                        } };
+                        const failures = [...destination.failures, ...activated.telemetryDestination.failures];
+                        const configured = activated.telemetryDestination.configured;
+                        const activatedAcknowledgement = failures.length === 0 && (['traces', 'logs'] as const).every(type =>
+                            configured.some(row => row.type === type)) ? await acknowledge() : undefined;
+                        return { providerVariables: { ...providerVariables, telemetryDestination: {
+                            owned: destination.owned, configured, failures,
+                        } }, ...(activatedAcknowledgement ? { telemetrySyncAcknowledgement: activatedAcknowledgement } : {}) };
                     } } : {}) };
             });
     };

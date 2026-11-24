@@ -1184,15 +1184,20 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
     }
     const parsed = bindings ? DeploymentBindingsSetStorageInputV1Schema.safeParse(proof.body)
         : DeploymentEnvironmentBackupSetInputV1Schema.safeParse(proof.body);
-    return parsed.success && proof.path === `${base}/${bindings ? 'bindings' : 'backup'}`
-        && parsed.data.serverId === binding.serverIdentityId && parsed.data.environmentId === admission.environmentId
-        && (bindings ? matchesBindingRevision(parsed.data.expectedRevision) : parsed.data.expectedRevision === admission.expectedRevision)
-        && parsed.data.contentArtifactId === id && parsed.data.contentHeaderVersion === 1 && parsed.data.contentBodyVersion === 1
-        && (!telemetry || 'telemetryMachineId' in parsed.data
-            && (admission.collector === undefined || parsed.data.telemetryMachineId === (admission.collector?.machineId ?? null)))
-        && (!telemetry || await isAdmittedBindingsLinkCandidateInTx(tx, binding,
-            'targetLinkContent' in parsed.data ? parsed.data.targetLinkContent : undefined, linkCandidateId))
-        && matches(parsed.data);
+    if (!parsed.success || proof.path !== `${base}/${bindings ? 'bindings' : 'backup'}`
+        || parsed.data.serverId !== binding.serverIdentityId || parsed.data.environmentId !== admission.environmentId
+        || parsed.data.contentArtifactId !== id || parsed.data.contentHeaderVersion !== 1 || parsed.data.contentBodyVersion !== 1
+        || !matches(parsed.data)) return false;
+    const candidate = 'targetLinkContent' in parsed.data ? parsed.data.targetLinkContent : undefined;
+    const acknowledgement = 'telemetrySyncAcknowledgement' in parsed.data ? parsed.data.telemetrySyncAcknowledgement : undefined;
+    if (acknowledgement && (!telemetry || !bindings || !candidate)) return false;
+    // The writer verifies the current Workers Link and unchanged artifacts under its Environment lock.
+    const activation = telemetry && acknowledgement && parsed.data.expectedRevision === admission.expectedRevision + 1;
+    return (bindings ? activation || matchesBindingRevision(parsed.data.expectedRevision) : parsed.data.expectedRevision === admission.expectedRevision)
+        && (!telemetry || (activation ? !('telemetryMachineId' in parsed.data)
+            : 'telemetryMachineId' in parsed.data
+                && (admission.collector === undefined || parsed.data.telemetryMachineId === (admission.collector?.machineId ?? null))))
+        && (!telemetry || await isAdmittedBindingsLinkCandidateInTx(tx, binding, candidate, linkCandidateId));
 }
 
 /**

@@ -10,6 +10,9 @@ import { registerDaemonLocalServicesMachineRpcHandlers } from '../../../../cli/s
 import { createMachineServicesRuntime } from '../../../../cli/src/daemon/local/services/launch/machineServices';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
+import { IncomingMessage } from 'node:http';
+import { Socket } from 'node:net';
+import { createTelemetryAssignments } from '../../../../../packages/plugins/telemetry/src/telemetry/assignments';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { resolvePrivateServiceExportAdmissionForHost } from '../../../../cli/src/deployments/targets/ownServer/privateServiceReference';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '../../../../cli/src/api/machine/machineRpcAuthorization';
@@ -6975,6 +6978,138 @@ describe('deployment children retain their controller Action authority', () => {
             const changed = { ...storage, targetLinkContent: { ...linkContent, ...patch } };
             expect(await verify('POST', path, changed, changed)).toBeNull();
         }
+    });
+
+    it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-pages']] as const)(
+        'admits a hosted collector bearer only after acknowledged sync in a %s Account on %s', async (contentMode, targetKind) => {
+        const f = await fixture('account', 'account', { contentMode, readableEnvironment: true, platformTarget: 'vercel' });
+        const actionId = 'deployments.environments.telemetry.set';
+        const effectActionId = 'deployments.bindings.set';
+        const target = { kind: 'machine' as const, machineId: f.controller.id };
+        const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+        const selected = f.controller.id;
+        const originalDefinition = createDeploymentEnvironmentDetailV1().content;
+        const initialLink = await f.content('deployment-target-link.v1', {});
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { ...initialLink, targetKind } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { telemetryMachineId: selected } });
+
+        const exporterBearer = 'synthetic-hosted-exporter-bearer';
+        const acknowledgement = { telemetryMachineId: selected,
+            telemetryTokenHash: createHash('sha256').update(exporterBearer).digest('hex') };
+        const collector = createTelemetryAssignments();
+        async function admit(machineId: string, bearer = exporterBearer) {
+            const rows = await db.deploymentEnvironment.findMany({ where: { telemetryMachineId: machineId, id: f.environment.id },
+                select: { id: true, telemetryTokenHash: true } });
+            collector.replace(rows.map(({ id, telemetryTokenHash }) => ({ environmentId: id, tokenHash: telemetryTokenHash })));
+            const request = new IncomingMessage(new Socket());
+            request.headers.authorization = `Bearer ${bearer}`;
+            return collector.admit(request);
+        }
+
+        const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+        async function preparedWrite(expectedRevision: number, expectedTargetLinkRevision: number,
+            options: { collector?: string | null; rotate?: true } = {}) {
+            const original = { serverId, environmentId: f.environment.id, expectedRevision,
+                ...(options.collector === undefined ? {} : { collector: options.collector === null
+                    ? null : { machineId: options.collector }, confirmDelete: true }), ...(options.rotate ? { rotate: true } : {}) };
+            const requestId = crypto.randomUUID();
+            const scope = { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target };
+            const envelope = contentMode === 'e2ee'
+                ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    binding: scope, input: original, material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes })
+                : { v: 1 as const, requestId, target, input: original };
+            const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ ...scope, machineId: f.controller.id,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                { input: contentMode === 'e2ee' ? native : original, deploymentNativeAdmission: native });
+            const candidate = await f.content('deployment-environment.v1', originalDefinition,
+                createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, actionId: effectActionId,
+                    environmentId: f.environment.id }));
+            const targetLinkCandidate = await f.content('deployment-target-link.v1', {},
+                createDeploymentLinkContentArtifactIdV1({ ...authorization.binding, actionId: effectActionId,
+                    deploymentLinkAdmission: { environmentId: f.environment.id } }));
+            const telemetryMachineId = options.collector === undefined ? selected : options.collector;
+            const reviewedChild = { actionId: effectActionId, role: 'telemetry.bindings',
+                inputDigest: computeActionInputApprovalDigestV1(effectActionId,
+                    { serverId, environmentId: f.environment.id, expectedRevision, set: [], remove: [], telemetryMachineId }) };
+            const body = { serverId, environmentId: f.environment.id, expectedRevision, ...candidate,
+                referencedSavedSecretRevisions: [], grants: [], telemetryMachineId,
+                targetLinkContent: { targetLinkId: f.link.id, expectedTargetLinkRevision, ...targetLinkCandidate } };
+            return { body, headers(payload: unknown) {
+                return { ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId, target, method: 'POST', path, body: payload,
+                        installationId: f.controller.installationId, requestId, reviewedChild, privateKey: f.controller.keys.secretKey }),
+                };
+            } };
+        }
+
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const submit = (write: Awaited<ReturnType<typeof preparedWrite>>, payload = write.body as unknown) =>
+                app.inject({ method: 'POST', url: path, payload: payload as Record<string, unknown>, headers: write.headers(payload) });
+            expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
+            const first = await preparedWrite(f.environmentRevision, f.link.revision);
+            const session = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const unsigned = await app.inject({ method: 'POST', url: path,
+                payload: { ...first.body, telemetrySyncAcknowledgement: acknowledgement },
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${session}` } });
+            expect(unsigned.statusCode).not.toBe(200);
+            const wrongCollector = await submit(first, { ...first.body, telemetrySyncAcknowledgement: {
+                ...acknowledgement, telemetryMachineId: f.member.id } });
+            expect(wrongCollector.statusCode).not.toBe(200);
+            const { targetLinkContent: _candidate, ...withoutCandidate } = first.body;
+            expect((await submit(first, { ...withoutCandidate, telemetrySyncAcknowledgement: acknowledgement })).statusCode).not.toBe(200);
+
+            if (targetKind === 'cloudflare-pages') {
+                expect((await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement })).statusCode).not.toBe(200);
+                expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
+                return;
+            }
+            if (targetKind === 'cloudflare-workers') {
+                expect((await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement })).statusCode).not.toBe(200);
+                const allocated = await submit(first);
+                expect(allocated.statusCode, allocated.body).toBe(200);
+                expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
+                const { telemetryMachineId: _placement, ...current } = first.body;
+                const afterActivation = { ...current, expectedRevision: f.environmentRevision + 1,
+                    targetLinkContent: { ...current.targetLinkContent, expectedTargetLinkRevision: f.link.revision + 1 },
+                    telemetrySyncAcknowledgement: acknowledgement };
+                const unrelated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1);
+                expect((await submit(first, { ...afterActivation, targetLinkContent: unrelated.body.targetLinkContent })).statusCode).not.toBe(200);
+                const stamped = await submit(first, afterActivation);
+                expect(stamped.statusCode, stamped.body).toBe(200);
+                expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+                return;
+            }
+            const stored = await submit(first, { ...first.body, telemetrySyncAcknowledgement: acknowledgement });
+            expect(stored.statusCode, stored.body).toBe(200);
+            expect(await admit(selected)).toMatchObject({ accepted: true, context: { environmentId: f.environment.id } });
+
+            const rotated = await preparedWrite(f.environmentRevision + 1, f.link.revision + 1, { rotate: true });
+            expect((await submit(rotated)).statusCode).toBe(200);
+            expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
+
+            const nextBearer = 'synthetic-rotated-exporter-bearer';
+            const rotatedAcknowledgement = { ...acknowledgement, telemetryTokenHash: createHash('sha256').update(nextBearer).digest('hex') };
+            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
+            const next = await preparedWrite(f.environmentRevision + 2, f.link.revision + 2);
+            expect((await submit(next, { ...next.body, telemetrySyncAcknowledgement: rotatedAcknowledgement })).statusCode).toBe(200);
+            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: true });
+            expect(await admit(selected)).toMatchObject({ accepted: false, status: 401 });
+            const moved = await preparedWrite(f.environmentRevision + 3, f.link.revision + 3, { collector: f.member.id });
+            expect((await submit(moved)).statusCode).toBe(200);
+            expect(await admit(selected, nextBearer)).toMatchObject({ accepted: false, status: 401 });
+            expect(await admit(f.member.id, nextBearer)).toMatchObject({ accepted: false, status: 401 });
+            const resync = await preparedWrite(f.environmentRevision + 4, f.link.revision + 4, { collector: f.member.id });
+            const restored = await submit(resync, { ...resync.body,
+                telemetrySyncAcknowledgement: { ...rotatedAcknowledgement, telemetryMachineId: f.member.id } });
+            expect(restored.statusCode, restored.body).toBe(200);
+            expect(await admit(f.member.id, nextBearer)).toMatchObject({ accepted: true });
+        }, { authentication: 'real' });
     });
 
     it.each(['plain', 'e2ee'] as const)('admits a %s reviewed public collector Domain read only for its enrolled collector App', async mode => {

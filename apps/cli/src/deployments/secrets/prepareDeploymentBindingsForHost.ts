@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { carryActionFailureDiagnostic, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1,
     isManagedDeploymentDataRoleBindingPatchV1,
@@ -31,6 +31,8 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { DeploymentBindingPreparationRequestV1, PreparedDeploymentBindingStorageV1 } from '../createCliDeploymentActionDeps';
@@ -65,7 +67,9 @@ export type PreparePlatformBindingsForHost = (request: Readonly<{
     input: DeploymentBindingsSetInputV1; environment: Extract<DeploymentEnvironmentGetResultV1, { ok: true }>;
     content: DeploymentEnvironmentContentV1; previousContent: DeploymentEnvironmentContentV1;
     targetLink: DeploymentTargetLinkHeaderV1; linkContent: DeploymentTargetLinkContentV1; context: ActionExecutorContext;
+    acknowledgeTelemetryBearer?: (source: Readonly<{ ref: string; resourceRevision: number }>) => Promise<string>;
 }>) => Promise<Readonly<{ linkContent: DeploymentTargetLinkContentV1;
+    telemetrySyncAcknowledgement?: PreparedDeploymentBindingStorageV1['telemetrySyncAcknowledgement'];
     providerVariables: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>;
     completeProviderVariables?: PreparedDeploymentBindingStorageV1['completeProviderVariables'] }>>;
 
@@ -87,6 +91,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
         Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure> => runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => {
         let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
         let completeProviderVariables: PreparedDeploymentBindingStorageV1['completeProviderVariables'];
+        let telemetrySyncAcknowledgement: PreparedDeploymentBindingStorageV1['telemetrySyncAcknowledgement'];
         let targetLinkContent: PreparedDeploymentBindingStorageV1['targetLinkContent'];
         let admission: Awaited<ReturnType<typeof readEnvironmentSecretBindingPreparationForHost>> | undefined;
         let dataRolePreparation: Awaited<ReturnType<PrepareDataRoleBindingsForHost>> | undefined;
@@ -203,8 +208,21 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 const opened = readDeploymentTargetLinkArtifactV1(platformLink, await open(platformLink.contentArtifactId));
                 if (!opened.ok) return refuseDeploymentArtifactRead(opened);
                 const synchronized = await host.preparePlatformBindings({ input, environment: loaded, content: candidate.content,
-                    previousContent: current.content, targetLink: platformLink, linkContent: opened.content, context });
+                    previousContent: current.content, targetLink: platformLink, linkContent: opened.content, context,
+                    ...(telemetryChild ? { async acknowledgeTelemetryBearer(source: Readonly<{ ref: string; resourceRevision: number }>) {
+                        const expectedScopeKey = operation ? operation.readSnapshot()?.scopeKey : resolveAccountSettingsScopeKey(credentials);
+                        if (!expectedScopeKey) return refuse('client_required');
+                        await assertCurrent();
+                        const reference = { ref: source.ref, revision: source.resourceRevision };
+                        const { materializer } = await readSavedSecretMaterializerForOperation({ expectedScopeKey,
+                            operationContext: operation, signal: context.signal, references: [reference] });
+                        const bearer = materializeSavedSecretReferenceBinding({ requirementName: source.ref, binding: reference,
+                            materializer, exactReference: true });
+                        if (bearer == null) return refuse('secret_missing');
+                        return createHash('sha256').update(bearer).digest('hex');
+                    } } : {}) });
                 providerVariables = synchronized.providerVariables;
+                telemetrySyncAcknowledgement = synchronized.telemetrySyncAcknowledgement;
                 completeProviderVariables = synchronized.completeProviderVariables;
                 const binding = context.externalActionExecutionAuthorization?.binding;
                 const artifactId = binding && (binding.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 || telemetryChild)
@@ -218,7 +236,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     expectedTargetLinkRevision: platformLink.revision, contentArtifactId: created.artifactId,
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
                 if (dataRoleTargetLinkIds.length === 0) return { ...await complete([]), providerVariables, targetLinkContent,
-                    ...(completeProviderVariables ? { completeProviderVariables } : {}) };
+                    ...(completeProviderVariables ? { completeProviderVariables } : {}),
+                    ...(telemetrySyncAcknowledgement ? { telemetrySyncAcknowledgement } : {}) };
             }
             if (!request.buildMachineId && !request.environmentUpdate && !child
                 && 'set' in input && input.set.length === 0 && input.remove.length > 0
@@ -327,7 +346,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             await dataRolePreparation?.complete([...grants.values()]);
             return { ...await complete([...grants.values()]), ...(providerVariables ? { providerVariables } : {}),
                 ...(targetLinkContent ? { targetLinkContent } : {}),
-                ...(completeProviderVariables ? { completeProviderVariables } : {}) };
+                ...(completeProviderVariables ? { completeProviderVariables } : {}),
+                ...(telemetrySyncAcknowledgement ? { telemetrySyncAcknowledgement } : {}) };
         } catch (error) {
             const result = failure(request.context.signal?.aborted ? { code: 'cancelled' } : error);
             return providerVariables ? carryActionFailureDiagnostic({ ...result, effectAttempted: true, details: { providerVariables } }, result) : result;

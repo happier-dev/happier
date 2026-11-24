@@ -3359,6 +3359,13 @@ so members of that Cloudflare account with Observability Read can read the
 collector bearer.
 [Cloudflare Workers OpenTelemetry export](https://developers.cloudflare.com/workers/observability/opentelemetry-export/).
 
+The reviewed bindings write registers the exporter with the selected collector
+after Vercel acknowledges both managed exporter variables or Cloudflare
+acknowledges activation of both destinations. Rotating the bearer or changing
+the collector clears that registration until the next acknowledged sync.
+Workers still need the Wrangler configuration above to start exporting.
+Pages currently does not consume the managed collector input.
+
 The Own-server launch settles per-service telemetry facts in the serving
 Receipt's private `machineResults[].telemetrySampling`. Select the exact Machine
 installation and service. The optional `provenance` is `authored` when an

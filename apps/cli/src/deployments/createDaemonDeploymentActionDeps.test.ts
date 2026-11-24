@@ -1528,7 +1528,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain assigned add', 'provider Domain assigned verify', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable Vercel telemetry off', 'variable Vercel telemetry acknowledged', 'variable Vercel telemetry provider refused', 'variable Worker destination off', 'variable Worker destination activate', 'variable Worker destination activation refused', 'variable Worker destination CAS refused', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -1544,11 +1544,16 @@ describe('installed deployment storage and target composition', () => {
         const variableScenario = scenario.startsWith('variable ');
         const vercelTelemetryOff = scenario === 'variable Vercel telemetry off';
         const telemetryManagedCleanup = scenario === 'variable telemetry managed header cleanup' || vercelTelemetryOff;
-        const telemetryRemoteEndpoint = scenario === 'variable telemetry remote endpoint' || telemetryManagedCleanup;
+        const vercelTelemetryRefused = scenario === 'variable Vercel telemetry provider refused';
+        const vercelTelemetryOn = scenario === 'variable Vercel telemetry acknowledged' || vercelTelemetryRefused;
+        const telemetryRemoteEndpoint = scenario === 'variable telemetry remote endpoint' || telemetryManagedCleanup || vercelTelemetryOn;
         const workerDestinationOff = scenario === 'variable Worker destination off';
-        const workerAllocation = scenario === 'variable Worker destination activate' || scenario === 'variable Worker destination CAS refused';
+        const refuseDestinationActivation = scenario === 'variable Worker destination activation refused';
+        const workerAllocation = scenario === 'variable Worker destination activate' || refuseDestinationActivation
+            || scenario === 'variable Worker destination CAS refused';
         const workerDestination = workerDestinationOff || workerAllocation;
         const refuseLinkCas = scenario === 'variable Worker destination CAS refused';
+        const publicTelemetrySync = workerAllocation || vercelTelemetryOn;
         const collectorDomain = { environmentId: 'collector-environment', targetLinkId: 'collector-link', domainId: 'collector-domain' };
         const collectorContent = { contentArtifactId: 'collector-domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
         const controller = { machineId: 'collector-host', installationId: 'collector-installation' };
@@ -1557,7 +1562,7 @@ describe('installed deployment storage and target composition', () => {
         const providerDestinations = new Map<string, { name: string; slug: string; enabled: boolean;
             scripts: string[]; configuration: Record<string, unknown> }>();
         const collectorBearer = 'fixture-worker-collector-bearer';
-        const targetKind = workerDestination ? 'cloudflare-workers' : 'platform';
+        const targetKind = workerDestination ? 'cloudflare-workers' : vercelTelemetryOn ? 'vercel' : 'platform';
         const nativeVariableRequests: { method: string; path: string; body?: unknown }[] = [];
         let nativeVariableSecretReads = 0;
         let telemetryRuntimeLinkReads = 0;
@@ -1695,6 +1700,10 @@ describe('installed deployment storage and target composition', () => {
                     const body = JSON.parse(new TextDecoder().decode(request.body));
                     const type = request.method === 'POST' ? body.configuration.logpushDataset.split('-').at(-1) : path.split('-').at(-1);
                     providerOrdering.push(request.method + '-' + type);
+                    if (refuseDestinationActivation && request.method === 'PATCH' && type === 'logs') {
+                        return { status: 403, headers: {}, body: new TextEncoder().encode(JSON.stringify({ success: false,
+                            errors: [{ code: 10000, message: 'Forbidden' }] })) };
+                    }
                     expect(body.configuration.url).toBe('https://collector.example.test/v1/' + type);
                     expect(body.enabled).toBe(request.method === 'PATCH');
                     expect(body.configuration.headers).toEqual(request.method === 'POST' ? {} : { Authorization: 'Bearer ' + collectorBearer });
@@ -1708,18 +1717,23 @@ describe('installed deployment storage and target composition', () => {
             } }) },
         }) : telemetryRemoteEndpoint ? await createPluginTestkit({
             manifest: vercelDomainPlugin.manifest, module: vercelDomainPlugin,
-            services: { secrets: { readSavedSecret: async () => { nativeVariableSecretReads++; return 'fixture-telemetry-token'; },
+            services: { secrets: { readSavedSecret: async () => { nativeVariableSecretReads++; return vercelTelemetryOn ? collectorBearer : 'fixture-telemetry-token'; },
                 saveShared: unsupportedSecretMutation, status: unsupportedSecretMutation, get: unsupportedSecretMutation,
                 set: unsupportedSecretMutation, delete: unsupportedSecretMutation },
             http: createPluginHttpFixture({ async request(request) {
                 const body = request.body ? JSON.parse(new TextDecoder().decode(request.body)) : undefined;
                 nativeVariableRequests.push({ method: request.method, path: new URL(request.url).pathname, body });
-                const response = request.method === 'DELETE' ? {} : request.method === 'GET' ? { envs: [
+                if (vercelTelemetryOn && request.method === 'POST') {
+                    providerOrdering.push('POST-' + body.key);
+                    if (vercelTelemetryRefused && body.key === 'OTEL_EXPORTER_OTLP_HEADERS')
+                        return { status: 403, headers: {}, body: new TextEncoder().encode('{}') };
+                }
+                const response = request.method === 'DELETE' ? {} : request.method === 'GET' ? { envs: vercelTelemetryOn ? [] : [
                     { id: 'remote-endpoint', key: 'OTEL_EXPORTER_OTLP_ENDPOINT', type: 'plain', target: ['production'],
                         value: 'https://own.example.test', updatedAt: 1 },
                     { id: 'remote-header', key: 'OTEL_EXPORTER_OTLP_HEADERS', type: 'sensitive', target: ['production'],
                         value: 'Authorization=own', updatedAt: 1 },
-                ] } : { created: { ...body, id: body.key === 'MODE' ? 'provider-mode' : 'provider-headers', updatedAt: 10 } };
+                ] } : { created: { ...body, id: vercelTelemetryOn ? 'provider-' + body.key : body.key === 'MODE' ? 'provider-mode' : 'provider-headers', updatedAt: 10 } };
                 return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(response)) };
             } }) },
         }) : null;
@@ -1914,7 +1928,7 @@ describe('installed deployment storage and target composition', () => {
                 providerIdentity: { providerAccountId: 'provider-account', providerResourceId: 'project', providerEnvironment: 'production' },
                 providerEnvironment: { kind: 'native', selection: workerDestination
                     ? { kind: 'script', scriptName: 'captured-script-name' } : { kind: 'production' } }, ...capturedPreparation };
-            if (workerAllocation) {
+            if (publicTelemetrySync) {
                 environment.environment.telemetryMachineId = collector.machineId;
                 environment.content.bindings.push({ ...createDeploymentVariableBindingV1({ phase: 'runtime',
                     name: 'OTEL_EXPORTER_OTLP_HEADERS', source: { kind: 'secret',
@@ -1938,7 +1952,7 @@ describe('installed deployment storage and target composition', () => {
             if (variableScenario) environment.content.bindings.push({ purpose: 'registry', targetLinkId: row.targetLink.id,
                 access: 'pull', registryOrigin: 'https://registry.example.test',
                 source: { kind: 'secret', ref: 'happier:shared-secret:v1:registry', resourceRevision: 1 } });
-            if (telemetryRemoteEndpoint) {
+            if (telemetryRemoteEndpoint && !vercelTelemetryOn) {
                 environment.content.bindings.push({ ...createDeploymentVariableBindingV1({ phase: 'runtime',
                     name: 'OTEL_EXPORTER_OTLP_HEADERS', source: { kind: 'value', value: 'Authorization=own' } }),
                     ...(telemetryManagedCleanup ? { managedBy: 'telemetry' as const, valueFormat: 'otelAuthorizationHeader' as const } : {}) });
@@ -1955,12 +1969,12 @@ describe('installed deployment storage and target composition', () => {
                 seq: 1, createdAt: 1, updatedAt: 1 });
             put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
             put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
-            if (workerAllocation) put(collectorContent.contentArtifactId, 'deployment-domain.v1', {
+            if (publicTelemetrySync) put(collectorContent.contentArtifactId, 'deployment-domain.v1', {
                 hostname: 'collector.example.test', target: { kind: 'telemetry' } });
             let nativeReads = 0;
             let candidatesCreated = 0;
             vi.spyOn(axios, 'request').mockImplementation(async request => {
-                if (workerAllocation && new URL(request.url!).pathname.endsWith('/domains/' + collectorDomain.domainId)) {
+                if (publicTelemetrySync && new URL(request.url!).pathname.endsWith('/domains/' + collectorDomain.domainId)) {
                     const placement = { serverId: 'home', accountId: 'owner', ...collectorDomain, ...controller,
                         actionOperationId: 'collector-domain-operation', requestId: 'collector-domain-request' };
                     const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: collectorDomain.domainId,
@@ -1972,7 +1986,7 @@ describe('installed deployment storage and target composition', () => {
                             desired: true, listener: 'public', telemetryCollector: collector }] });
                     return { status: 200, data: { ok: true, domain, environmentId: domain.environmentId, revision: domain.revision } };
                 }
-                if ((scenario === 'compact repository missing SCM provider' || rootSource || confirmedUpload || workerAllocation) && new URL(request.url!).pathname === `/v1/projects/sources/${environment.environment.projectSourceId}`) return { status: 200,
+                if ((scenario === 'compact repository missing SCM provider' || rootSource || confirmedUpload || publicTelemetrySync) && new URL(request.url!).pathname === `/v1/projects/sources/${environment.environment.projectSourceId}`) return { status: 200,
                     data: { ok: true, canManage: true, source: { id: environment.environment.projectSourceId, revision: 1,
                         name: 'Repository without attachment', audience: [], createdByAccountId: 'owner', attachments: [],
                         repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -1999,7 +2013,16 @@ describe('installed deployment storage and target composition', () => {
                 if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
                 if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain',
                     v: rootApproval ? { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) } : {} }, version: 1 } };
-                if (workerAllocation && new URL(url).pathname === '/v1/machines/' + collector.machineId) {
+                if (publicTelemetrySync && new URL(url).pathname === '/v1/account/saved-secrets/resources/materials') {
+                    providerOrdering.push('read-bearer-digest');
+                    return { status: 200, data: { resources: [{ resourceId: 'collector-secret', encryptionMode: 'plain',
+                        storedContent: { t: 'plain', v: { v: 1, name: 'Fixture collector', kind: 'token', value: collectorBearer } },
+                        recipientEnvelope: null, entry: { ref: 'happier:shared-secret:v1:collector-secret', source: 'shared_resource',
+                            relationship: 'owner', ownerAccountId: 'owner', name: 'Fixture collector', kind: 'token',
+                            revision: 1, materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true,
+                                manageAccess: true, delete: true } } }] } };
+                }
+                if (publicTelemetrySync && new URL(url).pathname === '/v1/machines/' + collector.machineId) {
                     const publicKey = Buffer.from(identity.publicKey).toString('base64');
                     return { status: 200, data: { machine: {
                         id: collector.machineId, active: true, kind: 'persistent', revokedAt: null, replacedByMachineId: null,
@@ -2019,7 +2042,7 @@ describe('installed deployment storage and target composition', () => {
                 if (settling && id === environment.environment.contentArtifactId) settlementReads.environmentBodies++;
                 if (id === row.targetLink.contentArtifactId) {
                     if (settling) settlementReads.targetBodies++;
-                    if (workerDestination || vercelTelemetryOff) telemetryRuntimeLinkReads++;
+                    if (workerDestination || vercelTelemetryOff || vercelTelemetryOn) telemetryRuntimeLinkReads++;
                 }
                 return { status: documents.has(id) ? 200 : 404, data: documents.get(id) ?? {} };
             });
@@ -2075,6 +2098,10 @@ describe('installed deployment storage and target composition', () => {
                 },
                 credentials,
                 serverId: 'home', serverHttpBaseUrl: 'https://platform.test', machineId: 'machine-a',
+                ...(publicTelemetrySync ? { savedSecretOperationContext: runWithServerHttpBaseUrl('https://platform.test', () =>
+                    createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://platform.test',
+                        isCurrent: async () => true, snapshot: { source: 'network', settings: accountSettingsParse({}),
+                            settingsVersion: 1, loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKey(credentials), settingsSecretsReadKeys: [] } })) } : {}),
                 acquirePluginRuntimeRegistryLease: async () => {
                     const lease = retainedLease ?? runtime.controller.tryAcquireRuntimeRegistry();
                     if (!lease) throw new Error('Fixture registry retired');
@@ -2500,6 +2527,16 @@ describe('installed deployment storage and target composition', () => {
                     vi.mocked(axios.request).mockImplementation(async request => {
                         if (!new URL(request.url!).pathname.endsWith('/bindings')) return previousHttp(request);
                         const write = request.data;
+                        if (write.telemetrySyncAcknowledgement) {
+                            expect(write).toMatchObject({ expectedRevision: environment.environment.revision + 1,
+                                targetLinkContent: { targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision + 1 },
+                                telemetrySyncAcknowledgement: { telemetryMachineId: collector.machineId,
+                                    telemetryTokenHash: createHash('sha256').update(collectorBearer).digest('hex') } });
+                            expect(JSON.stringify(write)).not.toContain(collectorBearer);
+                            providerOrdering.push('home-assignment-cas');
+                            return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                                revision: environment.environment.revision + 1 } };
+                        }
                         expect(write).toMatchObject({ telemetryMachineId: collector.machineId, targetLinkContent: {
                             targetLinkId: row.targetLink.id, expectedTargetLinkRevision: row.targetLink.revision } });
                         expect(write).not.toHaveProperty('completeProviderVariables');
@@ -2522,6 +2559,7 @@ describe('installed deployment storage and target composition', () => {
                     const result = await executor.execute(action, input, confirmed);
                     expect(result, JSON.stringify(result)).toMatchObject(refuseLinkCas
                         ? { ok: false, errorCode: 'deployment_conflict' }
+                        : refuseDestinationActivation ? { ok: false }
                         : { ok: true, result: { ok: true, state: 'wrangler_required', destinations: [
                             { type: 'traces', slug: 'provider-assigned-traces', name: providerDestinations.get('provider-assigned-traces')?.name },
                             { type: 'logs', slug: 'provider-assigned-logs', name: providerDestinations.get('provider-assigned-logs')?.name },
@@ -2529,7 +2567,42 @@ describe('installed deployment storage and target composition', () => {
                     expect(JSON.stringify(result)).not.toContain(collectorBearer);
                     expect(telemetryRuntimeLinkReads).toBe(1);
                     expect(providerOrdering).toEqual(['POST-traces', 'POST-logs', 'home-link-cas',
-                        ...(refuseLinkCas ? [] : ['read-bearer', 'PATCH-traces', 'PATCH-logs'])]);
+                        ...(refuseLinkCas ? [] : ['read-bearer', 'PATCH-traces', 'PATCH-logs',
+                            ...(refuseDestinationActivation ? [] : ['read-bearer-digest', 'home-assignment-cas'])])]);
+                    return;
+                }
+                if (vercelTelemetryOn) {
+                    const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
+                    const writes: Record<string, unknown>[] = [];
+                    vi.mocked(axios.request).mockImplementation(async request => {
+                        if (!new URL(request.url!).pathname.endsWith('/bindings')) return previousHttp(request);
+                        writes.push(request.data);
+                        providerOrdering.push('home-link-cas');
+                        return { status: 200, data: { ok: true, environmentId: environment.environment.id,
+                            revision: environment.environment.revision + 1 } };
+                    });
+                    const action = 'deployments.environments.telemetry.set';
+                    const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+                        collector: { machineId: collector.machineId }, publicCollectorDomain: collectorDomain };
+                    const { bindPresentUserActionConfirmationV1 } = await import('@happier-dev/protocol/actions/executor/approvalReview');
+                    const confirmed = bindPresentUserActionConfirmationV1(action, input,
+                        { ...context, surface: 'ui', actionRequestId: 'reviewed-vercel-telemetry-sync' });
+                    const result = await executor.execute(action, input, confirmed);
+                    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true } });
+                    expect(writes).toHaveLength(1);
+                    if (vercelTelemetryRefused) {
+                        expect(writes[0]).not.toHaveProperty('telemetrySyncAcknowledgement');
+                        expect(providerOrdering).not.toContain('read-bearer-digest');
+                    } else {
+                        expect(writes[0]).toMatchObject({ targetLinkContent: { targetLinkId: row.targetLink.id },
+                            telemetrySyncAcknowledgement: { telemetryMachineId: collector.machineId,
+                                telemetryTokenHash: createHash('sha256').update(collectorBearer).digest('hex') } });
+                        expect(providerOrdering).toContain('POST-OTEL_EXPORTER_OTLP_ENDPOINT');
+                        expect(providerOrdering).toContain('POST-OTEL_EXPORTER_OTLP_HEADERS');
+                        expect(providerOrdering.slice(-2)).toEqual(['read-bearer-digest', 'home-link-cas']);
+                    }
+                    expect(JSON.stringify(writes)).not.toContain(collectorBearer);
+                    expect(JSON.stringify(result)).not.toContain(collectorBearer);
                     return;
                 }
                 if (workerDestinationOff || vercelTelemetryOff) {

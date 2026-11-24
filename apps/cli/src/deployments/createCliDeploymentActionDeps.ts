@@ -56,7 +56,10 @@ export type PreparedDeploymentBindingStorageV1 = Omit<DeploymentBindingsSetStora
   grants: readonly MachineSecretGrantV1[];
   providerVariables?: Extract<import('@happier-dev/protocol').DeploymentBindingsSetResultV1, { ok: true }>['providerVariables'];
   /** Daemon-only effects that require the acknowledged Link CAS. Never transported to Home. */
-  completeProviderVariables?: () => Promise<NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>>;
+  completeProviderVariables?: () => Promise<Readonly<{
+    providerVariables: NonNullable<PreparedDeploymentBindingStorageV1['providerVariables']>;
+    telemetrySyncAcknowledgement?: DeploymentBindingsSetStorageInputV1['telemetrySyncAcknowledgement'];
+  }>>;
 }>;
 export type DeploymentBindingPreparationRequestV1 = Readonly<{
   input: DeploymentBindingsSetInputV1; context: ActionExecutorContext;
@@ -221,6 +224,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     let preparedUpdateArtifact: typeof preparedBindingArtifact;
     let providerVariables: PreparedDeploymentBindingStorageV1['providerVariables'];
     let completeProviderVariables: PreparedDeploymentBindingStorageV1['completeProviderVariables'];
+    let bindingsBody: DeploymentBindingsSetStorageInputV1 | undefined;
     let bindingsPersisted = false;
     const withProviderEffect = (result: ActionExecuteFailure): ActionExecuteFailure => providerVariables
       ? { ...result, effectAttempted: true, details: { providerVariables: normalizeProviderVariables(providerVariables, bindingsPersisted) } } : result;
@@ -372,7 +376,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         const { providerVariables: observed, completeProviderVariables: complete, ...storage } = prepared;
         providerVariables = observed;
         completeProviderVariables = complete;
-        body = homeId ? { ...storage, serverId: homeId } : storage;
+        bindingsBody = homeId ? { ...storage, serverId: homeId } : storage;
+        body = bindingsBody;
         const changed = await params.admitAccount(input.serverId, context);
         if (changed) return withProviderEffect(changed);
       }
@@ -414,11 +419,36 @@ export function createCliDeploymentActionDeps(params: Readonly<{
         || !preparedBindingArtifact) return parsed.data;
       bindingsPersisted = true;
       if (completeProviderVariables) {
-        try {
+        context.signal?.throwIfAborted();
+        const completed = await completeProviderVariables().catch(error => ({
+          failure: normalizeActionExecutorThrownError(error, 'deployment.provider.variables.sync'),
+        }));
+        if ('failure' in completed) return withProviderEffect(completed.failure);
+        providerVariables = completed.providerVariables;
+        if (completed.telemetrySyncAcknowledgement) {
+          const candidate = bindingsBody?.targetLinkContent;
+          if (!bindingsBody || !candidate || !('revision' in parsed.data))
+            return withProviderEffect(failure('deployment_content_unavailable'));
+          // The activation spends the same admission and exactly the candidates just accepted by Home.
+          const activationBody: DeploymentBindingsSetStorageInputV1 = {
+            serverId: bindingsBody.serverId, environmentId: bindingsBody.environmentId, expectedRevision: parsed.data.revision,
+            ...preparedBindingArtifact, referencedSavedSecretRevisions: bindingsBody.referencedSavedSecretRevisions,
+            grants: [], targetLinkContent: { ...candidate, expectedTargetLinkRevision: candidate.expectedTargetLinkRevision + 1 },
+            telemetrySyncAcknowledgement: completed.telemetrySyncAcknowledgement,
+          };
+          const activationHeaders = await params.resolveRequestHeaders(context, authorizationActionId,
+            { method, path, body: activationBody });
+          if (!activationHeaders) return withProviderEffect(deploymentAuthorizationFailure('home_request_headers_refused'));
           context.signal?.throwIfAborted();
-          providerVariables = await completeProviderVariables();
-        } catch (error) {
-          return withProviderEffect(normalizeActionExecutorThrownError(error, 'deployment.provider.variables.sync'));
+          const acknowledged = await axios.request<unknown>({ url: `${params.serverHttpBaseUrl}${path}`,
+            method, headers: activationHeaders, data: activationBody, signal: context.signal,
+            validateStatus: () => true }).catch(homeTransportFailure);
+          const settled = DeploymentActionOutputSchemasV1['deployments.bindings.set'].safeParse(acknowledged.data);
+          if (!settled.success) return withProviderEffect(acknowledged.status === 401 || acknowledged.status === 403
+            ? projectUnsignedHomeAuthorizationHttpFailure(acknowledged.status) : failure('outcome_unknown'));
+          if (!settled.data.ok) return withProviderEffect(failure(settled.data.error));
+          if (settled.data.environmentId !== bindingsBody.environmentId || settled.data.revision !== parsed.data.revision)
+            return withProviderEffect(failure('outcome_unknown'));
         }
       }
       return { ...parsed.data, preparedArtifact: preparedBindingArtifact,
