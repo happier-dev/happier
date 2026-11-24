@@ -165,7 +165,9 @@ include `machineId` in the input with the Machine you selected. Importing a logi
 from a Machine does not by itself require that Machine for later tests.
 
 Muse subscription accounts with an inference key use the models endpoint for
-this check. For previously delivered access-only Muse logins, the connection
+this check. If an unsupported refresh marked the connection as needing sign-in,
+a successful **Test connection** on the Machine clears that status. For
+previously delivered access-only Muse logins, the connection
 test reports unsupported with a reason. Testing never acquires another
 credential to enable the check.
 

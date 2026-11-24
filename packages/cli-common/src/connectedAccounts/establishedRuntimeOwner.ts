@@ -1065,6 +1065,20 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           },
           ...(input.signal ? { signal: input.signal } : {}),
         }), input.signal));
+        // A successful explicit test can clear the retained Muse unsupported-refresh marker
+        // for the tested credential revision.
+        if (input.operation.kind === 'testConnection' && params.publishCredentialHealth
+          && observedCredentialHealth?.status === 'needs_reauth'
+          && observedCredentialHealth.lastRefreshFailureKind === 'unknown'
+          && observedCredentialHealth.providerErrorCode === 'connected_account_refresh_unsupported'
+          && typeof result === 'object' && result !== null && 'status' in result && result.status === 'ok') {
+          assertNotAborted(input.signal);
+          await params.publishCredentialHealth({ patch: {
+            ref: input.account, expectedCredentialRevision,
+            expectedConfigurationRevision: initial.credential.configurationRevision,
+            health: { v: 1, status: 'connected', reconnectRequired: false },
+          }, signal: input.signal });
+        }
         return Object.freeze({
           result,
           basis: Object.freeze({

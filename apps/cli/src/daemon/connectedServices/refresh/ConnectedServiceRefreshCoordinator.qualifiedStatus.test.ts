@@ -54,6 +54,7 @@ afterEach(async () => {
 
 async function createHarness(input: Readonly<{
   github?: boolean;
+  muse?: boolean;
   accountMode?: 'plain' | 'e2ee';
   credentialSecretRef?: string;
   clock?: () => number;
@@ -72,8 +73,9 @@ async function createHarness(input: Readonly<{
   listedProfiles?: readonly QualifiedConnectedAccountProfileV4[];
   isAccountRuntimeCurrent?: () => Promise<boolean>;
 }>) {
-  const service = input.github ? { pluginId: 'happier.scm.forge.github', localId: 'github-account' } : openAiService;
-  const authenticationModeId = input.github ? 'fine-grained-pat' : 'api-key';
+  const service = input.muse ? { pluginId: 'happier.agent.muse', localId: 'muse-account' }
+    : input.github ? { pluginId: 'happier.scm.forge.github', localId: 'github-account' } : openAiService;
+  const authenticationModeId = input.muse ? 'device' : input.github ? 'fine-grained-pat' : 'api-key';
   const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-qualified-status-'));
   createdDirectories.push(happyHomeDir);
   const admitted = await createAdmittedPluginRuntimeFixture({
@@ -97,7 +99,10 @@ async function createHarness(input: Readonly<{
     accountMode: 'plain',
     payload: {
       v: 1,
-      values: { token: 'sk-qualified-current' },
+      values: input.muse ? {
+        credentialMode: 'native', nativeMechanism: '"oauth"', nativeApiBaseUrl: 'https://api.meta.ai/v1',
+        accountToken: 'fixture-muse-account-token', inferenceKey: 'fixture-muse-inference-key',
+      } : { token: 'sk-qualified-current' },
     },
     randomBytes: (length) => new Uint8Array(length),
   });
@@ -143,6 +148,7 @@ async function createHarness(input: Readonly<{
       getAccountEncryptionMode: vi.fn(async () => input.accountMode ?? 'plain'),
       readCredential: readQualifiedCredential,
       readConfiguration: vi.fn(async () => null),
+      mutateCredentialHealth: input.muse ? async params => mutateCredentialHealth(params) : undefined,
       configuration: {
         read: vi.fn(async () => null),
         secrets: {
@@ -239,11 +245,13 @@ async function createHarness(input: Readonly<{
   return {
     api,
     coordinator,
+    establishedRuntimeOwner,
     createCoordinator,
     mutateCredentialHealth,
     readQualifiedCredential,
     listScheduledAccounts,
     persistedMetadata: () => persistedMetadata,
+    persistedHealth: () => persistedHealth,
     writtenCredential: () => writtenCredential,
     setPersistedHealth(health: ConnectedServiceCredentialHealthV1) {
       persistedHealth = health;
@@ -252,6 +260,27 @@ async function createHarness(input: Readonly<{
 }
 
 describe('ConnectedServiceRefreshCoordinator qualified status integration', () => {
+  it.each([
+    { httpStatus: 200, providerErrorCode: 'connected_account_refresh_unsupported', result: 'ok', healthStatus: 'connected' },
+    { httpStatus: 401, providerErrorCode: 'connected_account_refresh_unsupported', result: 'needsReauth', healthStatus: 'needs_reauth' },
+    { httpStatus: 200, providerErrorCode: 'invalid_grant', result: 'ok', healthStatus: 'needs_reauth' },
+  ] as const)('settles stored Muse health after an explicit connection test ($httpStatus, $providerErrorCode)', async scenario => {
+    const fetch = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response('{}', { status: scenario.httpStatus }));
+    vi.stubGlobal('fetch', fetch);
+    const account = { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'work' };
+    const health: ConnectedServiceCredentialHealthV1 = { v: 1, status: 'needs_reauth', reconnectRequired: true,
+      lastRefreshFailureKind: scenario.providerErrorCode === 'invalid_grant' ? 'invalid_grant' : 'unknown',
+      providerErrorCode: scenario.providerErrorCode };
+    const harness = await createHarness({ muse: true, health });
+    await expect(harness.establishedRuntimeOwner.invoke({ account, operation: { kind: 'testConnection' } }))
+      .resolves.toMatchObject({ status: scenario.result });
+    expect(fetch.mock.calls.map(([url, init]) => [String(url), init?.method])).toEqual([['https://api.meta.ai/v1/models', 'GET']]);
+    expect(harness.persistedHealth()).toMatchObject({ status: scenario.healthStatus,
+      reconnectRequired: scenario.healthStatus === 'needs_reauth' });
+    expect(harness.mutateCredentialHealth).toHaveBeenCalledTimes(scenario.healthStatus === 'connected' ? 1 : 0);
+    expect(harness.writtenCredential()).toBeUndefined();
+  });
+
   it('backfills identity without inlining an E2EE Saved Secret credential', async () => {
     let revision = credentialRevision;
     const secretRef = 'happier:shared-secret:v1:github-identity-test';

@@ -50,7 +50,9 @@ Testing saved credentials uses the same placement owner with a connection-test
 operation: a native-import requirement applies to acquiring a login, while an
 explicit browser reachability restriction still routes the test to a Machine.
 Muse subscriptions with an inference key use the existing authenticated models
-GET. MSP usage/read returns cached observations; usage/refresh acquires a key,
+GET. A successful test on the Machine clears a stored Muse reconnect status
+caused by unsupported refresh, using the tested credential and configuration
+revisions. MSP usage/read returns cached observations and usage/refresh acquires a key,
 so neither is substituted for that explicit no-usage test. Previously delivered
 access-only Muse snapshots have no characterized read-only account-token probe;
 their remote connection test returns unsupported. New Muse Team shares use the
