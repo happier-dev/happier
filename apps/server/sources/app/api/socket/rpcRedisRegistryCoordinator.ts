@@ -7,22 +7,20 @@ export type RpcRedisRegistryConfig =
 
 const DEL_IF_SOCKET_ID_SCRIPT =
     "if redis.call('HGET', KEYS[1], 'socketId') == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
-// Writes this socket's mapping for a method and returns when it registered, on the Redis clock in
-// microseconds, so sockets on different instances can tell which registration is newer.
+// Writes this socket's mapping for a method with its registration time (ARGV[6], the Redis clock
+// read just before, so sockets on different instances can tell which registration is newer).
 // registeredBy names the socket the time belongs to: an older server's plain HSET can hand the
 // mapping to another socket and leave this time behind. With ARGV[5] = '1' (a retry after a
-// registration Redis rejected) it writes only if the mapping is missing or already this socket's,
-// and returns nil when another socket owns it.
+// registration that never reached Redis) it writes only if the mapping is missing or already this
+// socket's, and returns nil when another socket owns it.
 const REGISTER_SCRIPT = [
     "if ARGV[5] == '1' then",
     "local owner = redis.call('HGET', KEYS[1], 'socketId')",
     "if owner and owner ~= ARGV[2] then return false end",
     "end",
-    "local t = redis.call('TIME')",
-    "local at = t[1] .. string.format('%06d', t[2])",
-    "redis.call('HSET', KEYS[1], 'instanceId', ARGV[1], 'socketId', ARGV[2], 'updatedAt', ARGV[3], 'registeredAt', at, 'registeredBy', ARGV[2])",
+    "redis.call('HSET', KEYS[1], 'instanceId', ARGV[1], 'socketId', ARGV[2], 'updatedAt', ARGV[3], 'registeredAt', ARGV[6], 'registeredBy', ARGV[2])",
     "redis.call('EXPIRE', KEYS[1], ARGV[4])",
-    "return at",
+    "return 1",
 ].join(" ");
 // Refreshes this socket's mapping, and restores it when it is missing: a forward that fails or
 // times out deletes the mapping (rpcHandler), and so does expiry after missed refreshes, while the
@@ -61,7 +59,8 @@ export function createRpcRedisRegistryCoordinator(params: {
     const redisRegistryTtlSeconds = config.enabled ? (config.ttlSeconds ?? 120) : 0;
     const redisRegistryInstanceId = config.enabled ? config.instanceId : null;
     let refreshTimer: NodeJS.Timeout | null = null;
-    // When this socket registered each method it owns (REGISTER_SCRIPT's Redis-clock value).
+    // When this socket registered each method it owns, on the Redis clock. Set before the write, so
+    // it matches what Redis committed even when the write's reply is lost.
     const registeredAtByMethod = new Map<string, string>();
     // Registrations still waiting on Redis, per method. A refresh neither evaluates nor drops a
     // method while one is pending: its outcome would judge the previous registration.
@@ -84,8 +83,8 @@ export function createRpcRedisRegistryCoordinator(params: {
                 const registeredAt = registeredAtByMethod.get(method);
                 return registeredAt ? [{ method, registeredAt }] : [];
             });
-            // An owned method with no registration time had its registration rejected by Redis (the
-            // write may still have landed). Register it again, without taking another socket's route.
+            // An owned method with no registration time never reached Redis (its clock read failed).
+            // Register it again, without taking another socket's route.
             const retries = owned.filter((method) => !registeredAtByMethod.has(method));
             const retried = Promise.all(
                 retries.map((method) =>
@@ -180,18 +179,31 @@ export function createRpcRedisRegistryCoordinator(params: {
 
         pendingRegistrations.set(method, (pendingRegistrations.get(method) ?? 0) + 1);
         try {
-            const registeredAt = await redis.eval(
-                REGISTER_SCRIPT,
-                1,
-                key,
-                redisRegistryInstanceId!,
-                socketId,
-                now,
-                redisRegistryTtlSeconds.toString(),
-                options.keepOtherOwner ? "1" : "0",
-            );
-            if (registeredAt === null) return false;
-            registeredAtByMethod.set(method, String(registeredAt));
+            const [seconds, micros] = await redis.time();
+            const registeredAt = `${seconds}${String(micros).padStart(6, "0")}`;
+            registeredAtByMethod.set(method, registeredAt);
+            let result: unknown;
+            try {
+                result = await redis.eval(
+                    REGISTER_SCRIPT,
+                    1,
+                    key,
+                    redisRegistryInstanceId!,
+                    socketId,
+                    now,
+                    redisRegistryTtlSeconds.toString(),
+                    options.keepOtherOwner ? "1" : "0",
+                    registeredAt,
+                );
+            } catch (error) {
+                // A failed retry stays a retry: nothing it may have written is safe to compare with.
+                if (options.keepOtherOwner) registeredAtByMethod.delete(method);
+                throw error;
+            }
+            if (result === null) {
+                registeredAtByMethod.delete(method);
+                return false;
+            }
             return true;
         } finally {
             const remaining = (pendingRegistrations.get(method) ?? 1) - 1;
