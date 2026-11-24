@@ -4840,6 +4840,25 @@ export type DeploymentsActionInputById = {
                         path: string;
                         content: string;
                     }[];
+                } | {
+                    workspaceId: string;
+                    kind: 'folder';
+                    manifestFingerprint: string;
+                    fileCount: number;
+                    totalBytes: number;
+                    excludedPaths: string[];
+                    includeEnvFiles?: true | undefined;
+                    compose?: undefined | {
+                        profiles: string[];
+                        services: string[];
+                        path: string;
+                        primaryService?: string | undefined;
+                    };
+                    unsupportedFilePaths?: string[] | undefined;
+                    exclusionReasons?: undefined | {
+                        path: string;
+                        reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                    }[];
                 };
                 requestKey: string;
                 targetLinkId: string;
@@ -4886,6 +4905,25 @@ export type DeploymentsActionInputById = {
             publicFiles?: undefined | {
                 path: string;
                 content: string;
+            }[];
+        } | {
+            workspaceId: string;
+            kind: 'folder';
+            manifestFingerprint: string;
+            fileCount: number;
+            totalBytes: number;
+            excludedPaths: string[];
+            includeEnvFiles?: true | undefined;
+            compose?: undefined | {
+                profiles: string[];
+                services: string[];
+                path: string;
+                primaryService?: string | undefined;
+            };
+            unsupportedFilePaths?: string[] | undefined;
+            exclusionReasons?: undefined | {
+                path: string;
+                reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
             }[];
         };
         sourceMethod?: 'gitIntegration' | 'upload' | undefined;
@@ -10953,8 +10991,8 @@ export type DeploymentsActionResultById = {
         } | {
             serverId: string;
             purpose: 'preview' | 'standard';
-            protection: 'nonProduction' | 'production';
             requestKey: string;
+            protection: 'nonProduction' | 'production';
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
@@ -11068,6 +11106,16 @@ export type DeploymentsActionResultById = {
                     path: string;
                     content: string;
                 }[];
+            } | {
+                workspaceId: string;
+                from: 'folder';
+                includeEnvFiles?: true | undefined;
+                compose?: undefined | {
+                    profiles: string[];
+                    services: string[];
+                    path: string;
+                    primaryService?: string | undefined;
+                };
             };
             copyFrom?: undefined | {
                 environmentId: string;
@@ -11330,9 +11378,9 @@ export type DeploymentsActionResultById = {
                 valueFormat?: 'otelAuthorizationHeader' | undefined;
             }[];
             generatedSecretAudience?: undefined | {
+                groupGrants?: string[] | undefined;
                 accountGrants?: string[] | undefined;
                 teamGrants?: string[] | undefined;
-                groupGrants?: string[] | undefined;
             };
             domainBindings?: undefined | {
                 templateDomainId: string;
@@ -11653,6 +11701,18 @@ export type DeploymentsActionResultById = {
                 omitted: string[];
                 included: string[];
             };
+            folder?: undefined | {
+                kind: 'folder';
+                manifestFingerprint: string;
+                fileCount: number;
+                totalBytes: number;
+                excludedPaths: string[];
+                unsupportedFilePaths?: string[] | undefined;
+                exclusionReasons?: undefined | {
+                    path: string;
+                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                }[];
+            };
         };
     } | {
         ok: false;
@@ -11670,6 +11730,9 @@ export type DeploymentsActionResultById = {
             field: string;
             rule: 'constraint' | 'invalid_type' | 'invalid_value' | 'path_mismatch' | 'unrecognized_keys';
         };
+    } | {
+        ok: false;
+        error: 'deployment_preview_not_enrolled';
     } | {
         ok: false;
         error: 'machine_unavailable';
@@ -14643,15 +14706,15 @@ export type DeploymentsActionResultById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -14679,6 +14742,24 @@ export type DeploymentsActionResultById = {
             reason: string;
             requiredGrantCount: number;
             missingGrantCount: number;
+        };
+        runtimeReinstall?: undefined | {
+            reason: 'machine_installation_replaced';
+            machines: {
+                machineId: string;
+                retiredInstallationId: string;
+                currentInstallationId: string;
+            }[];
+            available: boolean;
+            actionIds: [
+                'deployments.targets.link',
+                'deployments.bindings.set',
+                'deployments.deploy'
+            ];
+            savedSecrets: {
+                reseal: string[];
+                reenter: string[];
+            };
         };
         controller?: undefined | {
             machineId: string;
@@ -14715,6 +14796,25 @@ export type DeploymentsActionResultById = {
                     publicFiles?: undefined | {
                         path: string;
                         content: string;
+                    }[];
+                } | {
+                    workspaceId: string;
+                    kind: 'folder';
+                    manifestFingerprint: string;
+                    fileCount: number;
+                    totalBytes: number;
+                    excludedPaths: string[];
+                    includeEnvFiles?: true | undefined;
+                    compose?: undefined | {
+                        profiles: string[];
+                        services: string[];
+                        path: string;
+                        primaryService?: string | undefined;
+                    };
+                    unsupportedFilePaths?: string[] | undefined;
+                    exclusionReasons?: undefined | {
+                        path: string;
+                        reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
                     }[];
                 };
                 requestKey: string;
@@ -14892,9 +14992,12 @@ export type DeploymentsActionResultById = {
                 composeDigest: string;
             };
             source?: undefined | {
+                kind: 'folder';
+                manifestFingerprint: string;
+            } | {
                 kind: 'repository';
-                projectSourceId: string;
                 sourceRevision: number;
+                projectSourceId: string;
                 sha: string;
                 builtSha?: string | undefined;
             } | {
@@ -14907,7 +15010,6 @@ export type DeploymentsActionResultById = {
                 phase: 'activate' | 'admission' | 'build' | 'cancel' | 'cleanup' | 'link' | 'observe' | 'restore' | 'send' | 'source' | 'teardown';
                 validation?: undefined | {
                     source: string;
-                    httpStatus: number;
                     issues: {
                         code: string;
                         path: (number | string)[];
@@ -14925,6 +15027,7 @@ export type DeploymentsActionResultById = {
                             maximumSignedDistance: 0;
                         };
                     }[];
+                    httpStatus?: number | undefined;
                 };
                 sourceAdmission?: undefined | {
                     phase: 'deployment_source_admission';
@@ -14935,6 +15038,16 @@ export type DeploymentsActionResultById = {
                 requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                 remedy?: string | undefined;
                 failureCause?: ActionFailureCauseV1 | undefined;
+                nativeCompose?: undefined | {
+                    subcommand: string;
+                    exitStatus: number;
+                    stderrTail?: string | undefined;
+                };
+                nativeActivation?: undefined | {
+                    service: string;
+                    exitStatus: number;
+                    missingVariable?: string | undefined;
+                };
                 effectAttempted?: boolean | undefined;
             };
         };
@@ -16048,6 +16161,16 @@ export type DeploymentsActionResultById = {
             cancelRequestedAtMs?: number | undefined;
             startedAtMs?: number | undefined;
             settledAtMs?: number | undefined;
+            nativeCompose?: undefined | {
+                subcommand: string;
+                exitStatus: number;
+                stderrTail?: string | undefined;
+            };
+            nativeActivation?: undefined | {
+                service: string;
+                exitStatus: number;
+                missingVariable?: string | undefined;
+            };
         })[];
         nextCursor: null | string;
     };

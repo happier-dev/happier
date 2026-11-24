@@ -406,6 +406,11 @@ export type ProjectExecutionActionResultById = {
                     remedy: string;
                     requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
                 } | {
+                    kind: 'deploymentImageResolutionFailure';
+                    service: string;
+                    reason: 'deployment_image_not_found' | 'deployment_image_pull_denied' | 'deployment_image_rate_limited' | 'deployment_network_unavailable' | 'native_compose_command_failed';
+                    reference?: string | undefined;
+                } | {
                     kind: 'finiteCommand';
                     phase: string;
                     exitCode: null | number;
@@ -1994,6 +1999,16 @@ export type ProjectExecutionActionResultById = {
                     ok: true;
                     environmentId: string;
                     revision: number;
+                    nativeCompose?: undefined | {
+                        subcommand: string;
+                        exitStatus: number;
+                        stderrTail?: string | undefined;
+                    };
+                    nativeActivation?: undefined | {
+                        service: string;
+                        exitStatus: number;
+                        missingVariable?: string | undefined;
+                    };
                     environmentRemoved?: true | undefined;
                     previewCleanup?: undefined | {
                         machines: string[];
@@ -2009,6 +2024,16 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
+                    nativeCompose?: undefined | {
+                        subcommand: string;
+                        exitStatus: number;
+                        stderrTail?: string | undefined;
+                    };
+                    nativeActivation?: undefined | {
+                        service: string;
+                        exitStatus: number;
+                        missingVariable?: string | undefined;
+                    };
                 } | {
                     requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
                     environmentId: string;
@@ -2069,8 +2094,19 @@ export type ProjectExecutionActionResultById = {
                         requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                         remedy?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
+                        nativeCompose?: undefined | {
+                            subcommand: string;
+                            exitStatus: number;
+                            stderrTail?: string | undefined;
+                        };
+                        nativeActivation?: undefined | {
+                            service: string;
+                            exitStatus: number;
+                            missingVariable?: string | undefined;
+                        };
                         effectAttempted?: boolean | undefined;
                     };
+                    logsAvailable?: boolean | undefined;
                     cleanupFailure?: undefined | {
                         phase: 'cleanup';
                         code: string;
@@ -2104,6 +2140,16 @@ export type ProjectExecutionActionResultById = {
                         requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                         remedy?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
+                        nativeCompose?: undefined | {
+                            subcommand: string;
+                            exitStatus: number;
+                            stderrTail?: string | undefined;
+                        };
+                        nativeActivation?: undefined | {
+                            service: string;
+                            exitStatus: number;
+                            missingVariable?: string | undefined;
+                        };
                         effectAttempted?: boolean | undefined;
                     };
                 } | {
@@ -3226,6 +3272,11 @@ export type ProjectExecutionActionResultById = {
                     remedy: string;
                     requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
                 } | {
+                    kind: 'deploymentImageResolutionFailure';
+                    service: string;
+                    reason: 'deployment_image_not_found' | 'deployment_image_pull_denied' | 'deployment_image_rate_limited' | 'deployment_network_unavailable' | 'native_compose_command_failed';
+                    reference?: string | undefined;
+                } | {
                     kind: 'finiteCommand';
                     phase: string;
                     exitCode: null | number;
@@ -4814,6 +4865,16 @@ export type ProjectExecutionActionResultById = {
                     ok: true;
                     environmentId: string;
                     revision: number;
+                    nativeCompose?: undefined | {
+                        subcommand: string;
+                        exitStatus: number;
+                        stderrTail?: string | undefined;
+                    };
+                    nativeActivation?: undefined | {
+                        service: string;
+                        exitStatus: number;
+                        missingVariable?: string | undefined;
+                    };
                     environmentRemoved?: true | undefined;
                     previewCleanup?: undefined | {
                         machines: string[];
@@ -4829,6 +4890,16 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
+                    nativeCompose?: undefined | {
+                        subcommand: string;
+                        exitStatus: number;
+                        stderrTail?: string | undefined;
+                    };
+                    nativeActivation?: undefined | {
+                        service: string;
+                        exitStatus: number;
+                        missingVariable?: string | undefined;
+                    };
                 } | {
                     requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
                     environmentId: string;
@@ -4889,8 +4960,19 @@ export type ProjectExecutionActionResultById = {
                         requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                         remedy?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
+                        nativeCompose?: undefined | {
+                            subcommand: string;
+                            exitStatus: number;
+                            stderrTail?: string | undefined;
+                        };
+                        nativeActivation?: undefined | {
+                            service: string;
+                            exitStatus: number;
+                            missingVariable?: string | undefined;
+                        };
                         effectAttempted?: boolean | undefined;
                     };
+                    logsAvailable?: boolean | undefined;
                     cleanupFailure?: undefined | {
                         phase: 'cleanup';
                         code: string;
@@ -4924,6 +5006,16 @@ export type ProjectExecutionActionResultById = {
                         requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                         remedy?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
+                        nativeCompose?: undefined | {
+                            subcommand: string;
+                            exitStatus: number;
+                            stderrTail?: string | undefined;
+                        };
+                        nativeActivation?: undefined | {
+                            service: string;
+                            exitStatus: number;
+                            missingVariable?: string | undefined;
+                        };
                         effectAttempted?: boolean | undefined;
                     };
                 } | {
@@ -6046,6 +6138,11 @@ export type ProjectExecutionActionResultById = {
                     remedy: string;
                     requiredFact?: 'caddyAdminConfig' | 'caddyAdminSocket' | 'caddyContainer' | 'caddyListeners' | 'caddyMountedSeed' | 'caddyPublishedBindings' | 'caddyRoutedNetworks' | undefined;
                 } | {
+                    kind: 'deploymentImageResolutionFailure';
+                    service: string;
+                    reason: 'deployment_image_not_found' | 'deployment_image_pull_denied' | 'deployment_image_rate_limited' | 'deployment_network_unavailable' | 'native_compose_command_failed';
+                    reference?: string | undefined;
+                } | {
                     kind: 'finiteCommand';
                     phase: string;
                     exitCode: null | number;
@@ -7634,6 +7731,16 @@ export type ProjectExecutionActionResultById = {
                     ok: true;
                     environmentId: string;
                     revision: number;
+                    nativeCompose?: undefined | {
+                        subcommand: string;
+                        exitStatus: number;
+                        stderrTail?: string | undefined;
+                    };
+                    nativeActivation?: undefined | {
+                        service: string;
+                        exitStatus: number;
+                        missingVariable?: string | undefined;
+                    };
                     environmentRemoved?: true | undefined;
                     previewCleanup?: undefined | {
                         machines: string[];
@@ -7649,6 +7756,16 @@ export type ProjectExecutionActionResultById = {
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
+                    nativeCompose?: undefined | {
+                        subcommand: string;
+                        exitStatus: number;
+                        stderrTail?: string | undefined;
+                    };
+                    nativeActivation?: undefined | {
+                        service: string;
+                        exitStatus: number;
+                        missingVariable?: string | undefined;
+                    };
                 } | {
                     requiredFact: 'managedServiceDocker' | 'nativeContainerIdentity' | 'nativeServiceReplicas' | 'routeUpstreams';
                     environmentId: string;
@@ -7709,8 +7826,19 @@ export type ProjectExecutionActionResultById = {
                         requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                         remedy?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
+                        nativeCompose?: undefined | {
+                            subcommand: string;
+                            exitStatus: number;
+                            stderrTail?: string | undefined;
+                        };
+                        nativeActivation?: undefined | {
+                            service: string;
+                            exitStatus: number;
+                            missingVariable?: string | undefined;
+                        };
                         effectAttempted?: boolean | undefined;
                     };
+                    logsAvailable?: boolean | undefined;
                     cleanupFailure?: undefined | {
                         phase: 'cleanup';
                         code: string;
@@ -7744,6 +7872,16 @@ export type ProjectExecutionActionResultById = {
                         requiredFact?: 'deploymentActionResult' | 'unrestricted_workspace_requester' | 'verified_root_requester' | undefined;
                         remedy?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
+                        nativeCompose?: undefined | {
+                            subcommand: string;
+                            exitStatus: number;
+                            stderrTail?: string | undefined;
+                        };
+                        nativeActivation?: undefined | {
+                            service: string;
+                            exitStatus: number;
+                            missingVariable?: string | undefined;
+                        };
                         effectAttempted?: boolean | undefined;
                     };
                 } | {
