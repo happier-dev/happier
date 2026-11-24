@@ -1,3 +1,5 @@
+import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { ArtifactAccessGrantsListResponseV1Schema, type ArtifactAccessGrantsListResponseV1 } from '../../artifacts/artifactAccessV1.js';
 import { readArtifactSharedAudienceV1 } from '../../artifacts/artifactSharingV1.js';
 import { isStoredContentPublicShareActiveV1, StoredContentPublicSharesListResponseV1Schema, type StoredContentPublicSharesListResponseV1 } from '../../sharing/storedContentPublicShareV1.js';
@@ -49,6 +51,7 @@ export type MemoryLibraryActionPortV1 = Readonly<{
 }>;
 export type MemoryWriteAdmissionV1 = Readonly<{
   safety: 'safe' | 'danger'; target: MemoryDocMutationTargetV1 | null;
+  audienceDigest: string;
   read?: MemoryDocMutationReadV1;
   createScope?: 'bot' | 'account' | 'project'; attachAccountMemory?: MemoryAccountContextV1['attachAccountMemory'];
   attachMemory?: MemoryScopeContextV1['attachMemory'];
@@ -58,27 +61,39 @@ export type MemoryWriteAdmissionV1 = Readonly<{
 export function bindMemoryWriteApprovalInputV1(actionId: string, input: unknown, admission: MemoryWriteAdmissionV1): unknown {
   if (actionId !== 'memory.remember' && actionId !== 'memory.decision.save') return input;
   const request = (actionId === 'memory.decision.save' ? MemoryDecisionSaveInputV1Schema : MemoryRememberInputV1Schema).parse(input);
-  return 'ref' in request ? request : { ...request, reviewedTarget: admission.target };
+  return { ...request, reviewedAudienceDigest: admission.audienceDigest,
+    ...('ref' in request ? {} : { reviewedTarget: admission.target }) };
 }
 function refuse(code: string): never { throw new MemoryDocFailureV1(code); }
 export function assertMemoryHomeV1(port: MemoryLibraryActionPortV1, serverId?: string | null): void {
   if (serverId != null && !(port.isSameServerId ? port.isSameServerId(serverId) : serverId === port.serverId)) refuse('server_target_mismatch');
 }
-async function readSafety(port: MemoryLibraryActionPortV1, artifactId: string, context: ActionExecutorContext): Promise<'safe' | 'danger'> {
+function digestAudience(facts: unknown): string {
+  return computeCanonicalDomainSeparatedDigest('memory.write-audience.v1', [createCanonicalJsonSigningInput(facts)]);
+}
+async function readAudience(port: MemoryLibraryActionPortV1, artifactId: string, context: ActionExecutorContext) {
   context.signal?.throwIfAborted();
   const exposure = await port.readExposure(artifactId, context);
   const grants = ArtifactAccessGrantsListResponseV1Schema.safeParse(exposure.grants);
   if (!grants.success || grants.data.artifactId !== artifactId) refuse('memory_exposure_unavailable');
   const publication = StoredContentPublicSharesListResponseV1Schema.safeParse(exposure.publicShares);
   const nowMs = (port.nowMs ?? Date.now)();
-  const publicAudience = !publication.success
+  const activePublicIds = !publication.success
     || publication.data.publicShares.some(row => row.subject.kind !== 'artifact' || row.subject.id !== artifactId)
-    ? 'unknown' : publication.data.publicShares.some(row => isStoredContentPublicShareActiveV1(row, nowMs)) ? 'retained' : 'none';
+    ? null : publication.data.publicShares.filter(row => isStoredContentPublicShareActiveV1(row, nowMs)).map(row => row.id).sort();
+  const publicAudience = activePublicIds === null ? 'unknown' : activePublicIds.length ? 'retained' : 'none';
   try {
-    return await readArtifactSharedAudienceV1({
+    const shared = await readArtifactSharedAudienceV1({
       current: { artifactId, header: {}, ownerAccountId: grants.data.ownerAccountId, access: grants.data.access, publicAudience },
       readGrants: async () => grants.data, signal: context.signal,
-    }) ? 'danger' : 'safe';
+    });
+    return {
+      shared,
+      ownerAccountId: grants.data.ownerAccountId,
+      access: grants.data.access,
+      grants: grants.data.grants.map(({ principal, accessLevel }) => createCanonicalJsonSigningInput({ principal, accessLevel })).sort(),
+      activePublicIds,
+    };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'content_unavailable') refuse('memory_exposure_unavailable');
     throw error;
@@ -95,7 +110,7 @@ async function findScopeMemory(port: MemoryLibraryActionPortV1, entries: readonl
   return docs.find((_, index) => headers[index]?.kind === 'memory_doc.v1');
 }
 
-export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1, actionId: string, input: unknown, context: ActionExecutorContext): Promise<MemoryWriteAdmissionV1> {
+export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1, actionId: string, input: unknown, context: ActionExecutorContext, approvalReplay = false): Promise<MemoryWriteAdmissionV1> {
   assertMemoryHomeV1(port, context.serverId);
   const store = port.storeForContext?.(context) ?? port.store;
   const decisionRequest = actionId === 'memory.decision.save' ? MemoryDecisionSaveInputV1Schema.parse(input) : null;
@@ -105,6 +120,12 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
   if (decisionRequest) assertMemoryHomeV1(port, decisionRequest.sourceMessageRef.kind === 'session'
     ? decisionRequest.sourceMessageRef.session.serverId : decisionRequest.sourceMessageRef.discussion.serverId);
   if ('duplicateChoice' in request && request.duplicateChoice && !('ref' in request) && request.reviewedTarget == null) refuse('approval_stale');
+  const bindAudience = (facts: unknown) => {
+    const digest = digestAudience(facts);
+    if (approvalReplay && (actionId === 'memory.decision.save' || actionId === 'memory.remember')
+      && (!('reviewedAudienceDigest' in request) || request.reviewedAudienceDigest !== digest)) refuse('approval_stale');
+    return digest;
+  };
   let target: MemoryDocMutationTargetV1;
   let currentRead: MemoryDocMutationReadV1 | undefined;
   let scopeSafety: 'safe' | 'danger' = 'safe';
@@ -117,7 +138,8 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
     const attached = await findScopeMemory(port, scope.entries, context);
     if (!attached) {
       if (request.reviewedTarget != null) refuse('approval_stale');
-      return { safety: scopeSafety, target: null, createScope: request.scope, attachMemory: scope.attachMemory };
+      return { safety: scopeSafety, target: null, audienceDigest: bindAudience({ scopeSafety }),
+        createScope: request.scope, attachMemory: scope.attachMemory };
     }
     if (attached.ref.kind !== 'doc') refuse('memory_doc_invalid');
     if (request.reviewedTarget !== undefined) {
@@ -147,7 +169,7 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
       selectedRef = selectMemoryTargetV1({ isBot: true, botRef: attached ? { ...attached.ref, kind: 'doc' } : null }).ref;
       if (!selectedRef) {
         if (request.reviewedTarget != null) refuse('approval_stale');
-        return { safety: 'safe', target: null, createScope: 'bot' };
+        return { safety: 'safe', target: null, audienceDigest: bindAudience({ scopeSafety: 'safe' }), createScope: 'bot' };
       }
     } else {
       if (!port.readInheritedContext || !port.readArtifactHeaders) refuse('memory_target_unavailable');
@@ -162,7 +184,8 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
           account: { status: 'ready', ref: accountEntry ? { ...accountEntry.ref, kind: 'doc' } : null } });
         if (!selection.ref) {
           if (request.reviewedTarget != null) refuse('approval_stale');
-          return { safety: 'safe', target: null, createScope: 'account', attachAccountMemory: account.attachAccountMemory };
+          return { safety: 'safe', target: null, audienceDigest: bindAudience({ scopeSafety: 'safe' }),
+            createScope: 'account', attachAccountMemory: account.attachAccountMemory };
         }
       }
       selectedRef = selection.ref;
@@ -184,13 +207,16 @@ export async function readMemoryWriteAdmissionV1(port: MemoryLibraryActionPortV1
   // The revision and candidates of a newly resolved target belong to the same admitted read.
   // Deferred replays acquire their own read; this invocation carries its admitted body to CAS.
   const read = currentRead ?? await readReviewedMemoryDocInLibrary({ store, request: target, signal: context.signal });
-  const safety = await readSafety(port, target.ref.artifactId, context);
+  const { shared, ...audience } = await readAudience(port, target.ref.artifactId, context);
+  if (approvalReplay && (actionId === 'memory.decision.save' || actionId === 'memory.remember')
+    && audience.activePublicIds === null) refuse('memory_exposure_unavailable');
+  const audienceDigest = bindAudience({ scopeSafety, ...audience });
   const restored = updateRequest && 'restore' in updateRequest ? readRestorableMemoryFactV1(read.body, updateRequest.factId) : undefined;
   const text = 'text' in request ? request.text : restored?.text;
   const duplicateReview = text !== undefined ? reviewMemoryFactWriteV1({ body: read.body, target, text,
     nowMs: (port.nowMs ?? Date.now)(), duplicateChoice: 'duplicateChoice' in request ? request.duplicateChoice : undefined,
     excludeFactId: 'text' in request && 'factId' in request && typeof request.factId === 'string' ? request.factId : undefined }) : null;
-  return { target, read, safety: scopeSafety === 'danger' ? 'danger' : safety, ...(duplicateReview ? { duplicateReview } : {}) };
+  return { target, read, audienceDigest, safety: scopeSafety === 'danger' || shared ? 'danger' : 'safe', ...(duplicateReview ? { duplicateReview } : {}) };
 }
 
 export async function executeMemoryWriteV1(args: Readonly<{

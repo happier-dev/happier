@@ -3030,8 +3030,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!deps.memoryLibrary) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
       try {
         const current = memoryAdmission && existingAdmission?.memoryAdmissionAtExecution
-          ? memoryAdmission : await readMemoryWriteAdmissionV1(deps.memoryLibrary, actionId, admittedInput, ctx);
-        if (memoryAdmission?.safety === 'safe' && current.safety === 'danger') {
+          ? memoryAdmission : await readMemoryWriteAdmissionV1(deps.memoryLibrary, actionId, admittedInput, ctx, options?.approvalReplay);
+        if (memoryAdmission && memoryAdmission.audienceDigest !== current.audienceDigest) {
           return { ok: false, errorCode: 'approval_stale', error: 'approval_stale' };
         }
         memoryAdmission = current;

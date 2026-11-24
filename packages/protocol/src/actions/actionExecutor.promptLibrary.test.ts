@@ -560,7 +560,13 @@ describe('createActionExecutor (prompt library actions)', () => {
     expect(getActionSpec('prompt_doc.create').inputSchema.safeParse({ title: 'Doc', markdown: 'Text', folderId: 'other',
       createFolder: { id: 'new', name: 'New', expectedRevision: 3 } }).success).toBe(false);
   });
-  it.each(['memory.remember', 'memory.decision.save'] as const)('keeps an agent %s proposal unchanged until the existing approval owner approves it', async actionId => {
+  it.each([
+    { actionId: 'memory.remember', change: null },
+    { actionId: 'memory.decision.save', change: null },
+    { actionId: 'memory.decision.save', change: 'remove' },
+    { actionId: 'memory.decision.save', change: 'replace' },
+  ] as const)('replays $actionId only while the reviewed audience remains current ($change)', async ({ actionId, change }) => {
+    let recipient: string | null = change ? 'reviewed-recipient' : null;
     let request: ApprovalRequest | null = null;
     let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
       header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, index: [], topics: [] }) };
@@ -578,7 +584,9 @@ describe('createActionExecutor (prompt library actions)', () => {
         store: { read: async () => stored, update: async input => {
           stored = { ...stored, body: input.body, revision: { headerVersion: 2, bodyVersion: 2 } };
         } },
-        readExposure: async () => ({ grants: { artifactId: 'memory', ownerAccountId: 'owner', access: 'owner', grants: [] },
+        readExposure: async () => ({ grants: { artifactId: 'memory', ownerAccountId: 'owner', access: 'owner',
+          grants: recipient ? [{ principal: { kind: 'account', accountId: recipient }, accessLevel: 'view',
+            createdByAccountId: 'owner', createdAt: 1, display: { name: null } }] : [] },
           publicShares: { publicShares: [] } }),
       },
     });
@@ -611,10 +619,16 @@ describe('createActionExecutor (prompt library actions)', () => {
     expect(stored).toBe(original);
     expect((await prepareWorker()).blocks.join('\n')).not.toContain('Use the canonical Context owner.');
     expect(request).toMatchObject({ status: 'open', actionId });
+    if (change) recipient = change === 'remove' ? null : 'replacement-recipient';
     const decided = await uiExecutor.execute('approval.request.decide', { artifactId: 'proposal', decision: 'approve' },
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
         defaultSessionId: 'lead' });
     const persistedApproval = (() : ApprovalRequest | null => request)();
+    if (change) {
+      expect(decided).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'approval_stale' } } });
+      expect(stored).toBe(original);
+      return;
+    }
     if (persistedApproval?.execution && !persistedApproval.execution.ok) {
       throw new Error(`Fixture approval execution failed: ${JSON.stringify(persistedApproval.execution)}`);
     }

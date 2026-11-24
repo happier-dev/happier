@@ -47,6 +47,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     } | {
         scope: 'account';
         text: string;
@@ -93,6 +94,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     } | {
         scope: 'project';
         projectRef: {
@@ -143,6 +145,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     } | {
         sessionRef: {
             serverId: string;
@@ -193,6 +196,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     };
     readonly "memory.remember": {
         ref: {
@@ -221,6 +225,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     } | {
         scope: 'account';
         text: string;
@@ -251,6 +256,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     } | {
         scope: 'project';
         projectRef: {
@@ -285,6 +291,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     } | {
         sessionRef: {
             serverId: string;
@@ -319,6 +326,7 @@ export type MemoryActionInputById = {
                 bodyVersion: number;
             };
         };
+        reviewedAudienceDigest?: string | undefined;
     };
     readonly "memory.update": {
         ref: {

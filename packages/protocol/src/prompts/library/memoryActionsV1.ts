@@ -33,14 +33,15 @@ const accountScope = lazyZodSchema(() => z.strictObject({ scope: z.literal('acco
 const projectScope = lazyZodSchema(() => z.strictObject({ scope: z.literal('project'), projectRef: QualifiedProjectKeyV1Schema }));
 export const MemoryScopeTargetV1Schema = lazyZodSchema(() => z.union([accountScope, projectScope]));
 export type MemoryScopeTargetV1 = z.infer<typeof MemoryScopeTargetV1Schema>;
+const reviewedAudienceDigest = () => z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/)));
 const memoryRememberInputVariants = () => ([
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(target, { text: text(), expiresAtMs: z.optional(until()), duplicateChoice })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(target, { text: text(), expiresAtMs: z.optional(until()), duplicateChoice, reviewedAudienceDigest: reviewedAudienceDigest() })),
   z.strictObject({ sessionRef: z.strictObject({ serverId: z.string().check(z.minLength(1)), sessionId: z.string().check(z.minLength(1)) }),
     expectedMetadataRevision: until(), text: text(), expiresAtMs: z.optional(until()), topic: topic(),
-    reviewedTarget, duplicateChoice,
+    reviewedTarget, duplicateChoice, reviewedAudienceDigest: reviewedAudienceDigest(),
   }),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(accountScope, { text: text(), expiresAtMs: z.optional(until()), topic: topic(), reviewedTarget, duplicateChoice })),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(projectScope, { text: text(), expiresAtMs: z.optional(until()), topic: topic(), reviewedTarget, duplicateChoice })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(accountScope, { text: text(), expiresAtMs: z.optional(until()), topic: topic(), reviewedTarget, duplicateChoice, reviewedAudienceDigest: reviewedAudienceDigest() })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(projectScope, { text: text(), expiresAtMs: z.optional(until()), topic: topic(), reviewedTarget, duplicateChoice, reviewedAudienceDigest: reviewedAudienceDigest() })),
 ] as const);
 export const MemoryRememberInputV1Schema = lazyZodSchema(() => z.union(memoryRememberInputVariants()));
 /** Same admitted targets and duplicate custody as remember; provenance is host output only. */
