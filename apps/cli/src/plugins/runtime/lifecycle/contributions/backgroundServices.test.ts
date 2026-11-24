@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { createDeploymentTelemetryHost } from '@/deployments/telemetry/collectorHost';
+import { createTargetActionInvocationRegistry } from '../../invocation/targetActionRegistry';
+import { createTargetActionHostBindingResolver } from '../../hostAccess/resolve';
+import { createManagedPluginSourceCustody } from './runtimeIdentity.testkit';
+import type { PluginRuntimeOccurrenceId } from '../../runtimeSlots';
 
 import type { ParsedPluginEventContributionV1 } from '@happier-dev/protocol';
 import type { PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
@@ -843,5 +851,150 @@ describe('background service runner host', () => {
         expect(restartedState).toEqual({ sessionId: 'session-1', cursor: 4 });
         await restartedHost.dispose();
         await restartedOwners.dispose();
+    });
+});
+
+
+describe('deployment telemetry collector Home materialization', () => {
+    const [pluginId, roleId] = DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1.split('/');
+    const localId = 'fixture-collector';
+    const collectorHome = 'collector-canonical-home';
+    const assignment = { environmentId: 'environment-a', tokenHash: 'a'.repeat(64) };
+
+    async function withCollector(run: (input: Readonly<{
+        activation: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>;
+        owners: ReturnType<typeof createProductionPluginInvocationServiceOwners>;
+        observed: Promise<Readonly<{ serverId: unknown; assignments: unknown }>>;
+    }>) => Promise<void>) {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-collector-home-'));
+        const http = createServer((request, response) => {
+            request.resume();
+            response.setHeader('connection', 'close');
+            if (request.method !== 'POST'
+                || request.url !== '/v1/deployments/machines/collector-machine/telemetry-assignments'
+                || request.headers.authorization !== 'Bearer collector-account-token') {
+                response.writeHead(401).end();
+                return;
+            }
+            response.writeHead(200, { 'content-type': 'application/json' })
+                .end(JSON.stringify({ ok: true, assignments: [assignment] }));
+        });
+        http.listen(0, '127.0.0.1');
+        await once(http, 'listening');
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('collector HTTP fixture has no address');
+        const telemetry = createDeploymentTelemetryHost({
+            serverBaseUrl: `http://127.0.0.1:${address.port}`,
+            token: 'collector-account-token', machineId: 'collector-machine',
+            createPublisherHeader: () => 'collector-installation-proof',
+            subscribeMachineChanges: () => () => {},
+            onRefreshError(error) { throw error; },
+        });
+        const owners = createProductionPluginInvocationServiceOwners({
+            loggerSink: { write() {} }, storagePaths: resolvePluginStorePaths({ happyHomeDir }),
+            deploymentTelemetry: telemetry,
+        });
+        const observed = Promise.withResolvers<Readonly<{ serverId: unknown; assignments: unknown }>>();
+        void observed.promise.catch(() => {});
+        let activation: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>> | undefined;
+        try {
+            const ingested = ingestCanonicalPluginManifest({
+                schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Collector fixture',
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, entrypoints: { daemon: './daemon.mjs' },
+                contributes: {
+                    backgroundServices: [{ id: localId, placement: 'daemon', activation: 'continuous' }],
+                    machineRoles: [{ id: roleId, title: 'Collector', description: 'Receives telemetry',
+                        backgroundServices: [localId] }],
+                },
+            }, { sourceProvenance: 'localSource', manifestAuthority: 'bundled_first_party' });
+            if (!ingested.ok) throw new Error(ingested.diagnostics.map(item => item.message).join('\n'));
+            const contributes = {
+                agents: [], actions: [], resources: [], catalogEntriesById: {},
+                agentDefinitionsById: new Map(), pluginDiagnosticsByPluginId: {},
+                activationTargets: [{
+                    provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
+                    manifestPath: join(happyHomeDir, 'happier.plugin.json'),
+                    daemonEntryPath: join(happyHomeDir, 'daemon.mjs'),
+                    sourceSpec: { kind: 'package', locator: '@happier-dev/plugins-telemetry',
+                        trustPolicy: 'bundled_trusted', installPolicy: 'copy' },
+                    activationEvents: [], manifest: ingested.manifest,
+                }],
+            } satisfies ResolvedContributionRegistry;
+            const materializationOptions = { readDeploymentTelemetryAssignmentHomeId: () => collectorHome };
+            activation = await activatePluginRuntimeRegistry({
+                ...materializationOptions, contributes, generation: 1, invocationServices: owners,
+                resolveActivationSource: () => ({
+                    kind: 'bundled', moduleId: `collector-fixture:${happyHomeDir}`,
+                    load: async () => ({
+                        activate(api: { backgroundServices: { register(id: string, runner: (context: BackgroundServiceContext) => Promise<void>): void } }) {
+                            api.backgroundServices.register(localId, async context => {
+                                try {
+                                    const service = context.services.deploymentTelemetry;
+                                    observed.resolve({ serverId: Reflect.get(service, 'serverId'), assignments: await service.readAssignments() });
+                                } catch (error) { observed.reject(error); throw error; }
+                            });
+                        },
+                    }),
+                }),
+            });
+            activation.startAdoptedBackgroundServices();
+            await run({ activation, owners, observed: observed.promise });
+        } finally {
+            await activation?.dispose();
+            await owners.dispose();
+            await new Promise<void>((resolve, reject) => {
+                http.close(error => error ? reject(error) : resolve());
+                http.closeAllConnections();
+            });
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    }
+
+    it('gives the collector its authenticated Home identity alongside the assignments read on that connection', async () => {
+        await withCollector(async ({ observed }) => {
+            await expect(observed).resolves.toEqual({ serverId: collectorHome, assignments: [assignment] });
+        });
+    });
+
+    it('omits the collector Home from a finite Action for a different admitted Account on the same daemon', async () => {
+        await withCollector(async ({ owners, observed, activation }) => {
+            await observed;
+            const occurrenceId: PluginRuntimeOccurrenceId = activation.readPluginOccurrenceId(pluginId)!;
+            const registry = createTargetActionInvocationRegistry({
+                actions: [{
+                    pluginId, pluginVersion: '1.0.0', occurrenceId,
+                    sourceCustody: createManagedPluginSourceCustody('collector-fixture-generation'),
+                    localId: 'inspect',
+                    definition: {
+                        id: 'inspect', scopes: ['global'], surfaces: ['cli'], dangerLevel: 'safe',
+                        inputSchema: { type: 'object', additionalProperties: false },
+                        resultSchema: { type: 'object', additionalProperties: false, properties: {
+                            accountId: { type: 'string' }, present: { type: 'boolean' }, rowPresent: { type: 'boolean' },
+                        }, required: ['accountId', 'present', 'rowPresent'] },
+                    },
+                    handler: async (_input, context) => ({
+                        accountId: context.requesterAccount?.accountId ?? '',
+                        present: Object.hasOwn(context.services.deploymentTelemetry, 'serverId'),
+                        rowPresent: (await context.services.deploymentTelemetry.readAssignments()).some(row => Object.hasOwn(row, 'serverId')),
+                    }),
+                }],
+                readCurrentPluginOccurrenceId: activation.readPluginOccurrenceId,
+                resolveAuthorizationFacts: () => ({
+                    generation: { targetGeneration: occurrenceId, desiredGeneration: occurrenceId, appliedGeneration: occurrenceId },
+                    resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [],
+                }),
+                readMachineLocalDatabaseAgentLevel: async () => undefined,
+                resolveHostBinding: createTargetActionHostBindingResolver(),
+                createServices: owners.createServices,
+            });
+            try {
+                await expect(registry.invoke({ pluginId, localId: 'inspect', surface: 'cli', input: {},
+                    approvalContext: { surface: 'cli', authority: 'present_user', runtimeAccountId: 'other-admitted-account',
+                        machineAdmission: { actorAccountId: 'other-admitted-account', machineId: 'collector-machine',
+                            installationId: 'collector-installation' } },
+                })).resolves.toMatchObject({ status: 'executed',
+                    value: { accountId: 'other-admitted-account', present: false, rowPresent: false } });
+            } finally { registry.dispose(); }
+        });
     });
 });

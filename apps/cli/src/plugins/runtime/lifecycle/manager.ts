@@ -5,6 +5,7 @@ import type {
     ParsedPluginEventContributionV1,
     PluginSystemToolContributionV1,
 } from '@happier-dev/protocol';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
@@ -281,6 +282,8 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     }>>;
     resolveActivationSource?: (target: ActivationTarget) => PluginActivationSource<PluginDaemonModuleNamespace> | null;
     invocationServices?: TargetInvocationServiceOwner;
+    /** Authenticated Home of the daemon collector's assignment connection, when present. */
+    readDeploymentTelemetryAssignmentHomeId?: () => string | undefined;
     retryFailedPreparation?: boolean;
     nowMs?: () => number;
     isActivationCurrent?: () => boolean;
@@ -748,6 +751,12 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                         );
                 const services = params.invocationServices.createServices(seed, serviceBinding);
                 const materialization = params.invocationServices.resolveCurrentPluginMaterializationRef?.(input.pluginId);
+                const collectorHomeId = input.placement === 'daemon' && target.manifest.contributes.machineRoles?.some(role =>
+                    `${target.pluginId}/${role.id}` === DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1
+                    && role.backgroundServices?.includes(input.localId))
+                    ? params.readDeploymentTelemetryAssignmentHomeId?.()
+                    : undefined;
+                const telemetry = services.deploymentTelemetry;
                 const context: BackgroundServiceContext = Object.freeze({
                         plugin: seed.plugin,
                         contribution: seed.contribution,
@@ -755,7 +764,16 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                         surface: 'background' as const,
                         invokedAtMs: lifetime.invokedAtMs,
                         signal: seed.signal,
-                        services,
+                        services: collectorHomeId === undefined ? services : Object.freeze({
+                            ...services,
+                            deploymentTelemetry: Object.freeze({
+                                serverId: collectorHomeId,
+                                get deployedAppPort() { return telemetry.deployedAppPort; },
+                                readAssignments: telemetry.readAssignments,
+                                subscribeAssignmentsChanged: telemetry.subscribeAssignmentsChanged,
+                                exposeEndpoint: telemetry.exposeEndpoint,
+                            }),
+                        }),
                         ui: createPluginInvocationPresentation({
                             currentSession: null,
                             signal: seed.signal,

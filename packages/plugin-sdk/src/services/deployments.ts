@@ -40,6 +40,11 @@ export type DeploymentTelemetryAssignmentV1 = DeploymentTelemetryAssignmentsV1['
 
 /** Same daemon's production collector, bound to its captured Account and Machine. */
 export interface DeploymentTelemetryServiceV1 {
+    /**
+     * Authenticated Home of the assignment connection. Present only on the
+     * daemon collector background materialization when the Home is identified.
+     */
+    readonly serverId?: string;
     /** Explicit deployed-App listener declaration; absent on ordinary Machines. */
     readonly deployedAppPort?: number;
     readAssignments(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly DeploymentTelemetryAssignmentV1[]>;

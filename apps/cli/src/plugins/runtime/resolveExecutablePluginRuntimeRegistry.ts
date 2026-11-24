@@ -1049,6 +1049,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             params?.onTerminalActivationFailure?.(pluginId);
         },
         captureActivatedPluginConsumerPreparation: pluginId => captureActivatedPluginConsumerPreparation?.(pluginId),
+        readDeploymentTelemetryAssignmentHomeId: () => deploymentTelemetry ? collectorAssignmentHomeId : undefined,
         invocationServices: {
             resolveCurrentPluginMaterializationRef(pluginId) {
                 return resolveCurrentPluginMaterializationRef(pluginId);
@@ -3689,13 +3690,21 @@ export async function resolveExecutablePluginRuntimeRegistry(
     consumerAssembly.allRetirementSignal.addEventListener('abort', () => currentDomainEdgeObservation.dispose(), { once: true });
     const notificationAccountId = sessionCredentials ? readAccountIdFromToken(sessionCredentials.token) : null;
     const telemetryMachineId = params?.resolveCurrentMachineId?.();
-    const deploymentTelemetry = !accountExecution && sessionCredentials && notificationAccountId && telemetryMachineId
+    // Keep the collector on the daemon's Home even when registry preparation inherits a finite request's HTTP scope.
+    const collectorConnection = params?.deploymentAccountExecution;
+    const collectorCredentials = collectorConnection?.credentials ?? sessionCredentials;
+    const collectorAccountId = collectorCredentials ? readAccountIdFromToken(collectorCredentials.token) : null;
+    const collectorServerHttpBaseUrl = collectorConnection?.serverUrl ?? notificationServerHttpBaseUrl;
+    const collectorAssignmentHomeId = collectorConnection
+        && params?.externalActionHomeBinding?.serverId === collectorConnection.serverId
+        ? sessionCredentialsHomeServerIdentityId : undefined;
+    const deploymentTelemetry = !accountExecution && collectorCredentials && collectorAccountId && telemetryMachineId
         ? createDeploymentTelemetryHost({
-            serverBaseUrl: notificationServerHttpBaseUrl, token: sessionCredentials.token, machineId: telemetryMachineId,
+            serverBaseUrl: collectorServerHttpBaseUrl, token: collectorCredentials.token, machineId: telemetryMachineId,
             readInstalledCollectorCaddy,
             subscribeMachineChanges(listener) {
-                const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: notificationAccountId,
-                    token: sessionCredentials.token, serverBaseUrl: notificationServerHttpBaseUrl });
+                const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: collectorAccountId,
+                    token: collectorCredentials.token, serverBaseUrl: collectorServerHttpBaseUrl });
                 const unsubscribe = accountChanges.subscribeRunFollowAvailability(change => {
                     if (change.kind === 'machine') listener(change.machineId);
                     else if (change.kind === 'reconnected') listener(null);
