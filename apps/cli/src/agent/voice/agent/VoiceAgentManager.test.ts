@@ -2113,7 +2113,8 @@ describe('VoiceAgentManager', () => {
         { ok: true, authority: 'admittedSessionInputV1', effectiveMode: 'read-only' },
       ]);
       expect(toolDecisions).toEqual([
-        { decision: 'approved' }, { decision: 'approved' }, { decision: 'approved' }, { decision: 'denied' },
+        { decision: 'approved' }, { decision: 'approved' }, { decision: 'approved' },
+        { decision: 'denied', rationale: expect.stringMatching(/^permission_exceeds_ceiling:/) },
       ]);
     } finally { await manager.dispose(); }
   });

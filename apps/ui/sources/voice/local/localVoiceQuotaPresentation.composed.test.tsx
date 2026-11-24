@@ -3,6 +3,7 @@ import * as React from 'react';
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonVoiceInferenceModelsWarmResponseSchema } from '@happier-dev/protocol/daemon/voiceInference';
 import { ExecutionRunTurnStreamReadResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
@@ -84,7 +85,7 @@ describe('quota presentation from the local Agent controller', () => {
                 errorMessage: 'usage_limit', errorRecoveryAction: 'none' });
             expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
             const read = await executeVoiceConversationAction('ui.voice_global.get', {}, { navigate() {} });
-            const time = new Date(retryAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+            const time = formatMoment(retryAtMs, Date.now());
             const notice = expectedKey === 'session.usageLimitRecovery.banner.retryAt'
                 ? t('session.usageLimitRecovery.banner.retryAt', { time })
                 : expectedKey ? t('message.agentQuotaWait', { time }) : null;

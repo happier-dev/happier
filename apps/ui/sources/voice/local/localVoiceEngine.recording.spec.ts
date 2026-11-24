@@ -4,6 +4,7 @@ import { warmLocalVoiceEngineHarnessGraph } from './localVoiceEngine.testHarness
 import { describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonVoiceSpeechTranscribeRequestSchema, DaemonVoiceSpeechTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
+import { createDeferred } from '@/dev/testkit';
 
 import {
     getStorage,
@@ -85,16 +86,13 @@ describe('local voice engine recording lifecycle', () => {
         });
     });
 
-    it('keeps a late recorded-audio cleanup failure visible after End Voice releases its capture admission', async () => {
+    it('keeps a recorded-audio cleanup failure visible when End Voice interrupts native finalization', async () => {
         const cleanupFailure = new Error('recording_delete_failed');
-        let resolveFinalizedRecording!: (result: { uri: string }) => void;
-        let notifyFinalizationStarted!: () => void;
-        const finalizationStarted = new Promise<void>((resolve) => { notifyFinalizationStarted = resolve; });
-        // Native finalization is a genuinely asynchronous SDK boundary. End can
-        // release capture before the outstanding stop reply yields its artifact.
+        const finalizationStarted = createDeferred<void>();
+        const finalizedRecording = createDeferred<{ uri: string }>();
         localVoiceSpeechOutputBoundary.fileRecording.stop.mockImplementationOnce(() => {
-            notifyFinalizationStarted();
-            return new Promise<{ uri: string }>((resolve) => { resolveFinalizedRecording = resolve; });
+            finalizationStarted.resolve();
+            return finalizedRecording.promise;
         });
         fileDelete.mockImplementationOnce(() => { throw cleanupFailure; });
 
@@ -105,19 +103,15 @@ describe('local voice engine recording lifecycle', () => {
         } = await loadLocalVoiceEngineWithCompatState();
         await toggleLocalVoiceTurn('s1');
         const stopAndTranscribe = toggleLocalVoiceTurn('s1');
-        await finalizationStarted;
+        await finalizationStarted.promise;
 
-        await expect(stopLocalVoiceSession()).resolves.toBeUndefined();
-        expect(getLocalVoiceState()).toMatchObject({
-            status: 'idle',
-            error: null,
-        });
-        expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
-        expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
-
-        resolveFinalizedRecording({ uri: 'file:///tmp/rec.m4a' });
+        // The native owner joins recording retirement before publishing End.
+        const ending = stopLocalVoiceSession();
+        finalizedRecording.resolve({ uri: 'file:///tmp/rec.m4a' });
+        await expect(ending).resolves.toBeUndefined();
         await expect(stopAndTranscribe).resolves.toBeUndefined();
 
+        expect(localVoiceSpeechOutputBoundary.getAudioSessionCoordinator().getSnapshot().leaseCount).toBe(0);
         expect(localVoiceSpeechTranscription).not.toHaveBeenCalled();
         expect(localVoicePendingEnqueue).not.toHaveBeenCalled();
         expect(fileDelete).toHaveBeenCalledOnce();
