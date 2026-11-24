@@ -49,9 +49,13 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   resolveSentToLabel?: (input: Readonly<Record<string, unknown>> | null) => string | null;
 }>): SpokenActionOutcome | null {
   if (isHeldApprovalToolResult(entry.result)) return t('voiceSurface.approvalResultHeld');
+  const envelope = record(entry.result);
+  if (envelope?.ok === false && envelope.errorCode === 'action_disabled'
+    && record(envelope.details)?.reason === 'session_memory_off') {
+    return t('memoryContext.session.memoryOff');
+  }
   const owner = readSpokenActionOutcomeOwner(entry.t, entry.args);
   if (!owner) return null;
-  const envelope = record(entry.result);
   const unknown = t('errors.scmOutcomeUnknown');
   if (envelope?.ok === false && (envelope.errorCode ?? envelope.code) === 'present_user_required') {
     return t('voiceSurface.approvalTapRequired');

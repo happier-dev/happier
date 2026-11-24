@@ -51,13 +51,29 @@ describe('redactVoiceToolResultValue', () => {
     expect(result.voice.presentation.failureMessage).toBe(vendorProse);
   });
 
+  it.each([
+    { ok: false, toolName: 'workflow_run_start', errorCode: 'target_unavailable', error: 'target_unavailable',
+      failureCause: { phase: 'workflow.run.start', errorCode: 'target_unavailable', errorClass: 'Error', httpStatus: null },
+      details: { code: 'target_unavailable', reason: 'workspace_unavailable' } },
+    { ok: false, toolName: 'memoryRemember', errorCode: 'action_disabled', error: 'action_disabled',
+      failureCause: { phase: 'dispatch', errorCode: null, errorClass: 'Error', httpStatus: null } },
+    { ok: false, toolName: 'workflow_run_start', errorCode: 'approval_result_held', error: 'approval_result_held' },
+    { ok: true, toolName: 'memorySearch', result: { hits: [] } },
+  ])('keeps the reverse Voice receipt parseable ($errorCode)', ({ toolName, ...receipt }) => {
+    expect(UiActionDispatchResultV1Schema.safeParse({ v: 1, execution: receipt }).success).toBe(true);
+    const execution = redactVoiceActionExecutionResultForProvider(toolName,
+      { ...receipt, voiceApprovalGuidance: undefined }, SHARE_ALL);
+    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution }).execution).toEqual(receipt);
+  });
+
   it('delivers only closed approval guidance in the provider Action result', () => {
     const result = { request: { status: 'open', summary: 'Setting change', actionArgs: { private: 'raw input' } } };
     const redact = (voiceApprovalGuidance: unknown, sharePermissionRequests = true) =>
       redactVoiceActionExecutionResultForProvider('approval_request_get', { ok: true, result, voiceApprovalGuidance },
         { ...SHARE_ALL, sharePermissionRequests });
     const expected = { request: { status: 'open', summary: 'Setting change' } };
-    expect(redact('tap_required')).toEqual({ ok: true, result: { ...expected, voiceApprovalGuidance: 'tap_required' } });
+    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution: redact('tap_required') }).execution)
+      .toEqual({ ok: true, result: { ...expected, voiceApprovalGuidance: 'tap_required' } });
     expect(redact({ value: 'private preference payload' })).toEqual({ ok: true, result: expected });
     expect(redact('tap_required', false)).toMatchObject({ ok: false, errorCode: 'privacy_disabled' });
   });

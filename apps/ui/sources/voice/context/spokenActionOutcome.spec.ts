@@ -15,6 +15,19 @@ describe('spoken Action owner outcomes', () => {
     expect(resolveSpokenActionOutcome({ ...tool, result: { ok: true, result: { ...result, voiceApprovalGuidance: 'spoken_decision' } } }))
       .toBe(t('approvals.status.open'));
   });
+  it('speaks the disabled Memory write separately from a pending approval', () => {
+    const entry = { t: 'action_execute', args: { actionId: 'memory.remember', input: {} } };
+    expect(resolveSpokenActionOutcome({ ...entry,
+      result: { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
+        details: { reason: 'session_memory_off' } } })).toBe(t('memoryContext.session.memoryOff'));
+    expect(resolveSpokenActionOutcome({ ...entry,
+      result: { ok: true, result: { kind: 'approval_request_created', actionId: 'memory.remember',
+        artifactId: 'request-1', voiceApprovalGuidance: 'tap_required' } } })).toBeNull();
+    expect(resolveSpokenActionOutcome({ ...entry,
+      result: { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
+        details: { reason: 'disabled_by_settings' } } })).toBeNull();
+  });
+
   it('presents a held approval as an executed Action in speech and tool follow-up', () => {
     const entry = { t: 'action_execute', args: { actionId: 'daemon.filesystem.copy', input: {} },
       result: { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held' } };

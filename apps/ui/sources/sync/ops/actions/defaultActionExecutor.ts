@@ -809,6 +809,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   readContributedActionSchemas?: NonNullable<ActionExecutorDeps['readContributedActionSchemas']>;
   /** Optional surface-local policy composed with the canonical Action settings policy. */
   isActionEnabled?: NonNullable<ActionExecutorDeps['isActionEnabled']>;
+  readSessionMemoryEnabled?: ActionExecutorDeps['readSessionMemoryEnabled'];
   /** Mounted device-setting lifetime guard, evaluated at the admitted persistence boundary. */
   beforeLocalSettingCommit?: () => void;
   /** Optional delivery leaf used by a surface that needs specialized ingress semantics. */
@@ -2383,6 +2384,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     listContributedActionDefinitions: opts?.listContributedActionDefinitions ?? listCurrentUiContextContributedActionDefinitions,
     readContributedActionSchemas: opts?.readContributedActionSchemas,
+    readSessionMemoryEnabled: opts?.readSessionMemoryEnabled,
     isActionEnabled: (actionId: ActionId, ctx) =>
       {
         if (opts?.isActionEnabled && !opts.isActionEnabled(actionId, ctx)) {

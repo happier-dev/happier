@@ -475,7 +475,7 @@ export function redactVoiceToolResultForProvider(
     return projectActionResultForProvider(value);
   }
   const resultRecord = readResultRecord(value);
-  if (resultRecord.voiceApprovalGuidance !== undefined) {
+  if (Object.hasOwn(resultRecord, 'voiceApprovalGuidance')) {
     const { voiceApprovalGuidance, ...body } = resultRecord;
     const guidance = readVoiceApprovalGuidance(voiceApprovalGuidance);
     value = guidance && body.ok === true ? { ...body, voiceApprovalGuidance: guidance } : body;

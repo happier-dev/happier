@@ -9329,8 +9329,12 @@ refused with `present_user_required` is spoken as a tap requirement, preserving
 the owner’s refusal rather than reporting a failed lookup.
 The UI Action executor projects its resolved Voice authority on open Account
 approval results as `voiceApprovalGuidance`. Voice tools pass `tap_required` or
-`spoken_decision` through the existing request-sharing policy. A decision Action
-still goes through ordinary admission when invoked.
+`spoken_decision` through the existing request-sharing policy. The reverse RPC
+keeps guidance inside a successful result and carries typed failure causes and
+closed details on refusals. A Memory write refused by the bound Session's policy
+returns `action_disabled` with `details.reason: session_memory_off`. Voice uses
+that reason to explain the Session's setting. A decision Action still goes
+through ordinary admission when invoked.
 The provider privacy projection retains catalog operand names and declaration
 labels while continuing to redact actual file paths and private Session titles.
 An approval already applied by its host keeps its successful receipt if the

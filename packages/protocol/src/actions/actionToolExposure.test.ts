@@ -150,7 +150,7 @@ describe('actionToolExposure', () => {
       expect(isActionDirectToolExposedOn(spec, 'agent', { settings, sessionMemoryEnabled: false }), id).toBe(false);
       expect(isActionDiscoverableOnToolSurface(spec, 'agent', { settings, sessionMemoryEnabled: false }), id).toBe(false);
       expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'agent', sessionMemoryEnabled: false }), id)
-        .toMatchObject({ available: false, reason: 'disabled_by_policy' });
+        .toMatchObject({ available: false, reason: 'session_memory_off' });
       expect(isActionDiscoverableOnToolSurface(spec, 'mcp'), id).toBe(true);
       expect(isActionDiscoverableOnToolSurface(spec, 'cli'), id).toBe(true);
     }

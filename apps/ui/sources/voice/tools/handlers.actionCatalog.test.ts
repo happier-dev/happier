@@ -73,7 +73,16 @@ describe('Voice Action reference catalog', () => {
       input: { scope: 'account', text: 'Keep the silver compass.' } },
     { serverId, effectId: 'voice-save-with-memory-off', turnOrigin: 'person' }).then(raw => JSON.parse(raw));
     const writeDiscovery = await discover('memory.remember');
-    expect(await save).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    const refusal = await save;
+    expect(refusal).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'session_memory_off' } });
+    const { redactVoiceActionExecutionResultForProvider } = await import('@/voice/context/redactVoiceToolResult');
+    const projected = redactVoiceActionExecutionResultForProvider('memoryRemember', refusal, {
+      shareFilePaths: false, sharePermissionRequests: false, shareSessionSummary: false,
+    });
+    expect(projected).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'session_memory_off' } });
+    const { resolveSpokenActionOutcome } = await import('@/voice/context/spokenActionOutcome');
+    expect(resolveSpokenActionOutcome({ t: 'action_execute', args: { actionId: 'memory.remember' }, result: projected }))
+      .toBe(t('memoryContext.session.memoryOff'));
     expect(writeDiscovery).toMatchObject({ ok: false, errorCode: 'action_disabled' });
     expect(await discover('memory.read')).toMatchObject({ ok: true });
     expect(home.artifacts(serverId).list()).toEqual([]);

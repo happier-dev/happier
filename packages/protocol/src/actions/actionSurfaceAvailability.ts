@@ -39,7 +39,8 @@ export type ActionSurfaceAvailabilityReason =
   | 'missing_tool_binding'
   | 'unsupported_surface'
   | 'disabled_by_settings'
-  | 'disabled_by_policy';
+  | 'disabled_by_policy'
+  | 'session_memory_off';
 
 export type ActionSurfaceSettingsState = 'enabled' | 'disabled' | 'approval_required' | 'unknown';
 
@@ -217,13 +218,14 @@ export function resolveActionSurfaceAvailability(params: Readonly<{
     };
   }
 
+  const memoryAllowed = isActionEnabledWithSessionMemory(actionId, params.sessionMemoryEnabled);
   if (
-    !isActionEnabledWithSessionMemory(actionId, params.sessionMemoryEnabled)
+    !memoryAllowed
     || (params.isActionEnabled && parsedActionId.success && !params.isActionEnabled(parsedActionId.data))
   ) {
     return {
       available: false,
-      reason: 'disabled_by_policy',
+      reason: memoryAllowed ? 'disabled_by_policy' : 'session_memory_off',
       actionId,
       surface: params.surface,
       availableSurfaces,

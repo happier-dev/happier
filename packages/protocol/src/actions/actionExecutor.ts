@@ -1120,6 +1120,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       settings: readAvailabilitySettings(spec.id, ctx),
       callerSurface: ctx.callerSurface,
       isActionEnabled: (id) => policyAllowsAction(id, ctx),
+      ...(isMemoryWriteActionV1(spec.id) ? { sessionMemoryEnabled: deps.readSessionMemoryEnabled?.(ctx) } : {}),
       ...(hostInternal ? { hostInternal: true, placement: ctx.placement } : {}),
     });
   }

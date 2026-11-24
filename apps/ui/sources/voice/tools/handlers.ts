@@ -3,7 +3,7 @@ import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settin
 import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { isMemoryWriteActionV1 } from '@happier-dev/protocol/prompts/library/memoryActionsV1';
+import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import type { VoiceAgentHandle } from '@/voice/agent/types';
 import { projectCurrentUiContextActionOutcome, readCurrentUiContextActionReader } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
@@ -375,13 +375,10 @@ export function createVoiceToolHandlers(
     readContributedActionSchemas: async (id, signal) => (
       await readInvocationUiContext()?.readCurrentContributedActionSchemas?.(id, signal) ?? null
     ),
-    isActionEnabled: (actionId, context) => {
-      const state = storage.getState();
-      const target = isMemoryWriteActionV1(actionId)
-        ? normalizeSessionAddress(context.serverId, context.defaultSessionId)
-        : null;
-      return isVoiceActionAvailableInState(state, actionId,
-        target ? { sessionMetadata: readVoiceSessionOwnerMetadataFromState(state, target) } : undefined);
+    isActionEnabled: actionId => isVoiceActionAvailableInState(storage.getState(), actionId),
+    readSessionMemoryEnabled: context => {
+      const target = normalizeSessionAddress(context.serverId, context.defaultSessionId);
+      return target ? readSessionMemoryEnabledV1(readVoiceSessionOwnerMetadataFromState(storage.getState(), target)) : undefined;
     },
   });
 

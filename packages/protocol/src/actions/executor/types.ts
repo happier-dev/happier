@@ -4003,6 +4003,8 @@ export type ActionExecutorDeps = Readonly<{
 
   // Optional policy hook for fail-closed action disablement.
   isActionEnabled?: (actionId: ActionId, ctx: ActionExecutorContext) => boolean;
+  /** Session Memory policy input from the host's captured working target. */
+  readSessionMemoryEnabled?: (ctx: ActionExecutorContext) => boolean | undefined;
 
   /**
    * Host facts for approval. The shared router (`resolveActionApprovalRouting`) decides; hosts never
