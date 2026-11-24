@@ -10173,6 +10173,13 @@ Exact reads still use the Collection reader. Callers that omit the projection
 continue to receive logical rows. Load matching UI, Home and Protocol sources
 for the new projection because earlier development schemas refuse the field.
 
+Unreleased 0.3 shared Collection list inputs optionally carry a closed
+`query` object. It accepts the same declared-index operands as the owned read.
+An indexed request uses the query's own cursor and limit. Older development
+readers reject the additional field, so indexed callers use matching Host,
+Protocol and Home sources. Omission uses the existing shared-list contract.
+The response envelope and stored index format keep their existing versions.
+
 Independently upgraded apps retain their compiled Collection reader refs. A
 current writer admits an exact compatible reader through Data's existing access
 resolver or refuses that Collection with `collection_update_required`; the app

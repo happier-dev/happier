@@ -15,7 +15,8 @@ import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { findExactMaterializedPluginCollectionContractTx, readMaterializedPluginCollectionContract } from "./contracts";
 import { readCollectionRecipientKeysInTx } from "./sharingStorage";
-import { readPluginCollectionIndexEntriesByRawOrdinalKey } from "./rawOrdinalIndex";
+import type { PluginCollectionSharingListRequestV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
+import { readPluginCollectionIndexEntriesByRawOrdinalKey, readSharedPluginCollectionIndexEntriesByRawOrdinalKey } from "./rawOrdinalIndex";
 import { diagnosePluginCollectionReadRefusal } from "./readRefusal";
 
 const COLLECTION_CURSOR_VERSION = 1;
@@ -754,7 +755,7 @@ function nextDirectQueryPrefix(value: Uint8Array | undefined): Uint8Array | unde
 function buildDirectQueryBounds(input: Readonly<{
     accountId: string;
     contract: NormalizedPluginAccountCollectionContractV1;
-    request: PluginCollectionQueryRequestV1;
+    request: Pick<PluginCollectionQueryRequestV1, "indexId" | "prefix" | "prefixes" | "range" | "order">;
 }>): QueryBounds {
     const index = input.contract.indexes.find((candidate) => candidate.id === input.request.indexId);
     if (!index || input.request.prefix.length > index.fields.length) {
@@ -864,6 +865,49 @@ function buildDirectQueryBounds(input: Readonly<{
         empty: lower !== undefined
             && upper !== undefined
             && comparePluginCollectionIndexSortKeysV1(lower, upper) >= 0,
+    };
+}
+
+/** Shared pages use the same declared bounds as the Account reader. A physical
+ * row id breaks a sort-key tie between two owners with the same logical row id. */
+export async function readSharedCollectionIndexPageInTx(input: Readonly<{
+    tx: Tx;
+    actorAccountId: string;
+    request: PluginCollectionSharingListRequestV1;
+    query: NonNullable<PluginCollectionSharingListRequestV1["query"]>;
+}>) {
+    const { tx, actorAccountId, request, query } = input;
+    const { pluginId, collectionId, readerContext, sharedWithTeamId } = request;
+    if (readerContext.pluginId !== pluginId || readerContext.collectionId !== collectionId) {
+        throw new PluginCollectionReadOperationError("collection_unavailable");
+    }
+    const stored = await findExactMaterializedPluginCollectionContractTx({ tx, ref: readerContext });
+    if (!stored) throw new PluginCollectionReadOperationError("collection_update_required");
+    const contract = readMaterializedPluginCollectionContract(stored);
+    const bounds = buildDirectQueryBounds({
+        accountId: actorAccountId, contract, request: { ...query, indexId: query.index },
+    });
+    const queryFingerprint = computeCanonicalDomainSeparatedDigest("happier.plugin.collection-shared-query.cursor.v1",
+        [bounds.queryFingerprint, sharedWithTeamId ?? "", request.projection ?? ""]);
+    let after: { encodedSortKey: Uint8Array; id: string } | undefined;
+    if (query.cursor) {
+        const separator = query.cursor.lastIndexOf("_");
+        const id = query.cursor.slice(separator + 1);
+        if (separator < 0 || !/^[a-z0-9]+$/.test(id)) throw new PluginCollectionReadOperationError("collection_cursor_invalid");
+        after = { encodedSortKey: decodeCursor({ cursor: query.cursor.slice(0, separator), queryFingerprint }), id };
+    }
+    const entries = bounds.empty ? [] : await readSharedPluginCollectionIndexEntriesByRawOrdinalKey({
+        tx, actorAccountId, sharedWithTeamId, pluginId, collectionId, indexId: query.index,
+        bounds, intervals: bounds.intervals, after, order: query.order, take: query.limit + 1,
+    });
+    if (!entries) throw new PluginCollectionReadOperationError("collection_contract_inconsistent");
+    const positions = entries.slice(0, query.limit);
+    const last = positions.at(-1);
+    return {
+        positions,
+        nextCursor: entries.length > query.limit && last
+            ? `${encodeCursor({ queryFingerprint, lastSortKey: last.encodedSortKey })}_${last.id}`
+            : null,
     };
 }
 

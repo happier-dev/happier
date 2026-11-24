@@ -250,9 +250,9 @@ export function resourceGrantMembershipSqlPredicate(input: Readonly<{
  * The resource adapter supplies its table names; `a` is the resource alias.
  * Readers still re-admit the captured content through the ordinary access owner.
  */
-export function resourceGrantAccessSqlPredicate(input: Readonly<{
+function resourceGrantSqlArms(input: Readonly<{
     actorAccountId: string; resourceTablePrefix: string; resourceIdColumn: string;
-}>): ReturnType<typeof prismaRuntime.sql> {
+}>, correlated: boolean) {
     const provider = getDbProviderFromEnv(process.env, 'postgres');
     const mysql = provider === 'mysql';
     const sql = prismaRuntime.sql;
@@ -273,26 +273,58 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
         membershipAlias: 'm', accountAlias: 'c', teamAlias: 't', principal: 'member' });
     const teamMemberMatches = resourceGrantMembershipSqlPredicate({ actorAccountId: actor,
         membershipAlias: 'm', accountAlias: 'c', teamAlias: 't', principal: 'team' });
-    return sql`(${column('a', 'accountId')} = ${actor}
-        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
-            JOIN ${account} c ON ${column('c', 'id')} = ${column('g', 'accountId')}
-            WHERE ${column('g', input.resourceIdColumn)} = ${resourceId}
-            AND ${column('g', 'accountId')} = ${actor} AND ${column('c', 'status')} = ${activeAccount})
-        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
-            JOIN ${membership} m ON ${column('m', 'teamId')} = ${column('g', 'teamId')}
-            JOIN ${account} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
-            JOIN ${team} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
-            WHERE ${column('g', input.resourceIdColumn)} = ${resourceId} AND ${teamMemberMatches})
-        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
-            JOIN ${identifier('TeamGroup')} r ON ${column('r', 'id')} = ${column('g', 'teamGroupId')}
-            JOIN ${identifier('TeamGroupMembership')} gm ON ${column('gm', 'teamGroupId')} = ${column('r', 'id')}
-                AND ${column('gm', 'teamId')} = ${column('r', 'teamId')}
-            JOIN ${membership} m ON ${column('m', 'id')} = ${column('gm', 'teamMembershipId')}
-                AND ${column('m', 'teamId')} = ${column('gm', 'teamId')}
-            JOIN ${account} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
-            JOIN ${team} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
-            WHERE ${column('g', input.resourceIdColumn)} = ${resourceId}
-            AND ${column('r', 'archivedAt')} IS NULL AND ${memberMatches}))`;
+    const grantedId = column('g', input.resourceIdColumn);
+    const grant = identifier(`${input.resourceTablePrefix}Grant`);
+    const selected = correlated ? sql`1` : grantedId;
+    const matchRow = correlated ? sql`${grantedId} = ${resourceId} AND` : prismaRuntime.empty;
+    return {
+        owned: sql`${column('a', 'accountId')} = ${actor}`,
+        resourceId,
+        received: [
+            sql`SELECT ${selected} FROM ${grant} g
+                JOIN ${account} c ON ${column('c', 'id')} = ${column('g', 'accountId')}
+                WHERE ${matchRow} ${column('g', 'accountId')} = ${actor} AND ${column('c', 'status')} = ${activeAccount}`,
+            sql`SELECT ${selected} FROM ${grant} g
+                JOIN ${membership} m ON ${column('m', 'teamId')} = ${column('g', 'teamId')}
+                JOIN ${account} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
+                JOIN ${team} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
+                WHERE ${matchRow} ${teamMemberMatches}`,
+            sql`SELECT ${selected} FROM ${grant} g
+                JOIN ${identifier('TeamGroup')} r ON ${column('r', 'id')} = ${column('g', 'teamGroupId')}
+                JOIN ${identifier('TeamGroupMembership')} gm ON ${column('gm', 'teamGroupId')} = ${column('r', 'id')}
+                    AND ${column('gm', 'teamId')} = ${column('r', 'teamId')}
+                JOIN ${membership} m ON ${column('m', 'id')} = ${column('gm', 'teamMembershipId')}
+                    AND ${column('m', 'teamId')} = ${column('gm', 'teamId')}
+                JOIN ${account} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
+                JOIN ${team} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
+                WHERE ${matchRow} ${column('r', 'archivedAt')} IS NULL AND ${memberMatches}`,
+        ],
+        teamScope(teamId: string) {
+            return sql`SELECT ${grantedId} FROM ${grant} g WHERE ${column('g', 'teamId')} = ${teamId}
+                UNION ALL
+                SELECT ${grantedId} FROM ${grant} g
+                JOIN ${identifier('TeamGroup')} r ON ${column('r', 'id')} = ${column('g', 'teamGroupId')}
+                WHERE ${column('r', 'teamId')} = ${teamId}`;
+        },
+    };
+}
+
+type ResourceGrantSqlScope = Parameters<typeof resourceGrantSqlArms>[0];
+
+export function resourceGrantAccessSqlPredicate(input: ResourceGrantSqlScope): ReturnType<typeof prismaRuntime.sql> {
+    const { owned, received } = resourceGrantSqlArms(input, true);
+    return prismaRuntime.sql`(${owned} OR ${prismaRuntime.join(received.map(arm => prismaRuntime.sql`EXISTS (${arm})`), ' OR ')})`;
+}
+
+/** Uncorrelated principal-index arms for a shared page, with optional Team provenance scope. */
+export function resourceGrantSharedPageSqlPredicate(input: ResourceGrantSqlScope & Readonly<{
+    sharedWithTeamId?: string;
+}>): ReturnType<typeof prismaRuntime.sql> {
+    const { owned, resourceId, received, teamScope } = resourceGrantSqlArms(input, false);
+    const granted = prismaRuntime.sql`${resourceId} IN (${prismaRuntime.join(received, ' UNION ALL ')})`;
+    return input.sharedWithTeamId === undefined
+        ? prismaRuntime.sql`NOT (${owned}) AND ${granted}`
+        : prismaRuntime.sql`${resourceId} IN (${teamScope(input.sharedWithTeamId)}) AND (${owned} OR ${granted})`;
 }
 
 function resourceGrantPrincipalContributionsFromFacts(row: ResourceGrantAccessFacts): Readonly<{

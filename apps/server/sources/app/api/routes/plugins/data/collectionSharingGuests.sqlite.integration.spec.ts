@@ -11,7 +11,7 @@ import {
 } from '@happier-dev/protocol';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as paths } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
+import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as paths, PluginCollectionSharingListResponseV1Schema } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db } from '@/storage/db';
@@ -32,7 +32,7 @@ const manifest = PluginManifestV2Schema.parse({
             title: { type: 'string', maxLength: 256 },
             privateNote: { type: 'string', maxLength: 256 },
         }, required: ['id', 'title', 'privateNote'], additionalProperties: false },
-        serverReadable: ['title'], indexes: [],
+        serverReadable: ['title'], indexes: [{ id: 'by-title', fields: [{ field: 'title', direction: 'asc' }] }],
     }] },
 });
 
@@ -65,6 +65,71 @@ describe('Collection sharing Team guests through authenticated routes', () => {
     }, 120_000);
 
     afterAll(async () => { await harness?.close(); });
+
+    it('keyset-pages a declared prefix across owners through the existing Team admission', async () => {
+        const [owner, otherOwner, member, outsider] = await Promise.all(Array.from({ length: 4 }, () => createAccount('plain')));
+        const team = await db.team.create({ data: { name: 'Indexed shares' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: owner.id, role: 'owner' },
+            { teamId: team.id, accountId: otherOwner.id, role: 'admin' },
+            { teamId: team.id, accountId: member.id, role: 'member' },
+        ] });
+        for (const writer of [owner, otherOwner]) {
+            await createPluginAvailabilityOperations().claimCollectionWriters({ accountId: writer.id, input: { manifest } });
+        }
+        const contract = await db.pluginCollectionContract.findFirstOrThrow({ where: { pluginId: manifest.id, collectionId: 'tasks' } });
+        const ref = { pluginId: manifest.id, collectionId: 'tasks', schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest };
+        const identity = { pluginId: ref.pluginId, collectionId: ref.collectionId };
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        pluginDataRoutes(app);
+        await app.ready();
+        try {
+            const post = (actor: typeof owner, url: string, payload: unknown) =>
+                app.inject({ method: 'POST', url, headers: actor.headers, payload });
+            const seed = async (writer: typeof owner, rowId: string, title: string, share: boolean) => {
+                const created = await post(writer, '/v1/plugins/data/mutate', {
+                    ...identity, writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: [{ kind: 'put', rowId, expectedRevision: 'absent', expectedAbsenceEpoch: 0,
+                        content: { t: 'plain', v: { privateNote: 'Protected note' } }, projection: { title } }],
+                });
+                expect(created.statusCode, created.body).toBe(200);
+                if (share) {
+                    const grant = await post(writer, paths.setGrant, {
+                        ...identity, ownerAccountId: writer.id, rowId, principal: { kind: 'team', teamId: team.id },
+                        accessLevel: 'view', expectedRevision: 1,
+                    });
+                    expect(grant.statusCode, grant.body).toBe(200);
+                }
+            };
+            await seed(owner, 'same', 'Match', true);
+            await seed(otherOwner, 'same', 'Match', true);
+            await seed(owner, 'private', 'Match', false);
+            await seed(owner, 'outside', 'Other', true);
+
+            const query = { indexId: 'by-title', prefix: ['Match'], order: 'asc', limit: 1 } as const;
+            const own = await post(owner, '/v1/plugins/data/query', { ...identity, readerContext: ref, ...query, limit: 10 });
+            expect(own.statusCode, own.body).toBe(200);
+            expect(own.json().rows.map((row: { rowId: string }) => row.rowId)).toEqual(['private', 'same']);
+
+            const read = async (actor: typeof owner, cursor?: string, sharedWithTeamId?: string) => {
+                const result = await post(actor, paths.sharedWithMe, {
+                    ...identity, readerContext: ref, query: { index: query.indexId, prefix: query.prefix, order: query.order, limit: query.limit, cursor }, sharedWithTeamId,
+                });
+                expect(result.statusCode, result.body).toBe(200);
+                return PluginCollectionSharingListResponseV1Schema.parse(result.json());
+            };
+            const first = await read(member);
+            expect(first.resources).toHaveLength(1);
+            expect(first.nextCursor).toEqual(expect.any(String));
+            const second = await read(member, first.nextCursor!);
+            expect(second.resources).toHaveLength(1);
+            expect(second.nextCursor).toBeNull();
+            expect([...first.resources, ...second.resources].map(row => [row.ownerAccountId, row.rowId]).sort())
+                .toEqual([[owner.id, 'same'], [otherOwner.id, 'same']].sort());
+            expect((await read(member, undefined, team.id)).resources).toHaveLength(1);
+            expect(await read(outsider)).toEqual({ resources: [], nextCursor: null });
+        } finally { await app.close(); }
+    });
 
     for (const mode of ['plain', 'e2ee'] as const) {
         it.each([

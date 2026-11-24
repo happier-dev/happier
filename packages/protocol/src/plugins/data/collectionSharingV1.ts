@@ -12,6 +12,7 @@ import { PluginCollectionContentEnvelopeV1Schema, PluginCollectionProjectionV1Sc
   PluginCollectionRowV1Schema, PluginCollectionMutationErrorV1Schema } from './collectionRowV1.js';
 import { PluginCollectionRowIdV1Schema, PluginCollectionUiQueryErrorV1Schema as PluginCollectionReadErrorV1Schema } from './collectionUiQueryWireV1.js';
 import { PluginCollectionContractRefV1Schema } from './collectionContractRefV1.js';
+import { PluginCollectionLogicalQueryV1Schema } from './collectionQueryWireV1.js';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from './collectionLimitsV1.js';
 
 export const PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 = {
@@ -72,7 +73,7 @@ export const PluginCollectionSharingListRequestV1Schema = lazyZodSchema(() => z.
   ...identity(), readerContext: PluginCollectionContractRefV1Schema, cursor: z.optional(z.string()),
   sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1))),
-  projection: z.optional(z.literal('identity')),
+  projection: z.optional(z.literal('identity')), query: z.optional(PluginCollectionLogicalQueryV1Schema),
 }));
 export type PluginCollectionSharingListRequestV1 = z.infer<typeof PluginCollectionSharingListRequestV1Schema>;
 export const PluginCollectionSharingListResponseV1Schema = lazyZodSchema(() => z.strictObject({

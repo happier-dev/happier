@@ -34,11 +34,14 @@ const tasksDeclaration = {
 } as const;
 
 describe('hosted-web Collection UI-query bridge contract', () => {
-  it('preserves the selected Team on a shared Collection page through the hosted bridge', () => {
+  it.each([
+    { sharedWithTeamId: 'selected-team', cursor: 'next-page', limit: 2 },
+    { sharedWithTeamId: 'selected-team', query: { index: 'by-id', prefix: ['first'], order: 'asc', limit: 2 } },
+  ])('admits a shared Collection page for the selected Team through the hosted bridge (%j)', (page) => {
     const request = requireSchema('PluginHostedWebAccountDataBridgeRequestV1Schema');
     expect(request.safeParse({ kind: 'request', operation: {
       kind: 'data', operation: 'collection.sharing.sharedWithMe', definition: tasksDeclaration,
-      arguments: [{ sharedWithTeamId: 'selected-team', cursor: 'next-page', limit: 2 }],
+      arguments: [page],
     } }).success).toBe(true);
   });
   it('uses the Account Data bridge operation kind', () => {

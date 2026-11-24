@@ -7045,6 +7045,16 @@ Actions run on the answering keyholding client with Account automation
 authority; reads are safe, while edits and grant mutations use the ordinary Ask
 policy. They consume the same logical sharing client as the SDK, so Action
 inputs and results contain logical values rather than encryption envelopes.
+
+An indexed shared page accepts the same declared-index query as an owned
+page. Call `sharing.sharedWithMe({ query: { index, prefix, order, limit, cursor } })`
+and put the returned `nextCursor` in the next page's `query.cursor`. The query
+can also take the existing prefix union or range operands. A selected
+`sharedWithTeamId` scopes both the grants and the continuation. The Home
+filters and bounds index positions before loading the authorized row bodies.
+The shared list retains its existing top-level cursor and limit for unindexed
+pages.
+
 Plugin-owned navigation remains with the plugin's page and SDK handle. Existing host surfaces that
 list plugin content retain their missing-plugin presentation naming `pluginId`
 when the plugin is absent or disabled. A future Inbox share notification with a

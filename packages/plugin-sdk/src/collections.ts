@@ -115,7 +115,10 @@ export type PluginCollectionRow<TValue extends Readonly<Record<string, JsonValue
 export type PluginSharedCollectionRow<TValue extends Readonly<Record<string, JsonValue>>> =
     PluginCollectionRow<TValue> & Readonly<{ ownerAccountId: string; access: ResourceCallerAccessV1 }>;
 
-export type PluginCollectionSharing<TValue extends Readonly<Record<string, JsonValue>>> = Readonly<{
+export type PluginCollectionSharing<
+    TValue extends Readonly<Record<string, JsonValue>>,
+    TIndexId extends string = string,
+> = Readonly<{
     setGrant(rowId: string, request: Readonly<{
         principal: PrincipalRefV1;
         accessLevel: 'view' | 'edit';
@@ -127,7 +130,9 @@ export type PluginCollectionSharing<TValue extends Readonly<Record<string, JsonV
         grants: readonly ResourceAccessGrantRowV1[];
     }>>;
     revokeGrant(rowId: string, request: Readonly<{ principal: PrincipalRefV1 }>, options?: PluginCancellationOptions): Promise<Readonly<{ changed: boolean }>>;
-    sharedWithMe(request?: Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'>>, options?: PluginCancellationOptions): Promise<Readonly<{
+    sharedWithMe(request?: Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'> & {
+        query?: PluginCollectionQuery<TIndexId>;
+    }>, options?: PluginCancellationOptions): Promise<Readonly<{
         rows: readonly PluginSharedCollectionRow<TValue>[];
         nextCursor?: string;
     }>>;
@@ -270,7 +275,7 @@ export interface PluginAccountCollection<
     TIndexes extends readonly PluginCollectionIndexV1[] = readonly PluginCollectionIndexV1[],
 > {
     /** Item grants use the host's existing Account/Team/Group authority and key custody. */
-    readonly sharing: PluginCollectionSharing<TValue>;
+    readonly sharing: PluginCollectionSharing<TValue, PluginCollectionIndexId<TIndexes>>;
     get(
         rowId: string,
         options?: PluginCancellationOptions,

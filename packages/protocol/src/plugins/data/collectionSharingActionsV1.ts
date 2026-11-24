@@ -10,7 +10,7 @@ import { PluginCollectionSharingAddressV1Schema, PluginCollectionSharingGrantsRe
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as ids, type PluginCollectionSharingActionIdV1 } from './collectionSharingActionIdsV1.js';
 
 const listInput = lazyZodSchema(() => z.strictObject({ collectionRef: PluginCollectionContractRefV1Schema,
-  ...z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true, projection: true }).shape }));
+  ...z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true, projection: true, query: true }).shape }));
 const getInput = lazyZodSchema(() => z.strictObject({ collectionRef: PluginCollectionContractRefV1Schema,
   ...z.pick(PluginCollectionSharingAddressV1Schema, { ownerAccountId: true, rowId: true }).shape }));
 const putInput = lazyZodSchema(() => z.strictObject({ collectionRef: PluginCollectionContractRefV1Schema,

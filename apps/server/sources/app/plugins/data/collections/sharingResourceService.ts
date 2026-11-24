@@ -12,7 +12,7 @@ import { resolveGrantableTeamForActorInTx } from '@/app/teams/queries';
 import { collectionAccessFactsSelect, collectionGrantFacts } from './sharingStorage';
 import { projectResourceRecipientEnvelope } from '@/app/teams/resourceGrantAccess';
 import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
-import { materializeDirectCollectionRow, resolveCurrentContract } from './uiQuery';
+import { materializeDirectCollectionRow, readSharedCollectionIndexPageInTx, resolveCurrentContract } from './uiQuery';
 import { mutatePluginCollectionInTx } from './mutation';
 import { readPluginsFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 import { diagnosePluginCollectionReadRefusal } from './readRefusal';
@@ -138,18 +138,31 @@ export async function countTeamSharedCollectionsInTx(tx: Tx, input: Readonly<{ a
 export function listSharedCollectionResources(actorAccountId: string, request: PluginCollectionSharingListRequestV1): Promise<PluginCollectionSharingListResponseV1> {
     return inReadSnapshot(async tx => {
         if (request.cursor && !/^[A-Za-z0-9_-]+$/.test(request.cursor)) throw new CollectionSharingError('collection_cursor_invalid');
-        const limit = request.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
+        if (request.query && (request.cursor !== undefined || request.limit !== undefined)) {
+            throw new CollectionSharingError('collection_query_invalid');
+        }
+        const limit = request.query?.limit ?? request.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
         const includeBody = request.projection !== 'identity';
         const candidates = await sharedCollectionCandidatesInTx(tx, actorAccountId, request.sharedWithTeamId);
         const pageWhere = { pluginId: request.pluginId, collectionId: request.collectionId, ...(request.cursor ? { id: { gt: request.cursor } } : {}) };
+        const indexPage = request.query && candidates.length > 0
+            ? await readSharedCollectionIndexPageInTx({ tx, actorAccountId, request, query: request.query }) : null;
         // Several arms merge their page-sized keyset positions before one content read.
-        const positions = candidates.length <= 1 ? null : mergeResourceGrantArmPages(await Promise.all(candidates.map(arm =>
-            tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [arm] }, select: { id: true }, orderBy: { id: 'asc' }, take: limit + 1 }))),
-        (left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0, limit + 1);
+        const positions = indexPage ? indexPage.positions : candidates.length <= 1 ? null
+            : mergeResourceGrantArmPages(await Promise.all(candidates.map(arm =>
+                tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [arm] }, select: { id: true }, orderBy: { id: 'asc' }, take: limit + 1 }))),
+            (left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0, limit + 1);
         const scope = positions === null ? candidates[0] : positions.length ? { id: { in: positions.map(row => row.id) } } : undefined;
         const rows = scope ? await tx.pluginCollectionRow.findMany({ where: { ...pageWhere, AND: [scope] },
             select: collectionSharingReadSelect(actorAccountId, includeBody), orderBy: { id: 'asc' }, take: limit + 1 }) : [];
-        const page = rows.slice(0, limit);
+        const rowsById = indexPage && new Map(rows.map(row => [row.id, row]));
+        const page = indexPage && rowsById ? indexPage.positions.map(position => {
+            const row = rowsById.get(position.id);
+            if (!row || (includeBody && row.revision !== position.rowRevision)) {
+                throw new CollectionSharingError('collection_index_not_ready');
+            }
+            return row;
+        }) : rows.slice(0, limit);
         const caller = includeBody && page.some(row => row.account.encryptionMode === 'e2ee')
             ? await tx.account.findUnique({ where: { id: actorAccountId }, select: RECIPIENT_READINESS_SELECT }) : null;
         const currentByOwner = new Map<string, Awaited<ReturnType<typeof resolveCurrentContract>>>();
@@ -184,6 +197,7 @@ export function listSharedCollectionResources(actorAccountId: string, request: P
                 resources.push({ ...resource, ...scopeField });
             }
         }
-        return { resources, ...(!includeBody ? { identities } : {}), nextCursor: rows.length > limit ? page.at(-1)!.id : null };
+        const nextCursor = indexPage ? indexPage.nextCursor : rows.length > limit ? page.at(-1)!.id : null;
+        return { resources, ...(!includeBody ? { identities } : {}), nextCursor };
     });
 }

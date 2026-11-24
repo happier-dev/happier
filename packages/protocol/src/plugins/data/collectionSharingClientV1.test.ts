@@ -125,7 +125,7 @@ describe('Collection sharing client through authenticated transport', () => {
           const selected = PluginCollectionSharingListRequestV1Schema.parse(body);
           return { status: 200, body: {
             resources: selected.sharedWithTeamId === 'selected-team' ? [{ ...projected, sharedWithTeamScope: 'group' }] : [],
-            nextCursor: null,
+            nextCursor: selected.query?.prefix[0] === value.title ? 'another-index-page' : null,
           } };
         }
         return { status: 200, body: projected };
@@ -145,6 +145,11 @@ describe('Collection sharing client through authenticated transport', () => {
     await expect(executor.execute(listId, { collectionRef, sharedWithTeamId: 'selected-team' },
       { surface: 'ui', authority: 'present_user' })).resolves.toEqual({
       ok: true, result: { rows: [{ ...shared, sharedWithTeamScope: 'group' }] },
+    });
+    await expect(executor.execute(listId, { collectionRef, sharedWithTeamId: 'selected-team',
+      query: { index: 'title', prefix: [value.title], order: 'asc' } },
+      { surface: 'ui', authority: 'present_user' })).resolves.toEqual({
+      ok: true, result: { rows: [{ ...shared, sharedWithTeamScope: 'group' }], nextCursor: 'another-index-page' },
     });
     await expect(executor.execute(listId, { collectionRef, sharedWithTeamId: 'another-team' },
       { surface: 'ui', authority: 'present_user' })).resolves.toEqual({ ok: true, result: { rows: [] } });

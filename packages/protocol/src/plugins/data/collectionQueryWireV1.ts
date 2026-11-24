@@ -1,6 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { PluginCollectionFiniteNumberV1Schema } from './collectionContributionV1.js';
+import { PluginCollectionFiniteNumberV1Schema, PluginCollectionMemberNameV1Schema } from './collectionContributionV1.js';
 import { PluginCollectionOpaqueCursorV1Schema } from './collectionOpaqueCursorV1.js';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from './collectionLimitsV1.js';
 import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
@@ -28,6 +28,12 @@ export function pluginCollectionQueryShapeV1() {
     limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1)), 50),
   };
 }
+
+export const PluginCollectionLogicalQueryV1Schema = lazyZodSchema(() => z.strictObject({
+  index: PluginCollectionMemberNameV1Schema,
+  ...pluginCollectionQueryShapeV1(),
+}).check(z.refine(isPluginCollectionQuerySelectionV1,
+  'A collection query supplies either prefix or prefixes.')));
 
 export function isPluginCollectionQuerySelectionV1(value: Readonly<{
   prefix: readonly unknown[]; prefixes?: readonly (readonly unknown[])[];

@@ -11,9 +11,12 @@ import { listArtifactHeaderPageForCaller } from '@/app/artifacts/artifactAccessS
 import { createDiscussion } from '@/app/discussions/mutations';
 import { listDiscussions } from '@/app/discussions/queries';
 import { readTeamSharedResourcesSummaryInTx } from '@/app/teams/sharedResources';
+import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createDbMaintenanceClient, db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
+import * as databaseTransactions from '@/storage/inTx';
 import { inTx } from '@/storage/inTx';
+import { getActivePrismaRuntime } from '@/storage/prisma';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { recordDriverStatements, type DriverStatementEvent } from '@/testkit/driverStatements';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
@@ -41,6 +44,114 @@ describe('Collection sharing database contract', () => {
         await db.$connect();
     }, 120_000);
     afterAll(async () => { if (sqlite) await sqlite.close(); else await db.$disconnect(); });
+
+    it('seeks the grant and declared index keys before reading one page of row bodies', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Index cost' } });
+        const pluginId = `example.sharing.index.${randomUUID()}`;
+        const collectionId = 'issues';
+        const index = 'by-environment';
+        const authentication = createPresentUserSessionAccessAuthentication();
+        const manifest = { schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Indexed sharing',
+            engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 }, contributes: { accountCollections: [{
+                id: collectionId, schemaVersion: 1, rowIdField: 'id',
+                schema: { type: 'object', properties: {
+                    id: { type: 'string', maxLength: 256 }, environment: { type: 'string', maxLength: 256 },
+                }, required: ['id', 'environment'], additionalProperties: false },
+                serverReadable: ['environment'],
+                indexes: [{ id: index, fields: [{ field: 'environment', direction: 'asc' }] }],
+            }] } };
+        const identity = { pluginId, collectionId };
+        const { inReadSnapshot } = databaseTransactions;
+        const snapshots = vi.spyOn(databaseTransactions, 'inReadSnapshot');
+        try {
+            await createPluginAvailabilityOperations().claimCollectionWriters({ accountId: owner.id, input: { manifest } });
+            const { schemaVersion, contractDigest } = await db.pluginCollectionContract.findFirstOrThrow({
+                where: identity, select: { schemaVersion: true, contractDigest: true },
+            });
+            const ref = { ...identity, schemaVersion, contractDigest };
+            await db.teamMembership.createMany({ data: [
+                { teamId: team.id, accountId: owner.id, role: 'owner' },
+                { teamId: team.id, accountId: member.id, role: 'member' },
+            ] });
+            for (const start of [0, 32, 64]) {
+                const result = await mutatePluginCollection({ accountId: owner.id, authentication, request: {
+                    ...identity, writerContext: { schemaVersion: ref.schemaVersion, contractDigest: ref.contractDigest },
+                    operations: Array.from({ length: 32 }, (_, offset) => {
+                        const n = start + offset;
+                        return { kind: 'put' as const, rowId: `issue-${n}`, expectedRevision: 'absent' as const,
+                            expectedAbsenceEpoch: 0, content: { t: 'plain' as const, v: {} },
+                            projection: { environment: n < 3 ? 'preview' : 'production' } };
+                    }),
+                } });
+                expect(result.status).toBe('updated');
+            }
+            const rows = await db.pluginCollectionRow.findMany({ where: { accountId: owner.id, ...identity },
+                select: { id: true, rowId: true } });
+            await db.pluginCollectionGrant.createMany({ data: rows.filter(row => row.rowId !== 'issue-2').map(row => ({
+                rowDbId: row.id, principalKind: 'team', teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id,
+            })) });
+
+            const indexStatements: Prisma.Sql[] = [];
+            const indexReads: number[] = [];
+            const bodyReads: number[] = [];
+            // Observe the real database boundary, including SQLite's dedicated read connection.
+            snapshots.mockImplementation((read, options) =>
+                inReadSnapshot(tx => read(new Proxy(tx, { get(client, key) {
+                    if (key === '$queryRaw') return async (statement: Prisma.Sql) => {
+                        const results = await client.$queryRaw<unknown[]>(statement);
+                        if (statement.sql.includes('PluginCollectionIndexEntry')) {
+                            indexStatements.push(statement);
+                            indexReads.push(results.length);
+                        }
+                        return results;
+                    };
+                    if (key === 'pluginCollectionRow') return new Proxy(client.pluginCollectionRow, { get(delegate, operation) {
+                        if (operation !== 'findMany') return Reflect.get(delegate, operation);
+                        return async (input: Prisma.PluginCollectionRowFindManyArgs) => {
+                            const results = await delegate.findMany(input);
+                            if (input.select?.contentEnvelope) bodyReads.push(results.length);
+                            return results;
+                        };
+                    } });
+                    return Reflect.get(client, key);
+                } })), options));
+            const page = await listSharedCollectionResources(member.id, {
+                ...identity, readerContext: ref, query: { index, prefix: ['preview'], order: 'asc', limit: 1 },
+            });
+            expect(page.resources.map(row => row.rowId)).toEqual(['issue-0']);
+            expect(page.nextCursor).toEqual(expect.any(String));
+            expect(indexReads).toEqual([2]);
+            expect(bodyReads).toEqual([1]);
+            const [statement] = indexStatements;
+            if (!statement) throw new Error('Expected an ordinal index statement');
+            const { sql } = getActivePrismaRuntime();
+            if (provider === 'sqlite') {
+                const steps = await db.$queryRaw<Array<{ detail: string }>>(sql`EXPLAIN QUERY PLAN ${statement}`);
+                const plan = steps.map(step => step.detail).join('\n');
+                expect(plan).toMatch(/SEARCH e USING INDEX PluginCollectionIndexEntry_(?:row_idx|sort_key)/);
+                expect(plan).toMatch(/SEARCH g USING (?:COVERING )?INDEX PluginCollectionGrant_teamId_rowDbId_idx/);
+                expect(plan).not.toMatch(/^SCAN (?:a|e|g|s)\b/m);
+            } else if (provider === 'postgres') {
+                // A small disposable fixture can be cheaper to scan. Check that the
+                // production predicates offer indexed access paths to the optimizer.
+                const plan = await db.$transaction(async tx => {
+                    await tx.$executeRaw`SET LOCAL enable_seqscan = off`;
+                    const steps = await tx.$queryRaw<Array<{ 'QUERY PLAN': string }>>(sql`EXPLAIN ${statement}`);
+                    return steps.map(step => step['QUERY PLAN']).join('\n');
+                });
+                expect(plan).toMatch(/Index (?:Only )?Scan using "PluginCollectionIndexEntry_(?:row_idx|sort_key)"/);
+                expect(plan).toContain('PluginCollectionGrant_teamId_rowDbId_idx');
+                expect(plan).not.toMatch(/Seq Scan on "PluginCollection(?:Row|IndexEntry|IndexState|Grant)"/);
+            }
+        } finally {
+            snapshots.mockRestore();
+            await db.team.delete({ where: { id: team.id } });
+            await db.account.deleteMany({ where: { id: { in: [owner.id, member.id] } } });
+            await db.pluginCollectionContract.deleteMany({ where: { pluginId } });
+        }
+    });
 
     it.skipIf(provider !== 'postgres')('aggregates a Team Collection without reading the matching grant identities', async () => {
         const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;

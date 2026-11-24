@@ -19,7 +19,7 @@ import {
 import { TaskResourceAddressV1Schema } from '../../todos/taskResourceV1.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { AccountDataCollectionValueV1Schema } from './collectionLogicalValueV1.js';
-import { isPluginCollectionQuerySelectionV1, pluginCollectionQueryShapeV1 } from './collectionQueryWireV1.js';
+import { PluginCollectionLogicalQueryV1Schema } from './collectionQueryWireV1.js';
 import { PluginCollectionSharingSetGrantRequestV1Schema, PluginCollectionSharingRevokeGrantRequestV1Schema,
   PluginCollectionSharingAddressV1Schema, PluginCollectionSharingListRequestV1Schema } from './collectionSharingV1.js';
 export { PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1 } from './hostedWebAccountDataBridgeKindV1.js';
@@ -30,11 +30,6 @@ const PluginHostedWebAccountDataDefinitionV1Schema = PluginAccountCollectionCont
 
 const AccountDataExpectedRevisionV1Schema = lazyZodSchema(() => z.union([z.number().check(z.int(), z.nonnegative()), z.literal('absent')]));
 const AccountDataExpectedVersionV1Schema = lazyZodSchema(() => z.union([z.number().check(z.int(), z.nonnegative()), z.literal('absent')]));
-const AccountDataCollectionQueryV1Schema = lazyZodSchema(() => z.strictObject({
-  index: PluginCollectionMemberNameV1Schema,
-  ...pluginCollectionQueryShapeV1(),
-}).check(z.refine(isPluginCollectionQuerySelectionV1,
-  'A collection query supplies either prefix or prefixes.')));
 const AccountDataCollectionMutationV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('put'),
@@ -71,7 +66,7 @@ const PluginHostedWebAccountDataCollectionOperationV1Schema = lazyZodSchema(() =
     arguments: z.tuple([PluginCollectionRowIdV1Schema, z.pick(PluginCollectionSharingRevokeGrantRequestV1Schema, { principal: true })]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.sharedWithMe'),
     definition: PluginHostedWebAccountDataDefinitionV1Schema,
-    arguments: z.tuple([z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true })]) }),
+    arguments: z.tuple([z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true, query: true })]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.get'),
     definition: PluginHostedWebAccountDataDefinitionV1Schema,
     arguments: z.tuple([z.pick(PluginCollectionSharingAddressV1Schema, { ownerAccountId: true, rowId: true })]) }),
@@ -113,7 +108,7 @@ const PluginHostedWebAccountDataCollectionOperationV1Schema = lazyZodSchema(() =
     kind: z.literal('data'),
     operation: z.literal('collection.query'),
     definition: PluginHostedWebAccountDataDefinitionV1Schema,
-    arguments: z.tuple([AccountDataCollectionQueryV1Schema]),
+    arguments: z.tuple([PluginCollectionLogicalQueryV1Schema]),
   }),
   z.strictObject({
     kind: z.literal('data'),

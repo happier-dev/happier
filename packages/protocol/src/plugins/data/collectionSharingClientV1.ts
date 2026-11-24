@@ -19,7 +19,14 @@ import {
 type OperationKind = 'read' | 'mutation';
 type OperationOutcome = 'refused' | 'failed' | 'uncertain';
 type OperationRefusal = ReturnType<typeof PluginCollectionSharingErrorV1Schema.parse>;
-type ListOptions = Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'>>;
+type SharedIndexQuery = NonNullable<PluginCollectionSharingListRequestV1['query']>;
+type ListOptions = Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'> & {
+  query?: Readonly<Pick<SharedIndexQuery, 'index' | 'order' | 'cursor' | 'range'> & {
+    prefix?: Readonly<SharedIndexQuery['prefix']>;
+    prefixes?: readonly Readonly<SharedIndexQuery['prefix']>[];
+    limit?: SharedIndexQuery['limit'];
+  }>;
+}>;
 
 
 /** Transport and key custody belong to each realm; logical sharing has one owner. */
@@ -83,6 +90,7 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
       ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
       ...(input.limit === undefined ? {} : { limit: input.limit }),
       ...(input.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: input.sharedWithTeamId }),
+      ...(input.query === undefined ? {} : { query: input.query }),
       ...(projection === undefined ? {} : { projection }),
     }));
   const open = async (resource: PluginCollectionSharingResourceV1, checkCurrent = true) => {
