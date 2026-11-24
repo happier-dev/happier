@@ -20,7 +20,6 @@ import {
 } from '@/voice/settings/panels/voiceSettingsAccountTestHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
-import type { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import {
@@ -62,9 +61,7 @@ describe('Voice History conversation section states', () => {
     installDisconnectedServerSocketBoundary();
   });
 
-  it('says loading, then "none loaded yet" while pages remain, and shows the empty state only for a settled whole list', async () => {
-    // The Session-list owner fills a visible page before exposing its continuation.
-    // A full non-Voice page leaves History empty while more conversation pages remain.
+  it('keeps loading through pages without Voice conversations before showing the settled empty state', async () => {
     const ordinary = await Promise.all(Array.from({ length: SESSION_LIST_PAGE_DEFAULT_LIMIT }, (_, index) =>
       createVoiceHistoryListRowFixture(
         createSessionFixture({
@@ -75,18 +72,24 @@ describe('Voice History conversation section states', () => {
       ),
     ));
     const firstPage = createDeferred<void>();
+    const continuation = createDeferred<void>();
+    const ordinaryCursor = encodeV2SessionListCursorV1('ordinary');
+    let continuationRequested = false;
     const request = account.request.getMockImplementation()!;
     account.request.mockImplementation(async (input, init) => {
       if (new URL(String(input)).pathname === '/v2/sessions/query') {
         const query = SessionListQueryV1Schema.parse(
           JSON.parse(String(init?.body)),
         );
-        // The first active page holds no Voice conversation but says more pages exist.
         const first = query.storage === 'active' && !query.cursor;
         if (first) await firstPage.promise;
+        if (query.storage === 'active' && query.cursor === ordinaryCursor) {
+          continuationRequested = true;
+          await continuation.promise;
+        }
         return Response.json({
           sessions: first ? ordinary : [],
-          nextCursor: first ? encodeV2SessionListCursorV1('ordinary') : null,
+          nextCursor: first ? ordinaryCursor : null,
           hasNext: first,
           attentionNextCursor: null,
           attentionHasNext: false,
@@ -117,26 +120,17 @@ describe('Voice History conversation section states', () => {
       expect(keys()).toEqual(['conversations:loading']);
 
       await act(async () => firstPage.resolve());
-      await waitForHomeGovernance(async () => {
-        await act(async () => {});
-        expect(keys()).toEqual(['conversations:none-loaded']);
-      });
+      await waitForHomeGovernance(() => expect(continuationRequested).toBe(true));
+      expect(keys()).toEqual(['conversations:loading']);
 
-      // The row's generic element return erases the known ItemGroup/SurfaceStateCard props.
-      const loadMore = state.rows[0]!.render() as React.ReactElement<{
-        children: React.ReactElement<React.ComponentProps<typeof SurfaceStateCard>>;
-      }>;
-      const action = loadMore.props.children.props.action;
-      expect(action).toBeDefined();
-      if (!action) throw new Error('Expected Voice History load-more action');
-      await act(async () => {
-        action.onPress();
-      });
+      await act(async () => continuation.resolve());
       await waitForHomeGovernance(async () => {
         await act(async () => {});
         expect(keys()).toEqual(['conversations:empty']);
       });
     } finally {
+      firstPage.resolve();
+      continuation.resolve();
       await act(async () => root.unmount());
       container.remove();
       environment.IS_REACT_ACT_ENVIRONMENT = previousAct;
