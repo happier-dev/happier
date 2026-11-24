@@ -6,6 +6,7 @@ import Fastify from "fastify";
 import type { Socket } from 'socket.io';
 import type { ClientConnection, UpdatePayload } from '@/app/events/eventRouter';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
+import { buildAutomationRunSummaryChangeEntityIdV1 } from "@happier-dev/protocol/changes";
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     encodePlainMachineStoredContent,
@@ -3144,10 +3145,11 @@ describe("workflowRunService (integration)", () => {
             .resolves.toEqual({ lastRunAt: null });
         await expect(db.automationRunEvent.findMany({ where: { runId }, select: { type: true } }))
             .resolves.toEqual([expect.objectContaining({ type: "run_succeeded" })]);
+        const summaryEntityId = buildAutomationRunSummaryChangeEntityIdV1(automation.id);
         await expect(db.accountChange.findFirst({
-            where: { accountId: seeded.accountId, kind: "automation", entityId: automation.id },
+            where: { accountId: seeded.accountId, kind: "automation", entityId: summaryEntityId },
             select: { entityId: true },
-        })).resolves.toEqual({ entityId: automation.id });
+        })).resolves.toEqual({ entityId: summaryEntityId });
     });
 
     it.each([
@@ -3210,10 +3212,11 @@ describe("workflowRunService (integration)", () => {
             .resolves.toEqual([{ type: eventType }]);
         await expect(db.automation.findUniqueOrThrow({ where: { id: automation.id }, select: { lastRunAt: true } }))
             .resolves.toEqual({ lastRunAt: null });
+        const summaryEntityId = buildAutomationRunSummaryChangeEntityIdV1(automation.id);
         await expect(db.accountChange.findFirst({
-            where: { accountId: seeded.accountId, kind: "automation", entityId: automation.id },
+            where: { accountId: seeded.accountId, kind: "automation", entityId: summaryEntityId },
             select: { entityId: true },
-        })).resolves.toEqual({ entityId: automation.id });
+        })).resolves.toEqual({ entityId: summaryEntityId });
     });
 
     it.each([

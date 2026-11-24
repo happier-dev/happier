@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import { createPluginHttpFixture } from "@happier-dev/plugin-sdk/testing";
+import { buildAutomationRunSummaryChangeEntityIdV1 } from "@happier-dev/protocol/changes";
 
 import {
     signAccountContentKeyBindingV1,
@@ -2985,7 +2986,7 @@ describe("Automation Event admission", () => {
                 accountId_kind_entityId: {
                     accountId: ACCOUNT_ID,
                     kind: "automation",
-                    entityId: AUTOMATION_ID,
+                    entityId: buildAutomationRunSummaryChangeEntityIdV1(AUTOMATION_ID),
                 },
             },
             select: { cursor: true },
