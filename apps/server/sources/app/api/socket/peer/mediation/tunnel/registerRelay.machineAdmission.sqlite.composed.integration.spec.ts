@@ -11,6 +11,9 @@ import {
 } from '@happier-dev/protocol';
 import { db } from '@/storage/db';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
+import { revokeMachineInTx } from '@/app/machines/machineMutations';
+import { updateMachineInstallationIdentityInTx } from '@/app/machines/installationIdentityUpdate';
+import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createFakeSocket, getSocketHandler } from '../../../../testkit/socketHarness';
 import { createPeerTcpTunnelRelayCoordinator } from './relayCoordinator';
@@ -79,7 +82,7 @@ describe('Tunnel current Machine admission (real SQLite)', () => {
         }
     });
 
-    it.each(['revoke', 'installation-replacement'] as const)('does not forward the next data frame after %s', async (transition) => {
+    it.each(['revoke', 'installation-replacement'] as const)('closes the open tunnel at %s and does not forward the next data frame', async (transition) => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: {
             id: randomUUID(), accountId: owner.id, installationId: randomUUID(), active: true,
@@ -94,7 +97,10 @@ describe('Tunnel current Machine admission (real SQLite)', () => {
         });
         const forwarded: unknown[] = [];
         const to = (_room: string) => ({ emit: (_event: string, envelope: unknown) => { forwarded.push(envelope); } });
-        const io = Object.assign(new EventEmitter(), { to, local: { to }, sockets: { sockets: new Map([[machineSocket.id, machineSocket]]) } });
+        const io = Object.assign(new EventEmitter(), { to, local: { to }, sockets: {
+            sockets: new Map([[machineSocket.id, machineSocket]]),
+            adapter: { rooms: new Map([...machineSocket.rooms].map(room => [room, new Set([machineSocket.id])])) },
+        } });
         const coordinator = createPeerTcpTunnelRelayCoordinator({ io: io as unknown as Server, config: { mode: 'memory' } });
         const socket = createFakeSocket({ id: randomUUID(), data: { clientType: 'user-scoped' } });
         const key = tweetnacl.sign.keyPair();
@@ -132,14 +138,15 @@ describe('Tunnel current Machine admission (real SQLite)', () => {
             } } });
             await send(data(0));
             expect(forwardedData()).toHaveLength(1);
-            if (transition === 'revoke') await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
-            else await db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
             forwarded.length = 0;
-            await send(data(1));
-            expect(forwardedData()).toHaveLength(0);
+            // Losses arrive through their canonical owners, which publish the withdrawal after commit.
+            if (transition === 'revoke') await inTx(tx => revokeMachineInTx(tx, { accountId: owner.id, machineId: machine.id }));
+            else await inTx(tx => updateMachineInstallationIdentityInTx(tx, machine, { installationId: randomUUID() }));
             expect(forwarded).toContainEqual(expect.objectContaining({
                 v: 1, frame: expect.objectContaining({ kind: 'abort', tunnelId, reasonCode: 'route_unavailable' }),
             }));
+            await send(data(1));
+            expect(forwardedData()).toHaveLength(0);
         } finally {
             await getSocketHandler(socket, 'disconnect')();
             await coordinator.close();

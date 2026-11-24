@@ -8,7 +8,7 @@ import {
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
 import * as registerRelayModule from './registerRelay';
-import * as logBoundary from '@/utils/logging/log';
+import { eventRouter } from '@/app/events/eventRouter';
 import { TEST_MACHINE_INSTALLATION_ID } from '../../../../testkit/machineAdmissionPersistenceBoundary';
 
 const admissionPersistence = vi.hoisted(() => ({ readAvailability: async (_machineId: string): Promise<'available'> => 'available' }));
@@ -326,71 +326,113 @@ function findBinaryFrame(
 }
 
 describe('registerPeerTcpTunnelRelaySocketHandler', () => {
-    it('forwards a queued burst after one fresh read but rechecks arrivals during that read', async () => {
+    function forwardedDataSequences(io: ReturnType<typeof createIo>, direction: 'client_to_daemon' | 'daemon_to_client'): number[] {
+        return io.roomEmit.mock.calls.flatMap(([, payload]) => {
+            if (!payload || typeof payload !== 'object' || !('frame' in payload) || !(payload.frame instanceof Uint8Array)) return [];
+            const decoded = decodePeerTcpTunnelBinaryFrameV2({ frame: payload.frame, maxHeaderBytes: 1024, maxPayloadBytes: 1024 });
+            return decoded.ok && decoded.header.kind === 'data' && decoded.header.direction === direction ? [decoded.header.sequence] : [];
+        });
+    }
+
+    function relayAborts(io: ReturnType<typeof createIo>, tunnelId: string): string[] {
+        return io.roomEmit.mock.calls.flatMap(([, payload]) => {
+            const envelope = payload as { v?: number; frame?: { kind?: string; tunnelId?: string; reasonCode?: string } };
+            return envelope.v === 1 && envelope.frame?.kind === 'abort' && envelope.frame.tunnelId === tunnelId
+                ? [envelope.frame.reasonCode ?? ''] : [];
+        });
+    }
+
+    it('reads Machine admission once per admitted tunnel, not per relayed request or reply frame', async () => {
+        const userSocket = createSocket();
+        const machineSocket = createSocket({ id: 'socket_machine_1', clientType: 'machine-scoped', machineId: 'machine_1' });
+        const io = createIo();
+        for (const socket of [userSocket, machineSocket]) {
+            registerRelayModule.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+                io, coordinator: createRelayTestCoordinator(io), serverRoutedEnabled: true,
+                allowedPorts: [3000], relayAuthorizationTrustRoots,
+            });
+        }
+        const tunnelId = 'admission-read-count';
+        let reads = 0;
+        // Count only the database boundary; real Machine admission evaluates every read.
+        admissionPersistence.readAvailability = async () => { reads += 1; return 'available'; };
+        try {
+            await userSocket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope(tunnelId));
+            const admissionReads = reads;
+            const pairs = 25;
+            const sequences = Array.from({ length: pairs }, (_, sequence) => sequence);
+            for (const sequence of sequences) {
+                await userSocket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createDataEnvelope(tunnelId, 'pcm', sequence));
+                await machineSocket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createMachineDataEnvelope(tunnelId, 'reply', sequence));
+            }
+            expect(forwardedDataSequences(io, 'client_to_daemon')).toEqual(sequences);
+            expect(forwardedDataSequences(io, 'daemon_to_client')).toEqual(sequences);
+            // OPEN reads before and after cluster attachment; relayed frames consume that result.
+            expect({ admissionReads, frameReads: reads - admissionReads }).toEqual({ admissionReads: 2, frameReads: 0 });
+        } finally {
+            admissionPersistence.readAvailability = async () => 'available';
+            await userSocket.trigger('disconnect');
+            await machineSocket.trigger('disconnect');
+        }
+    });
+
+    it('closes an open tunnel when its Machine admission is withdrawn, and refuses the next frame', async () => {
         const socket = createSocket();
         const io = createIo();
         registerRelayModule.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
             io, coordinator: createRelayTestCoordinator(io), serverRoutedEnabled: true,
             allowedPorts: [3000], relayAuthorizationTrustRoots,
         });
-        const tunnelId = 'fresh-batched-admission';
-        await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope(tunnelId));
-        const gates = Array.from({ length: 3 }, () => {
-            let release!: () => void;
-            let started!: () => void;
-            const pending = new Promise<void>(resolve => { release = resolve; });
-            const entered = new Promise<void>(resolve => { started = resolve; });
-            return { pending, entered, release, started };
+        const tunnelId = 'admission-withdrawn';
+        try {
+            await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope(tunnelId));
+            await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createDataEnvelope(tunnelId, 'pcm', 0));
+            expect(forwardedDataSequences(io, 'client_to_daemon')).toEqual([0]);
+            // Withdrawals of other Accounts or Machines leave this tunnel open.
+            eventRouter.receiveMachineAccessLoss({ accountId: 'user_2', machineId: 'machine_1' });
+            eventRouter.receiveMachineAccessLoss({ accountId: 'user_1', machineId: 'machine_2' });
+            expect(relayAborts(io, tunnelId)).toEqual([]);
+            eventRouter.receiveMachineAccessLoss({ accountId: 'user_1', machineId: 'machine_1' });
+            // Both participants receive the typed close at the withdrawal, before any later frame.
+            expect(relayAborts(io, tunnelId)).toEqual(['route_unavailable', 'route_unavailable']);
+            await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createDataEnvelope(tunnelId, 'pcm', 1));
+            expect(forwardedDataSequences(io, 'client_to_daemon')).toEqual([0]);
+        } finally {
+            await socket.trigger('disconnect');
+        }
+    });
+
+    it('refuses an OPEN whose Machine admission is withdrawn while its admission reads are in flight', async () => {
+        const socket = createSocket();
+        const io = createIo();
+        registerRelayModule.registerPeerTcpTunnelRelaySocketHandler('user_1', socket, {
+            io, coordinator: createRelayTestCoordinator(io), serverRoutedEnabled: true,
+            allowedPorts: [3000], relayAuthorizationTrustRoots,
         });
-        let read = 0;
-        // Delay only the database boundary. Real Machine admission and the
-        // registered relay handler still enforce every currentness decision.
+        const tunnelId = 'admission-withdrawn-during-open';
+        let release!: () => void;
+        let entered!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const reading = new Promise<void>(resolve => { entered = resolve; });
+        let reads = 0;
+        // The final OPEN read observes the row before the withdrawal commits.
         admissionPersistence.readAvailability = async () => {
-            const gate = gates[read++];
-            if (gate) { gate.started(); await gate.pending; }
+            reads += 1;
+            if (reads === 2) { entered(); await gate; }
             return 'available';
         };
-        const forwarded = () => io.roomEmit.mock.calls.flatMap(([, payload]) => {
-            if (!payload || typeof payload !== 'object' || !('frame' in payload) || !(payload.frame instanceof Uint8Array)) return [];
-            const decoded = decodePeerTcpTunnelBinaryFrameV2({ frame: payload.frame, maxHeaderBytes: 1024, maxPayloadBytes: 1024 });
-            return decoded.ok && decoded.header.kind === 'data' ? [decoded.header.sequence] : [];
-        });
-        const sends: Array<Promise<unknown>> = [];
-        const send = (seq: number) => { const result = Promise.resolve(socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createDataEnvelope(tunnelId, 'pcm', seq))); sends.push(result); return result; };
-        const trace = vi.spyOn(logBoundary, 'log').mockImplementation(() => undefined);
-        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         try {
-            const first = send(0);
-            await gates[0]!.entered;
-            // A slow database boundary must remain distinguishable from native
-            // recognition or a missing relay response, without logging PCM.
-            await new Promise(resolve => setTimeout(resolve, 30));
-            send(1); send(2); send(3);
-            gates[0]!.release();
-            await first;
-            await gates[1]!.entered;
-            send(4);
-            gates[1]!.release();
-            await vi.waitFor(() => expect(forwarded()).toEqual([0, 1, 2, 3]));
-            gates[2]!.release();
-            await Promise.all(sends);
-            expect(forwarded()).toEqual([0, 1, 2, 3, 4]);
-            expect(trace.mock.calls).toContainEqual([
-                expect.objectContaining({ event: 'peer-relay-frame-admission', tunnelId,
-                    sequence: 0, sender: 'user', admitted: true,
-                    elapsedMs: expect.any(Number),
-                }),
-                '[peer-relay-frame-admission]',
-            ]);
-            const admission = trace.mock.calls.find(([fields]) =>
-                fields.event === 'peer-relay-frame-admission' && fields.sequence === 0);
-            expect(admission?.[0].elapsedMs).toBeGreaterThanOrEqual(20);
+            const opening = Promise.resolve(socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createOpenEnvelope(tunnelId)));
+            await reading;
+            eventRouter.receiveMachineAccessLoss({ accountId: 'user_1', machineId: 'machine_1' });
+            release();
+            await opening;
+            expect(relayAborts(io, tunnelId)).toContain('route_unavailable');
+            await socket.trigger(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, createDataEnvelope(tunnelId, 'pcm', 0));
+            expect(forwardedDataSequences(io, 'client_to_daemon')).toEqual([]);
         } finally {
-            trace.mockRestore();
-            vi.unstubAllEnvs();
             admissionPersistence.readAvailability = async () => 'available';
-            for (const gate of gates) gate.release();
-            await Promise.all(sends);
+            release();
             await socket.trigger('disconnect');
         }
     });
