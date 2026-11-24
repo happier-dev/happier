@@ -374,7 +374,7 @@ describe('AddPhoneSettingsView', () => {
         expect(requestsFor('/v1/auth/pairing/start').length).toBe(1);
     });
 
-    it('does not complete with a replacement Account after captured Home credentials retire', async () => {
+    it('cancels the invite without approving after the captured Home Account retires', async () => {
         const screen = await renderPhone();
         const captured = captureActiveServerAccountScopeLifetime();
         expect(captured?.isCurrent()).toBe(true);
@@ -382,16 +382,20 @@ describe('AddPhoneSettingsView', () => {
         expect(profiles.areServerProfileIdentifiersEquivalent(captured?.scope.serverId ?? '', focusedHome.serverIdentityId)).toBe(true);
         currentnessGate = new Promise<void>(resolve => { releaseCurrentness = resolve; });
         const initialReads = currentnessReads;
-        await requestPhone(screen);
+        const { invite } = await requestPhone(screen);
         await waitForHomeGovernance(() => expect(currentnessReads > initialReads).toBe(true));
         await homes.switchAccount(focusedHome.profileId, 'replacement-phone-account', { currentAccount: true });
         expect(captured?.isCurrent()).toBe(false);
         const replacement = captureActiveServerAccountScopeLifetime();
         expect(replacement?.isCurrent()).toBe(true);
         expect(replacement?.scope.accountId).toBe('replacement-phone-account');
-        releaseCurrentness?.();
-        currentnessGate = null;
-        await waitForHomeGovernance(() => expect(screen.findByTestId('add-phone-invalid-request') !== null).toBe(true));
+        await act(async () => {
+            releaseCurrentness?.();
+            currentnessGate = null;
+            await waitForHomeGovernance(() => expect(requestsFor('/v1/auth/pairing/consume')).toMatchObject([
+                { serverId: focusedHome.profileId, input: { pairId: invite.pairId, intent: 'cancel' } },
+            ]));
+        });
         expect(requestsFor('/v1/auth/account/response').length).toBe(0);
         expect(screen.findByTestId('add-phone-complete') === null).toBe(true);
         expect(screen.findByTestId('add-phone-pairing-link') === null).toBe(true);
