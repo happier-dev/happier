@@ -80,39 +80,52 @@ export async function startManagedNativeGuestDaemon(input: Readonly<{
 }
 
 /** Adapt the provider's native byte/exec roles to the one shared enrollment recipe. */
-export function createManagedNativeBootstrapIO(correlation: Readonly<{ resource: Readonly<{ value: JsonValue }> }>, invoke: ManagedNativeInvocation): ManagedNativeBootstrapIO {
+export function createManagedNativeBootstrapIO(correlation: Readonly<{ resource: Readonly<{ value: JsonValue }> }>, invoke: ManagedNativeInvocation,
+    wrapCommand?: (command: string) => string): ManagedNativeBootstrapIO {
+    const run = async (request: Parameters<ManagedNativeBootstrapIO['exec']>[0],
+        stdin: Uint8Array | undefined = request.input === undefined ? undefined : new TextEncoder().encode(request.input)) => {
+        const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
+            resource: correlation.resource.value, argv: ['sh', '-c', wrapCommand?.(request.command) ?? request.command],
+            ...(request.allowWake === false ? { allowWake: false } : {}),
+            ...(stdin === undefined ? {} : { inputBase64: encodeBase64(stdin) }),
+            ...(request.processConfig ? { processConfig: request.processConfig } : {}),
+        }, request));
+        if ('kind' in result) {
+            if (!request.processConfig) throw new SystemTaskExecutionError('provider_unavailable',
+                'Native guest command failed (process configured without completion).');
+            return { status: 0, stdout: '', stderr: '' };
+        }
+        if (request.processConfig) throw new ManagedMachineControllerError('native_boot_unconfirmed');
+        if (result.termination.requestedBy.kind !== 'none' || result.termination.observed.kind !== 'exit'
+            || result.stdoutTruncated || result.stderrTruncated) {
+            const { requestedBy, observed } = result.termination;
+            const facts = [`requested ${requestedBy.kind}`, `observed ${observed.kind}`,
+                ...(observed.kind === 'exit' ? [`exit ${observed.exitCode}`] : []),
+                `stdout truncated ${result.stdoutTruncated}`, `stderr truncated ${result.stderrTruncated}`];
+            if (requestedBy.kind === 'dispose' && requestedBy.reason) facts.push(`dispose reason ${requestedBy.reason}`);
+            if (observed.kind === 'failed') {
+                const code = readUnexpectedActionErrorDiagnosticV1({ code: observed.diagnostic.code }).errorCode;
+                if (code !== null) facts.push(`code ${code}`);
+            }
+            throw new SystemTaskExecutionError('provider_unavailable', `Native guest command failed (${facts.join('; ')}).`);
+        }
+        return { status: result.termination.observed.exitCode,
+            stdout: new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(result.stdoutBase64)),
+            stderr: new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(result.stderrBase64)) };
+    };
     return {
-        exec: async request => {
-            const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
-                resource: correlation.resource.value, argv: ['sh', '-c', request.command],
-                ...(request.allowWake === false ? { allowWake: false } : {}),
-                ...(request.input === undefined ? {} : { inputBase64: encodeBase64(new TextEncoder().encode(request.input)) }),
-                ...(request.processConfig ? { processConfig: request.processConfig } : {}),
-            }, request));
-            if ('kind' in result) {
-                if (!request.processConfig) throw new SystemTaskExecutionError('provider_unavailable',
-                    'Native guest command failed (process configured without completion).');
-                return { status: 0, stdout: '', stderr: '' };
-            }
-            if (request.processConfig) throw new ManagedMachineControllerError('native_boot_unconfirmed');
-            if (result.termination.requestedBy.kind !== 'none' || result.termination.observed.kind !== 'exit'
-                || result.stdoutTruncated || result.stderrTruncated) {
-                const { requestedBy, observed } = result.termination;
-                const facts = [`requested ${requestedBy.kind}`, `observed ${observed.kind}`,
-                    ...(observed.kind === 'exit' ? [`exit ${observed.exitCode}`] : []),
-                    `stdout truncated ${result.stdoutTruncated}`, `stderr truncated ${result.stderrTruncated}`];
-                if (requestedBy.kind === 'dispose' && requestedBy.reason) facts.push(`dispose reason ${requestedBy.reason}`);
-                if (observed.kind === 'failed') {
-                    const code = readUnexpectedActionErrorDiagnosticV1({ code: observed.diagnostic.code }).errorCode;
-                    if (code !== null) facts.push(`code ${code}`);
-                }
-                throw new SystemTaskExecutionError('provider_unavailable', `Native guest command failed (${facts.join('; ')}).`);
-            }
-            return { status: result.termination.observed.exitCode,
-                stdout: new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(result.stdoutBase64)),
-                stderr: new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(result.stderrBase64)) };
-        },
+        exec: request => run(request),
         putFile: async request => {
+            if (wrapCommand) {
+                // A provider's putFile runs as its login. Send private guest files through the selected user's stdin.
+                const path = safeBashSingleQuote(request.path);
+                const result = await run({ command: `umask 077; cat > ${path} && chmod 600 ${path}`, signal: request.signal }, request.bytes);
+                if (result.status !== 0) throw new ManagedMachineControllerError('remote_command_failed', undefined,
+                    { kind: 'managedNative', nativeCause: projectMachineProvisionerGuestCommandFailure({
+                        command: 'run', exitCode: result.status, stderr: result.stderr,
+                    }) });
+                return;
+            }
             const result = MachineProvisionerPutFileResultV1Schema.parse(await invoke('putFile', {
                 resource: correlation.resource.value, guestPath: request.path, bytesBase64: encodeBase64(request.bytes),
             }, request));

@@ -141,7 +141,7 @@ describe('Session holder bootstrap in a managed guest', () => {
     it('retains a placement failure with its exit status and a redacted stderr tail', async () => {
         const secret = 'holder-fixture-private-token';
         const placement = ensureManagedGuestSessionHolder({ version: 'test',
-            platform: { os: 'linux', arch: 'x86_64', home: '/home/guest' },
+            platform: { os: 'linux', arch: 'x64', home: '/home/guest' },
             io: { exec: async () => ({ status: 1, stdout: 'private output',
                 stderr: `${'old diagnostic\n'.repeat(1024)}\nAuthorization: Bearer ${secret}\nchmod: Operation not permitted` }),
                 putFile: async () => { throw new Error('must not upload'); } },

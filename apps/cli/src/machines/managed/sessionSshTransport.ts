@@ -10,16 +10,20 @@ export function createManagedSshSessionTransport(input: Readonly<{
     credentialPath: string;
     knownHostsPath: string;
     lifetime: AbortSignal;
+    wrapCommand?: (command: string) => string;
 }>) {
     const connection = { target: `${input.carrier.user}@${input.carrier.address}`, port: input.carrier.port,
         auth: { mode: 'keyFile' as const, privateKeyPath: input.credentialPath },
         knownHostsPath: input.knownHostsPath, knownHostsMode: 'app' as const };
     const signalFor = (signal?: AbortSignal) => signal ? AbortSignal.any([input.lifetime, signal]) : input.lifetime;
-    const openChannel = (argv: readonly string[], signal?: AbortSignal) => openOpenSshRemoteChannel({ ...connection,
-        remoteCommand: argv.map(safeBashSingleQuote), signal: signalFor(signal) });
+    const openChannel = (argv: readonly string[], signal?: AbortSignal) => {
+        const quoted = argv.map(safeBashSingleQuote);
+        const remoteCommand = input.wrapCommand ? ['sh', '-c', safeBashSingleQuote(input.wrapCommand(`exec ${quoted.join(' ')}`))] : quoted;
+        return openOpenSshRemoteChannel({ ...connection, remoteCommand, signal: signalFor(signal) });
+    };
     const io: ManagedNativeBootstrapIO = {
         exec: request => runOpenSshRemoteCommand({ ...connection,
-            remoteCommand: ['sh', '-c', safeBashSingleQuote(request.command)],
+            remoteCommand: ['sh', '-c', safeBashSingleQuote(input.wrapCommand?.(request.command) ?? request.command)],
             input: request.input, signal: signalFor(request.signal), timeoutMs: request.timeoutMs,
             onStdoutChunk: request.onStdoutChunk, rejectOnNonZero: false, includeStdoutInError: false }),
         putFile: async request => {

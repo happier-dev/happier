@@ -8133,6 +8133,8 @@ channels and exits when the holder closes that connection.
     admission for the requester through the signed controller policy read.
     `openSessionTarget` allows `exec`, `putFile` and `stream` against that resource.
     Calling `exec` leaves a stopped target stopped.
+    Dedicated enrollment uses the same guest user and home as managed Exec for
+    holder placement, file delivery and channels. Other targets use their provider login.
   - Project workspace and Sync opens request the retained preset carrier in their
     exact signed target census. Home includes it for the selected installed
     controller after requester admission. The controller opens the same

@@ -33,7 +33,7 @@ import { execFile } from 'node:child_process';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -110,7 +110,9 @@ function harness(options: Readonly<{ streamRole?: boolean; holdStream?: boolean;
     const inputs: unknown[] = [];
     const native = fixture({ ...options.nativeOptions, credentialPurposes: [], streamRole: options.streamRole ?? true,
         nativeCredentialService: Boolean(options.onNativeRole),
-        ...(options.guest || options.targetExec ? { nativeRoleResults: { exec: (options.targetExec ?? guestExec) as never } } : {}),
+        ...(options.guest || options.targetExec ? { nativeRoleResults: {
+            ...options.nativeOptions?.nativeRoleResults, exec: (options.targetExec ?? guestExec) as never,
+        } } : {}),
         async onNativeRole(role, input, context) {
             calls.push(role); inputs.push(input);
             await options.onNativeRole?.(role, input, context);
@@ -553,6 +555,90 @@ describe('Session-target authority for managed provider channel roles', () => {
 describe('Session placement on a managed target (driver)', () => {
     const holder = { version: 'v1', resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array([1]), sha256: 'a'.repeat(64) },
         helper: { bytes: new Uint8Array([2]), sha256: 'b'.repeat(64) } }) };
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+        'places, executes and opens the holder as the dedicated guest user on a Project attach', async () => {
+            const root = await mkdtemp(join(tmpdir(), 'dedicated-project-holder-'));
+            const bootstrapHome = join(root, 'happier-bootstrap');
+            const dedicatedHome = join(root, 'happier');
+            const tools = join(root, 'bin');
+            const lifetime = new AbortController();
+            const restricted = join(bootstrapHome, '.happier');
+            onTestFinished(async () => {
+                lifetime.abort();
+                await chmod(restricted, 0o700);
+                await rm(root, { recursive: true, force: true });
+            });
+            await Promise.all([mkdir(bootstrapHome), mkdir(dedicatedHome), mkdir(tools)]);
+            await mkdir(restricted, { mode: 0o000 });
+            // Emulate the guest's passwd and privileged user switch at the process boundary.
+            const guestTools = {
+                id: 'if [ "$2" = happier ]; then echo 2000; else echo 1000; fi',
+                getent: `printf '%s\\n' 'happier:x:2000:2000::${dedicatedHome}:/bin/sh'`,
+                sudo: '[ "$1" = -n ] && [ "$2" = -- ] || exit 99; shift 2; exec "$@"',
+                runuser: '[ "$1" = -u ] && [ "$2" = happier ] && [ "$3" = -- ] || exit 99; shift 3; exec "$@"',
+            };
+            await Promise.all(Object.entries(guestTools).map(([name, script]) =>
+                writeFile(join(tools, name), `#!/bin/sh\n${script}\n`, { mode: 0o755 })));
+            const env = { PATH: `${tools}:/usr/bin:/bin`, HOME: bootstrapHome, USER: 'happier-bootstrap' };
+            const h = harness({ targetExec: async body => {
+                const { argv, inputBase64 } = body as { argv: string[]; inputBase64?: string };
+                const child = promisify(execFile)('/bin/sh', argv.slice(1), { env, cwd: root });
+                child.child.stdin?.on('error', () => {});
+                child.child.stdin?.end(inputBase64 ? Buffer.from(inputBase64, 'base64') : undefined);
+                const result = await child.then(value => ({ ...value, status: 0 }), (error: unknown) => {
+                    if (!error || typeof error !== 'object' || !('code' in error) || typeof error.code !== 'number'
+                        || !('stdout' in error) || typeof error.stdout !== 'string'
+                        || !('stderr' in error) || typeof error.stderr !== 'string') throw error;
+                    return { status: error.code, stdout: error.stdout, stderr: error.stderr };
+                });
+                return { ...guestExec(body), termination: { observed: { kind: 'exit', exitCode: result.status },
+                    requestedBy: { kind: 'none' } }, stdoutBase64: Buffer.from(result.stdout).toString('base64'),
+                    stderrBase64: Buffer.from(result.stderr).toString('base64') };
+            }, targetPutFile: async body => {
+                const { guestPath, bytesBase64 } = body as { guestPath: string; bytesBase64: string };
+                if (guestPath.startsWith(`${dedicatedHome}/`)) throw new Error('Lima bootstrap cannot write in the dedicated home');
+                await writeFile(guestPath, Buffer.from(bytesBase64, 'base64'));
+            }, nativeOptions: {
+                nativeCommandArgs: [],
+                nativeRoleResults: { bootstrap: roleResult('bootstrap'), putFile: roleResult('put-file') },
+                hostServiceAdapters: { exec: {
+                    resolveExecutable: async () => ({ command: '/usr/bin/env', args: [], env }),
+                    resolvePath: async () => root,
+                } },
+            }, async onNativeRole(role, input, context) {
+                if (role !== 'stream') return;
+                const { argv } = input as { argv: string[] };
+                const channel = await context.services.exec.spawn({ executable: { kind: 'systemTool', id: 'fixture-node' }, args: argv },
+                    { outputDelivery: 'invocation', signal: context.signal });
+                try { await channel.waitForExit(); }
+                finally { await channel.dispose(); }
+            } });
+            const artifact = (bytes: Buffer) => ({ bytes, sha256: createHash('sha256').update(bytes).digest('hex') });
+            const holderArtifact = artifact(Buffer.from('#!/bin/sh\nprintf "%s:%s\\n" "$USER" "$HOME"\n'));
+            const helperArtifact = artifact(Buffer.from([0, 0xff, 13, 10]));
+            const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true,
+                enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+                    role: 'server', adminAccessAtCreation: 'none' } });
+            const driver = createManagedMachineAcquisitionDriver({ ...h.input, readTargetCurrent: async () => ({ machine: row, admitted: true }) });
+            const target = await driver.openProjectWorkspaceTarget({
+                workspace: { ...syncWorkspace, rootPath: dedicatedHome }, requesterAccountId: 'owner', lifetime: lifetime.signal,
+                holder: { version: holder.version, resolveArtifacts: async () => ({ holder: holderArtifact, helper: helperArtifact }) },
+            });
+            const placed = join(dedicatedHome, '.happier', 'holder');
+            expect(target).toMatchObject({ home: dedicatedHome, holderPath: join(placed, holder.version, 'happier-session-holder'),
+                helperPath: join(placed, holder.version, 'happier-process-custody'), socketDirectory: join(placed, 'run') });
+            expect(await readFile(target.helperPath!)).toEqual(helperArtifact.bytes);
+            expect((await stat(target.socketDirectory!)).mode & 0o777).toBe(0o700);
+            const identity = `happier:${dedicatedHome}\n`;
+            expect(await target.exec(`exec ${safeBashSingleQuote(target.holderPath!)}`, lifetime.signal)).toMatchObject({ status: 0, stdout: identity });
+            const holderChannel = target.openChannel([target.holderPath!], lifetime.signal);
+            holderChannel.end();
+            const chunks = [];
+            for await (const chunk of holderChannel) chunks.push(Buffer.from(chunk));
+            expect(Buffer.concat(chunks).toString()).toBe(identity);
+        },
+    );
 
     it.each([
         { name: 'returns a confirmed guest exit', termination: { observed: { kind: 'exit', exitCode: 7 }, requestedBy: { kind: 'none' } },

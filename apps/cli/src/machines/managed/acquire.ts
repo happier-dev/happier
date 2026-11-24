@@ -62,7 +62,7 @@ import { executeManagedMachineAcquire, readManagedGuestDiagnostics, createManage
 import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
-import { buildDedicatedDaemonInvocationCommand, readManagedGuestCliIdentity, resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { buildDedicatedDaemonInvocationCommand, DEDICATED_DAEMON_INSTALL_HOME, readManagedGuestCliIdentity, resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { readManagedGuestCliLocalPayloadRoot } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
 import { runBoundSessionSetup } from './boundSessionSetup';
 import type { ManagedGuestLocalStop } from './managedRetentionPolicy';
@@ -662,6 +662,10 @@ export type ManagedProjectWorkspaceTargetRequest = Readonly<{
     holder: ManagedSessionTargetRequest['holder'];
 }>;
 
+function readManagedGuestCommandWrapper(identity: ManagedMachineFullV1['enrollmentIdentity']) {
+    return identity?.kind === 'dedicatedDaemonUser' ? buildDedicatedDaemonInvocationCommand : undefined;
+}
+
 export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcquisitionDriverInput) {
     const inFlight = new Map<string, Promise<JsonValue | null>>();
     async function reconcileOnce(params: Parameters<typeof reconcileManagedMachine>[0]): Promise<void> {
@@ -796,8 +800,12 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }, () => undefined);
         });
         if (unsubscribe) observationLifetime.addEventListener('abort', () => unsubscribe(), { once: true });
-        let io = createManagedNativeBootstrapIO(correlation, invoke);
-        let openChannel: ManagedSessionTarget['openChannel'] = (argv, signal) => openManagedNativeChannel(correlation, invoke, { argv, signal });
+        const wrapCommand = readManagedGuestCommandWrapper(current.enrollmentIdentity);
+        let io = createManagedNativeBootstrapIO(correlation, invoke, wrapCommand);
+        let openChannel: ManagedSessionTarget['openChannel'] = (argv, signal) => openManagedNativeChannel(correlation, invoke, {
+            argv: wrapCommand ? ['sh', '-c', wrapCommand(`exec ${argv.map(safeBashSingleQuote).join(' ')}`)] : argv,
+            signal,
+        });
         let placed: Readonly<{ platform: ManagedGuestPlatform }> & Partial<Pick<ManagedSessionTarget, 'holderPath' | 'helperPath' | 'socketDirectory'>>;
         let ensureWorkspaceRuntime!: ManagedSessionTarget['ensureWorkspaceRuntime'];
         try {
@@ -812,7 +820,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 finiteSignal.throwIfAborted();
                 authority.assertManagedTargetCurrent(correlation.resource.value);
                 const ssh = createManagedSshSessionTransport({ carrier, credentialPath: credential.path,
-                    knownHostsPath: trust.knownHostsPath, lifetime });
+                    knownHostsPath: trust.knownHostsPath, lifetime, wrapCommand });
                 io = ssh.io;
                 openChannel = ssh.openChannel;
             }
@@ -825,7 +833,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 && managedMachineSetupHasWorkV1(setup);
             const selectedExecution = hydrator.readPresetDefinition(current)?.preparationExecution;
             const channel = resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label;
-            const remoteHomeDir = `${placed.platform.home}/.happier`;
+            const remoteHomeDir = wrapCommand ? DEDICATED_DAEMON_INSTALL_HOME : `${placed.platform.home}/.happier`;
             let setupBinaryPath = selectedExecution?.binaryPath ?? resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',
                 remoteHomeDir, channel });
             const setupClient = () => createManagedMachineControllerClient(input, {
@@ -1150,8 +1158,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     argv,
                 ].join('');
                 // Enrollment without an explicit identity uses the provider's guest user.
-                const script = machine.enrollmentIdentity?.kind === 'dedicatedDaemonUser'
-                    ? buildDedicatedDaemonInvocationCommand(command) : command;
+                const wrapCommand = readManagedGuestCommandWrapper(machine.enrollmentIdentity);
+                const script = wrapCommand?.(command) ?? command;
                 const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
                     resource: machine.resource.value, argv: ['sh', '-s'], allowWake: false,
                     inputBase64: Buffer.from(`${script}\n`).toString('base64'),
