@@ -618,7 +618,7 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     }
     if (sources.principalName) return { text: sources.principalName, named: true };
     if (sources.principalResolving) return { text: t('common.loading'), named: false, resolving: true };
-    if (reference?.kind === 'group') return { text: t('common.unavailable'), named: false };
+    if (reference?.kind === 'group' || reference?.kind === 'homeAccount') return { text: t('common.unavailable'), named: false };
     return { text: literal, named: false };
 }
 

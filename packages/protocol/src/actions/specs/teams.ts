@@ -100,6 +100,7 @@ import {
 } from '../../teams/credentials/actionIdsV1.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
 import {
+  homeAccountApprovalReferenceForField,
   homeDomainActionRow,
   homeDomainApprovalField as approvalField,
   type HomeDomainActionRow,
@@ -717,6 +718,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   }),
   homeDomainActionRow({
     id: 'teams.create', approval: {result: 'required'},
+    approvalPresentation: { referenceForField: homeAccountApprovalReferenceForField('initialOwnerAccountId') },
     mcp: true,
     title: 'Create Team',
     description: 'Create a Team in this Home. initialOwnerAccountId is required when Team creation is managed-only. A repeated request key returns the same Team rather than a second one.',
@@ -896,8 +898,11 @@ function createTeamActionSpecs(): TeamActionSpecs {
     mcp: true,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: TEAM_MEMBER_ADD_TITLE,
-    approvalPresentation: { summary: (_input, context) => context?.teamMemberPresentation
-      ? `${TEAM_MEMBER_ADD_TITLE} · ${context.teamMemberPresentation.accountName} · ${context.teamMemberPresentation.teamName}` : null },
+    approvalPresentation: {
+      summary: (_input, context) => context?.teamMemberPresentation
+        ? `${TEAM_MEMBER_ADD_TITLE} · ${context.teamMemberPresentation.accountName} · ${context.teamMemberPresentation.teamName}` : null,
+      referenceForField: homeAccountApprovalReferenceForField(ACCOUNT_ID_FIELD.path),
+    },
     description: 'Admit an existing Home Account to a Team with an explicit role and history horizon.',
     safety: 'danger',
     sideEffectClass: 'danger',

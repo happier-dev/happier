@@ -337,8 +337,8 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
 }
 
 function isGovernancePrincipal(reference: ApprovalReference | undefined): boolean {
-    return reference?.kind === 'account' || reference?.kind === 'team'
-        || reference?.kind === 'group' || reference?.kind === 'teamMembership';
+    return reference?.kind === 'account' || reference?.kind === 'homeAccount'
+        || reference?.kind === 'team' || reference?.kind === 'group' || reference?.kind === 'teamMembership';
 }
 
 function readHomePolicyLabel(row: ApprovalValueRow, actionId: string | undefined): string | undefined {

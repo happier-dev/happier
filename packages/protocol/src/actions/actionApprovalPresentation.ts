@@ -209,6 +209,8 @@ export type ApprovalActionReference =
     }>
   | Readonly<{ kind: 'home'; id: string; unavailableWithoutName?: true }>
   | Readonly<{ kind: 'account'; id: string }>
+  /** A Home directory entry, named by the reviewer's authorized read on this Home. */
+  | Readonly<{ kind: 'homeAccount'; id: string }>
   /** A Discussion, read by the title its viewer can read. */
   | Readonly<{ kind: 'discussion'; id: string }>
   /** A saved Home layout item, read through the presenting Account's existing layout projection. */

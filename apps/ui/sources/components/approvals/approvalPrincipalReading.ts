@@ -1,9 +1,12 @@
 import * as React from 'react';
 import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { HomeAccountDetailV1Schema } from '@happier-dev/protocol/home/governance';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { readSharePrincipalNames, SharePrincipalNamesContext, useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
+import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { getTeamMember } from '@/sync/ops/teams/teamMemberOperations';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 
@@ -15,9 +18,19 @@ function approvalPrincipal(reference: ApprovalActionReference | undefined): Prin
     return null;
 }
 
-/** Display and immediate consent read the exact principal through the existing authorized resolver. */
+/** Display and immediate consent read each principal from its authorized source. */
 export async function readApprovalPrincipalName(reference: ApprovalActionReference | undefined, scope: ServerAccountScope,
     signal?: AbortSignal, isCurrent?: () => boolean): Promise<string | null> {
+    if (reference?.kind === 'homeAccount') {
+        // An approval label uses the directory read, without starting another Action approval.
+        const { method, path, body } = bindHomeDomainActionHttpRequestV1('home.accounts.get', { accountId: reference.id });
+        const account = await requestHomeDomain({
+            scope, method, path, input: body, schema: HomeAccountDetailV1Schema, effect: 'read',
+            ...(signal ? { signal } : {}),
+        });
+        if (!account.ok || signal?.aborted || isCurrent?.() === false) return null;
+        return formatAccountDisplayName(account.value.profile);
+    }
     if (reference?.kind === 'teamMembership') {
         const member = await getTeamMember({ scope, address: { serverId: scope.serverId, teamId: reference.teamId },
             membershipId: reference.id, signal });
@@ -37,6 +50,7 @@ export function useApprovalPrincipalName(reference: ApprovalActionReference | un
 }> {
     const subject = approvalPrincipal(reference);
     const key = reference?.kind === 'teamMembership' ? JSON.stringify([reference.kind, reference.teamId, reference.id])
+        : reference?.kind === 'homeAccount' ? JSON.stringify([reference.kind, reference.id])
         : subject ? sharePrincipalKey(subject) : null;
     const acknowledged = React.useContext(SharePrincipalNamesContext);
     const name = serverId !== null && acknowledged?.serverId === serverId && key !== null

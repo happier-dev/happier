@@ -55,12 +55,13 @@ import {
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { homeDomainActionRow, homeDomainApprovalField as approvalField } from './homeDomainRow.js';
+import { homeAccountApprovalReferenceForField, homeDomainActionRow, homeDomainApprovalField as approvalField } from './homeDomainRow.js';
 import { HomePublicProfileModerationInputV1Schema, HomePublicProfileModerationResultV1Schema } from '../../home/governance/publicProfiles.js';
 import { SERVER_CONFIG_REGISTRY_BASE } from '../../serverConfig/registry.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
+const HOME_ACCOUNT_APPROVAL = { referenceForField: homeAccountApprovalReferenceForField(ACCOUNT_ID_FIELD.path) };
 
 /**
  * Home Administration rows.
@@ -77,6 +78,7 @@ function createHomeGovernanceActionSpecs() {
   return Object.freeze([
   homeDomainActionRow({
     id: 'home.public_profiles.restrict', approval: { result: 'required', flow: 'deferred' },
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     title: 'Restrict a public profile',
     description: 'Remove one Account’s public profile from this Home with an audited reason. The Home rechecks the operator’s authority.',
     safety: 'danger', sideEffectClass: 'danger',
@@ -88,6 +90,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.public_profiles.restore', approval: { result: 'required', flow: 'deferred' },
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     title: 'Restore a public profile',
     description: 'Lift one Account’s public-profile restriction with an audited reason. Deleted disclosure is not republished; the Home rechecks the operator’s authority.',
     safety: 'danger', sideEffectClass: 'danger',
@@ -99,6 +102,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.public_profiles.handle_reclaim', approval: { result: 'required', flow: 'deferred' },
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     irreversible: true,
     title: 'Reclaim a public-profile handle',
     description: 'Reclaim the reviewed Account username with an audited reason and owner notice. Any publication restriction remains.',
@@ -203,6 +207,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.accounts.get', approval: {result: 'required'},
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     title: 'Get Home Account',
     description: 'Read one person as Home administration sees them: role, status, sign-in facts, Teams, counts and recent administration events.',
     safety: 'safe',
@@ -215,6 +220,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.accounts.role.set', approval: {result: 'required'},
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Set Home role',
     description: 'Change one Account\'s Home role. The Home enforces its last-owner invariant.',
@@ -231,6 +237,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.accounts.disable', approval: {result: 'required'},
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Disable Home Account',
     description: 'Place one Account on a reversible hold, ending its access to this Home.',
@@ -244,6 +251,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.accounts.enable', approval: {result: 'required'},
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Re-enable Home Account',
     description: 'Lift a reversible hold and restore one Account\'s access to this Home.',
@@ -272,7 +280,7 @@ function createHomeGovernanceActionSpecs() {
       summary: () => null,
       referenceForField: (path, value) => path === 'managedResourceDispositions.[].managedId' && typeof value === 'string'
         ? { kind: 'managedMachine', id: value, unavailableWithoutName: true }
-        : undefined,
+        : HOME_ACCOUNT_APPROVAL.referenceForField(path, value, undefined),
       inputHints: { fields: [
         ACCOUNT_ID_FIELD,
         approvalField('managedResourceDispositions', 'Managed resource dispositions', { widget: 'json' }),
@@ -281,6 +289,7 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.accounts.signOutEverywhere', approval: {result: 'required'},
+    approvalPresentation: HOME_ACCOUNT_APPROVAL,
     irreversible: true,
     title: 'Sign a Home Account out everywhere',
     description: 'End every signed-in session of one Account. API tokens stay valid until the Account is disabled.',

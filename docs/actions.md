@@ -1412,8 +1412,10 @@ are never the person's confirmation text.
 In unreleased 0.3 source, approval field presentation consumes declared reference
 names and option labels through the shared Protocol projector and UI card. An
 unreadable reference shows Unavailable; its exact identity stays in the existing
-Technical details disclosure. Domains declare explicit null clears in the private,
-in-process `approvalPresentation.clearInputPaths`; an omitted operand has no clear
+Technical details disclosure. Home Account references, such as the proposed owner
+of a new Team, use the Home directory read with the viewing approver’s credentials.
+Domains declare explicit null clears in the private, in-process
+`approvalPresentation.clearInputPaths`; an omitted operand has no clear
 row, and a nullable schema alone does not declare a clear. The ordinary field row
 translates “Clears <field>”. These declarations do not change stored approvals or
 the serialized Action catalog. `technicalInputPaths` retains transport and revision

@@ -85,7 +85,7 @@ describe('the shared Action approval presentation owner', () => {
         expect(presentation.summary).toBeNull();
         expect(readActionApprovalSubject({ actionId: 'teams.members.add', actionArgs, preview })).toBeUndefined();
         expect(readActionApprovalSubject({ actionId: 'teams.members.add', actionArgs }))
-            .toEqual({ kind: 'account', id: actionArgs.accountId });
+            .toEqual({ kind: 'homeAccount', id: actionArgs.accountId });
         expect(presentActionApproval({ actionId: 'teams.members.add', actionArgs, preview,
             authoredSummary: 'Please review the membership first.' }).summary).toBe('Please review the membership first.');
         expect(presentActionApproval({ actionId: 'teams.members.add', actionArgs: { ...actionArgs, accountId: 'another-person' }, preview }).title)

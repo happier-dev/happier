@@ -2,6 +2,14 @@ import type { z } from '../../zodRuntimePolicy.js';
 
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
 
+type ApprovalReferenceForField = NonNullable<NonNullable<PreNormalizedActionSpec['approvalPresentation']>['referenceForField']>;
+
+export function homeAccountApprovalReferenceForField(accountPath: string): ApprovalReferenceForField {
+  return (path, value) => path === accountPath && typeof value === 'string' && value.trim()
+    ? { kind: 'homeAccount', id: value.trim() }
+    : undefined;
+}
+
 export function homeDomainApprovalField(
   path: string,
   title: string,
