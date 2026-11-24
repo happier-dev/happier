@@ -1267,7 +1267,8 @@ describe('useVoiceAttemptControl availability ladder', () => {
     try {
       expect(screen.findByTestId('voice-setup-in-place')).toBeNull();
       await act(async () => screen.tree.pressByTestId('session-composer-voice'));
-      expect(screen.findByTestId('voice-setup-in-place')).not.toBeNull();
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('voice-setup-in-place'),
+        popover => popover !== null);
       expect(
         routerMock.instance?.spies.push.mock.calls.slice(pushesBefore).map((call) => call[0]),
       ).not.toContain(SETTINGS_ROUTES.voice);

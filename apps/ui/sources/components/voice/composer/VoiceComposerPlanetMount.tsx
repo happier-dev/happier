@@ -12,9 +12,13 @@ import { t } from '@/text';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useHostActivelyFocused } from '@/utils/runtime/useHostActivelyViewed';
-import { VoiceSetupPopover } from '@/voice/settings/setup/VoiceSetupPopover';
+import { retryableLazy } from '@/components/ui/performance/retryableLazy';
 
 import { VoiceComposerPlanet } from './VoiceComposerPlanet';
+
+const VoiceSetupPopover = retryableLazy(async () => ({
+    default: (await import('@/voice/settings/setup/VoiceSetupPopover')).VoiceSetupPopover,
+}));
 
 /**
  * The composer planet, wired to the one canonical Voice attempt (§2.3, §2.5).
@@ -124,13 +128,15 @@ function VoiceComposerPlanetRuntime(props: Readonly<{
                 beginHoldToTalk={holdEnabled && control.canHoldToTalk ? control.beginHoldToTalk : undefined}
                 onHoldUnavailable={onHoldUnavailable}
             />
-            <VoiceSetupPopover
-                open={setupOpen}
-                target={idleTarget}
-                anchorRef={props.setupAnchorRef ?? anchorRef}
-                focusReturnRef={anchorRef}
-                onRequestClose={closeSetup}
-            />
+            {setupOpen ? <React.Suspense fallback={null}>
+                <VoiceSetupPopover
+                    open
+                    target={idleTarget}
+                    anchorRef={props.setupAnchorRef ?? anchorRef}
+                    focusReturnRef={anchorRef}
+                    onRequestClose={closeSetup}
+                />
+            </React.Suspense> : null}
         </View>
     );
 }
