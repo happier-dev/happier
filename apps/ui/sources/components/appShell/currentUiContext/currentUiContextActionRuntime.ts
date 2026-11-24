@@ -2,7 +2,7 @@ import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actio
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createPluginSurfaceActionFailureError } from '@/components/plugins/surfaces/actionFailure';
 import { withActionAutomationNoticesV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
@@ -135,8 +135,13 @@ export async function executeCurrentUiContextAction(
     const outcome = await port.invokeCurrentUiCommand?.({ commandId: input.commandId, includeCommandTitle: true, signal: request.context.signal,
         ...(input.input === undefined ? {} : { input: input.input }) });
     if (outcome?.ok) {
+        const settlement = { ok: true, result: outcome.result ?? null } as const;
+        // A nested approval defers settlement of the mounted command.
+        if (isDeferredApprovalResult(settlement)) {
+            return withActionAutomationNoticesV1(settlement, outcome.automationNotices);
+        }
         const result: CurrentUiContextCommandInvokeOutput = {
-            value: outcome.result ?? null,
+            value: settlement.result,
             ...(outcome.commandTitle ? { commandTitle: outcome.commandTitle } : {}),
         };
         return withActionAutomationNoticesV1({ ok: true, result }, outcome.automationNotices);

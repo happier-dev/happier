@@ -131,7 +131,7 @@ describe('desktop destination admitted dispatch', () => {
             expect(native.requests).toEqual([]);
             expect(view).toBe('source');
             await expect(executeDesktopAppWindowClientAction({ actionId: 'ui.current_context.command.invoke', input, context, execute }))
-                .resolves.toEqual({ ok: true, result: { view: 'preview' } });
+                .resolves.toEqual({ ok: true, result: { value: { view: 'preview' } } });
             expect(view).toBe('preview');
             expect(invocationRealms).toEqual(['destination_file-editor']);
             expect(native.requests).toHaveLength(1);

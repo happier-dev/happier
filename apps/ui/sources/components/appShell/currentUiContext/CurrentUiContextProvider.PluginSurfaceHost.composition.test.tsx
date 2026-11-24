@@ -890,7 +890,7 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             ]));
             await act(async () => {
                 expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command.id },
-                    context: { surface: 'agent' } })).toMatchObject({ ok: true, result: { status: 'applied' } });
+                    context: { surface: 'agent' } })).toMatchObject({ ok: true, result: { value: { status: 'applied' } } });
             });
             await vi.waitFor(() => {
                 expect(currentReader.readCurrentUiContext()?.detail).toMatchObject({ mountId: mountedId, preview: true });

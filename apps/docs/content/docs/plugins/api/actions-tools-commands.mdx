@@ -965,6 +965,9 @@ An Action that names a Session, composer or mounted surface still needs that
 exact owner on the answering app. With no connected handler, Find and the prompt
 picker return `unavailable` with `reason: 'noClient'`, Next returns
 `status: 'unavailable'`, and other Actions return an `unavailable` failure.
+For `ui.current_context.command.invoke`, read the mounted command's JSON
+payload from `result.value`. A successful command with no payload returns
+`value: null`. The result may also include `commandTitle`.
 An older app that does not advertise the method is unavailable in the same way.
 If a response is lost after dispatch, `outcome_uncertain` means the operation may
 have run; the host does not automatically retry it.

@@ -7438,13 +7438,12 @@ opaque address: title, description and the declared `executeAction` or
 retire that command. Changing its meaning or removing it retires the old address;
 the existing mount, target and Account retirement rules still apply.
 In unreleased 0.3 source, a handled `ui.current_context.command.invoke` returns
-the current-UI owner's positive settlement. Its Action result is
-`{ ok: true, result: null }` when the command has no result value; commands with
-a JSON result retain that value. Native and external MCP serialize that payload
-with `isError: false`; their failure path carries the typed refusal with
-`isError: true`. CLI retains the Action settlement, and Voice retains `ok`
-while its provider-result redactor omits private command data. Null is therefore
-a successful empty payload, not an instruction to read the context again.
+the current-UI owner's positive settlement in `result.value`. A command with no
+payload returns `value: null`. The result can also include the mounted
+`commandTitle`. Native and external MCP serialize the completed result with
+`isError: false`, and CLI retains the Action settlement. Voice reports `ok` to
+the provider and omits private command data. A null value is a successful empty
+payload.
 Unknown or retired commands, disabled Actions and unavailable clients return
 their existing typed refusals; callers must inspect the transport's settlement.
 An `executeAction` command keeps its authored input bound. When it has no authored

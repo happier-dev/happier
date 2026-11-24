@@ -535,11 +535,11 @@ describe('mounted current-context descendant commands', () => {
         const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
         const invoke = (commandId: string, input?: { name: string }) => executor.execute('ui.current_context.command.invoke',
             { commandId, ...(input ? { input } : {}) }, { surface: 'agent' });
-        expect(await invoke(read.id)).toMatchObject({ ok: true, result: { name: 'Original' } });
-        await act(async () => { expect(await invoke(patch.id, { name: 'Agent edit' })).toMatchObject({ ok: true, result: { name: 'Agent edit' } }); });
-        expect(await invoke(read.id)).toMatchObject({ ok: true, result: { name: 'Agent edit' } });
+        expect(await invoke(read.id)).toMatchObject({ ok: true, result: { value: { name: 'Original' } } });
+        await act(async () => { expect(await invoke(patch.id, { name: 'Agent edit' })).toMatchObject({ ok: true, result: { value: { name: 'Agent edit' } } }); });
+        expect(await invoke(read.id)).toMatchObject({ ok: true, result: { value: { name: 'Agent edit' } } });
         await act(async () => { expect(await local!.invoke('patch', { name: 'UI edit' })).toBe(true); });
-        expect(await invoke(read.id)).toMatchObject({ ok: true, result: { name: 'UI edit' } });
+        expect(await invoke(read.id)).toMatchObject({ ok: true, result: { value: { name: 'UI edit' } } });
         expect(reader!.readCurrentUiContext()!.commands).toEqual(inventory);
         await screen.update(tree(false));
         expect(await invoke(patch.id, { name: 'Retired edit' })).toMatchObject({ ok: false });

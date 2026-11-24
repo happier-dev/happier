@@ -742,7 +742,7 @@ it('preserves the incumbent refusal of an unsupported asynchronous Session brows
     callConnectedClientRpc: async (_method, raw, options) => {
       mountedRequest = UiActionDispatchRequestV1Schema.parse(raw);
       options.onIssued();
-      return { ok: true, result: { v: 1, execution: { ok: true, result: null } } };
+      return { ok: true, result: { v: 1, execution: { ok: true, result: { value: null } } } };
     },
   }));
   const f = await fixture(1, undefined, false, false, true, undefined, undefined, dispatch);

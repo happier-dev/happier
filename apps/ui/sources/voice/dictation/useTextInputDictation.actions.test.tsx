@@ -296,7 +296,7 @@ describe('mounted field Dictation Actions', () => {
         expect(voiceDictationController.getSnapshot().status).toBe('listening');
         expect(recording.stops).toBe(0);
         expect(await execute('ui.current_context.command.invoke', { commandId: finish }, agent))
-            .toMatchObject({ ok: true, result: { status: 'unavailable', code: 'dictation_cancelled' } });
+            .toMatchObject({ ok: true, result: { value: { status: 'unavailable', code: 'dictation_cancelled' } } });
         expect(words).toBe('draft');
         expect(voiceDictationController.getSnapshot()).toMatchObject({ failure: { canRetry: true } });
         expect(await execute('ui.voice_global.dictation.retry', { commandId: retry }, agent))

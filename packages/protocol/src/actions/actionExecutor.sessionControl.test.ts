@@ -636,11 +636,11 @@ describe('createActionExecutor (session control)', () => {
       expect(context.surface).toMatch(/^(agent|mcp)$/u);
       return { ok: true, result: actionId === 'ui.current_context.read'
         ? { navigation: { area: 'workspace', screen: 'pluginAppPage', title: 'PRs & Issues' }, commands: [{ id: 'opaque:1', title: 'Switch to Board' }] }
-        : { invoked: (input as Readonly<{ commandId: string }>).commandId === 'opaque:1' } };
+        : { value: { invoked: (input as Readonly<{ commandId: string }>).commandId === 'opaque:1' } } };
     } });
     for (const surface of ['agent', 'mcp'] as const) {
       expect(await executor.execute('ui.current_context.read', {}, { surface })).toMatchObject({ ok: true, result: { commands: [{ id: 'opaque:1' }] } });
-      expect(await executor.execute('ui.current_context.command.invoke', { commandId: 'opaque:1' }, { surface })).toEqual({ ok: true, result: { invoked: true } });
+      expect(await executor.execute('ui.current_context.command.invoke', { commandId: 'opaque:1' }, { surface })).toEqual({ ok: true, result: { value: { invoked: true } } });
     }
     expect(await createExecutor().execute('ui.current_context.read', {}, { surface: 'agent' })).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });

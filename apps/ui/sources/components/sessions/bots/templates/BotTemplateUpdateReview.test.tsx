@@ -186,11 +186,11 @@ describe('template update review', () => {
                 input: { instructions: { '0': 'both' }, editedInstructions: 'Agent reviewed prose\n' } }, { surface: 'agent' })).toMatchObject({ ok: true }); });
             expect(screen.findByTestId('bot-template-update:preview')?.props.value).toBe('Agent reviewed prose\n');
             expect(await executor.execute('ui.current_context.command.invoke', { commandId: read.id }, { surface: 'agent' }))
-                .toMatchObject({ ok: true, result: { instructions: { '0': 'both' }, editedInstructions: 'Agent reviewed prose\n',
-                    skills: { herbs: { choice: 'take', expectedRevision: 'reviewed-skill-revision' } } } });
+                .toMatchObject({ ok: true, result: { value: { instructions: { '0': 'both' }, editedInstructions: 'Agent reviewed prose\n',
+                    skills: { herbs: { choice: 'take', expectedRevision: 'reviewed-skill-revision' } } } } });
             await act(async () => { screen.changeTextByTestId('bot-template-update:preview', 'UI reviewed prose\n'); });
             expect(await executor.execute('ui.current_context.command.invoke', { commandId: read.id }, { surface: 'agent' }))
-                .toMatchObject({ ok: true, result: { editedInstructions: 'UI reviewed prose\n' } });
+                .toMatchObject({ ok: true, result: { value: { editedInstructions: 'UI reviewed prose\n' } } });
             await screen.pressByTestIdAsync('bot-template-update:apply');
             expect(submitted).toMatchObject({
                 instructions: { choices: { '0': 'both' }, markdown: 'UI reviewed prose\n', expectedRevision: { headerVersion: 2, bodyVersion: 4 } } });

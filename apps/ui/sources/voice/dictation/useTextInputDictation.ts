@@ -12,6 +12,8 @@ import { useCurrentUiContextFocusedCommands } from '@/components/appShell/curren
 import { executeMountedCurrentUiContextCommand } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isActionApprovalDeclinedErrorCode, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { CurrentUiContextCommandInvokeOutput } from '@happier-dev/protocol/actions/actionSpecs';
+import { isDeferredApprovalResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
 import { resolveActionSurfaceAvailability } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { useSettingsSelector } from '@/sync/store/settingsReadHooks';
@@ -178,10 +180,13 @@ export function useTextInputDictation(input: Readonly<{
         const focused = focus.current;
         const command = focused?.enrichment.commands?.find(entry => entry.command.kind === 'voiceDictation'
             && entry.command.operation === operation)?.command;
-        return executeMountedCurrentUiContextCommand({ reader, command,
+        const outcome = await executeMountedCurrentUiContextCommand({ reader, command,
             execute: (actionId, args) => execute(actionId, args, { surface: 'ui', authority: 'present_user',
                 serverId: focused?.account.scope.serverId, expectedAccountId: focused?.account.scope.accountId }),
         });
+        if (!outcome.ok || isDeferredApprovalResult(outcome)) return outcome;
+        const { value } = outcome.result as CurrentUiContextCommandInvokeOutput;
+        return { ...outcome, result: value };
     }, [execute, onFocus, reader]);
     const onRetry = React.useCallback(() => invokeAction('retry'), [invokeAction]);
     const onDiscard = React.useCallback(() => invokeAction('cancel'), [invokeAction]);

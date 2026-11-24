@@ -64,7 +64,7 @@ it('reveals and dismisses the same exact datum through its UI trigger and mounte
     expect(tooltipOpen()).toBe(false);
     await act(async () => {
         expect(await executor.execute('ui.current_context.command.invoke', { commandId: reveal!.id }, { surface: 'agent' }))
-            .toMatchObject({ ok: true, result: { title: 'Cache hit', value: '69.8811%', subtitle: 'Measured tokens' } });
+            .toMatchObject({ ok: true, result: { value: { title: 'Cache hit', value: '69.8811%', subtitle: 'Measured tokens' } } });
     });
     expect(tooltipOpen()).toBe(true);
     await screen.unmount();

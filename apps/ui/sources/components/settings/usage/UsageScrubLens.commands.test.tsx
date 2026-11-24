@@ -75,10 +75,10 @@ it('keeps declarations and current-context publications fixed across new vitals 
     expect(command).toBeDefined();
     const executor = createDefaultActionExecutor();
     const result = await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, { surface: 'agent' });
-    expect(result).toMatchObject({ ok: true, result: { buckets: [
+    expect(result).toMatchObject({ ok: true, result: { value: { buckets: [
         { index: 0, rows: [{ value: '69.8811%' }] }, { index: 1, rows: [{ value: '1.12345%' }] },
         { index: 2, rows: [{ value: '2.12345%' }] }, { index: 3, rows: [{ value: '3.12345%' }] },
-    ] } });
+    ] } } });
     await act(async () => rename());
     expect(declarations, 'a real chart identity change publishes once').toBe(1);
     expect(port.readCurrentUiContext()).not.toBe(snapshot);
@@ -130,9 +130,9 @@ it('reveals the same bucket, chooses its rows and dismisses through mounted agen
     await act(async () => {
         expect(await executor.execute('ui.current_context.command.invoke', {
             commandId: reveal!.id, input: { bucket: 2, mode: 'select' },
-        }, { surface: 'agent' })).toMatchObject({ ok: true, result: { buckets: [
+        }, { surface: 'agent' })).toMatchObject({ ok: true, result: { value: { buckets: [
             { index: 2, title: 'Nov 7', total: '19M', rows: [{ id: 'source', value: 'Available', selectable: true }] },
-        ] } });
+        ] } } });
     });
     expect(screen.getTextContent()).toContain('Nov 7');
     expect(screen.getTextContent()).toContain('19M');
