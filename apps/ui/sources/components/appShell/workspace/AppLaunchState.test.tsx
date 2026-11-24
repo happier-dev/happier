@@ -79,7 +79,9 @@ describe('launch curtain', () => {
       await frame();
       // The same curtain instance, still up: no surface swap shows the page behind it.
       expect(curtain()).toEqual([firstCurtain]);
-      expect(curtain()[0]!.props.pointerEvents).toBe('auto');
+      // A mounted destination remains interactive even when another loading surface holds the layer.
+      expect(curtain()[0]!.props.pointerEvents).toBe('none');
+      expect(curtain()[0]!.props.inert).toBe(true);
     }
     // Home has drawn: nothing holds the curtain across a painted frame, so it leaves (this DOM has no Web
     // Animations, so the fade completes at once) and takes the shell's Still frame with it.

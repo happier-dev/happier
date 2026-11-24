@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Redirect, useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLaunchCurtainHold } from '@/boot/launchCurtain';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -136,6 +137,7 @@ export const TeamsDirectoryScreen = React.memo(function TeamsDirectoryScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams();
     const sourceHint = React.useMemo(() => readTeamCredentialSourceHint(params), [params]);
+    useLaunchCurtainHold(view === 'pending');
 
     React.useEffect(() => {
         navigation.setOptions({ title: t('teams.title') });
@@ -153,6 +155,8 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
     const router = useRouter();
     const collection = useTeamsCollection({ sourceHint: props.sourceHint, query: '' });
     const { active } = collection;
+    const waiting = !props.sourceHint && active.kind === 'loading' && active.rows.length === 0;
+    useLaunchCurtainHold(waiting);
 
     if (props.sourceHint) {
         // Sharing a credential: the rail beside this page is the choice.
@@ -169,7 +173,7 @@ const TeamsCollectionLanding = React.memo(function TeamsCollectionLanding(props:
 
     // Wait for an answer so "first Team" is not a guess. The rail beside this pane shows the one
     // loading state; the pane keeps only its header meanwhile.
-    if (active.kind === 'loading' && active.rows.length === 0) {
+    if (waiting) {
         return (
             <ItemList>
                 <PageHeader testID="teams-directory-header" title={t('teams.title')} description={t('teams.pages.directory')} />
@@ -201,6 +205,9 @@ const TeamsDirectoryPage = React.memo(function TeamsDirectoryPage(props: Readonl
     const { sourceHint } = props;
     const [query, setQuery] = React.useState('');
     const collection = useTeamsCollection({ sourceHint, query });
+    const active = collection.active;
+    const waiting = active.kind === 'loading' && active.unavailableHomes.every(home => home.reason === 'loading');
+    useLaunchCurtainHold(waiting);
 
     const openTeam = React.useCallback(
         (address: TeamAddress) => {
@@ -212,7 +219,7 @@ const TeamsDirectoryPage = React.memo(function TeamsDirectoryPage(props: Readonl
     );
 
     const createTeam = React.useCallback(() => router.push(teamsCreatePath() as never), [router]);
-    const rows = useTeamsDirectoryRows({ collection, sourceHint, openTeam, createTeam });
+    const rows = useTeamsDirectoryRows({ collection, sourceHint, openTeam, createTeam, waiting });
 
     const renderRow = React.useCallback(
         ({ item }: Readonly<{ item: TeamsDirectoryVirtualizedRow }>) => item.render(),
@@ -263,8 +270,9 @@ function useTeamsDirectoryRows(input: Readonly<{
     sourceHint: TeamCredentialSourceHint | null;
     openTeam: (address: TeamAddress) => void;
     createTeam: () => void;
+    waiting: boolean;
 }>): readonly TeamsDirectoryVirtualizedRow[] {
-    const { collection, sourceHint, openTeam, createTeam } = input;
+    const { collection, sourceHint, openTeam, createTeam, waiting } = input;
     const {
         active,
         archived,
@@ -304,7 +312,7 @@ function useTeamsDirectoryRows(input: Readonly<{
 
         // Homes still being read are covered by the loading row; only an answer that failed is named.
         const answeredUnavailableHomes = active.unavailableHomes.filter((home) => home.reason !== 'loading');
-        if (active.kind === 'loading' && answeredUnavailableHomes.length === 0) {
+        if (waiting) {
             add('loading', () => (
                 <ItemGroup>
                     <ItemLoadStateRows
@@ -418,5 +426,5 @@ function useTeamsDirectoryRows(input: Readonly<{
         }
 
         return result;
-    }, [active, archived, archivedPending, collection, createTeam, normalizedQuery, openTeam, showArchived, sourceHint, toggleArchived, visibleActiveRows, visibleArchivedRows]);
+    }, [active, archived, archivedPending, collection, createTeam, normalizedQuery, openTeam, showArchived, sourceHint, toggleArchived, visibleActiveRows, visibleArchivedRows, waiting]);
 }

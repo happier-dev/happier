@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
+import { useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
@@ -31,6 +32,7 @@ export default function ServerConfigRoute() {
     const router = useRouter();
     const params = useLocalSearchParams<RouteParams>();
     const recovery = React.useMemo(() => parseServerSettingsRouteParams(params).recovery, [params]);
+    useMarkLaunchDestinationBodyMounted(recovery !== null);
     const handledRef = React.useRef(false);
     React.useEffect(() => {
         if (recovery || handledRef.current) return;

@@ -89,6 +89,7 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
 }>): WorkspaceUrlTransport & Readonly<{
     enterHref: (href: string, replace: boolean, admitted?: boolean) => void;
     readAdmittedHref: () => string | null;
+    retainCurrentHref: () => (() => void) | undefined;
     acceptPopState: (state: unknown, event?: PopStateEvent) => boolean;
 }> {
     // Workspace positions address restored views; native positions measure traversal deltas.
@@ -112,6 +113,13 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
     return {
         readAdmittedHref() {
             return admittedEntryHref;
+        },
+        retainCurrentHref() {
+            if (admittedEntryHref !== null) return;
+            const href = input.getHref();
+            if (href.split(/[?#]/)[0] === '/') return;
+            admittedEntryHref = href;
+            return () => { if (admittedEntryHref === href) admittedEntryHref = null; };
         },
         enterHref(href, replace, admitted = false) {
             admittedEntryHref = null;

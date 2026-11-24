@@ -7,6 +7,9 @@ import { t, type TranslationKey } from '@/text';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { isScheduledWorkflowGroupShown, type ScheduledWorkflowRowsRead } from '@/components/workflows/triggers/ScheduledWorkflowSection';
 import { useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { SessionsListHeader } from './sessionListChrome';
 import { NewSessionDraftsSection } from './NewSessionDraftsSection';
@@ -311,6 +314,10 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
         awaitingScheduled && scheduledRead?.serverId ? [scheduledRead.serverId] : NO_HOMES);
     if (!awaitingScheduled || scheduledUnanswerable) presentedRef.current = true;
     const awaitingFirstComposition = !presentedRef.current;
+    const phoneTabShell = usePhoneTabNavRow() !== null;
+    const presented = useLayoutPresentationActive();
+    useMarkLaunchDestinationBodyMounted(phoneTabShell && presented && !awaitingFirstComposition
+        && props.queryPresentationState?.presentation.kind !== 'initial_loading');
     const isWeb = Platform.OS === 'web';
     // Plays the captured glide once the nodes of the chosen layout are committed and laid out.
     React.useLayoutEffect(() => {

@@ -7,6 +7,7 @@ import { terminalLinkProblemMessage } from '@/components/terminalConnect/termina
 import { useAuth } from '@/auth/context/AuthContext';
 import { useTerminalConnectContinuation } from '@/hooks/session/useTerminalConnectContinuation';
 import { useTerminalConnectWebRequest } from '@/hooks/session/useTerminalConnectWebRequest';
+import { markLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 
@@ -15,6 +16,9 @@ export default function TerminalConnectScreen() {
     const auth = useAuth();
     const routeHash = useLocalSearchParams<{ '#': string }>()['#'];
     const { request, hashProcessed, scrubIfResumable } = useTerminalConnectWebRequest(routeHash);
+    React.useLayoutEffect(() => {
+        if (hashProcessed) markLaunchDestinationBodyMounted();
+    }, [hashProcessed]);
     const serverUrlFromHash = request?.serverUrl ?? null;
     const homeConnectionDescriptor = request?.homeConnectionDescriptor;
     const onSuccess = React.useCallback(() => { resolvePostAuthLanding({ replace: router.replace }); }, [router]);

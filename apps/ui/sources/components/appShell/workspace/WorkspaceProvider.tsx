@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useLaunchCurtainHold, useLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useGlobalSearchParams, usePathname, useRouter, useSegments } from 'expo-router';
@@ -107,6 +108,8 @@ export function WorkspaceProvider(props: Readonly<{
     deferred?: boolean;
     /** Exact-scope local admission belongs to WorkspaceAppShellProvider. */
     restoreRetainedHome?: boolean;
+    /** Once Account restore hands off, wait for a workspace-hosted launch destination to mount. */
+    waitForLaunchBody?: boolean;
     appWindow?: Readonly<{ record: AppWindowRecord; initialTarget: DestinationRef; chrome?: 'full' | 'destination'; browser?: boolean }>;
     catalog: readonly CompactAppDestination[];
     children: React.ReactNode | ((navigation: WorkspaceNavigationContextValue) => React.ReactNode);
@@ -173,6 +176,8 @@ export function WorkspaceProvider(props: Readonly<{
     const ownsHref = React.useCallback((href: string) => canHostRoutes
         && resolveDestinationRefFromHref(props.catalog, href) !== null, [canHostRoutes, props.catalog]);
     const ownsRoute = ownsHref(routeHref);
+    const launchBodyMounted = useLaunchDestinationBodyMounted();
+    useLaunchCurtainHold(props.waitForLaunchBody === true && ownsRoute && !launchBodyMounted);
     const hostsMobileWeb = phone && Platform.OS === 'web' && (ownsRoute || newSessionOverlay);
     const hostsRoute = props.enabled || hostsMobileWeb || (entry && ownsRoute);
     const phoneTransport = phone && !hostsMobileWeb;
@@ -492,6 +497,12 @@ export function WorkspaceProvider(props: Readonly<{
         props.appWindow?.record.layoutId, nativeWindows?.kind, paneSubscription, requestAppWindowOpen, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
+        // During Account restore Expo can serialize its index before the tab owner
+        // is ready. The admitted browser entry survives that mirror and its later echoes.
+        if (ownsRoute) return runtime.browser?.retainCurrentHref();
+    }, [ownsRoute, runtime]);
+
+    React.useLayoutEffect(() => {
         const entryHref = runtime.browser?.readAdmittedHref();
         if (!hostsRoute && !entryHref) {
             runtime.projectedHref = null;
@@ -532,9 +543,6 @@ export function WorkspaceProvider(props: Readonly<{
             const unresolvedTabId = !appWindowRef.current && initialTab.target.kind === 'newTab' ? initialTab.id : undefined;
             runtime.adapter.initialize(retainedHref ?? routeHref, unresolvedTabId);
             runtime.initialized = true;
-            // Cold browser admission owns the child before Expo's nested
-            // navigator acknowledges it, just like an explicit workspace open.
-            if (runtime.browser && pathname !== routeHref.split(/[?#]/)[0]) runtime.projectedHref = routeHref;
         } else if (runtime.projectedHref === routeHref) {
             if (!runtime.browser) runtime.projectedHref = null;
         } else {

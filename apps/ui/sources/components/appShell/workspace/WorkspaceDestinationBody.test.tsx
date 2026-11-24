@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { useLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { renderScreen } from '@/dev/testkit';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { DestinationInstanceHost } from './DestinationInstanceHost';
@@ -104,6 +105,50 @@ function hosted(pathname: string, params: Record<string, string> = {}) {
 }
 
 describe('workspace destination route composition', () => {
+    // Home is where a reload lands: while its page loads it holds Home's own shape (greeting, composer, the
+    // rows under it), not the generic page rows, and the Home that mounts draws the same shape until its model answers.
+    it('draws the Home-shaped fallback and waits for the Home presentation owner', async () => {
+        function LaunchPresentation() {
+            return React.createElement('LaunchPresentation', { presented: useLaunchDestinationBodyMounted() });
+        }
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: false, workflows: true, friends: false,
+        } });
+        const target = resolveDestinationRefFromHref(catalog, '/')!;
+        let renderer!: ReturnType<typeof create>;
+        act(() => {
+            renderer = create(<><WorkspaceDestinationBody target={target} pathname="/" renderSession={() => null} renderSessionDetails={() => null} /><LaunchPresentation /></>);
+        });
+        const hosts = (testID: string) => renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID);
+        expect(renderer.root.findAllByType('HostedHome')).toHaveLength(0);
+        expect(hosts('workspace-destination-body-loading')).toHaveLength(0);
+        expect(hosts('home-hub.loading-greeting')).toHaveLength(1);
+        expect(hosts('home-hub.loading-composer')).toHaveLength(1);
+        await act(async () => {});
+        expect(renderer.root.findAllByType('HostedHome')).toHaveLength(1);
+        expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(false);
+        act(() => renderer.unmount());
+    });
+
+    it('reports a non-Home launch destination when its lazy page commits', async () => {
+        function LaunchPresentation() {
+            return React.createElement('LaunchPresentation', { presented: useLaunchDestinationBodyMounted() });
+        }
+        let renderer!: ReturnType<typeof create>;
+        act(() => {
+            renderer = create(<>{hosted('/settings/server')}<LaunchPresentation /></>);
+        });
+        try {
+            expect(renderer.root.findAllByType('HostedEditor')).toHaveLength(0);
+            expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(false);
+            await act(async () => {});
+            expect(renderer.root.findAllByType('HostedEditor')).toHaveLength(1);
+            expect(renderer.root.findByType('LaunchPresentation').props.presented).toBe(true);
+        } finally {
+            act(() => renderer.unmount());
+        }
+    });
+
     it('retains the Machine page, unsent composer and scroll through either door', async () => {
         const screen = await renderScreen(hosted('/settings/machines/machine-a?serverId=home-a&tab=processes'));
         const machine = screen.root.findByType('HostedMachine');
@@ -139,26 +184,6 @@ describe('workspace destination route composition', () => {
             && node.props.role === 'status')).toHaveLength(cards);
         await act(async () => {});
         expect(renderer.root.findAllByType('HostedBoards')).toHaveLength(1);
-        act(() => renderer.unmount());
-    });
-    // Home is where a reload lands: while its page loads it holds Home's own shape (greeting, composer, the
-    // rows under it), not the generic page rows, and the Home that mounts draws the same shape until its model answers.
-    it('holds a loading Home in Home\'s own shape, not the generic page rows', async () => {
-        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
-            externalSessions: false, inbox: false, workflows: true, friends: false,
-        } });
-        const target = resolveDestinationRefFromHref(catalog, '/')!;
-        let renderer!: ReturnType<typeof create>;
-        act(() => {
-            renderer = create(<WorkspaceDestinationBody target={target} pathname="/" renderSession={() => null} renderSessionDetails={() => null} />);
-        });
-        const hosts = (testID: string) => renderer.root.findAll(node => typeof node.type === 'string' && node.props.testID === testID);
-        expect(renderer.root.findAllByType('HostedHome')).toHaveLength(0);
-        expect(hosts('workspace-destination-body-loading')).toHaveLength(0);
-        expect(hosts('home-hub.loading-greeting')).toHaveLength(1);
-        expect(hosts('home-hub.loading-composer')).toHaveLength(1);
-        await act(async () => {});
-        expect(renderer.root.findAllByType('HostedHome')).toHaveLength(1);
         act(() => renderer.unmount());
     });
     it('adjudicates the retired settings alias as Run settings rather than a Workflow entity or collection', async () => {

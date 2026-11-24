@@ -4,6 +4,8 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
+import { useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { HomeHub } from '@/components/hub/HomeHub';
 import { useSessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import { SessionsListStorageChrome } from '@/components/sessions/shell/SessionsListStorageChrome';
@@ -142,10 +144,14 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
 function TabletSessionHome(props: Readonly<{ backgroundColor: string }>) {
     const filters = useSessionListViewFilterController();
-    if (filters.sourceAvailable && filters.displayFilters.source === 'direct') {
+    const presented = useLayoutPresentationActive();
+    const direct = filters.sourceAvailable && filters.displayFilters.source === 'direct';
+    const showsHome = !direct && getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID) !== 'deny';
+    useMarkLaunchDestinationBodyMounted(presented && !showsHome);
+    if (direct) {
         return <View style={[styles.container, { backgroundColor: props.backgroundColor }]}><ExternalSessionsEmptyState /></View>;
     }
-    if (getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID) !== 'deny') return <HomeHub />;
+    if (showsHome) return <HomeHub />;
     return (
         <View testID="mainview-tablet-primary-pane-fallback" style={[styles.primaryPaneFallback, { backgroundColor: props.backgroundColor }]}>
             <Text style={styles.primaryPaneFallbackText}>{t('components.emptyMainScreen.readyToCode')}</Text>
@@ -175,6 +181,9 @@ const PhoneMainView = React.memo((props: Readonly<{
 
     // Workflows is its own route, so the home route shows Sessions for it.
     const headerTab: ActiveTabType = activeTab === 'projects' ? 'projects' : activeTab === 'inbox' && inboxEnabled ? 'inbox' : 'sessions';
+
+    const presented = useLayoutPresentationActive();
+    useMarkLaunchDestinationBodyMounted(presented && !props.isTablet && headerTab !== 'sessions');
 
     if (props.isTablet) {
         return <TabletSessionHome backgroundColor={backgroundColor} />;

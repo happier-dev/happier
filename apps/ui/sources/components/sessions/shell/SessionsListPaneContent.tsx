@@ -23,6 +23,8 @@ import { resolveSessionsListEmptyStateKind } from './resolveSessionsListEmptySta
 import { SessionListSkeletonRows } from './SessionListSkeletonRows';
 import { PhoneTabNavRowLine, usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { markLaunchDestinationBodyMounted, useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { HomeHub } from '@/components/hub/HomeHub';
 import {
     normalizeSessionListSurfaceOwnership,
@@ -154,11 +156,14 @@ function PhoneTabNavRowWithoutList() {
 function SessionsListPaneEmptyState(props: Pick<SessionsListPaneContentViewProps, 'fallbackGuidanceVariant' | 'sessionListPaneState' | 'storageKind'>) {
     const gettingStarted = useSessionGettingStartedGuidanceBaseModel();
     const phoneTabShell = usePhoneTabNavRow() !== null;
+    const presented = useLayoutPresentationActive();
+    const showsHome = phoneTabShell && props.storageKind !== 'direct' && gettingStarted.kind === 'connect_machine';
+    useMarkLaunchDestinationBodyMounted(phoneTabShell && presented && !showsHome);
     const styles = stylesheet;
 
     // One first run on every device (owner 2026-11-04): with no machine yet the phone's Sessions tab is the
     // same Home the desktop main pane shows, with its Get set up first step; Home draws the tab shell's line.
-    if (phoneTabShell && props.storageKind !== 'direct' && gettingStarted.kind === 'connect_machine') {
+    if (showsHome) {
         return <View style={styles.emptyStateContainer}><HomeHub /></View>;
     }
 
@@ -208,6 +213,9 @@ function SessionsListPaneEmptyState(props: Pick<SessionsListPaneContentViewProps
  */
 const SessionsListPaneContentView = React.memo(function SessionsListPaneContentView(props: SessionsListPaneContentViewProps) {
     const styles = stylesheet;
+    const phoneTabShell = usePhoneTabNavRow() !== null;
+    const presented = useLayoutPresentationActive();
+    const presentsPhoneSessions = phoneTabShell && presented;
 
     if (props.sessionListPaneState.showLoading) {
         // The column's own rows arrive with the list, under its title, rather than standing here and then moving.
@@ -215,7 +223,7 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
             <>
             <PhoneTabNavRowWithoutList />
             <View style={styles.loadingContainerWrapper}>
-                <HomeReachabilityGate variant="line">
+                <HomeReachabilityGate variant="line" onUnavailable={presentsPhoneSessions ? markLaunchDestinationBodyMounted : undefined}>
                     <SessionListSkeletonRows />
                 </HomeReachabilityGate>
             </View>

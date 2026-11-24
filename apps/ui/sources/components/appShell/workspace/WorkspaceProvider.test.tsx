@@ -258,6 +258,14 @@ const ColdAccountStack = createNavigatorFactory(ColdAccountNavigator)();
 /** Real event dispatch beneath the external browser URL/history fixtures. */
 function installBrowserBoundary(input: Record<string, unknown> & { history: object }) {
     const events = new EventTarget();
+    const location = input.location as Pick<Location, 'pathname' | 'search' | 'hash'> | undefined;
+    if (location && !('href' in location)) {
+        const origin = 'https://happier.test';
+        Object.defineProperties(location, {
+            origin: { value: origin },
+            href: { get: () => origin + location.pathname + location.search + location.hash },
+        });
+    }
     vi.stubGlobal('window', { ...input,
         addEventListener: events.addEventListener.bind(events),
         removeEventListener: events.removeEventListener.bind(events),
@@ -2880,7 +2888,9 @@ describe('consumed workspace navigation owner', () => {
         boundary.pathname = '/session/A1';
         boundary.params = { id: 'A1', serverId: 'home-a' };
         boundary.dataReady = ready;
-        const location = { pathname: infoPath, search: '?serverId=home-a', hash: '' };
+        const location = { pathname: infoPath, search: '?serverId=home-a', hash: '',
+            origin: 'https://happier.test',
+            get href() { return this.origin + this.pathname + this.search + this.hash; } };
         const history = { state: null as unknown,
             replaceState: (state: unknown, _unused: string, href?: string | URL | null) => {
                 history.state = state;
@@ -2909,10 +2919,16 @@ describe('consumed workspace navigation owner', () => {
             </>;
         }}</WorkspaceProvider>;
         const screen = await renderScreen(element());
+        const navigation = () => screen.root.findByType('WorkspaceProbe').props.navigation as WorkspaceNavigationContextValue;
         const currentHref = () => {
-            const navigation = screen.root.findByType('WorkspaceProbe').props.navigation as WorkspaceNavigationContextValue;
-            return hrefForDestinationRef(catalog, navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId].target);
+            const { state } = navigation();
+            return hrefForDestinationRef(catalog, state.tabs[state.groups[state.focusedGroupId].activeTabId].target);
         };
+        // The first navigator can serialize its index before the Account and tab owner are ready.
+        if (!ready) {
+            await act(async () => { history.replaceState(history.state, '', '/'); });
+            expect(location.href).toBe(`https://happier.test${infoPath}?serverId=home-a`);
+        }
         await act(async () => { boundary.dataReady = true; await screen.update(element()); });
         expect(currentHref()).toBe(`${infoPath}?serverId=home-a`);
         // The nested navigator emits its parent before acknowledging the cold leaf.
@@ -2921,9 +2937,14 @@ describe('consumed workspace navigation owner', () => {
         expect(currentHref()).toBe(`${infoPath}?serverId=home-a`);
         expect(mounts).toBe(1);
         expect(disposals).toBe(0);
-        // Once Expo acknowledges Info, deliberate navigation to the parent is valid.
+        // Expo may emit an index after its child rendered, for example on remount during Account bootstrap.
         await act(async () => { boundary.pathname = infoPath; await screen.update(element()); });
-        await act(async () => { history.pushState({}, '', '/session/A1?serverId=home-a'); });
+        await act(async () => { history.replaceState(history.state, '', '/'); });
+        expect(location.href).toBe(`https://happier.test${infoPath}?serverId=home-a`);
+        expect(currentHref()).toBe(`${infoPath}?serverId=home-a`);
+        expect(disposals).toBe(0);
+        // Deliberate workspace navigation can still replace the protected address with its parent.
+        await act(async () => { navigation().openHref('/session/A1?serverId=home-a', { replace: true }); });
         expect(currentHref()).toBe('/session/A1?serverId=home-a');
         expect(disposals).toBe(1);
     });

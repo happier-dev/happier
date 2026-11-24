@@ -1,4 +1,5 @@
 import { useAuth } from '@/auth/context/AuthContext';
+import { useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { Platform, View } from 'react-native';
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
@@ -64,6 +65,7 @@ export function Home() {
     const [homeVisible, setHomeVisible] = React.useState(false);
     const interactive = React.useRef(!isAuthenticated && !keepBootstrapShell);
     const applying = React.useRef(false);
+    useMarkLaunchDestinationBodyMounted(focused && firstRun);
 
     // Only the focused root completes inline auth. A separate auth route owns its
     // explicit continuation and arrives here already authenticated if it chose Home.

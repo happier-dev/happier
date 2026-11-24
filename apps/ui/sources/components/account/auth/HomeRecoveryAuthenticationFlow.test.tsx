@@ -1,4 +1,6 @@
+/** @vitest-environment jsdom */
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -7,7 +9,8 @@ vi.mock('socket.io-client', async (importOriginal) =>
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } from '@/boot/launchCurtain';
 import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import { adoptHomeProfile, upsertServerProfile, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
@@ -38,7 +41,7 @@ afterEach(async () => {
     localStorage.restore();
 });
 
-async function createRecoveryHome() {
+async function createRecoveryHome(entryGate?: Promise<void>) {
     const fixture = createDirectoryHttpFixture();
     const state = { healthReady: true, featureReady: true, entryReady: true, requests: [] as URL[] };
     setRuntimeFetch(async (input, init) => {
@@ -52,6 +55,7 @@ async function createRecoveryHome() {
         }
         if (url.pathname === '/v1/features' && !state.featureReady) return Response.json({ invalid: true });
         if (url.pathname === '/v1/auth/entry' && !state.entryReady) return Response.json({ v: 999 });
+        if (url.pathname === '/v1/auth/entry') await entryGate;
         if (url.pathname === '/v1/features' || url.pathname === '/v1/auth/entry') return fixture.request(url.origin, url.pathname + url.search, init);
         return new Response('{}', { status: 404 });
     });
@@ -72,6 +76,38 @@ function renderRecovery(profileRef: string) {
 }
 
 describe('HomeRecoveryAuthenticationFlow', () => {
+    it('hands the launch curtain from boot to the addressed Home recovery until its authentication methods present', async () => {
+        const entry = createDeferred<void>();
+        const { selected } = await createRecoveryHome(entry.promise);
+        document.documentElement.classList.add('launch-planet');
+        const releaseBoot = holdLaunchCurtain();
+        function CurtainProbe() {
+            return React.createElement('Curtain', { state: useLaunchCurtainState() });
+        }
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+            <HomeRecoveryAuthenticationFlow profileRef={selected.id} returnTo="/" onAuthenticated={vi.fn()} onBack={vi.fn()} />
+            <CurtainProbe />
+        </InjectedAuthProvider>);
+        const paint = () => act(async () => {
+            for (let i = 0; i < 3; i++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        });
+        const curtain = () => screen.root.findByType('Curtain').props.state;
+        try {
+            releaseBoot();
+            expect(screen.findByTestId('home-recovery-authentication-loading-line')).not.toBeNull();
+            await paint();
+            expect(curtain()).toBe('up');
+            entry.resolve();
+            await vi.waitFor(() => expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).not.toBeNull());
+            await paint();
+            expect(curtain()).toBe('leaving');
+        } finally {
+            entry.resolve();
+            await screen.unmount();
+            finishLaunchCurtain();
+        }
+    });
+
     it('shows the exact saved Home methods even while another Home is focused', async () => {
         const { selected, fixture, state, focused } = await createRecoveryHome();
         const screen = await renderRecovery(selected.id);

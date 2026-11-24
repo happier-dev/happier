@@ -2,7 +2,7 @@ import { admitOpaqueInternalReturnPath } from '@/utils/path/routeUtils';
 
 type ParamValue = string | string[] | undefined;
 
-const HOME_RECOVERY_ROUTE = '/server' as const;
+export const HOME_RECOVERY_ROUTE = '/server' as const;
 
 function firstString(value: ParamValue): string {
     if (typeof value === 'string') return value;

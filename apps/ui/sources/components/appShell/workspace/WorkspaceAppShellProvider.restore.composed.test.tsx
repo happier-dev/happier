@@ -43,6 +43,74 @@ const { sync } = await import('@/sync/sync');
 const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 afterAll(() => vi.unstubAllGlobals());
 
+it('keeps the 390 px launch planet through the lazy gap until Home is presented', async () => {
+    const { finishLaunchCurtain, holdLaunchCurtain, useMarkLaunchDestinationBodyMounted, useLaunchCurtainState } = await import('@/boot/launchCurtain');
+    const { HomeHubLoading } = await import('@/components/hub/HomeHubLoading');
+    const { PhoneTabNavRowProvider } = await import('@/components/navigation/shell/phoneTabNavRow');
+    const { SessionListSkeletonRows } = await import('@/components/sessions/shell/SessionListSkeletonRows');
+    const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    document.documentElement.classList.add('launch-planet');
+    const releaseBoot = holdLaunchCurtain();
+    const accountId = 'first-phone-launch';
+    const restoration = restoreServerAccountForTest({
+        serverUrl: 'https://first-phone-launch.example.test', accountId,
+        request: async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: accountId });
+            return createEmptyAccountBootstrapHttpResponse(path, init);
+        },
+    });
+    const { credentials } = await restoration;
+    await sync.awaitBootstrapForegroundAcquisition();
+
+    function CurtainProbe() {
+        return React.createElement('Curtain', { state: useLaunchCurtainState() });
+    }
+    function PresentedHome() {
+        useMarkLaunchDestinationBodyMounted(true);
+        return React.createElement('PresentedHome');
+    }
+    const app = (body: React.ReactNode) => <AuthProvider initialCredentials={credentials}>
+        <AppShellPluginUiProjectionProvider><WorkspaceAppShellProvider>{body}</WorkspaceAppShellProvider></AppShellPluginUiProjectionProvider>
+        <CurtainProbe />
+    </AuthProvider>;
+    const screen = await renderScreen(app(null));
+    const readCurtain = () => screen.root.findByType('Curtain').props.state;
+    const paint = () => act(async () => {
+        for (let i = 0; i < 3; i++) await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    });
+    try {
+        releaseBoot();
+        // Expo's lazy route can still be absent for several paints even though the Account is ready.
+        await paint();
+        expect(readCurtain()).toBe('up');
+        await screen.update(app(<HomeHubLoading testID="home-hub.loading" />));
+        await paint();
+        expect(readCurtain()).toBe('up');
+        // The Home route can commit before the retained foreground panel mounts.
+        await screen.update(app(React.createElement('HomeRoute')));
+        await paint();
+        expect(readCurtain()).toBe('up');
+        await screen.update(app(<PhoneTabNavRowProvider leading={null} trailing={null}>
+            <SessionListSkeletonRows />
+        </PhoneTabNavRowProvider>));
+        await paint();
+        expect(readCurtain()).toBe('up');
+        await screen.update(app(<PresentedHome />));
+        await paint();
+        expect(screen.root.findAllByType('PresentedHome')).toHaveLength(1);
+        expect(readCurtain()).toBe('leaving');
+    } finally {
+        await screen.unmount();
+        finishLaunchCurtain();
+        dimensions.mockRestore();
+        await (await restoration).dispose();
+    }
+});
+
 it('lets the live signed-out route commit its landing before the workspace takes over Home without presenting a temporary Home', async () => {
     const events: string[] = [];
     function Route() {

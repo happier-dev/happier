@@ -82,7 +82,7 @@ import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
 import { runAppBootSequence, reportDesktopAppBootPhase, type AppBootPhase, type AppBootReadyState } from '@/boot/runAppBootSequence';
 import { AppBootPendingSurface } from '@/boot/AppBootPendingSurface';
 import { AppLaunchState, LaunchCurtain } from '@/components/appShell/workspace/AppLaunchState';
-import { finishLaunchCurtain } from '@/boot/launchCurtain';
+import { finishLaunchCurtain, useLaunchCurtainHold, useLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { prepareWarmCacheStorage } from '@/sync/domains/state/warmCachePersistence';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
@@ -91,6 +91,7 @@ import { DesktopShellUpdateIndicatorHost } from '@/components/navigation/shell/d
 import { DesktopShellWindowControlsHost } from '@/components/navigation/shell/desktopChrome/DesktopShellWindowControlsHost';
 import { useResolvedDesktopWindowControls } from '@/components/navigation/shell/desktopChrome/useResolvedDesktopWindowControls';
 import { isTerminalConnectWebPathname } from '@/utils/path/terminalConnectUrl';
+import { HOME_RECOVERY_ROUTE } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 import { desktopHostKind, getDesktopHostWindowLabel, isDesktopHost } from '@/utils/platform/desktopHost';
 import { installTauriExternalLinkClicks } from '@/utils/url/installTauriExternalLinkClicks';
 import { useIsTablet } from '@/utils/platform/responsive';
@@ -762,6 +763,10 @@ function AppBoot() {
     const { opening, Host: OpeningHost, admitOpening } = useFirstOpenBoot();
     // The main web window shows one Loading planet from the HTML shell to the first destination drawn.
     const launchCurtain = primaryRealm && Platform.OS === 'web' && !isFirstOpenPresenter;
+    const launchDestinationMounted = useLaunchDestinationBodyMounted();
+    // These full-viewport routes reach their first body through Expo's lazy navigator.
+    const waitsForStandaloneRoute = isTerminalConnectRoute || pathname === HOME_RECOVERY_ROUTE;
+    useLaunchCurtainHold(launchCurtain && waitsForStandaloneRoute && !launchDestinationMounted);
     React.useLayoutEffect(() => {
         if (!launchCurtain) finishLaunchCurtain();
     }, [launchCurtain]);

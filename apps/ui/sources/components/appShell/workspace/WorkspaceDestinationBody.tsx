@@ -13,7 +13,8 @@ import { workspaceSettingsLayoutKeys } from './workspaceRouteContext';
 import { WorkspaceRouteOutlet } from './WorkspaceRouteOutlet';
 import { DestinationBodyLoading } from './DestinationBodyLoading';
 import { HomeHubLoading } from '@/components/hub/HomeHubLoading';
-import { markLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { PluginAppPageLoadingFrame } from '@/components/plugins/shared/PluginPageIdentityHeader';
 import { pluginAppPageRouteSelectsEntry, readPluginAppPageRouteView } from '@/components/plugins/pages/pluginPageRoute';
 
@@ -50,6 +51,12 @@ function DestinationUnavailable(): React.ReactElement {
     return <SurfaceStateCard kind="unavailable" size={usePageSurfaceStateSize()} title={t('common.unavailable')} />;
 }
 
+function LaunchDestinationBody({ children }: Readonly<{ children: React.ReactNode }>): React.ReactNode {
+    const presented = useLayoutPresentationActive();
+    useMarkLaunchDestinationBodyMounted(presented);
+    return children;
+}
+
 /** Renders the catalog-admitted identity; the Expo entrypoint is only its URL sink. */
 export const WorkspaceDestinationBody = React.memo(function WorkspaceDestinationBody(props: Readonly<{
     target: DestinationRef;
@@ -57,22 +64,22 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
     renderSession: (target: DestinationRef) => React.ReactNode;
     renderSessionDetails: (target: DestinationRef) => React.ReactNode;
 }>): React.ReactNode {
-    // The workspace's first body takes the launch planet over from the shell around it.
-    React.useLayoutEffect(markLaunchDestinationBodyMounted, []);
-    if (props.target.kind === 'session') return props.renderSession(props.target);
-    if (props.target.kind === 'sessionDetails') return props.renderSessionDetails(props.target);
+    if (props.target.kind === 'session') return <LaunchDestinationBody>{props.renderSession(props.target)}</LaunchDestinationBody>;
+    if (props.target.kind === 'sessionDetails') return <LaunchDestinationBody>{props.renderSessionDetails(props.target)}</LaunchDestinationBody>;
     const match = matchWorkspaceDestinationRoute(props.pathname);
     const Body = match ? bodies[match.routeKey] : undefined;
     if (match && workspacePluginAppPageRouteKey(match.routeKey) && props.target.params.pluginId && props.target.params.localId) {
         const { pluginId, localId, subPath = '' } = props.target.params;
         return <React.Suspense fallback={<PluginAppPageLoadingFrame testID="plugin-app-page-module-loading"
             entryDetail={pluginAppPageRouteSelectsEntry(pluginId, subPath)} />}>
-            <PluginAppPageScreen pluginId={pluginId}
-                localId={localId} subPath={subPath}
-                view={readPluginAppPageRouteView(props.target.params.view)} />
+            <LaunchDestinationBody>
+                <PluginAppPageScreen pluginId={pluginId}
+                    localId={localId} subPath={subPath}
+                    view={readPluginAppPageRouteView(props.target.params.view)} />
+            </LaunchDestinationBody>
         </React.Suspense>;
     }
-    if (!Body) return <DestinationUnavailable />;
+    if (!Body) return <LaunchDestinationBody><DestinationUnavailable /></LaunchDestinationBody>;
     let content: React.ReactNode = <Body />;
     const machineKey = match ? workspaceMachinePageRouteKey(match.routeKey) : null;
     // Keep the page below the same providers when only its door changes. The collection
@@ -84,10 +91,13 @@ export const WorkspaceDestinationBody = React.memo(function WorkspaceDestination
         content = <WorkspaceRouteOutlet.Provider key={key} value={content}><Layout /></WorkspaceRouteOutlet.Provider>;
     }
     // Home draws the same Home-shaped placeholder until its own model answers, so the two waits read as one.
-    const fallback = match?.routeKey === HOME_ROUTE_KEY ? <HomeHubLoading testID="home-hub.loading" /> : <DestinationBodyLoading />;
-    return <React.Suspense fallback={fallback}>
-        {layoutKeys.includes('./(app)/settings/machines/_layout.tsx')
-            ? <MachinesDoorFromShell pathname={props.pathname}>{content}</MachinesDoorFromShell> : content}
+    if (match?.routeKey === HOME_ROUTE_KEY) {
+        // Home can mount its visible panel after the route commits. Its presentation owner takes the curtain.
+        return <React.Suspense fallback={<HomeHubLoading testID="home-hub.loading" />}>{content}</React.Suspense>;
+    }
+    return <React.Suspense fallback={<DestinationBodyLoading />}>
+        <LaunchDestinationBody>{layoutKeys.includes('./(app)/settings/machines/_layout.tsx')
+            ? <MachinesDoorFromShell pathname={props.pathname}>{content}</MachinesDoorFromShell> : content}</LaunchDestinationBody>
     </React.Suspense>;
 });
 

@@ -74,11 +74,16 @@ function subscribe(listener: () => void) {
 }
 
 let bodyMounted = false;
-/** The workspace has mounted its first destination body (which then holds the curtain itself while it loads). */
+/** The addressed destination is on screen and can own the remainder of its launch. */
 export function markLaunchDestinationBodyMounted(): void {
   if (bodyMounted) return;
   bodyMounted = true;
   for (const listener of listeners) listener();
+}
+export function useMarkLaunchDestinationBodyMounted(presented: boolean): void {
+  React.useLayoutEffect(() => {
+    if (presented) markLaunchDestinationBodyMounted();
+  }, [presented]);
 }
 const readBodyMounted = () => bodyMounted;
 export function useLaunchDestinationBodyMounted(): boolean {

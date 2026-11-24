@@ -59,8 +59,8 @@ function CurtainLayer({ leaving }: Readonly<{ leaving: boolean }>) {
     return () => fade.cancel();
   }, [leaving, reduced]);
   return (
-    <View ref={layer} testID="launch-curtain" style={styles.curtain} pointerEvents={leaving ? 'none' : 'auto'}
-      aria-hidden importantForAccessibility="no-hide-descendants">
+    <View ref={layer} testID="launch-curtain" style={styles.curtain} pointerEvents="none"
+      aria-hidden importantForAccessibility="no-hide-descendants" {...{ inert: true }}>
       {reduced ? <StillPlanet theme={colourScheme} /> : <LivePlanet theme={colourScheme} />}
     </View>
   );

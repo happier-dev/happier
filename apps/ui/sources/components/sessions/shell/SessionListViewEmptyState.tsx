@@ -3,6 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
+import { markLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { usePhoneTabNavRow } from '@/components/navigation/shell/phoneTabNavRow';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { t, type TranslationKey } from '@/text';
 
@@ -62,9 +65,14 @@ function resolveAction(
 export const SessionListViewEmptyState = React.memo((props: SessionListViewEmptyStateProps) => {
     const styles = stylesheet;
     const model = resolveSessionListViewEmptyState(props);
+    const phoneTabShell = usePhoneTabNavRow() !== null;
+    const presented = useLayoutPresentationActive();
     if (props.presentation.kind === 'initial_loading') {
         // A Home that does not answer ends the wait with "Can't reach {Home}. Retry".
-        return <HomeReachabilityGate variant="line" relevantServerIds={props.selectedHomeServerIds}><SessionListSkeletonRows /></HomeReachabilityGate>;
+        return <HomeReachabilityGate variant="line" relevantServerIds={props.selectedHomeServerIds}
+            onUnavailable={phoneTabShell && presented ? markLaunchDestinationBodyMounted : undefined}>
+            <SessionListSkeletonRows />
+        </HomeReachabilityGate>;
     }
     if (model.mode === 'none') return null;
 

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useAtmosphereBackdrop } from '@/components/atmosphere/atmosphereBackdrop';
-import { useLaunchCurtainHold, useLaunchCurtainState } from '@/boot/launchCurtain';
+import { useLaunchCurtainHold, useLaunchCurtainState, useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { Platform, useWindowDimensions, View, type ScrollView } from 'react-native';
 import { useGlyphFieldTap } from '@/components/atmosphere/glyph/useHomeGlyphField';
 
@@ -577,6 +577,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // reached; a Home that is not the one on screen (another tab, the Personal Home setup over it) does not hold it.
     const homeArrived = React.useSyncExternalStore(subscribeHomeArrival, isHomeArrivalSettled, isHomeArrivalSettled);
     useLaunchCurtainHold(arrivalPresented && !homeUnavailable && !homeArrived);
+    useMarkLaunchDestinationBodyMounted(focused && presented);
     const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn }),
         [homeLoading, homePlanetDrawn, momentTarget]);
     const loadingMoment = useHomeLoadingMoment({
