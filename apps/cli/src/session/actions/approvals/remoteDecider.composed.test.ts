@@ -18,7 +18,7 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, EXTERNAL_ACTION_EXECUTION_AUTHORI
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema,
   ExternalActionExecutionAuthorizationV1Schema, parseExternalActionDaemonDispatchResult,
   projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { configuration } from '@/configuration';
@@ -26,7 +26,7 @@ import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecyc
 import { registerApprovalRpcHandlers } from '@/rpc/handlers/approvals';
 import { registerExternalActionRpcHandler } from '@/rpc/handlers/externalAction';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import type { VerifyExternalActionExecutionAuthorization } from '@/daemon/externalActions/executeExternalAction';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
@@ -38,6 +38,7 @@ import { createClientActionReverseDispatcher } from '../clientActionReverseDispa
 import { SessionMessageContentSchema, UserMessageSchema } from '@/api/types';
 import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { createCliActionExecutorFromCredentials } from '../createCliActionExecutorFromCredentials';
+import { createPluginInvocationActionsService } from '@/plugins/runtime/invocation/services/actions';
 
 // Replace network transport only. The credentialed deciding factory, Artifact
 // codecs/CAS, registered daemon replay and Session Action executor stay real.
@@ -50,11 +51,13 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); transport.mockRes
 const managerSessionId = 'c123456789012345678901234';
 
 describe('remote person approval through credentialed CLI and registered daemon replay', () => {
-  async function approveGoal(externalActionClient: boolean, scenario: 'goal' | 'missing_client' | 'missing_app_live' | 'missing_app_plugin_live' | 'background_plugin_post' | 'background_plugin_refusal' | 'target_live' | 'mcp_client' = 'goal', decision: 'approve' | 'reject' = 'approve') {
+  async function approveGoal(externalActionClient: boolean, scenario: 'goal' | 'missing_client' | 'missing_app_live' | 'missing_app_plugin_live' | 'sdk_deferred_post' | 'sdk_origin_revoked' | 'background_plugin_post' | 'background_plugin_refusal' | 'target_live' | 'mcp_client' = 'goal', decision: 'approve' | 'reject' = 'approve') {
     const missingClientPort = scenario === 'missing_client';
     const mcpClient = scenario === 'mcp_client';
     const missingAppWaiter = scenario === 'missing_app_live' || scenario === 'missing_app_plugin_live';
     const backgroundPluginPost = scenario === 'background_plugin_post' || scenario === 'background_plugin_refusal';
+    const sdkOriginRevoked = scenario === 'sdk_origin_revoked';
+    const sdkDeferredPost = scenario === 'sdk_deferred_post' || sdkOriginRevoked;
     const refusedOriginDelivery = scenario === 'background_plugin_refusal';
     return await withConfiguredDaemonTestHome({ prefix: 'happier-remote-decider-', env: {
       HAPPIER_SERVER_URL: 'https://approval.test', HAPPIER_WEBAPP_URL: 'https://approval.test',
@@ -129,6 +132,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
       let waiterReady!: () => void;
       const waiting = new Promise<void>(resolve => { waiterReady = resolve; });
       const daemon = createActionExecutor({
+        ...(sdkDeferredPost ? {
+          readActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+            actions: { 'discussion.post': { approvalRequiredSurfaces: ['plugin'] } } }),
+          actionAutomations: {
+            select: async () => ({ status: 'ready' as const, subjects: [], before: [], after: [] }),
+            settle: async () => {},
+          },
+        } : {}),
         ...(scenario === 'target_live' ? { targetActionApprovalReplay: createTargetActionApprovalDecision({
           read: async () => target, update: updateTarget,
         }) } : {}),
@@ -143,7 +154,17 @@ describe('remote person approval through credentialed CLI and registered daemon 
           if (!transition.ok) return transition;
           stored = ApprovalRequestV2Schema.parse(request); return { ok: true };
         },
-        isApprovalExecutionOriginCurrent: async ({ origin }) => origin.machineId === 'origin-machine',
+        isApprovalExecutionOriginCurrent: sdkDeferredPost ? createDaemonApprovalExecutionOriginCurrentness({
+          accountId: 'owner', machineId: 'origin-machine', serverId,
+          resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home', machineId: 'origin-machine' }),
+          resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+          isAccountCurrent: async () => true,
+          listAccountApiTokens: async () => { throw new Error('Unexpected API token read'); },
+          externalActionMachinePublicKey: publicKey,
+          verifyExternalExecutionAuthorization: async ({ authorization, effectActionId }) =>
+            authorization.token === 'sdk-root' && effectActionId === 'action.invoke',
+          isPluginInstalled: async pluginId => !sdkOriginRevoked && pluginId === 'acme.channels',
+        }) : async ({ origin }) => origin.machineId === 'origin-machine',
         ...(mcpClient ? { clientActionExecute: createClientActionReverseDispatcher(() => ({
           hasConnectedClientRpcHandler: () => true,
           callConnectedClientRpc: async (method, raw, options) => {
@@ -190,6 +211,38 @@ describe('remote person approval through credentialed CLI and registered daemon 
         : null;
       if (originalInvocation) onTestFinished(async () => { lifetime.abort(); coordinator.dispose(); await originalInvocation; });
       if (backgroundPluginPost) await waiting;
+      else if (sdkDeferredPost) {
+        const target = { kind: 'machine' as const, machineId: 'origin-machine' };
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'sdk-root', binding: {
+          serverIdentityId: 'srv_home', accountId: 'owner', custodianAccountId: 'owner',
+          authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+          machineId: target.machineId, installationId: installation.installationId,
+          actionId: 'action.invoke', requestId: 'sdk-root', requestEnvelopeDigest: 'a'.repeat(43), target,
+        } });
+        const service = createPluginInvocationActionsService({
+          seed: {
+            plugin: { id: pluginCaller.pluginId, version: '1.0.0' },
+            contribution: { id: 'ingress', qualifiedId: 'acme.channels/actions/ingress' },
+            occurrenceId: pluginCaller.occurrenceId, sourceCustody: pluginCaller.sourceCustody,
+            surface: 'cli', signal: lifetime.signal, isOccurrenceCurrent: () => true,
+            approvalContext: { serverId, serverIdentityId: 'srv_home', runtimeAccountId: 'owner',
+              actionRequestId: 'sdk-root', externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+              signExternalActionApprovalInput: ({ actionId, input, target }) => signExternalActionApprovalInputV1({
+                authorizationToken: authorization.token, actionId, input, target, privateKey,
+              }),
+            },
+          },
+          actionExecutor: daemon,
+          invokeContributedAction: async () => { throw new Error('Unexpected contributed child'); },
+        });
+        expect(await service.execute('discussion.post', {
+          discussionId: 'discussion', localId: 'plugin-post',
+          content: { v: 1, parts: [{ t: 'text', text: 'Deferred publication' }] },
+        })).toMatchObject({ kind: 'approval_request_created', artifactId: 'approval' });
+        expect(stored).toMatchObject({ status: 'open', approval: { flow: 'deferred' },
+          executionOriginV1: { surface: 'plugin', machineId: 'origin-machine', caller: { kind: 'plugin' } } });
+        lifetime.abort();
+      }
       // A prior app process is gone. Supply its schema-valid stored record at
       // the HTTP boundary; a contextual Machine never owned its private result.
       else if (missingAppWaiter) stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
@@ -397,6 +450,28 @@ describe('remote person approval through credentialed CLI and registered daemon 
         surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
       });
       const result = await decide();
+      if (sdkOriginRevoked) {
+        expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: {
+          ok: false, errorCode: 'approval_stale', effectAttempted: false,
+          details: { reason: 'plugin_source_changed' },
+        } } });
+        expect(stored).toMatchObject({ status: 'failed', execution: {
+          ok: false, errorCode: 'approval_stale', effectAttempted: false,
+        } });
+        expect(effects).toEqual([]);
+        return { first: { http: {}, ...executionCounts() }, replay: { http: {}, ...executionCounts() } };
+      }
+      if (sdkDeferredPost) {
+        const diagnostic = result.ok ? undefined
+          : JSON.stringify({ code: result.errorCode, phase: result.failureCause?.phase,
+            nativeReason: result.failureCause?.nativeErrorReason, approvalStatus: stored?.status, effects: effects.length });
+        expect(result, diagnostic).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(stored).toMatchObject({ status: 'executed', execution: { ok: true } });
+        expect(effects).toEqual([expect.objectContaining({ input: expect.objectContaining({
+          discussionId: 'discussion', localId: 'plugin-post',
+        }), context: expect.objectContaining({ actionCaller: expect.objectContaining({ kind: 'plugin' }) }) })]);
+        return { first: { http: {}, ...executionCounts() }, replay: { http: {}, ...executionCounts() } };
+      }
       if (refusedOriginDelivery) {
         expect(result).toMatchObject({ ok: true, result: { status: 'failed', execution: {
           ok: false, errorCode: 'approval_origin_unavailable', effectAttempted: false,
@@ -566,6 +641,14 @@ describe('remote person approval through credentialed CLI and registered daemon 
 
   it.each(['approve', 'reject'] as const)('settles a retained background plugin Discussion publication from a real person %s', async decision => {
     await approveGoal(false, 'background_plugin_post', decision);
+  });
+
+  it('executes a signed deferred SDK Discussion post after the contributed caller closes', async () => {
+    await approveGoal(false, 'sdk_deferred_post');
+  });
+
+  it('settles a signed deferred SDK Discussion approval when its admitting plugin was uninstalled', async () => {
+    await approveGoal(false, 'sdk_origin_revoked');
   });
 
   it('settles a definitive pre-effect origin refusal for the retained background plugin invocation', async () => {

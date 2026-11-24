@@ -111,10 +111,11 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
         return { kind: 'daemon', machineId: origin.target.machineId };
       }
     }
-    // An effect prepared through required daemon ingress retains that signer
-    // after normalization makes its prepared input Account-placed.
+    // A signed SDK child retains the daemon that admitted its exact input
+    // under the outer Action's proof. Deferred replay has no plugin waiter.
     if (origin.externalActionExecutionAuthorization
-        && spec.originalExecution?.daemonIngressSurfaces?.some(surface => surface === origin.surface)
+        && (origin.surface === 'plugin' && origin.caller.kind === 'plugin' && request.approval?.flow === 'deferred'
+          || spec.originalExecution?.daemonIngressSurfaces?.some(surface => surface === origin.surface))
       || origin.principalId && origin.credentialId) {
       return { kind: 'daemon', machineId: origin.target.machineId };
     }
