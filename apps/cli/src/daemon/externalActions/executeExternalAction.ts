@@ -56,7 +56,10 @@ import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/re
 import { createExternalActionStartDiagnosticRecorder, refuseExternalActionPhase, runExternalActionPhase, traceExternalActionStage, readSessionInputAdmissionDiagnostic } from './externalActionPhase';
 import { setApprovalTraceArtifactId, timeApprovalPhase, timeApprovalPhaseSync, timeWebLatencyPhase, withApprovalActionTrace, withWebLatencyTrace } from './webLatencyTrace';
 import { AccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
-import { projectUnexpectedActionFailureV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { parseActionExecuteFailure, projectActionFailureCauseV1, projectUnexpectedActionFailureV1,
+  type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readRequesterHomeActionFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { logger } from '@/ui/logger';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { preparedResponse, beforeEffectResponse } from './response';
@@ -1160,13 +1163,33 @@ async function executeExternalActionRequest(input: Readonly<{
       ...(logsReference?.hostRead === 'machines.services.logs' ? { sourceRevision: logsReference.sourceRevision } : {}),
     } } : {}),
   };
+  const failureRequestId = () => envelope.data.requestId ?? admittedAuthorization?.binding.requestId
+    ?? input.transportRequestId ?? randomUUID();
+  const recordExecutionThrow = (error: unknown, requestId: string) => {
+    trace('action_execution.threw');
+    return refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
+  };
+  const projectPreparationFailure = (error: unknown, requestId: string, phase: ReturnType<typeof recordExecutionThrow>): ActionExecuteFailure => {
+    // Only the typed identity and validated cause can leave this phase.
+    // Author details, exception prose, stacks and raw schema input stay private.
+    if (error instanceof AccountSettingsContentInvalidError) {
+      return { ok: false, errorCode: error.code, error: error.code, effectAttempted: false };
+    }
+    const typed = phase.executionFailure ?? (error instanceof ManagedMachineControllerError
+      ? error.toActionFailure(actionId.data) : parseActionExecuteFailure(error));
+    const code = typed?.errorCode ?? (isPluginError(error) ? error.code : undefined);
+    return code ? { ok: false, errorCode: code, error: code, effectAttempted: false,
+      failureCause: typed?.failureCause ?? projectActionFailureCauseV1(error, actionId.data) }
+      : { ...projectUnexpectedActionFailureV1(false, requestId), effectAttempted: false };
+  };
   let internalExecution: ActionExecuteResult;
   try {
     trace('action_execution.begin');
-    effectMayHaveStarted = true;
     internalExecution = await withWebLatencyTrace(envelope.data.requestId, () => timeWebLatencyPhase('daemon.action.execute', async () => {
       const executor = requesterContext?.executor ?? input.executor;
       if (input.observeSessionBirth) {
+        // This request observes a previous daemon dispatch with a lost acknowledgement.
+        effectMayHaveStarted = true;
         const observed = actionId.data === 'session.spawn_new' && admittedAuthorization && originalRootCurrentness
           && await originalRootCurrentness()
           ? await executor.observeSessionBirth?.(decodedInput, context) : null;
@@ -1174,13 +1197,19 @@ async function executeExternalActionRequest(input: Readonly<{
           : projectUnexpectedActionFailureV1(null, envelope.data.requestId);
       }
       if (!logsOperands.resourceContinuation) {
+        const execute = (value: unknown, executionContext: ActionExecutorContext) => {
+          effectMayHaveStarted = true;
+          return executor.execute(actionId.data, value, {
+            ...executionContext,
+            reportActionEffectDispatch: dispatched => { effectMayHaveStarted = dispatched; },
+          });
+        };
         const reviewed = await invokeAdmittedReviewedChild({ parent: managedReviewedParent ?? requesterContext?.invocation?.reviewedParent,
           requesterOwnedReview: !managedReviewedParent && Boolean(requesterContext?.invocation?.reviewedParent),
           context, actionId: actionId.data, actionInput: decodedInput,
           ...(input.machineAdmission ? { receivingAdmission: input.machineAdmission } : {}),
-          execute: (childInput, childContext) => executor.execute(actionId.data, childInput, childContext) });
-        if (reviewed) return reviewed;
-        return executor.execute(actionId.data, decodedInput, context);
+          execute });
+        return reviewed ?? execute(decodedInput, context);
       }
       const continuation = logsOperands.resourceContinuation;
       if (context.surface !== 'ui' || context.actionCaller?.kind !== 'host' || !context.signal
@@ -1192,6 +1221,7 @@ async function executeExternalActionRequest(input: Readonly<{
         if (response.kind !== 'response') throw new Error('Host Resource delivery could not be prepared');
         await sendResourceFrame!(response.prepared.response);
       };
+      effectMayHaveStarted = true;
       const result = await input.invokeResource!(continuation.method, continuation.params, {
         signal: context.signal, callerInputAuthorization: admittedAuthorization,
         ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
@@ -1208,29 +1238,22 @@ async function executeExternalActionRequest(input: Readonly<{
     }));
     trace('action_execution.end');
   } catch (error) {
-    trace('action_execution.threw');
-    const requestId = envelope.data.requestId ?? admittedAuthorization?.binding.requestId ?? input.transportRequestId ?? randomUUID();
-    const phaseFailure = refuseExternalActionPhase('action_execution', input.currentMachineId, error, { actionId: actionId.data, requestId });
-    // Policy preparation runs before protocol execution. Preserve its known
-    // refusal without exposing a schema error's input, cause or message.
-    const actionFailure = logsOperands.resourceContinuation && !context.signal?.aborted
-      ? readDaemonHostResourceActionFailure(error) : null;
-    const errorCode = logsOperands.resourceContinuation && context.signal?.aborted ? 'cancelled'
-      : logsOperands.resourceContinuation && isPluginError(error) ? error.code
-      : error instanceof AccountSettingsContentInvalidError ? error.code
-      : isPluginError(error) && error.code === 'project_requester_home_unavailable' ? error.code : 'internal_error';
-    return prepare({
-      v: 1,
-      actionId: actionId.data,
-      requestId,
-      execution: actionFailure ?? (errorCode === 'internal_error' ? projectUnexpectedActionFailureV1(null, requestId) : {
-        ok: false,
-        errorCode,
-        error: errorCode,
-        ...(errorCode === 'project_requester_home_unavailable' && phaseFailure.executionFailure?.failureCause
-          ? { failureCause: phaseFailure.executionFailure.failureCause } : {}),
-      }),
-    });
+    const requestId = failureRequestId();
+    const phase = recordExecutionThrow(error, requestId);
+    const resource = logsOperands.resourceContinuation;
+    let execution: ActionExecuteFailure;
+    if (!effectMayHaveStarted) {
+      execution = projectPreparationFailure(error, requestId, phase);
+    } else if (resource && context.signal?.aborted) {
+      execution = { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    } else {
+      execution = (resource ? readDaemonHostResourceActionFailure(error) : null)
+        ?? readRequesterHomeActionFailure(error)
+        ?? ((resource && isPluginError(error)) || error instanceof AccountSettingsContentInvalidError
+          ? { ok: false, errorCode: error.code, error: error.code }
+          : projectUnexpectedActionFailureV1(null, requestId));
+    }
+    return prepare({ v: 1, actionId: actionId.data, requestId, execution });
   }
   const reviewedCandidate = context.externalActionExecutionAuthorization?.binding.deploymentCandidatePublication?.reviewed;
   if (!internalExecution.ok && reviewedCandidate

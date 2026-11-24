@@ -724,6 +724,8 @@ export type ActionExecutorContext = Readonly<{
   publicProfilePreviewResult?: ActionExecuteResult;
   /** Content-free observer installed by the host; never parsed from Action/RPC input. */
   recordActionStartDiagnostic?: (event: import('./actionStartDiagnostics.js').ActionStartDiagnosticV1) => void;
+  /** Host-only observation of this invocation entering preparation or dispatch. */
+  reportActionEffectDispatch?: (dispatched: boolean) => void;
   /** Host-captured Account identity for this invocation; never Action input or RPC authority. */
   expectedAccountId?: string;
   /** Host Resource custody only; never accepted from Action or RPC input. */

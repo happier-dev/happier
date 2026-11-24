@@ -949,6 +949,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     approvalScope?: ActionApprovalPolicyScopeV1;
     /** Opened inside the private host-child dispatch; replay re-admits it the same way. */
     hostChild?: boolean;
+    onEffectDispatch?: () => void;
   }>): Promise<Readonly<{ ok: true; request: StoredApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
     if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
     const { actionId, input, context: ctx } = args;
@@ -998,6 +999,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if ('ok' in admitted) return admitted;
       proposedRequest = admitted;
     }
+    args.onEffectDispatch?.();
     const created = await deps.approvalsCreate({ request: proposedRequest, serverId: normalizeId(ctx.serverId) || null });
     const request = created.request ?? proposedRequest;
     if (request.v !== 2 || isHistoricalPublishApprovalRequestV2(request)) {
@@ -2905,6 +2907,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       const created = await createActionApprovalRequest({ actionId, input: valueFreeInput, actionArgs: valueFreeInput,
         preview: { actionId, actionArgs: valueFreeInput, confidentialInputs: { kind: 'action_inputs', paths } },
         context: promptContext, approval: { flow: 'deferred', result: 'required' }, hostChild: hostInternal,
+        onEffectDispatch: options?.onEffectDispatch,
         sharedRequesterRequest: !delegatesApprovalClassificationToResolvedAction(actionId) && isSharedRequesterActionV1(ctx),
       });
       return created.ok ? { ok: true, result: { kind: 'approval_request_created', artifactId: created.artifactId, actionId } } : created;
@@ -3887,7 +3890,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? recordPresentUserApprovalV1({ ...nativeConfirmation, input: admittedInput,
         ...(confirmedReviewDigest ? { reviewDigest: confirmedReviewDigest } : {}) }) : null;
     const childrenPreparation = await prepareHostReviewedChildrenV1({ actionId, input: admittedInput, context: ctx, deps,
-      executeChild: executeHostChild,
+      executeChild: (childId, childInput, childContext) => {
+        if (getActionSpec(childId).sideEffectClass !== 'read') options?.onEffectDispatch?.();
+        return executeHostChild(childId, childInput, childContext);
+      },
       admitCredentialScope: (id, context, input) => admitCredentialScope(id, context, input, true),
       reviewAdmitted: nativeReview !== null,
       ...(preparedHostReviewedChildren ? { prepared: preparedHostReviewedChildren } : {}),
@@ -4158,6 +4164,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               || spec.approvalResultCustody === 'live_only' || retainHostOperationApproval;
             const created = await createActionApprovalRequest({ actionId, input: admittedInput,
               actionArgs: prepared.actionArgs, preview: prepared.preview, context: ctx, sharedRequesterRequest, hostChild: hostInternal,
+              onEffectDispatch: options?.onEffectDispatch,
               humanApprovalRequired: false, approval: { flow: retainsAutomaticInvocation ? 'blocking' : 'deferred', result: baseApprovalRouting.result },
               ...(approvalScope ? { approvalScope } : {}) });
             if (!created.ok) return created;
@@ -4346,6 +4353,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if ('ok' in preparedApproval) return preparedApproval;
         const created = await createActionApprovalRequest({ actionId, input: admittedInput,
           actionArgs: preparedApproval.actionArgs, preview: preparedApproval.preview, context: ctx, hostChild: hostInternal,
+          onEffectDispatch: options?.onEffectDispatch,
           approval: { flow: approvalRouting.flow, result: approvalRouting.result,
             ...(baseApprovalRouting.profile ? { profile: baseApprovalRouting.profile } : {}) }, sharedRequesterRequest,
           ...(discussionDraftReviewRequired ? { discussionDraftReview: true } : {}),
@@ -8430,6 +8438,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     dispatchImmediately = false,
     preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
     inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
+    onEffectDispatch?: CoreOptions['onEffectDispatch'],
   ): Promise<PrivatePrepareResult> => {
     const normalizedContext = normalizeActionCallerContext(context ?? {});
     if (!normalizedContext) return settlePrepareResult(actionId, {
@@ -8521,7 +8530,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         false,
         undefined,
         { prepareOnly: true, hostInternal, dispatchImmediately, workflowSessionScope: inheritedWorkflowSessionScope,
-          onAutomationAdmission: admitted => { settlementContext = admitted; },
+          onAutomationAdmission: admitted => { settlementContext = admitted; }, onEffectDispatch,
           ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
           ...(preparedDiscussionPolicy !== undefined ? { discussionPublicationPolicy: preparedDiscussionPolicy } : {}) },
       ));
@@ -8632,7 +8641,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       undefined,
       { prepareOnly: true, hostInternal, dispatchImmediately, admittedInputSchema: spec.inputSchema,
         workflowSessionScope: inheritedWorkflowSessionScope,
-        onAutomationAdmission: admitted => { settlementContext = admitted; },
+        onAutomationAdmission: admitted => { settlementContext = admitted; }, onEffectDispatch,
         ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
         ...(preparedDiscussionPolicy !== undefined && readRecord(parsedSemanticInput.data).discussionId === originalDiscussionId
           && (ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
@@ -8668,9 +8677,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     dispatchImmediately = false,
     preparationOptions?: import('./executor/types.js').ActionPrepareOptions,
     inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
+    onEffectDispatch?: CoreOptions['onEffectDispatch'],
   ): Promise<PrivatePrepareResult> => {
     try {
-      return await prepareInvocationCore(actionId, input, context, hostInternal, dispatchImmediately, preparationOptions, inheritedWorkflowSessionScope);
+      return await prepareInvocationCore(actionId, input, context, hostInternal, dispatchImmediately, preparationOptions, inheritedWorkflowSessionScope, onEffectDispatch);
     } catch (error) {
       if (error instanceof ActionCatalogUnavailableError) {
         return settlePrepareResult(actionId, { ok: false, ...normalizeActionExecutorThrownError(error) });
@@ -8689,18 +8699,29 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     hostInternal = false,
     inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope'],
   ): Promise<ActionExecuteResult> => {
+    const reportEffectDispatch = context?.reportActionEffectDispatch;
+    if (context && reportEffectDispatch) {
+      // Observe this invocation only. Nested execution receives no reporting port.
+      const { reportActionEffectDispatch: _report, ...invocationContext } = context;
+      context = invocationContext;
+      if (!context.operationAcceptance) reportEffectDispatch(false);
+    }
+    const onEffectDispatch = reportEffectDispatch && (() => reportEffectDispatch(true));
     const reviewedChild = readHostReviewedChildOperationV1(context, actionId, input);
     if (hostInternal && actionId === 'action.invoke' && deps.routeHostChildAction) {
+      onEffectDispatch?.();
       const routed = await deps.routeHostChildAction({ actionId, input, context: context! });
       if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
     }
     hostInternal ||= reviewedChild !== null;
-    const prepared = await prepareInvocation(actionId, input, context, hostInternal, true, undefined, inheritedWorkflowSessionScope);
+    const prepared = await prepareInvocation(actionId, input, context, hostInternal, true, undefined,
+      inheritedWorkflowSessionScope, onEffectDispatch);
     if (hostInternal && prepared.kind === 'ready' && deps.routeHostChildAction
       && actionId !== 'action.invoke') {
       const spec = getActionSpec(actionId);
       const admitted = prepared.admission;
       if (resolveActionExecutionPlacementForInput(spec, admitted.input, admitted.context.actionCaller, admitted.context.surface ?? 'ui') === 'machine') {
+        onEffectDispatch?.();
         const routed = await deps.routeHostChildAction({ actionId, input: admitted.input, context: admitted.context });
         if (routed) {
           const output = settleActionOutput(actionId, routed, admitted.context.actionRequestId ?? undefined);
@@ -8708,6 +8729,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
       }
     }
+    if (prepared.kind === 'ready') onEffectDispatch?.();
     const result = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
     // Admission may cancel before this read-only Action's observation arm runs.
     if (actionId === 'wait' && !result.ok && result.errorCode === 'cancelled') {
@@ -8721,10 +8743,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   const executeInvocation = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     hostInternal = false, inheritedWorkflowSessionScope?: CoreOptions['workflowSessionScope']): Promise<ActionExecuteResult> => {
     const runActionOperation = context?.runActionOperation ?? deps.runActionOperation;
-    return actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && runActionOperation && !context?.operationAcceptance
-      ? runActionOperation({ actionId, input, context: context ?? {}, resumeRetained: true,
-          execute: () => executeNewInvocation(actionId, input, context, hostInternal, inheritedWorkflowSessionScope) })
-      : executeNewInvocation(actionId, input, context, hostInternal, inheritedWorkflowSessionScope);
+    if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && runActionOperation && !context?.operationAcceptance) {
+      const { reportActionEffectDispatch, ...operationContext } = context ?? {};
+      reportActionEffectDispatch?.(true);
+      return runActionOperation({ actionId, input, context: operationContext, resumeRetained: true,
+        execute: () => executeNewInvocation(actionId, input, operationContext, hostInternal, inheritedWorkflowSessionScope) });
+    }
+    return executeNewInvocation(actionId, input, context, hostInternal, inheritedWorkflowSessionScope);
   };
 
   const prepare = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,

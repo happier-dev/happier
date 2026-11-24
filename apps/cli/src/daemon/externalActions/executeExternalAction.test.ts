@@ -99,6 +99,9 @@ import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externa
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
+import { rethrowRequesterHomeReadFailure } from '@/daemon/sessionEncryption/requesterCurrentness';
 
 let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>;
 beforeEach(async () => { currentnessChannel = await createRequesterCurrentnessSocketHarness(); });
@@ -2953,22 +2956,64 @@ describe('executeExternalAction', () => {
       .toMatchObject({ ok: false, errorCode: 'target_not_local' });
   });
 
-  it('seals an executor exception after opening V2 instead of exposing a plaintext transport failure', async () => {
+  it.each(['controller', 'plugin', 'requester Home', 'untyped'] as const)('keeps a %s reviewed-child preparation refusal before dispatch', async kind => {
+    const target = { kind: 'machine' as const, machineId: 'machine-1' };
+    const input = { homeId: 'srv_home' };
+    const failureCause = { phase: 'machines.managed.list', errorClass: 'Error',
+      errorCode: 'controller_unavailable', nativeErrorReason: 'server_error', httpStatus: 503 } as const;
+    const managedMachineAction = vi.fn(async () => ({ machines: [] }));
+    const privateMessage = 'private reviewed-child read input';
+    const executor = createActionExecutor({
+      ...createUnavailableHostActionDeps(),
+      // The reviewed-child preparation owner awaits this host read port.
+      prepareHostReviewedChildren: async () => {
+        if (kind === 'controller') throw new ManagedMachineControllerError('controller_unavailable', 503, undefined, failureCause);
+        if (kind === 'plugin') throw new PluginError({ code: 'controller_unavailable', message: privateMessage, failureCause });
+        if (kind === 'requester Home') rethrowRequesterHomeReadFailure({ response: { status: 503 } });
+        throw Object.assign(new Error(privateMessage), { code: 'controller_unavailable' });
+      },
+      managedMachineAction,
+    });
+
+    const result = await executeExternalAction({
+      actionId: 'machines.managed.list', envelope: { v: 1, requestId: 'reviewed-read-refusal', input, target },
+      principal, currentMachineId: target.machineId, resolveTarget: async () => target, executor,
+    });
+    expect(managedMachineAction).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(privateMessage);
+    expect(result).toMatchObject({ kind: 'response', response: { execution: {
+      ok: false, effectAttempted: false,
+      ...(kind === 'untyped' ? { errorCode: 'action_not_admitted' }
+        : kind === 'requester Home' ? { errorCode: 'project_requester_home_unavailable',
+          failureCause: { nativeErrorReason: 'server_error', httpStatus: 503 } }
+        : { errorCode: 'controller_unavailable', error: 'controller_unavailable', failureCause }),
+    } } });
+  });
+
+  it.each(['typed', 'untyped'] as const)('seals a %s executor exception after dispatch', async kind => {
     const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
     const binding = {
       serverIdentityId: 'srv_test', accountId: principal.accountId,
       credentialId: '00000000-0000-4000-8000-000000000001',
-      actionId: 'session.activity.get', requestId: 'protected-executor-failure',
+      actionId: kind === 'typed' ? 'deployments.teardown' : 'session.activity.get', requestId: 'protected-executor-failure',
       target: { kind: 'machine' as const, machineId: 'machine-1' },
     };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding,
       material,
-      input: { sessionId: 'session-1' },
+      input: kind === 'typed'
+        ? { serverId: binding.serverIdentityId, environmentId: 'environment', targetLinkId: 'link',
+          reason: 'manual', removeEnvironment: true, volumes: [], requestKey: 'remove' }
+        : { sessionId: 'session-1' },
       randomBytes: (length) => new Uint8Array(length).fill(3),
     });
 
+    const submitOperation = vi.fn(async () => {
+      throw new PluginError({ code: 'controller_unavailable', message: 'private executor failure',
+        failureCause: { phase: 'machines.managed.list', errorClass: 'Error', errorCode: 'controller_unavailable',
+          nativeErrorReason: 'server_error', httpStatus: 503 } });
+    });
     const result = await executeExternalAction({
       actionId: binding.actionId,
       envelope: request,
@@ -2976,21 +3021,28 @@ describe('executeExternalAction', () => {
       currentMachineId: 'machine-1',
       resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
       resolveTarget: async () => binding.target,
-      executor: { execute: async () => { throw Object.assign(new TypeError('private executor failure'), {
-        code: 'EIO', stack: 'TypeError: private executor failure\n    at privateCall (/srv/happier/action.ts:42:9)',
-      }); } },
+      executor: kind === 'typed'
+        ? createActionExecutor({ ...createUnavailableHostActionDeps(), runActionOperation: submitOperation })
+        : { execute: async () => {
+          throw Object.assign(new TypeError('private executor failure'), {
+            code: 'EIO', stack: 'TypeError: private executor failure\n    at privateCall (/srv/happier/action.ts:42:9)',
+          });
+        } },
     });
 
+    if (kind === 'typed') expect(submitOperation).toHaveBeenCalledOnce();
     expect(result.kind).toBe('response');
     if (result.kind !== 'response') throw new Error('Expected encrypted failure');
     expect(result.response.v).toBe(2);
     expect(result.prepared.body).not.toContain('private executor failure');
-    expect(openExternalActionResponseV2({ envelope: result.response, binding, request, material }))
-      .toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+    const execution = openExternalActionResponseV2({ envelope: result.response, binding, request, material });
+    expect(execution).toMatchObject({ ok: false, errorCode: 'action_outcome_unknown' });
+    expect(execution).not.toHaveProperty('effectAttempted');
+    expect(JSON.stringify(execution)).not.toContain('private executor failure');
     expect(diagnostic.mock.calls.filter(([tag]) => tag === '[external-action-phase]')).toEqual([
       ['[external-action-phase]', expect.objectContaining({ actionId: binding.actionId, requestId: binding.requestId,
-        phase: 'action_execution', errorClass: 'TypeError', errorCode: 'EIO',
-        stackFrames: [{ file: '/srv/happier/action.ts', line: 42, column: 9 }] })],
+        phase: 'action_execution', ...(kind === 'untyped' ? { errorClass: 'TypeError', errorCode: 'EIO',
+          stackFrames: [{ file: '/srv/happier/action.ts', line: 42, column: 9 }] } : {}) })],
     ]);
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private');
     diagnostic.mockRestore();
@@ -3244,7 +3296,7 @@ describe('executeExternalAction', () => {
     expect(execute).toHaveBeenCalledWith(
       'session.spawn_new',
       { directory: '/workspace', prompt: 'hello' },
-      {
+      expect.objectContaining({
         surface: 'api',
         authority: 'account_automation',
         runtimeAccountId: 'account-1',
@@ -3259,7 +3311,7 @@ describe('executeExternalAction', () => {
         externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
         defaultSessionMachineId: 'machine-1',
         signal,
-      },
+      }),
     );
   });
 

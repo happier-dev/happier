@@ -93,6 +93,7 @@ export type CoreOptions = Readonly<{
       /** Private Home binding from the already-verified approval replay owner. */
       sameHome?: ActionHomeEquivalence;
       onAutomationAdmission?: (context: ActionExecutorContext) => void;
+      onEffectDispatch?: () => void;
     }>;
 
 export type DispatchFacts = {
