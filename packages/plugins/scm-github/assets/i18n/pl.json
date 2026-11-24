@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "botów",
   "plugins.github.ui.reviewSkip.authors.unsupported": "innych kont",
   "plugins.github.ui.reviewSkip.reviewAnyway": "Przejrzyj mimo to",
-  "plugins.github.ui.reviewSkip.editAutomation": "Edytuj automatyzację"
+  "plugins.github.ui.reviewSkip.editAutomation": "Edytuj automatyzację",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Reguły gałęzi bazowej są niedostępne."
 }

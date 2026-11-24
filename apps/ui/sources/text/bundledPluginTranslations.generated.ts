@@ -2523,6 +2523,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Obre {item} a GitHub",
     "plugins.github.ui.openResults": "Obre els resultats de {item}",
     "plugins.github.ui.openSession": "Obre {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Les regles de la branca base no estan disponibles.",
     "plugins.github.ui.overview.copyGithubUrl": "Copia l’URL de GitHub",
     "plugins.github.ui.overview.details": "Detalls actuals de GitHub",
     "plugins.github.ui.overview.openAttachment": "Obre l’adjunt",
@@ -7202,6 +7203,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "{item} auf GitHub öffnen",
     "plugins.github.ui.openResults": "Ergebnisse für {item} öffnen",
     "plugins.github.ui.openSession": "{session} öffnen",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Die Regeln für den Basisbranch sind nicht verfügbar.",
     "plugins.github.ui.overview.copyGithubUrl": "GitHub-URL kopieren",
     "plugins.github.ui.overview.details": "Aktuelle GitHub-Details",
     "plugins.github.ui.overview.openAttachment": "Anhang öffnen",
@@ -11881,6 +11883,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Open {item} on GitHub",
     "plugins.github.ui.openResults": "Open results for {item}",
     "plugins.github.ui.openSession": "Open {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Base branch rules are unavailable.",
     "plugins.github.ui.overview.copyGithubUrl": "Copy GitHub URL",
     "plugins.github.ui.overview.details": "Current GitHub details",
     "plugins.github.ui.overview.openAttachment": "Open attachment",
@@ -16560,6 +16563,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Abrir {item} en GitHub",
     "plugins.github.ui.openResults": "Abrir los resultados de {item}",
     "plugins.github.ui.openSession": "Abrir {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Las reglas de la rama base no están disponibles.",
     "plugins.github.ui.overview.copyGithubUrl": "Copiar URL de GitHub",
     "plugins.github.ui.overview.details": "Detalles actuales de GitHub",
     "plugins.github.ui.overview.openAttachment": "Abrir archivo adjunto",
@@ -21239,6 +21243,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Ouvrir {item} sur GitHub",
     "plugins.github.ui.openResults": "Ouvrir les résultats de {item}",
     "plugins.github.ui.openSession": "Ouvrir {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Les règles de la branche de base ne sont pas disponibles.",
     "plugins.github.ui.overview.copyGithubUrl": "Copier l’URL GitHub",
     "plugins.github.ui.overview.details": "Détails GitHub actuels",
     "plugins.github.ui.overview.openAttachment": "Ouvrir la pièce jointe",
@@ -25918,6 +25923,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Apri {item} su GitHub",
     "plugins.github.ui.openResults": "Apri i risultati di {item}",
     "plugins.github.ui.openSession": "Apri {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Le regole del branch di base non sono disponibili.",
     "plugins.github.ui.overview.copyGithubUrl": "Copia URL GitHub",
     "plugins.github.ui.overview.details": "Dettagli GitHub correnti",
     "plugins.github.ui.overview.openAttachment": "Apri allegato",
@@ -30597,6 +30603,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "GitHub で {item} を開く",
     "plugins.github.ui.openResults": "{item} の結果を開く",
     "plugins.github.ui.openSession": "{session} を開く",
+    "plugins.github.ui.overview.branchRulesUnavailable": "ベースブランチのルールを取得できません。",
     "plugins.github.ui.overview.copyGithubUrl": "GitHub URL をコピー",
     "plugins.github.ui.overview.details": "現在の GitHub 詳細",
     "plugins.github.ui.overview.openAttachment": "添付ファイルを開く",
@@ -35276,6 +35283,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Otwórz {item} w GitHub",
     "plugins.github.ui.openResults": "Otwórz wyniki dla {item}",
     "plugins.github.ui.openSession": "Otwórz {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Reguły gałęzi bazowej są niedostępne.",
     "plugins.github.ui.overview.copyGithubUrl": "Kopiuj adres URL GitHub",
     "plugins.github.ui.overview.details": "Bieżące szczegóły z GitHub",
     "plugins.github.ui.overview.openAttachment": "Otwórz załącznik",
@@ -39955,6 +39963,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Abrir {item} no GitHub",
     "plugins.github.ui.openResults": "Abrir os resultados de {item}",
     "plugins.github.ui.openSession": "Abrir {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "As regras da branch base não estão disponíveis.",
     "plugins.github.ui.overview.copyGithubUrl": "Copiar URL do GitHub",
     "plugins.github.ui.overview.details": "Detalhes atuais do GitHub",
     "plugins.github.ui.overview.openAttachment": "Abrir anexo",
@@ -44634,6 +44643,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "Открыть {item} на GitHub",
     "plugins.github.ui.openResults": "Открыть результаты для {item}",
     "plugins.github.ui.openSession": "Открыть {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "Правила базовой ветки недоступны.",
     "plugins.github.ui.overview.copyGithubUrl": "Скопировать URL GitHub",
     "plugins.github.ui.overview.details": "Текущие сведения GitHub",
     "plugins.github.ui.overview.openAttachment": "Открыть вложение",
@@ -49313,6 +49323,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "在 GitHub 上打开 {item}",
     "plugins.github.ui.openResults": "打开 {item} 的结果",
     "plugins.github.ui.openSession": "打开 {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "无法获取基准分支规则。",
     "plugins.github.ui.overview.copyGithubUrl": "复制 GitHub URL",
     "plugins.github.ui.overview.details": "当前 GitHub 详情",
     "plugins.github.ui.overview.openAttachment": "打开附件",
@@ -53992,6 +54003,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.github.ui.openOnGithub": "在 GitHub 上開啟 {item}",
     "plugins.github.ui.openResults": "開啟 {item} 的結果",
     "plugins.github.ui.openSession": "開啟 {session}",
+    "plugins.github.ui.overview.branchRulesUnavailable": "無法取得基底分支規則。",
     "plugins.github.ui.overview.copyGithubUrl": "複製 GitHub URL",
     "plugins.github.ui.overview.details": "目前的 GitHub 詳細資料",
     "plugins.github.ui.overview.openAttachment": "開啟附件",
@@ -58673,6 +58685,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.github.ui.openOnGithub'
     | 'plugins.github.ui.openResults'
     | 'plugins.github.ui.openSession'
+    | 'plugins.github.ui.overview.branchRulesUnavailable'
     | 'plugins.github.ui.overview.copyGithubUrl'
     | 'plugins.github.ui.overview.details'
     | 'plugins.github.ui.overview.openAttachment'

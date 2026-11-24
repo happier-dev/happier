@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "bots",
   "plugins.github.ui.reviewSkip.authors.unsupported": "altres comptes",
   "plugins.github.ui.reviewSkip.reviewAnyway": "Revisa igualment",
-  "plugins.github.ui.reviewSkip.editAutomation": "Edita l’automatització"
+  "plugins.github.ui.reviewSkip.editAutomation": "Edita l’automatització",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Les regles de la branca base no estan disponibles."
 }

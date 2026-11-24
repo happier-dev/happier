@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "機器人",
   "plugins.github.ui.reviewSkip.authors.unsupported": "其他帳號",
   "plugins.github.ui.reviewSkip.reviewAnyway": "仍然審查",
-  "plugins.github.ui.reviewSkip.editAutomation": "編輯自動化"
+  "plugins.github.ui.reviewSkip.editAutomation": "編輯自動化",
+  "plugins.github.ui.overview.branchRulesUnavailable": "無法取得基底分支規則。"
 }

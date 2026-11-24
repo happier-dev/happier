@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "ботов",
   "plugins.github.ui.reviewSkip.authors.unsupported": "других аккаунтов",
   "plugins.github.ui.reviewSkip.reviewAnyway": "Всё равно проверить",
-  "plugins.github.ui.reviewSkip.editAutomation": "Изменить автоматизацию"
+  "plugins.github.ui.reviewSkip.editAutomation": "Изменить автоматизацию",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Правила базовой ветки недоступны."
 }

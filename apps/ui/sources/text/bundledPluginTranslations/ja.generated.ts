@@ -2515,6 +2515,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.openOnGithub": "GitHub で {item} を開く",
   "plugins.github.ui.openResults": "{item} の結果を開く",
   "plugins.github.ui.openSession": "{session} を開く",
+  "plugins.github.ui.overview.branchRulesUnavailable": "ベースブランチのルールを取得できません。",
   "plugins.github.ui.overview.copyGithubUrl": "GitHub URL をコピー",
   "plugins.github.ui.overview.details": "現在の GitHub 詳細",
   "plugins.github.ui.overview.openAttachment": "添付ファイルを開く",

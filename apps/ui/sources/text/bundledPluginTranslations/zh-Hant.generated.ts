@@ -2515,6 +2515,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.openOnGithub": "在 GitHub 上開啟 {item}",
   "plugins.github.ui.openResults": "開啟 {item} 的結果",
   "plugins.github.ui.openSession": "開啟 {session}",
+  "plugins.github.ui.overview.branchRulesUnavailable": "無法取得基底分支規則。",
   "plugins.github.ui.overview.copyGithubUrl": "複製 GitHub URL",
   "plugins.github.ui.overview.details": "目前的 GitHub 詳細資料",
   "plugins.github.ui.overview.openAttachment": "開啟附件",

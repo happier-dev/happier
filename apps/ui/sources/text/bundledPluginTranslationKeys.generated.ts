@@ -2514,6 +2514,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.github.ui.openOnGithub",
   "plugins.github.ui.openResults",
   "plugins.github.ui.openSession",
+  "plugins.github.ui.overview.branchRulesUnavailable",
   "plugins.github.ui.overview.copyGithubUrl",
   "plugins.github.ui.overview.details",
   "plugins.github.ui.overview.openAttachment",

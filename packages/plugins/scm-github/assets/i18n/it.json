@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "bot",
   "plugins.github.ui.reviewSkip.authors.unsupported": "altri account",
   "plugins.github.ui.reviewSkip.reviewAnyway": "Revisiona comunque",
-  "plugins.github.ui.reviewSkip.editAutomation": "Modifica l’automazione"
+  "plugins.github.ui.reviewSkip.editAutomation": "Modifica l’automazione",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Le regole del branch di base non sono disponibili."
 }

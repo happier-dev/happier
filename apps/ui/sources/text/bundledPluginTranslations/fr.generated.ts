@@ -2515,6 +2515,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.github.ui.openOnGithub": "Ouvrir {item} sur GitHub",
   "plugins.github.ui.openResults": "Ouvrir les résultats de {item}",
   "plugins.github.ui.openSession": "Ouvrir {session}",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Les règles de la branche de base ne sont pas disponibles.",
   "plugins.github.ui.overview.copyGithubUrl": "Copier l’URL GitHub",
   "plugins.github.ui.overview.details": "Détails GitHub actuels",
   "plugins.github.ui.overview.openAttachment": "Ouvrir la pièce jointe",

@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "ボット",
   "plugins.github.ui.reviewSkip.authors.unsupported": "その他のアカウント",
   "plugins.github.ui.reviewSkip.reviewAnyway": "それでもレビュー",
-  "plugins.github.ui.reviewSkip.editAutomation": "オートメーションを編集"
+  "plugins.github.ui.reviewSkip.editAutomation": "オートメーションを編集",
+  "plugins.github.ui.overview.branchRulesUnavailable": "ベースブランチのルールを取得できません。"
 }

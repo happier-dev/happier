@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "机器人",
   "plugins.github.ui.reviewSkip.authors.unsupported": "其他账号",
   "plugins.github.ui.reviewSkip.reviewAnyway": "仍然审查",
-  "plugins.github.ui.reviewSkip.editAutomation": "编辑自动化"
+  "plugins.github.ui.reviewSkip.editAutomation": "编辑自动化",
+  "plugins.github.ui.overview.branchRulesUnavailable": "无法获取基准分支规则。"
 }

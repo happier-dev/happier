@@ -1190,5 +1190,6 @@
   "plugins.github.ui.reviewSkip.authors.bot": "bots",
   "plugins.github.ui.reviewSkip.authors.unsupported": "otras cuentas",
   "plugins.github.ui.reviewSkip.reviewAnyway": "Revisar de todos modos",
-  "plugins.github.ui.reviewSkip.editAutomation": "Editar la automatización"
+  "plugins.github.ui.reviewSkip.editAutomation": "Editar la automatización",
+  "plugins.github.ui.overview.branchRulesUnavailable": "Las reglas de la rama base no están disponibles."
 }
