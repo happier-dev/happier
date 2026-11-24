@@ -10511,7 +10511,10 @@ findings. Each finding retains the emitting Machine, observation window,
 coverage, and the typed capture trace and trace-list inputs for verification.
 Earlier results omit these findings. Use a matching client and daemon for the
 closed trace result shape. Capture admission and stored observations keep their
-existing contracts.
+existing contracts. Selected Environment traces can include an
+`environmentObservation` with the stable finding shape and service marked as
+workload-reported. Request verification keeps its own observation key. The
+Environment ingest token remains the admission authority.
 
 In unreleased 0.3, `session.access.context.set` returns the direct Team grants
 remaining at the end of the operation, including their access levels. An empty

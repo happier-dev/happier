@@ -29,6 +29,7 @@ it('keeps the selected committed trace and follow-up Action operands in the Sess
             sourceScope: { serverId: 'home', machineId: 'collector' }, evidenceIdentity: 'observation',
             kind: 'failing_endpoint', title: 'Endpoint request failed', observedWindow: { fromMs: 100, toMs: 140 },
             coverage: { status: 'partial', reasons: ['partial_observation'] }, summary: { records: 1, totalTimeMs: 40 },
+            environmentObservation: { shapeKey: 'checkout-failure', reportedService: { kind: 'workload_reported', name: 'checkout' } },
             exercise: 'Repeat the selected application request', verification }],
     });
     if (!result.ok || !result.findings?.[0]) throw new Error('Expected collector finding');

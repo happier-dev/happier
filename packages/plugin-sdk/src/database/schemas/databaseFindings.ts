@@ -69,6 +69,12 @@ const sourceFindingFields = {
 };
 export const DatabaseCaptureFindingDetailV1Schema = z.strictObject({
     ...sourceFindingFields, verification: DatabaseCaptureFindingVerificationV1Schema,
+    environmentObservation: z.optional(z.strictObject({
+        shapeKey: AutomationEventSourceOrOccurrenceIdV1Schema,
+        reportedService: z.optional(z.strictObject({
+            kind: z.literal('workload_reported'), name: z.string().check(z.minLength(1)),
+        })),
+    })),
 });
 
 /** Structural names stay source-local; Event observations remain numeric only. */

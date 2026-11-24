@@ -46,7 +46,8 @@ export function projectCaptureFindings(selection: CaptureFindingSelection, summa
     }
     const { source, sourceScope, pageSize, coverage } = selection;
     const page = { limit: pageSize };
-    function finding(request: Pick<CaptureSummary & { traceId: string }, 'traceId' | 'at' | 'durationMs' | 'id' | 'httpStatusCode'>,
+    function finding(request: Pick<CaptureSummary & { traceId: string },
+        'traceId' | 'at' | 'durationMs' | 'id' | 'httpStatusCode' | 'serviceName' | 'endpointMethod' | 'endpointRoute'>,
         detail: Pick<CaptureFinding, 'kind' | 'title' | 'summary' | 'normalizedShape'>,
         members: readonly string[]): CaptureFinding {
         const { traceId } = request;
@@ -57,6 +58,14 @@ export function projectCaptureFindings(selection: CaptureFindingSelection, summa
                 createCanonicalJsonSigningInput(source), sourceScope.machineId, traceId, request.id, detail.kind,
                 detail.normalizedShape ?? '', ...[...members].sort(),
             ]),
+            ...(source.kind === 'environment' ? {
+                environmentObservation: {
+                    shapeKey: computeCanonicalDomainSeparatedDigest('happier.telemetry.capture-finding-shape.v1', [
+                        detail.kind, request.endpointMethod ?? '', request.endpointRoute ?? '', detail.normalizedShape ?? '',
+                    ]),
+                    ...(request.serviceName ? { reportedService: { kind: 'workload_reported' as const, name: request.serviceName } } : {}),
+                },
+            } : {}),
             observedWindow,
             coverage: coverage.lostObservations > 0 ? { status: 'partial', reasons: ['partial_observation'] } : { status: 'complete' },
             ...detail,

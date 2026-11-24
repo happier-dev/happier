@@ -47,7 +47,7 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         const detail = selectedSource ? finding.finding : finding;
         const verification = selectedSource ? undefined : finding.verification;
         return findingBrief([
-            `Investigate the database finding “${detail.title}” and propose the smallest justified improvement.`,
+            `Investigate the ${verification ? 'capture' : 'database'} finding “${detail.title}” and propose the smallest justified improvement.`,
             `The source measured ${JSON.stringify(detail.summary)} before the change, from ${detail.observedWindow.fromMs} to ${detail.observedWindow.toMs} ms. It reported ${JSON.stringify(detail.coverage)} for coverage.`,
             ...(verification ? [`Inspect the retained before trace using ${verification.readBefore.action} and its exact input in the evidence.`] : []),
             ...(detail.exercise ? ['Repeat the source’s verification exercise. ' + detail.exercise] : []),
