@@ -271,17 +271,19 @@ export async function waitForIdleObservation(params: Readonly<{
         const observedTurnStatus = readSessionProjectedTurnStatus(body.latestTurnStatus);
         const projectedPendingRequests = summarizeProjectedPendingRequests(body);
         const agentState = body.agentState;
-        const hasAgentState = typeof agentState?.value === 'string' && agentState.value.trim().length > 0;
+        const encodedAgentState = typeof agentState?.value === 'string' && agentState.value.trim()
+          ? { value: agentState.value, version: agentState.version }
+          : null;
         // Only a change to observed activity supersedes an in-flight idle read.
         if (pendingInputCount === null && observedTurnStatus === null && projectedPendingRequests === null
-          && !hasAgentState) return;
+          && !encodedAgentState) return;
         observationRevision += 1;
         if (preferProjectionUpdates || readyCompletesPendingUserTurns) observePendingInputCount(pendingInputCount);
         const projectedActivity = observedTurnStatus ? detectSessionTurnActivityFromProjection(body) : null;
         const shouldReadProjection = preferProjectionUpdates || !readyCompletesPendingUserTurns || projectedActivity !== null;
         let state: unknown;
-        if (hasAgentState) {
-          const opened = params.openAgentState(agentState.value, agentState.version);
+        if (encodedAgentState) {
+          const opened = params.openAgentState(encodedAgentState.value, encodedAgentState.version);
           state = opened instanceof Promise ? await opened : opened;
           if (settled) return;
         }
