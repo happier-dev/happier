@@ -684,6 +684,24 @@ function headerTitles(container: HTMLElement): readonly string[] {
 }
 
 describe('Collection table', () => {
+  it('draws an identifier title and its quiet lead alike in the table and the list (one route, one face)', async () => {
+    const routes = { ...anatomy, title: (entry: Entry) => `/${entry.id}/:id`, titleLead: () => 'GET', titleIdentifier: true };
+    const routeNode = () => [...document.querySelectorAll<HTMLElement>('div, span')]
+      .find((node) => node.textContent === 'GET /a/:id' && node.querySelector('span') !== null && node.style.fontFamily !== '');
+    const view = mount({ anatomy: routes, detail: 'none', reducedMotion: true });
+    try {
+      view.measure(1200);
+      const table = routeNode();
+      expect(table).toBeDefined();
+      // The method is quiet text inside the title, in the title's own face.
+      expect([...table!.querySelectorAll('span')].some((node) => node.textContent === 'GET ' && node.style.fontFamily === '')).toBe(true);
+      view.measure(360);
+      expect(routeNode()).toBeDefined();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('selects and edits the focused row field with the keyboard without opening the row', async () => {
     const onEdit = vi.fn(() => true);
     const onSelect = vi.fn();

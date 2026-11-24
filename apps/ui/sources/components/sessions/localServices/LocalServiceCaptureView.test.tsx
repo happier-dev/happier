@@ -81,7 +81,7 @@ async function settle() {
 
 function view(
   invoke: ReturnType<typeof machine>['invoke'],
-  which: 'endpoints' | 'logs' = 'endpoints',
+  which: 'endpoints' | 'traces' | 'logs' = 'endpoints',
   transport?: ReturnType<typeof createTelemetryCaptureFixtureTransport>,
   active = true,
 ) {
@@ -323,5 +323,87 @@ describe('LocalServiceCaptureView', () => {
     } finally {
       screen.unmount();
     }
+  });
+
+  // DBW review R4 #2: a wide Traces list always has a selection, the first request shown beside it until one is picked.
+  it('shows the newest request beside the Traces list without a press, and the list keeps following capture', async () => {
+    const at = Date.now();
+    const request = (id: string, route: string, offset: number) => ({
+      id, worktree: 'checkout-main', kind: 'span', source: 'otlp', at: at - offset, traceId: `trace-${id}`, spanId: id,
+      durationMs: 40, serviceName: 'web', endpointMethod: 'GET', endpointRoute: route, httpStatusCode: 200,
+    });
+    const { invoke, calls } = machine((call) => {
+      if (call.actionId.endsWith('/capture/status')) return { ok: true, source, coverage, enabled: true };
+      if (call.actionId.endsWith('/capture/trace/get'))
+        return { ok: true, source, traceId: 'trace-t1', summaries: [], repeatedQueries: [], slowChildSpans: [], logCorrelations: [] };
+      return { ok: true, source, items: [request('t1', '/invoices/:id', 0), request('t2', '/login', 1000)] };
+    });
+    const screen = await renderScreen(view(invoke, 'traces'));
+    try {
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.traces', { width: 1000, height: 800 });
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.trace.t1')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.request')).not.toBeNull();
+      expect(calls.find((call) => call.actionId.endsWith('/capture/trace/get'))?.input)
+        .toEqual(expect.objectContaining({ traceId: 'trace-t1' }));
+      // The detail is the Collection's: no second way back of its own.
+      expect(screen.findByTestId('project-deployments.telemetry.request.back')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
+  // DBW review R4 #7: gaps are said once, in the person's terms, with Retry beside them.
+  it('says capture has gaps once, without the store code, and retries from that line', async () => {
+    const { invoke, calls } = machine((call) => {
+      if (call.actionId.endsWith('/capture/configure')) return { ok: true, enabled: true };
+      if (call.actionId.endsWith('/capture/status'))
+        return { ok: true, source, coverage: { lostObservations: 5791, reason: 'store_busy' }, enabled: true };
+      return { ok: true, source, items: [] };
+    });
+    const screen = await renderScreen(view(invoke, 'logs'));
+    try {
+      await settle();
+      const line = screen.findByTestId('capture-gaps');
+      expect(line).not.toBeNull();
+      expect(screen.getTextContent()).not.toMatch(/store.busy/);
+      expect(screen.findByTestId('capture-status')?.props.children ?? null).toBeNull();
+      await screen.pressByTestIdAsync('capture-gaps-action');
+      await settle();
+      expect(calls.filter((call) => call.actionId.endsWith('/capture/configure')).map((call) => call.input))
+        .toEqual([expect.objectContaining({ enabled: true, retry: true })]);
+    } finally { await screen.unmount(); }
+  });
+
+  // DBW review R4 #7: an unanswered read is said in the body alone, in capture's own words.
+  it('does not say "Capture on" above a capture that did not answer', async () => {
+    const { invoke } = machine((call) => {
+      if (call.actionId.endsWith('/capture/status')) return { ok: true, source, coverage, enabled: true };
+      throw Object.assign(new Error('unavailable'), { code: 'telemetry_unavailable' });
+    });
+    const screen = await renderScreen(view(invoke, 'endpoints'));
+    try {
+      await settle();
+      expect(screen.findByTestId('capture-unavailable')).not.toBeNull();
+      expect(screen.findByTestId('capture-status')?.props.children ?? null).toBeNull();
+      expect(screen.getTextContent()).not.toMatch(/Telemetry/);
+    } finally { await screen.unmount(); }
+  });
+
+  // DBW review R4 #6: a phone row says the figures the table's columns hold, the failure in its tone.
+  it('recomposes an Endpoints row on a phone to its route and its figures', async () => {
+    const { invoke } = machine((call) => call.actionId.endsWith('/capture/status')
+      ? { ok: true, source, coverage, enabled: true }
+      : { ok: true, source, items: [{
+          serviceName: 'web', method: 'GET', route: '/api/invoices', requestCount: 38, errorCount: 9,
+          errorRate: 9 / 38, totalDurationMs: 38 * 22, databaseTimeMs: 38 * 5,
+        }] });
+    const screen = await renderScreen(view(invoke, 'endpoints'));
+    try {
+      await settle();
+      await reportCollectionLayout(screen, 'telemetry.capture.endpoints', { width: 358, height: 800 });
+      await settle();
+      const text = screen.getTextContent();
+      expect(text).toMatch(/38 requests · 9 failed · 22\s?ms · 23% in database/);
+    } finally { await screen.unmount(); }
   });
 });

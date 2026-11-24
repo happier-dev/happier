@@ -15,6 +15,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
+import { PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { renderPageHeaderText } from '@/components/ui/layout/PageHeader';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
@@ -742,7 +743,10 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         props.publicPreviewState, props.previewState, props.publicPreviewActions, props.publicPreviewCapabilityDisabledReasons]);
 
     const page = props.presentation === 'page';
-    const columnMaxWidth = useLayoutMaxWidth();
+    // A capture view (Endpoints, Traces, Logs) is data compared across the pane and a list beside its detail: it takes
+    // the dashboard column, its title with it (lab dbCapture). Servers keeps the page's own column (lab dbFind-devservers).
+    const captureColumn = props.viewBody ? 'dashboard' as const : undefined;
+    const columnMaxWidth = useLayoutMaxWidth(captureColumn);
     // The page opens on its own name, as the Project's other pages do (lab dbCapture). The phone page is titled by
     // its cockpit header and leads straight into the list (lab PAGEp).
     const pageHeader = page && !phone ? (
@@ -787,11 +791,13 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     if (props.viewBody) {
         return (
             <ScrollView testID={`${testID}-view`} style={styles.root} contentContainerStyle={styles.stateScrollContent}>
-                <ConstrainedScreenContent>
-                    {pageHeader}
-                    {scopeBar}
-                    {props.viewBody}
-                </ConstrainedScreenContent>
+                <PageColumnProvider value="dashboard">
+                    <ConstrainedScreenContent>
+                        {pageHeader}
+                        {scopeBar}
+                        {props.viewBody}
+                    </ConstrainedScreenContent>
+                </PageColumnProvider>
             </ScrollView>
         );
     }

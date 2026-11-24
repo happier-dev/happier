@@ -1201,6 +1201,13 @@ describe('Database workbench surfaces', () => {
     });
     try {
       const start = await fixture.findByRole('button', { name: 'Connect a database' });
+      if (container === 'servicesPanel') {
+        // DBW review R4 #9: adding is the section's own action beside its title, never a button inside the empty sheet.
+        let node: Element | null = document.querySelector('[data-testid="database.panel.connect"]');
+        expect(node).not.toBeNull();
+        while (node && !node.textContent?.includes('Databases this checkout')) node = node.parentElement;
+        expect(node?.textContent).not.toContain('No databases found');
+      }
       await act(async () => { await fixture.press(start); });
       const secret = await fixture.findByRole('button', { name: 'Saved database URL' });
       await act(async () => { await fixture.press(secret); });

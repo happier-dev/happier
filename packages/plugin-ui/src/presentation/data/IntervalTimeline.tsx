@@ -297,6 +297,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
   const collapseLabel = props.valuesCollapseLabel ?? (props.valuesLabel === undefined
     ? localization?.translate('happier.plugin-ui.state.collapseDetails', 'Collapse') ?? 'Collapse' : valuesLabel);
 
+  const narrowRowStyle = { paddingVertical: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: props.theme.colors.divider };
   const sheetInset = pageSection?.framed === true
     ? { paddingHorizontal: pageSection.rowInsetPx, paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx } : null;
   const timeline = <View testID={props.testID} onLayout={(event: HappierLayoutChangeEvent) => setMeasuredWidth(event.nativeEvent.layout.width)}
@@ -423,8 +425,10 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
           </View>;
         const valueCell = sideLabels && rowValuesShown ? <HappierText style={{ ...text.caption, width: HAPPIER_DATA_METRICS.intervalRowValueWidthPx, textAlign: 'right' }}
           numberOfLines={1} tabularNumbers>{interval.value ?? ''}</HappierText> : null;
+        // Narrow, a row is two lines (its label and time, then its bar): each row stands between hairlines with its
+        // own breath, so a bar reads as its label's and never as the next row's or the axis (lab dbCapture-tracep).
         const visual = <View aria-hidden importantForAccessibility="no-hide-descendants"
-          style={sideLabels ? { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.blockGapPx } : undefined}>
+          style={sideLabels ? { flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.blockGapPx } : narrowRowStyle}>
             {labelLine}
             <View style={{ height: HAPPIER_DATA_METRICS.proportionHeightPx, ...(sideLabels ? { flex: 1, minWidth: 0 } : { marginTop: HAPPIER_DATA_METRICS.axisGapPx }) }}>
               <View style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 1, backgroundColor: props.theme.colors.divider }} />
@@ -460,6 +464,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
       })}
       <View aria-hidden importantForAccessibility="no-hide-descendants" testID={props.testID ? `${props.testID}-axis` : undefined}
         style={{ flexDirection: 'row', justifyContent: 'space-between',
+          // Under narrow two-line rows the axis keeps a gap of its own, so it never reads as one more row.
+          ...(!sideLabels && !lanesLayout ? { marginTop: HAPPIER_DATA_METRICS.axisGapPx } : {}),
           // The axis spans the bars only: past the lane or row labels, and short of a rows timeline's values.
           marginLeft: !sideLabels ? 0 : lanesLayout ? HAPPIER_DATA_METRICS.laneLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx
             : HAPPIER_DATA_METRICS.intervalRowLabelWidthPx + HAPPIER_DATA_METRICS.blockGapPx,

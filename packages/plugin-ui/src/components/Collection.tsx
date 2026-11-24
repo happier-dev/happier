@@ -224,11 +224,17 @@ export type CollectionAnatomy<Item> = Readonly<{
   glyphBadge?: (item: Item) => CollectionGlyphBadge | null;
   title: (item: Item) => string;
   /**
-   * The title is an identifier (a host name, a path): the list row draws it on one line in the host's mono face,
-   * ending in an ellipsis, instead of wrapping it as a name. Keep the full title in `accessibilityLabel`. A function
-   * decides per item, for a collection whose items are named either way (a check named by its host or by its name).
+   * The title is an identifier (a host name, a path): the list row and the table's title cell draw it on one line in
+   * the host's mono face, ending in an ellipsis, instead of wrapping it as a name. Keep the full title in
+   * `accessibilityLabel`. A function decides per item, for a collection whose items are named either way (a check
+   * named by its host or by its name).
    */
   titleIdentifier?: boolean | ((item: Item) => boolean);
+  /**
+   * A quiet word that leads the title on its own line, in the title's face (a request's method before its route:
+   * "GET /invoices/:id"). The list row and the table's title cell draw it alike; `title` stays the record's name.
+   */
+  titleLead?: (item: Item) => string | null;
   /**
    * The title is a record's name (a file, "checkout-bug-repro.mov") that stays on one line with an end ellipsis in the
    * body face, even on a resting list where authored names wrap whole. Keep the full name in `accessibilityLabel`. A
@@ -1519,6 +1525,14 @@ function CollectionPendingTitle<Item>(props: Readonly<{ item: Item; anatomy: Col
     {...(props.anatomy.testID === undefined ? {} : { testID: `${props.anatomy.testID(props.item)}:title-pending` })} />;
 }
 
+/** The title's words: its quiet lead (`titleLead`), then the title, inheriting the title line's face. */
+function CollectionTitleText<Item>(props: Readonly<{ item: Item; anatomy: CollectionAnatomy<Item> }>): ReactElement {
+  const lead = props.anatomy.titleLead?.(props.item) ?? null;
+  const title = props.anatomy.title(props.item);
+  if (lead === null || lead === '') return <>{title}</>;
+  return <><HappierText tone="secondary">{`${lead} `}</HappierText>{title}</>;
+}
+
 function TableTitle<Item>(props: Readonly<{
   item: Item;
   anatomy: CollectionAnatomy<Item>;
@@ -1526,7 +1540,13 @@ function TableTitle<Item>(props: Readonly<{
   titleStyle?: HappierPortableStyle;
 }>): ReactElement {
   const { item, anatomy } = props;
-  const stepStyle = props.titleStyle ?? null;
+  const typography = useOptionalHappierUiTypography();
+  // An identifier title reads in the mono face here as on the list row, so one record is never drawn two ways.
+  const identifier = typeof anatomy.titleIdentifier === 'function' ? anatomy.titleIdentifier(item) : anatomy.titleIdentifier === true;
+  const stepStyle = identifier
+    ? [props.titleStyle ?? null, { fontFamily: typography?.mono?.fontFamily ?? IDENTIFIER_FALLBACK_FONT }]
+    : props.titleStyle ?? null;
+  const titleText = <CollectionTitleText item={item} anatomy={anatomy} />;
   // The title starts beside the row's mark whatever its first word's script (`useHappierLayoutTextAlign`).
   const align = useHappierLayoutTextAlign();
   const suffix = anatomy.titleSuffix?.(item) ?? null;
@@ -1540,7 +1560,7 @@ function TableTitle<Item>(props: Readonly<{
       <View pointerEvents={layer?.content} style={titleWithLineStyle}>
         <View pointerEvents={layer?.leaf} style={empty ? titleTextStyle : titleBeforeLineStyle}>
           {pending ? <CollectionPendingTitle item={item} anatomy={anatomy} />
-            : <HappierText variant="label" tone="neutral" numberOfLines={1} style={[stepStyle, align]}>{anatomy.title(item)}</HappierText>}
+            : <HappierText variant="label" tone="neutral" numberOfLines={1} style={[stepStyle, align]}>{titleText}</HappierText>}
         </View>
         {empty ? null : (
           <View pointerEvents={layer?.leaf} style={titleLineStyle}>
@@ -1556,7 +1576,7 @@ function TableTitle<Item>(props: Readonly<{
   const inline = suffix !== null && suffix !== false && typeof suffix !== 'string' && typeof suffix !== 'number';
   const title = pending ? <CollectionPendingTitle item={item} anatomy={anatomy} /> : (
     <HappierText variant="label" tone="neutral" numberOfLines={1} style={[inline ? titleBeforeLineStyle : titleTextStyle, stepStyle, align]}>
-      {anatomy.title(item)}
+      {titleText}
     </HappierText>
   );
   if (suffix === null || suffix === false || suffix === '') return title;
@@ -1835,7 +1855,7 @@ function ListCells<Item>(props: Readonly<{
           <HappierText variant="label" tone="neutral" {...((catalog || props.wrapTitle) && !titleIdentifier && !titleTruncates ? {} : { numberOfLines: 1 })}
             style={[titleTextStyle, catalog ? null : flexCellStyle, resolveHappierTextStepStyle(listTitleStep, typography), titleAlign,
               titleIdentifier ? { fontFamily: typography?.mono?.fontFamily ?? IDENTIFIER_FALLBACK_FONT } : null]}>
-            {anatomy.title(item)}
+            <CollectionTitleText item={item} anatomy={anatomy} />
             {kindWord}
           </HappierText>)}
           {/* A catalog name keeps its natural width, so its meta grows to stand at the line's end; any other title fills

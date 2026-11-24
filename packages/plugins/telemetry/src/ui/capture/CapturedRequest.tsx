@@ -204,6 +204,8 @@ export function CapturedRequestWaterfall({
           })}
           domain={waterfall.domain}
           size="full"
+          // The toggle opens each step's exact start and end; the rows already show how long each took.
+          valuesLabel={text('plugins.telemetry.request.exactTimes', 'Start and end times')}
           formatValue={(value) =>
             formatHappierDuration(
               value - (waterfall.domain?.start ?? 0),

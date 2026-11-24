@@ -91,14 +91,20 @@ function LookedDisclosure(
 }
 
 function DatabaseRows(
-  props: Readonly<{ context: RenderContext; launch: WorkbenchLaunchInput }>,
+  props: Readonly<{
+    context: RenderContext;
+    launch: WorkbenchLaunchInput;
+    /** Connect a database was chosen in the section header: the connection form stands in for the rows. */
+    connecting: boolean;
+    onConnectingChange: (connecting: boolean) => void;
+  }>,
 ) {
   const translate = usePluginTranslation();
   const instance = useWorkbenchInstance();
   const { targets, looked, status, error, refresh } = useDatabaseTargets(
     props.launch.scope,
   );
-  const [connecting, setConnecting] = React.useState(false);
+  const { connecting, onConnectingChange: setConnecting } = props;
   const scope = props.launch.scope;
   const open = React.useCallback(
     (target: WorkbenchTarget) => {
@@ -113,9 +119,6 @@ function DatabaseRows(
       refresh();
     }} />;
   }
-  const connect = scope.kind === 'worktree' ? <Button
-    title={translate('plugins.database.connect.open', 'Connect a database')} variant="secondary"
-    onPress={() => setConnecting(true)} /> : null;
   if (status === 'loading' && targets.length === 0)
     return <LoadingState layout="line" rows={1} />;
   if (status === 'unavailable') {
@@ -144,7 +147,6 @@ function DatabaseRows(
           )}
         />
         <LookedDisclosure looked={looked} />
-        {connect}
       </Stack>
     );
   }
@@ -172,7 +174,6 @@ function DatabaseRows(
           {target.target.kind === 'manual' ? <DatabaseForget target={target.target} onForgot={refresh} /> : null}
         </Stack>
       ))}
-      {connect}
     </>
   );
 }
@@ -190,6 +191,18 @@ function DatabasesPanel(context: RenderContext) {
     launch ? PANEL_LOCATION : null,
     PANEL_OPTIONS,
   );
+  const [connecting, setConnecting] = React.useState(false);
+  // Adding to the section is the section's own action, beside its title (lab dbFind-devservers), never a button in
+  // its sheet: an empty section is then one quiet line on the rows' edge.
+  const connect = instance && launch?.scope.kind === 'worktree' && !connecting ? (
+    <Button
+      testID="database.panel.connect"
+      title={translate('plugins.database.connect.open', 'Connect a database')}
+      variant="plain"
+      icon={<Icon name="plus" tone="secondary" />}
+      onPress={() => setConnecting(true)}
+    />
+  ) : undefined;
   return (
     <ItemGroup
       title={translate('plugins.database.section.title', 'Databases')}
@@ -197,11 +210,12 @@ function DatabasesPanel(context: RenderContext) {
         'plugins.database.section.description',
         'Databases this checkout’s services use. Open one to browse tables, run SQL and see how it performs.',
       )}
+      action={connect}
     >
       {instance && launch ? (
         <WorkbenchProvider instance={instance}>
           {/* Capture is turned on, off and cleared in the Dev servers capture view that hosts this panel: one control owner. */}
-          <DatabaseRows context={context} launch={launch} />
+          <DatabaseRows context={context} launch={launch} connecting={connecting} onConnectingChange={setConnecting} />
         </WorkbenchProvider>
       ) : (
         // The same line state as "No databases found": it sits inside the sheet with the row inset.

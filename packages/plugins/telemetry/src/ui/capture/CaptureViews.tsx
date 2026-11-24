@@ -19,6 +19,7 @@ import {
   formatHappierDuration,
   useHappierCollection,
   type CollectionAnatomy,
+  type CollectionDetailRenderContext,
   type CollectionField,
   type CollectionRowActions,
 } from '@happier-dev/plugin-ui/components';
@@ -46,6 +47,33 @@ const share = (value: number | null, locale: string) =>
   formatTelemetryMetric('errorRate', value, locale);
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+
+/**
+ * The one route cell every capture list draws (lab dbCapture): the method quiet, then the route in identifier type,
+ * whether the row is an endpoint or one request to it. A record with no route names itself by its shape.
+ */
+function routeTitleSlots<Item>(
+  parts: (item: Item) => Readonly<{ method: string | null; route: string }>,
+): Pick<CollectionAnatomy<Item>, 'title' | 'titleLead' | 'titleIdentifier'> {
+  return { title: (item) => parts(item).route, titleLead: (item) => parts(item).method, titleIdentifier: true };
+}
+
+const requestRoute = (item: DatabaseCaptureSummaryV1) =>
+  item.endpointMethod && item.endpointRoute
+    ? { method: item.endpointMethod, route: item.endpointRoute }
+    : { method: null, route: requestLabelOf(item) };
+
+/**
+ * A list whose rows open beside it (lab dbCapture-traces): the chosen row's detail stands beside the list where both
+ * fit and is pushed in their place where they don't. Until the person picks a row the first one is shown beside the
+ * list (never pushed), so a wide list always has a selection.
+ */
+export type CaptureListDetail<Item> = Readonly<{
+  /** The row the person opened, or null to show the first beside the list. */
+  openId: string | null;
+  onOpenChange: (id: string | null) => void;
+  render: (item: Item, context: CollectionDetailRenderContext) => React.ReactNode;
+}>;
 
 /** The next page of a list, when the read said there is one. */
 export type CapturePageMore = Readonly<{ onPress: () => void; busy: boolean }>;
@@ -96,6 +124,18 @@ function TimeMeta(
   );
 }
 
+/**
+ * The list beside a request's detail: room for a route and its time, the rest for the waterfall (lab dbCapture-traces,
+ * about 300 of 1010). Below both minima the detail is pushed in the list's place.
+ */
+const CAPTURE_SPLIT = Object.freeze({ minListWidthPx: 280, minDetailWidthPx: 480, preferredListRatio: 0.3 });
+
+/** The route column and every figure column of the Endpoints table, at their readable widths. */
+const ENDPOINT_TITLE_MIN_WIDTH = 220;
+const ENDPOINT_FIELD_MIN_WIDTHS = Object.freeze({ requests: 84, errors: 88, mean: 76, database: 92 });
+const ENDPOINT_TABLE_MIN_WIDTH = Object.values(ENDPOINT_FIELD_MIN_WIDTHS)
+  .reduce((sum, width) => sum + width, ENDPOINT_TITLE_MIN_WIDTH);
+
 /** The one list shape every capture view shares: the page's flat list, rows on the page's own scroller. */
 function CaptureList<Item>(
   props: Readonly<{
@@ -111,22 +151,43 @@ function CaptureList<Item>(
     more?: CapturePageMore | null;
     /** `table` for figures compared down a column (Endpoints); a phone recomposes it to the list. */
     presentation?: 'table' | 'list';
+    /**
+     * The narrowest width the table reads at; narrower, the rows recompose to the list and their `byline` carries
+     * the figures. Omitted, the table stands at any width and drops columns as it narrows.
+     */
+    tableMinWidth?: number;
+    detail?: CaptureListDetail<Item>;
   }>,
 ) {
-  const { items, keyOf, onOpen } = props;
+  const { items, keyOf, onOpen, detail } = props;
   const byKey = React.useMemo(
     () => new Map(items.map((item) => [keyOf(item), item])),
     [items, keyOf],
   );
+  // The person's pick while its row is listed; otherwise the first row, shown only beside the list.
+  const picked = detail?.openId != null && byKey.has(detail.openId) ? detail.openId : null;
+  const first = items[0];
+  const openKey = detail === undefined ? null : picked ?? (first === undefined ? null : keyOf(first));
   const model = useHappierCollection({
     items,
     keyOf,
-    openKey: null,
+    openKey,
     onOpenChange: (key) => {
+      if (detail) {
+        detail.onOpenChange(key);
+        return;
+      }
       const item = key === null ? undefined : byKey.get(String(key));
       if (item && onOpen) onOpen(item);
     },
   });
+  const renderDetail = React.useCallback(
+    (key: string, context: CollectionDetailRenderContext) => {
+      const item = byKey.get(String(key));
+      return item && detail ? detail.render(item, context) : null;
+    },
+    [byKey, detail],
+  );
   return (
     <Stack gap="medium">
       <Collection
@@ -139,26 +200,53 @@ function CaptureList<Item>(
         loading={props.loading && items.length === 0}
         {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
         empty={<Text tone="secondary" value={props.empty} />}
-        // The list is the whole answer here: no detail pane beside it, rows on the page's own scroller.
-        detail="none"
         scroll="page"
-        minListWidth={0}
-        minDetailWidth={0}
-        preferredListRatio={1}
+        {...(detail
+          ? {
+              // The rows and the chosen one's detail share the page (lab dbCapture-traces: a short list, a wide detail).
+              detail: 'auto' as const,
+              detailOpenIntent: picked === null ? ('landing' as const) : ('explicit' as const),
+              renderDetail,
+              minListWidth: CAPTURE_SPLIT.minListWidthPx,
+              minDetailWidth: CAPTURE_SPLIT.minDetailWidthPx,
+              preferredListRatio: CAPTURE_SPLIT.preferredListRatio,
+            }
+          : {
+              // The list is the whole answer here: no detail beside it, rows on the page's own scroller.
+              detail: 'none' as const,
+              minListWidth: props.tableMinWidth ?? 0,
+              minDetailWidth: 0,
+              preferredListRatio: 1,
+            })}
       />
       <MoreButton more={props.more} testID={`${props.testID}.older`} />
     </Stack>
   );
 }
 
-/** The phone's second line (lab p7Setup-tabp): "4,812 requests · 2.4% errors". */
+/**
+ * The phone's second line, the figures the table's columns hold (lab dbCapture-endpointsp): "38 requests · 9 failed ·
+ * 22 ms · 24% in database". A failed count is the only part that speaks, and only when there is one.
+ */
 function endpointPhoneFacts(view: CaptureEndpointView, locale: string, text: PluginTranslate): string {
   return [
     text('plugins.telemetry.capture.requestsCount', '{count} requests', {
       count: formatHappierDataValue(view.endpoint.requestCount, locale),
     }),
-    text('plugins.telemetry.capture.errorsShare', '{share} errors', { share: share(view.errorRate, locale) }),
-  ].join(' · ');
+    view.endpoint.errorCount > 0
+      ? text('plugins.telemetry.capture.failed', '{count} failed', {
+          count: formatHappierDataValue(view.endpoint.errorCount, locale),
+        })
+      : null,
+    view.meanMs === null ? null : formatHappierDuration(view.meanMs, locale),
+    view.databaseShare === null
+      ? null
+      : text('plugins.telemetry.capture.inDatabaseShare', '{share} in database', {
+          share: share(view.databaseShare, locale),
+        }),
+  ]
+    .filter((part): part is string => part !== null)
+    .join(' · ');
 }
 
 /**
@@ -187,7 +275,7 @@ export function CaptureEndpoints(
       {
         key: 'requests',
         title: text('plugins.telemetry.capture.requests', 'Requests'),
-        minWidth: 84,
+        minWidth: ENDPOINT_FIELD_MIN_WIDTHS.requests,
         priority: 4,
         align: 'end',
         render: (view) => <Text variant="body" value={formatHappierDataValue(view.endpoint.requestCount, locale)} />,
@@ -195,7 +283,7 @@ export function CaptureEndpoints(
       {
         key: 'errors',
         title: text('plugins.telemetry.capture.errorRate', 'Error rate'),
-        minWidth: 88,
+        minWidth: ENDPOINT_FIELD_MIN_WIDTHS.errors,
         priority: 3,
         align: 'end',
         render: (view) => (
@@ -217,7 +305,7 @@ export function CaptureEndpoints(
         key: 'mean',
         // The endpoints contract counts total time per route, so the column is the mean (no per-route p95).
         title: text('plugins.telemetry.capture.mean', 'Mean'),
-        minWidth: 76,
+        minWidth: ENDPOINT_FIELD_MIN_WIDTHS.mean,
         priority: 2,
         align: 'end',
         render: (view) => (
@@ -227,7 +315,7 @@ export function CaptureEndpoints(
       {
         key: 'database',
         title: text('plugins.telemetry.capture.inDatabase', 'In database'),
-        minWidth: 92,
+        minWidth: ENDPOINT_FIELD_MIN_WIDTHS.database,
         priority: 1,
         align: 'end',
         render: (view) => <Text variant="body" value={share(view.databaseShare, locale)} />,
@@ -236,16 +324,24 @@ export function CaptureEndpoints(
     return {
       glyph: () => null,
       loadingGlyph: false,
-      title: (view) => captureEndpointTitle(view.endpoint),
-      titleIdentifier: true,
-      // The table names the service under the route; the phone's row says the figures its columns would.
+      ...routeTitleSlots((view: CaptureEndpointView) => ({ method: view.endpoint.method, route: view.endpoint.route })),
+      // The table names the service under the route; the phone's row says the figures its columns would, in the
+      // failure tone when the route failed.
       byline: (view, layout) =>
-        layout?.fieldColumns === false ? endpointPhoneFacts(view, locale, text) : view.endpoint.serviceName || null,
-      listFact: (view) => <TimeMeta ms={view.meanMs} locale={locale} />,
+        layout?.fieldColumns === false ? (
+          <Text
+            variant="meta"
+            tone={view.endpoint.errorCount > 0 ? 'danger' : 'secondary'}
+            numberOfLines={1}
+            value={endpointPhoneFacts(view, locale, text)}
+          />
+        ) : (
+          view.endpoint.serviceName || null
+        ),
       fields,
       // A route is a short code ("POST /checkout"): its columns keep their room on a page column, and a phone, where
       // no column fits beside it, recomposes the rows to the list.
-      titleMinWidth: 220,
+      titleMinWidth: ENDPOINT_TITLE_MIN_WIDTH,
       accessibilityLabel: (view) => `${captureEndpointTitle(view.endpoint)}, ${endpointPhoneFacts(view, locale, text)}`,
       testID: (view) => `telemetry.capture.endpoint.${view.endpoint.method} ${view.endpoint.route}`,
       columnTitles: { title: text('plugins.telemetry.capture.route', 'Route') },
@@ -273,6 +369,9 @@ export function CaptureEndpoints(
       keyOf={keyOf}
       anatomy={anatomy}
       presentation="table"
+      // A route's figures are compared together: the table stands only where every column fits beside the route, and a
+      // phone recomposes each row to its route and its figures line rather than dropping them (lab dbCapture-endpointsp).
+      tableMinWidth={ENDPOINT_TABLE_MIN_WIDTH}
       empty={text('plugins.telemetry.capture.noRequests', 'Waiting for the first request')}
       {...(actions && actions.length > 0 ? { useRowActions } : {})}
       more={props.more ?? null}
@@ -282,15 +381,21 @@ export function CaptureEndpoints(
 
 const summaryKey = (item: DatabaseCaptureSummaryV1) => item.id;
 
-/** Traces: each captured request, newest first, its time at the row's end; a row opens that request. */
+/**
+ * Traces: each captured request, newest first, its time at the row's end. A row opens that request: beside the list
+ * through `detail` (the first one shown until the person picks), or through `onOpen` where the caller owns the page.
+ */
 export function CaptureTraces(
   props: Readonly<{
     items: readonly DatabaseCaptureSummaryV1[];
     loading: boolean;
     locale: string;
-    onOpen: (request: DatabaseCaptureSummaryV1) => void;
     more?: CapturePageMore | null;
-  }>,
+  }> &
+    (
+      | Readonly<{ onOpen: (request: DatabaseCaptureSummaryV1) => void; detail?: undefined }>
+      | Readonly<{ detail: CaptureListDetail<DatabaseCaptureSummaryV1>; onOpen?: undefined }>
+    ),
 ) {
   const text = usePluginTranslation();
   const { locale } = props;
@@ -302,10 +407,11 @@ export function CaptureTraces(
       minute: '2-digit',
       second: '2-digit',
     });
+    // A healthy status stays quiet (lab dbCapture-traces): only a failed request names its status.
     const facts = (item: DatabaseCaptureSummaryV1) =>
       [
         item.serviceName || null,
-        item.httpStatusCode === null || item.httpStatusCode === undefined
+        item.httpStatusCode === null || item.httpStatusCode === undefined || !captureSummaryFailed(item)
           ? null
           : String(item.httpStatusCode),
         time.format(item.at),
@@ -315,8 +421,7 @@ export function CaptureTraces(
     return {
       glyph: () => null,
       loadingGlyph: false,
-      title: requestLabelOf,
-      titleIdentifier: true,
+      ...routeTitleSlots(requestRoute),
       byline: facts,
       // A failed request says so once, in the failure tone, beside its time.
       titleMeta: (item) => (
@@ -346,7 +451,7 @@ export function CaptureTraces(
         'plugins.telemetry.capture.noTraces',
         'No requests in this window',
       )}
-      onOpen={props.onOpen}
+      {...(props.detail ? { detail: props.detail } : { onOpen: props.onOpen })}
       more={props.more ?? null}
     />
   );

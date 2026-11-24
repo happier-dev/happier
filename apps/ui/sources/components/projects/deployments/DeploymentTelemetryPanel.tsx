@@ -20,6 +20,7 @@ import {
   captureSummaryFailed,
   requestLabelOf,
   type CaptureEndpointAction,
+  type CaptureListDetail,
 } from '@happier-dev/plugins-telemetry/capture-views';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
@@ -30,6 +31,7 @@ import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollec
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -312,7 +314,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
     if (reads) setOpenTrace({ reads, request });
   }, [reads]);
   const [addingCheck, setAddingCheck] = React.useState<KeyFlowRoute | null>(null);
-  const trace = (tab === 'traces' || tab === 'llmCalls') && openTrace?.reads === reads ? openTrace : null;
+  // An LLM call's trace replaces its list; Traces opens its requests beside the list (`CaptureTraces` detail).
+  const trace = tab === 'llmCalls' && openTrace?.reads === reads ? openTrace : null;
+  const [openTraceId, setOpenTraceId] = React.useState<string | null>(null);
   const captureTab = isCaptureTab(tab) ? tab : null;
   const { state, more, discardOlder, refresh } = useTelemetryCaptureList(lifetime, reads, active && !trace && captureTab !== null,
     captureTab ?? 'endpoints', WINDOW_MS[windowId]);
@@ -334,6 +338,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
     discardOlder();
     setOpenTrace(current => current?.reads === reads ? null : current);
     setAttempt(value => value + 1);
+    setOpenTraceId(null);
   } : null;
   const offline = collectorOnline === false;
   const readLogBody = React.useCallback((id: string) => active && reads ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [active, reads]);
@@ -363,6 +368,14 @@ function DeploymentTelemetryTabs(props: Readonly<{
     }] : []),
   ], [canAddCheck, endpointDemand, openBrief, captureWindow]);
 
+  const traceDetail = React.useMemo<CaptureListDetail<DatabaseCaptureSummaryV1>>(() => ({
+    openId: openTraceId,
+    onOpenChange: setOpenTraceId,
+    render: (request) => reads ? (
+      <TelemetryRequestDetail key={request.id} reads={reads} lifetime={lifetime} active={active} request={request}
+        locale={locale} onAddCheck={canAddCheck ? setAddingCheck : undefined} />
+    ) : null,
+  }), [openTraceId, reads, lifetime, active, locale, canAddCheck]);
   const data = captureTab ? state.data : null;
   const failed = captureTab !== null && state.failure !== null && !state.reading;
   const status = telemetryApplied && collectorStatus?.reads === reads ? collectorStatus : null;
@@ -394,7 +407,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
       request={trace.request}
       locale={locale}
       onBack={() => setOpenTrace(null)}
-      backLabel={tab === 'llmCalls' ? t('deploymentTelemetry.request.backToCalls') : undefined}
+      backLabel={t('deploymentTelemetry.request.backToCalls')}
       onAddCheck={canAddCheck ? setAddingCheck : undefined}
     />
   ) : tab === 'llmCalls' && reads ? (
@@ -406,7 +419,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
       actions={endpointActions}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'traces' ? (
-    <CaptureTraces items={data.items} loading={state.reading} locale={locale} onOpen={openRequest}
+    <CaptureTraces items={data.items} loading={state.reading} locale={locale}
+      detail={traceDetail}
       more={data.nextCursor ? { onPress: more, busy: state.loadingMore } : null} />
   ) : data?.list === 'logs' ? (
     <CaptureLogs items={data.items} loading={state.reading} locale={locale} readBody={readLogBody}
@@ -590,7 +604,8 @@ export function TelemetryRequestDetail(props: Readonly<{
   active: boolean;
   request: DatabaseCaptureSummaryV1;
   locale: string;
-  onBack: () => void;
+  /** The way back, where the detail replaced its list itself; omitted where its Collection owns the way back. */
+  onBack?: () => void;
   /** The list the detail returns to, when it is not Traces (an LLM call opens its trace here too). */
   backLabel?: string;
   onAddCheck?: (route: KeyFlowRoute) => void;
@@ -634,17 +649,25 @@ export function TelemetryRequestDetail(props: Readonly<{
   return (
     <View style={styles.detail} testID="project-deployments.telemetry.request">
       <View style={[styles.detailHeader, { paddingHorizontal: headerInsetPx }]}>
-        <TextLinkButton testID="project-deployments.telemetry.request.back" label={props.backLabel ?? t('deploymentTelemetry.request.back')}
-          onPress={props.onBack} tone="quiet" size="meta" />
-        <Text variant="heading" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
-        {onAddCheck && serviceName && endpointMethod && endpointRoute ? (
-          <TextLinkButton testID="project-deployments.telemetry.request.add-check" label={t('deploymentTelemetry.addCheck')}
-            onPress={() => onAddCheck({ serviceName, method: endpointMethod, route: endpointRoute })} size="meta" />
+        {props.onBack ? (
+          <TextLinkButton testID="project-deployments.telemetry.request.back" label={props.backLabel ?? t('deploymentTelemetry.request.back')}
+            onPress={props.onBack} tone="quiet" size="meta" />
         ) : null}
-        {finding && lifetime ? (
-          <TextLinkButton testID="project-deployments.telemetry.request.investigate" label={t('deploymentTelemetry.request.investigate')}
-            onPress={() => { void openBrief(() => finding); }} disabled={openingBrief} size="meta" />
-        ) : null}
+        {/* The request's identity leads at the title step, its actions at the title line's end, its facts under it
+            (lab dbCapture-traces: "GET /invoices/48210 … Logs for this request"). */}
+        <View style={styles.titleLine}>
+          <Text variant="title" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
+          {onAddCheck && serviceName && endpointMethod && endpointRoute ? (
+            <RoundButton size="small" display="secondary" testID="project-deployments.telemetry.request.add-check"
+              title={t('deploymentTelemetry.addCheck')}
+              onPress={() => onAddCheck({ serviceName, method: endpointMethod, route: endpointRoute })} />
+          ) : null}
+          {finding && lifetime ? (
+            <RoundButton size="small" display="secondary" testID="project-deployments.telemetry.request.investigate"
+              title={t('deploymentTelemetry.request.investigate')}
+              onPress={() => { void openBrief(() => finding); }} disabled={openingBrief} loading={openingBrief} />
+          ) : null}
+        </View>
         <Text variant="meta" style={styles.facts}>
           {[...facts, ...(queries === null ? [] : [t('deploymentTelemetry.request.queries', { count: queries })])].map((part, index) => (
             <React.Fragment key={index}>
@@ -692,6 +715,8 @@ const styles = StyleSheet.create((theme) => ({
   detail: { gap: theme.space.s16 },
   // The detail's header stands on the same edge as the tab bar and its sections.
   detailHeader: { gap: theme.space.s4 },
+  // The title takes the line; the actions keep their width at its end and wrap under it when the line is short.
+  titleLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s12, rowGap: theme.space.s8 },
   // The request's identity in identifier type and the theme's ink, legible on either sheet.
-  requestTitle: { ...Typography.mono(), color: theme.colors.text.primary },
+  requestTitle: { ...Typography.mono(), color: theme.colors.text.primary, flexGrow: 1, flexShrink: 1, flexBasis: 240 },
 }));

@@ -9,6 +9,7 @@ import {
   CaptureEndpoints,
   CaptureLogs,
   CaptureTraces,
+  type CaptureListDetail,
 } from '@happier-dev/plugins-telemetry/capture-views';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
@@ -119,15 +120,12 @@ export function LocalServiceCaptureView(
   const status = statusRead?.reads === reads ? statusRead : null;
   const enabled =
     status?.kind === 'ready' ? status.status.enabled !== false : null;
-  const [openTrace, setOpenTrace] = React.useState<Readonly<{
-    reads: TelemetryCaptureReads;
-    request: DatabaseCaptureSummaryV1;
-  }> | null>(null);
-  const trace = view === 'traces' && openTrace?.reads === reads ? openTrace : null;
+  // The trace the person opened beside Traces; the first one is shown until they pick (`CaptureTraces` detail).
+  const [openTraceId, setOpenTraceId] = React.useState<string | null>(null);
   const { state, more, refresh } = useTelemetryCaptureList(
     lifetime,
     reads,
-    active && enabled === true && !trace,
+    active && enabled === true,
     view,
     WINDOW_MS[windowId],
   );
@@ -135,12 +133,14 @@ export function LocalServiceCaptureView(
     setAttempt(value => value + 1);
     void refresh?.();
   }, [refresh]);
-  const openRequest = React.useCallback(
-    (request: DatabaseCaptureSummaryV1) => {
-      if (reads) setOpenTrace({ reads, request });
-    },
-    [reads],
-  );
+  const traceDetail = React.useMemo<CaptureListDetail<DatabaseCaptureSummaryV1>>(() => ({
+    openId: openTraceId,
+    onOpenChange: setOpenTraceId,
+    render: (request) => reads ? (
+      <TelemetryRequestDetail key={request.id} reads={reads} lifetime={lifetime} active={active} request={request}
+        locale={locale} />
+    ) : null,
+  }), [openTraceId, reads, lifetime, active, locale]);
   const readLogBody = React.useCallback(
     (id: string) =>
       active && reads
@@ -211,25 +211,26 @@ export function LocalServiceCaptureView(
   const coverageReason =
     status?.kind === 'ready' ? status.status.coverage.reason : null;
   const ready = status?.kind === 'ready' ? status.status : null;
-  const missed = ready && ready.coverage.lostObservations > 0
-    ? t('deploymentTelemetry.local.missed', { count: ready.coverage.lostObservations }) : null;
-  const statusText =
-    enabled === false
-      ? t('deploymentTelemetry.local.off')
-      : ready?.preparing
-        ? t('deploymentTelemetry.local.preparing')
-        : coverageReason
-          ? [t('deploymentTelemetry.local.gaps', {
-              reason: coverageReason.replaceAll('_', ' '),
-            }), missed].filter(Boolean).join(' · ')
-          : enabled
-            ? t('deploymentTelemetry.local.on')
-            : null;
   const restartRequired =
     status?.kind === 'ready' && status.status.restartRequired === true;
 
   const data = state.data;
   const failed = state.failure !== null && !state.reading;
+  // The capture's state is said once: an unanswered read says it in the body, gaps and a needed restart in their own
+  // line with the next step beside it; the bar says only "Preparing" or "Capture on". The gap's cause is a store
+  // code, so the line says what it means for the person (events weren't kept) and offers Retry.
+  const gaps = coverageReason
+    ? ready && ready.coverage.lostObservations > 0
+      ? t('deploymentTelemetry.local.missed', { count: new Intl.NumberFormat(locale).format(ready.coverage.lostObservations) })
+      : ''
+    : null;
+  const statusText = failed && data === null
+    ? null
+    : ready?.preparing
+      ? t('deploymentTelemetry.local.preparing')
+      : gaps === null && !restartRequired && enabled
+        ? t('deploymentTelemetry.local.on')
+        : null;
   const body =
     status === null ? (
       <SurfaceStateCard
@@ -242,7 +243,8 @@ export function LocalServiceCaptureView(
       <SurfaceStateCard
         testID={`${testID}-unavailable`}
         kind="unavailable"
-        title={t('deploymentTelemetry.unavailable.title')}
+        title={t('deploymentTelemetry.local.unavailableTitle')}
+        reason={t('deploymentTelemetry.local.unavailableBody')}
         diagnosticCode={status.code}
         action={{
           label: t('common.retry'),
@@ -273,22 +275,14 @@ export function LocalServiceCaptureView(
       <SurfaceStateCard
         testID={`${testID}-unavailable`}
         kind="unavailable"
-        title={t('deploymentTelemetry.unavailable.title')}
+        title={t('deploymentTelemetry.local.unavailableTitle')}
+        reason={t('deploymentTelemetry.local.unavailableBody')}
         diagnosticCode={state.failure}
         action={{
           label: t('common.retry'),
           onPress: retry,
           testID: `${testID}-retry`,
         }}
-      />
-    ) : trace ? (
-      <TelemetryRequestDetail
-        reads={trace.reads}
-        lifetime={lifetime}
-        active={active}
-        request={trace.request}
-        locale={locale}
-        onBack={() => setOpenTrace(null)}
       />
     ) : data && data.items.length === 0 && !state.reading ? (
       <SurfaceStateCard
@@ -312,7 +306,7 @@ export function LocalServiceCaptureView(
         items={data.items}
         loading={state.reading}
         locale={locale}
-        onOpen={openRequest}
+        detail={traceDetail}
         more={
           data.nextCursor ? { onPress: more, busy: state.loadingMore } : null
         }
@@ -360,6 +354,15 @@ export function LocalServiceCaptureView(
             }}
           />
         ) : null}
+        {gaps !== null ? (
+          <SurfaceFreshnessLine
+            testID={`${testID}-gaps`}
+            tone="warning"
+            emphasis={t('deploymentTelemetry.local.gaps')}
+            reason={gaps}
+            action={{ label: t('common.retry'), onPress: () => { void retryCapture(); } }}
+          />
+        ) : null}
         {failed && data !== null ? (
           <SurfaceFreshnessLine
             testID={`${testID}-stale`}
@@ -375,7 +378,7 @@ export function LocalServiceCaptureView(
               variant="meta"
               numberOfLines={1}
               testID={`${testID}-status`}
-              style={coverageReason ? styles.gaps : styles.facts}
+              style={styles.facts}
             >
               {statusText}
             </Text>
@@ -399,7 +402,7 @@ export function LocalServiceCaptureView(
                 ]}
                 onSelectTab={(id) => {
                   setWindowId(id);
-                  setOpenTrace(null);
+                  setOpenTraceId(null);
                 }}
               />
               <TelemetryMenu onRetry={coverageReason ? retryCapture : null} onTurnOff={turnOff} onClear={clear}
@@ -427,5 +430,4 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   barEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   facts: { color: theme.colors.text.secondary, flexShrink: 1 },
-  gaps: { color: theme.colors.state.warning.foreground, flexShrink: 1 },
 }));

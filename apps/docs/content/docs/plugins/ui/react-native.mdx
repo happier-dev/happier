@@ -1817,9 +1817,11 @@ sheet under sub-headings that keep their end: "customer-portal · Production"
 shortens the shared start first. On a phone a sub-heading recomposes: its name
 keeps line 1, and what its rows share and its action move to line 2. When a title
 is an identifier (a host name, a path), set the anatomy's `titleIdentifier: true`.
-The list then draws it on one line in the host's mono face, ending in an
-ellipsis, instead of wrapping it like a name; keep the whole value in
-`accessibilityLabel`. When a title is a record's name that should stay on one
+The list and the table's title cell then draw it on one line in the host's mono
+face, ending in an ellipsis, instead of wrapping it like a name; keep the whole
+value in `accessibilityLabel`. A quiet word that leads the title on its line (a
+request's method before its route, "GET /invoices/:id") goes in `titleLead`;
+both the list and the table draw it in the title's face and secondary ink. When a title is a record's name that should stay on one
 line (a file name such as `checkout-bug-repro.mov`), set `titleTruncates: true`
 instead: the list keeps it in the body face and ends it in an ellipsis. A row's
 `⋯` (from `useRowActions`) waits for the pointer, focus or a long press; for a

@@ -93,8 +93,10 @@ export type Copy = Readonly<{
     turnOffFailed: string;
     retry: string;
     preparing: string;
-    missed: (p: Readonly<{ count: number }>) => string;
-    gaps: (p: Readonly<{ reason: string }>) => string;
+    missed: (p: Readonly<{ count: string }>) => string;
+    gaps: string;
+    unavailableTitle: string;
+    unavailableBody: string;
     restart: string;
     restartReason: string;
     waitingTitle: string;
@@ -248,12 +250,14 @@ const en: Copy = {
     turnOffFailed: 'Capture could not be turned off.',
     retry: 'Retry capture',
     preparing: 'Preparing capture…',
-    missed: ({ count }) => `${count} observations missed`,
-    gaps: ({ reason }) => `Capture on with gaps · ${reason}`,
+    missed: ({ count }) => `${count} events weren’t kept`,
+    gaps: 'Capture on with gaps',
+    unavailableTitle: 'Capture isn’t answering right now',
+    unavailableBody: 'Capture keeps each request’s route, time, database queries and logs on this Machine. Try again in a moment.',
     restart: 'Restart the dev servers to capture their requests.',
     restartReason: 'Capture changed while they were running.',
     waitingTitle: 'Waiting for the first request',
-    waitingBody: 'Capture is recording. Open the app and its requests appear here as they happen.',
+    waitingBody: 'Open the app and its requests appear here as they happen.',
     window: { quarter: '15 min', hour: '1 h', day: '24 h' },
   },
   measurement: {

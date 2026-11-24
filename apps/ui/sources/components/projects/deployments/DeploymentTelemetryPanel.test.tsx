@@ -479,10 +479,8 @@ describe('Environment Telemetry tabs', () => {
       expect(screen.findByTestId('telemetry.request.slowest')).not.toBeNull();
       expect(screen.findByTestId('telemetry.request.log.log-1')).not.toBeNull();
       expect(screen.findByTestId('project-deployments.telemetry.request.investigate')).not.toBeNull();
-      await screen.pressByTestIdAsync(
-        'project-deployments.telemetry.request.back',
-      );
-      await reportCollectionLayout(screen, 'telemetry.capture.traces');
+      // The request opens beside the list (CaptureTraces detail): the list stays, and the detail has no way back of its own.
+      expect(screen.findByTestId('project-deployments.telemetry.request.back')).toBeNull();
       expect(
         screen.findByTestId('telemetry.capture.trace.req-1'),
       ).not.toBeNull();

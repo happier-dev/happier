@@ -10,6 +10,7 @@ export {
   CaptureTraces,
   type CaptureAppLlmCallV1,
   type CaptureEndpointAction,
+  type CaptureListDetail,
   type CapturePageMore,
 } from './CaptureViews.js';
 export {
