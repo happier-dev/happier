@@ -21,6 +21,7 @@ type LegacySessionProjection = Readonly<Pick<RawSessionRecord, 'metadata' | 'sha
 
 // Load the real API graph once; each fixture reloads its Home through the configuration owner.
 await import('@/api/api');
+const { ApiMachineClient } = await import('@/api/apiMachine');
 await import('./syncMemoryDocuments');
 
 const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_ACTIVE_SERVER_ID']);
@@ -724,8 +725,6 @@ it('reuses daemon Account identity across idle memory admissions, keeps authorit
     admissionPhase = 'user_socket_harness';
     const { createRequesterCurrentnessSocketHarness } = await import('@/testkit/backends/requesterCurrentnessSocketHarness');
     const channel = await createRequesterCurrentnessSocketHarness();
-    admissionPhase = 'machine_transport_imports';
-    const { ApiMachineClient } = await import('@/api/apiMachine');
     const client = new ApiMachineClient(credentials.token, { id: 'daemon-machine', encryptionMode: 'plain',
       metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
     const counts = (path = '/v1/account/encryption/currentness') => vi.mocked(axios.get).mock.calls
@@ -760,20 +759,20 @@ it('reuses daemon Account identity across idle memory admissions, keeps authorit
         expect(counts() - beforeIdentityRead).toBe(0);
         expect((await prepare()).state).toBe('ready');
       }
-      // Exact catalog cursors and final private-row/Artifact authority stay fresh (docs/encryption.md).
-      expect(counts('/v1/account/encryption') - initialAuthorityReads).toBeGreaterThan(0);
+      // Read-only Memory admission reuses the connected Account observation.
+      expect(counts('/v1/account/encryption')).toBe(initialAuthorityReads);
       expect(channel.clients).toHaveLength(1);
       vi.useRealTimers();
       admissionPhase = 'disconnect_refusal';
       await channel.disconnect();
-      expect((await prepare()).state).not.toBe('ready');
+      expect(await prepare()).toMatchObject({ state: 'unavailable', eligibleDocuments: [] });
       await channel.reconnect();
       admissionPhase = 'reconnect_admission';
       expect((await prepare()).state).toBe('ready');
       await channel.push('account', { mode: 'e2ee', version: 2, updatedAt: 2,
         signingKeyFingerprint: 'changed-signing', contentKeyFingerprint: 'changed-content' });
       admissionPhase = 'pushed_mode_refusal';
-      expect((await prepare()).state).not.toBe('ready');
+      expect(await prepare()).toMatchObject({ state: 'pending', eligibleDocuments: [] });
     } finally {
       vi.useRealTimers();
       await client.shutdown();
