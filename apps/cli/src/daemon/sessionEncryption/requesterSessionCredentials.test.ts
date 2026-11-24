@@ -1053,7 +1053,7 @@ describe('requester Session lifecycle custody', () => {
       privateKey: Buffer.from(host.keyPair.secretKey).toString('base64url') });
     const handlers = new Map<string, RpcHandler>();
     const admittedInputs: unknown[] = [];
-    const input = { sessionId, message: 'Queue before the native child exists', localId: 'requester-early-input', wait: false };
+    const input = { sessionId, message: 'Queue before the native child exists', localId: 'requester-early-input', reply: 'none' };
     const target = { kind: 'session' as const, sessionId };
     const authentication = { kind: 'account' as const, tokenEpoch: 1 };
     const material = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };

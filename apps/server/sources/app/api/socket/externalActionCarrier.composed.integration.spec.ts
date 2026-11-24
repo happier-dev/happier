@@ -354,7 +354,7 @@ describe("external Action server-to-daemon request carrier", () => {
         const relay = async (sessionId: string, requestId: string) => {
             const binding = bindingFor(requestId);
             const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: length => new Uint8Array(length).fill(4), input: {
-                sessionId, message: 'Reply without tools', localId: requestId, permissionModeOverride: 'read_only', wait: false,
+                sessionId, message: 'Reply without tools', localId: requestId, permissionModeOverride: 'read_only', reply: 'none',
             } });
             const response = await app.inject({ method: 'POST', url: '/v1/actions/session.message.send',
                 headers: { authorization: `Bearer ${token}`, 'x-happier-authority-ceiling': 'account_automation' }, payload: envelope });

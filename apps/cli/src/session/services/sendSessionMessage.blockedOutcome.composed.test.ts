@@ -117,18 +117,16 @@ describe('Send preserves the effect uncertainty of blocked accepted input', () =
             v: 1, approvalWaivedSurfaces: { [SESSION_MESSAGE_SEND_ACTION_ID_V1]: ['cli'] },
           }),
         });
-        const execute = (observation: { wait: boolean } | { reply: 'wait' }, inputId: string) => runWithServerHttpBaseUrl(origin, () => executor.execute(SESSION_MESSAGE_SEND_ACTION_ID_V1,
-          { sessionId, localId: inputId, message: 'Run pwd', ...observation, timeoutSeconds: 1, requestedAction: { v: 1, kind: 'send_now' } },
+        const execute = (reply: 'none' | 'wait', inputId: string) => runWithServerHttpBaseUrl(origin, () => executor.execute(SESSION_MESSAGE_SEND_ACTION_ID_V1,
+          { sessionId, localId: inputId, message: 'Run pwd', reply, timeoutSeconds: 1, requestedAction: { v: 1, kind: 'send_now' } },
           { surface: 'cli', authority: 'present_user', defaultSessionId: sessionId }));
-        const control = await execute({ wait: false }, 'action-admission-control');
+        const control = await execute('none', 'action-admission-control');
         expect(control, JSON.stringify(control)).toMatchObject({ ok: true, result: {
           status: 'accepted', localId: 'action-admission-control',
         } });
         expect.soft(sent).toMatchObject({ settlementResult });
-        for (const observation of [{ wait: true }, { reply: 'wait' }] as const) {
-          const action = await execute(observation, localId);
-          expect.soft(action, JSON.stringify({ observation, action })).toMatchObject({ ok: true, result: { ...admissionResult, settlementResult } });
-        }
+        const action = await execute('wait', localId);
+        expect.soft(action, JSON.stringify(action)).toMatchObject({ ok: true, result: { ...admissionResult, settlementResult } });
       }
       if (!recipient) {
         for (const observeReply of [false, true]) {

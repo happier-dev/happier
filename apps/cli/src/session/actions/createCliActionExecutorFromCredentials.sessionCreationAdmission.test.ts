@@ -366,7 +366,7 @@ describe('paired terminal Action admission', () => {
             const credentials = { token, encryption: { type: 'legacy' as const, secret }, credentialProvenance: 'stored_session' as const };
             const sessionId = 'c123456789012345678901234';
             const input = { sessionId: otherLocalDaemon ? 'startup' : sessionId,
-                message: 'queue while starting', localId: 'startup-cli-input', wait: false };
+                message: 'queue while starting', localId: 'startup-cli-input', reply: 'none' };
             const target = { kind: 'session' as const, sessionId };
             const machineId = 'session-machine';
             const session = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'e2ee', share: null,

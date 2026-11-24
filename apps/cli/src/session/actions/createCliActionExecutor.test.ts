@@ -3027,7 +3027,6 @@ describe('createCliActionExecutor', () => {
         message: 'Hello',
         modelOverride: 'default',
         providerConnectionId: 'pc_work',
-        wait: false,
         timeoutSeconds: 10,
       },
       { surface: 'cli', defaultSessionId: 'sess-1' },

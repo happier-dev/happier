@@ -121,17 +121,19 @@ describe('Session reply negotiation through public HTTP', () => {
     } finally { await client.close(); await server.close(); }
   });
 
-  it('preserves information and legacy boolean sends while refusing malformed current reply input', async () => {
-    const server = await serve({ type: 'object', additionalProperties: true });
+  it('sends information directly and negotiates explicit waits while refusing malformed reply input', async () => {
+    const server = await serve();
     const client = connect({ endpoint: server.endpoint, token });
     try {
       await client.actions.session.message.send({ sessionId: 'worker', message: 'FYI.', reply: 'none' });
-      await client.actions.session.message.send({ sessionId: 'worker', message: 'Observe it.', wait: true });
+      await client.actions.session.message.send({ sessionId: 'worker', message: 'Observe it.', reply: 'wait' });
       await expect(client.actions.session.message.send({ sessionId: 'worker', message: 'Inspect it.', reply: 'invalid' } as never))
         .rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
       await expect(client.actions.session.message.send({ sessionId: 'worker', message: 'Inspect it.', structuredInput: null } as never))
         .rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
-      expect(server.calls.map(call => call.actionId)).toEqual(['session.message.send', 'session.message.send']);
+      expect(server.calls.map(call => call.actionId)).toEqual(['session.message.send', 'action.spec.get', 'session.message.send']);
+      expect(server.calls[0]?.input).toMatchObject({ reply: 'none' });
+      expect(server.calls[2]?.input).toMatchObject({ reply: 'wait' });
     } finally { await client.close(); await server.close(); }
   });
 

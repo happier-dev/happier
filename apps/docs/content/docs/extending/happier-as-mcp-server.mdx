@@ -170,15 +170,15 @@ Call `session_list` with no args:
 {}
 ```
 
-### Send a message (and wait for idle)
+### Send a message and wait for its reply
 
-Call `session_message_send`:
+In 0.3 development, call `session_message_send` with `reply: "wait"` to observe the reply to this input:
 
 ```json
 {
   "sessionId": "sess_123",
   "message": "ping",
-  "wait": true,
+  "reply": "wait",
   "timeoutSeconds": 60
 }
 ```

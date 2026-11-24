@@ -211,7 +211,7 @@ describe('target Session input authoring through HTTP', () => {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null });
     const invoke = (localId: string, permissionModeOverride?: string) => executeExternalAction({
       actionId: 'session.message.send', envelope: { v: 1, requestId: localId,
-        input: { sessionId, message: 'Read this turn', localId, wait: false,
+        input: { sessionId, message: 'Read this turn', localId, reply: 'none',
           requestedAction: { v: 1, kind: 'enqueue' }, ...(permissionModeOverride ? { permissionModeOverride } : {}) } },
       principal: { authority: 'account_automation' }, currentMachineId: 'machine-a',
       resolveTarget: async () => ({ kind: 'session', sessionId }),
@@ -320,7 +320,7 @@ describe('target Session input authoring through HTTP', () => {
       return Promise.resolve({ v: 1, result: { status: 'accepted', localId: request.localId } });
     } }));
     const target = { kind: 'session' as const, sessionId };
-    const input = { sessionId, message: 'Continue the replied session', localId: 'signed-cli-input', wait: false };
+    const input = { sessionId, message: 'Continue the replied session', localId: 'signed-cli-input', reply: 'none' };
     const authorize = (requestId: string, requestInput: typeof input) => ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'terminal-proof', binding: {
       accountId: 'requester', authentication: { kind: 'terminal', tokenEpoch: 1 },
       serverIdentityId: 'srv_home', machineId: 'machine-a', custodianAccountId: 'requester', installationId: 'installation',
@@ -404,7 +404,7 @@ describe('target Session input authoring through HTTP', () => {
     const grant = ApiTokenGrantV1Schema.parse({ ...API_TOKEN_FULL_GRANT_V1, permissionModes: ['read-only'] });
     const target = { kind: 'session' as const, sessionId };
     const input = { sessionId, message: 'Read this turn', localId: 'alias-input', permissionModeOverride: 'read_only',
-      requestedAction: { v: 1 as const, kind: 'enqueue' as const }, wait: false, timeoutSeconds: 1 };
+      requestedAction: { v: 1 as const, kind: 'enqueue' as const }, reply: 'none', timeoutSeconds: 1 };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-proof', binding: {
       accountId: 'requester', principalId: 'principal', credentialId: 'credential', grant,
       serverIdentityId: 'home', machineId: 'machine-a', custodianAccountId: 'requester', installationId: 'installation',
@@ -449,7 +449,7 @@ describe('target Session input authoring through HTTP', () => {
     expect(() => expect(miswiredResult).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'alias-input' } })).toThrow();
     expect(http.post.mock.calls).toHaveLength(writesBeforeMiswiring);
     await deps.sessionSendMessage({ context: cliActionContext, sessionId, message: 'Use defaults',
-      localId: 'ordinary-after-alias', requestedAction: { v: 1, kind: 'enqueue' }, wait: false, timeoutSeconds: 1 });
+      localId: 'ordinary-after-alias', requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none', timeoutSeconds: 1 });
     expect(machineInputs).toHaveLength(1);
     expect(http.post.mock.calls.map(([, body]) => body.content.v.meta.permissionMode)).toEqual(['default']);
   });
@@ -570,7 +570,7 @@ describe('target Session input authoring through HTTP', () => {
     });
     const deps = createCliActionDeps({ token: credentials.token, credentials: retainedCredentials, sessionId, mode: 'plain', ctx: null });
     const result = await deps.sessionSendMessage!({ context: cliActionContext, sessionId,
-      localId: 'input-a', message: 'Reply OK', requestedAction: { v: 1, kind: 'enqueue' }, wait: true, timeoutSeconds: 1 });
+      localId: 'input-a', message: 'Reply OK', requestedAction: { v: 1, kind: 'enqueue' }, reply: 'wait', timeoutSeconds: 1 });
     if (outcome === 'failed') expect(result).toEqual({ status: 'failed', code: 'session_input_turn_failed', localId: 'input-a' });
     else expect(result).toMatchObject({ ok: false, errorCode: 'timeout' });
   });
@@ -615,7 +615,7 @@ describe('target Session input authoring through HTTP', () => {
       ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null } : { mode: 'e2ee' as const, ctx }) });
     const result = await createActionExecutor({
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps }).execute('session.message.send', {
-      sessionId, localId: input.localId, message: 'No tools. Reply SWITCH_OK.', wait: true, timeoutSeconds: 1,
+      sessionId, localId: input.localId, message: 'No tools. Reply SWITCH_OK.', reply: 'wait', timeoutSeconds: 1,
     }, { surface: 'mcp', authority: 'present_user', defaultSessionId: null });
     expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: input.localId } });
     expect(completed).toBe(true);
@@ -710,7 +710,7 @@ describe('target Session input authoring through HTTP', () => {
     const executor = createActionExecutor({
     readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"session.message.send": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }), ...deps });
     const input = { sessionId, localId: 'native-input', message: 'Only the selected native recipient',
-      recipient: nativeRecipient, wait: false };
+      recipient: nativeRecipient, reply: 'none' };
     const result = await executor.execute('session.message.send', input, cliActionContext);
     expect(result).toMatchObject({ ok: true, result: { status: 'rejected', code: 'session_input_target_update_required' } });
     if (!result.ok) throw new Error('Expected a typed admission refusal');
@@ -741,7 +741,7 @@ describe('target Session input authoring through HTTP', () => {
       context: cliActionContext,
       sessionId, localId: 'input-a', message: 'Continue the side conversation',
       messageMeta: { attachmentMarker: 'authored-file' }, displayText: 'Continue with this file',
-      recipient, requestedAction: { v: 1, kind: 'enqueue' }, wait: false, timeoutSeconds: 1,
+      recipient, requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none', timeoutSeconds: 1,
     });
     expect(result, JSON.stringify(result)).toEqual({ status: 'accepted', localId: 'input-a' });
     expect(http.post).toHaveBeenCalledTimes(1);
@@ -954,7 +954,7 @@ describe('target Session input authoring through HTTP', () => {
     });
     const deps = createCliActionDeps({ credentials, token: credentials.token, sessionId: 'cli-global', serverId: 'cloud', serverHttpBaseUrl: configuration.serverUrl, mode: 'plain', ctx: null });
     const result = await deps.sessionSendMessage!({ context: cliActionContext, sessionId, localId: 'blocked-run-input',
-      message: 'Targeted input before the first turn', recipient, wait: true, timeoutSeconds: 1,
+      message: 'Targeted input before the first turn', recipient, reply: 'wait', timeoutSeconds: 1,
       requestedAction: { v: 1, kind: 'enqueue' } });
     expect(result).toMatchObject({ status: 'rejected', code: 'session_input_target_unavailable' });
     expect(pendingReads).toEqual([expect.stringContaining(`/execution-runs/${recipient.runId}/pending?includeDiscarded=true`)]);
@@ -1126,7 +1126,7 @@ describe('target Session input authoring through HTTP', () => {
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId, mode: 'plain', ctx: null });
     const pendingResult = deps.sessionSendMessage({
       context: cliActionContext,
-      sessionId, localId: 'input-a', message: 'Wait for this run input', recipient, wait: true, timeoutSeconds: 1,
+      sessionId, localId: 'input-a', message: 'Wait for this run input', recipient, reply: 'wait', timeoutSeconds: 1,
       requestedAction: { v: 1, kind: 'steer_if_active' },
     });
     await run.firstRead;

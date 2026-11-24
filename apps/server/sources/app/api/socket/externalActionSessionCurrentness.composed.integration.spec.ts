@@ -306,7 +306,7 @@ describe('original external Session Action currentness composition', () => {
             authentication: { kind, tokenEpoch: account.tokenEpoch }, actionId: 'session.message.send',
             requestId: 'qa8-send', target: publisherGap ? { kind: 'session' as const, sessionId: session.id }
                 : { kind: 'machine' as const, machineId } };
-        const input = { sessionId: session.id, message: 'QA8', localId: 'qa8-input', permissionModeOverride: 'read_only', wait: false };
+        const input = { sessionId: session.id, message: 'QA8', localId: 'qa8-input', permissionModeOverride: 'read_only', reply: 'none' };
         const envelope = accountMode === 'e2ee'
             ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: length => new Uint8Array(length).fill(21), input })
             : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId,

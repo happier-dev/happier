@@ -854,7 +854,7 @@ it.each([
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
       mode: 'plain', ctx: null, machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: machineResumeTransport } });
     const outcome = await createActionExecutor(deps).execute('session.message.send', {
-      sessionId, message: 'Keep this prompt for recovery', localId, wait: true, timeoutSeconds: 1,
+      sessionId, message: 'Keep this prompt for recovery', localId, reply: 'wait', timeoutSeconds: 1,
       requestedAction: { v: 1, kind: 'enqueue' },
     }, { surface: 'ui', authority: 'present_user' });
     expect(outcome.ok).toBe(true);

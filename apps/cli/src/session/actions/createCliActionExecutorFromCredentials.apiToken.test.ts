@@ -334,7 +334,7 @@ describe('createCliActionExecutorFromCredentials API Token transport', () => {
         actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {} }) },
         resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) }),
       });
-      await expect(executor.execute('session.message.send', { sessionId: exactSessionId, message: 'Admit this input', localId: 'input-1', wait: false },
+      await expect(executor.execute('session.message.send', { sessionId: exactSessionId, message: 'Admit this input', localId: 'input-1', reply: 'none' },
         { surface: 'cli', authority: 'present_user' })).resolves.toMatchObject({ ok: true, result: { status: 'accepted', localId: 'input-1' } });
       expect(machineAdmissionTransport).toHaveBeenCalledWith(expect.objectContaining({ sessionId: exactSessionId, targetMachineId: 'machine-1', localId: 'input-1' }), expect.anything());
     } finally {

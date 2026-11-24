@@ -346,7 +346,7 @@ describe('Workflow Session step execution', () => {
       machineAdmissionTransport });
     await expect(deps.sessionSendMessage!({ sessionId, message: 'Work', callerSurface: 'cli',
       actionCaller: { kind: 'host' }, context: { surface: 'cli', authority: 'present_user' },
-      localId: 'ordinary-model-input', wait: false, requestedAction: { v: 1, kind: 'enqueue' },
+      localId: 'ordinary-model-input', reply: 'none', requestedAction: { v: 1, kind: 'enqueue' },
       modelOverride: modelId, ...(providerConnectionId === undefined ? {} : { providerConnectionId }),
     })).resolves.toMatchObject({ status: 'accepted' });
     await expect(enqueueWorkflowSessionInput({ credentials, sessionId, text: 'Work',

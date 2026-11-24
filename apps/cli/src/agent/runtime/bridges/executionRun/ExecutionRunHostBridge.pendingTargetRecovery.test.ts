@@ -744,7 +744,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
             target: { kind: 'session', sessionId } }, material: {
               type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(legacySecret),
             } });
-          expect(opened?.input).toMatchObject({ sessionId, recipient, localId, wait: true, timeoutSeconds: 1 });
+          expect(opened?.input).toMatchObject({ sessionId, recipient, localId, reply: 'wait', timeoutSeconds: 1 });
           const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: randomUUID(), binding: {
             ...authorization.binding, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'e2ee',
             requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
@@ -801,7 +801,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
           });
           const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSendMessage: deps.sessionSendMessage });
           return executor.execute('session.message.send', { sessionId, recipient, localId, message: 'Fresh input',
-            wait: true, timeoutSeconds: 1, requestedAction: { v: 2, kind: 'recover_execution_run' } },
+            reply: 'wait', timeoutSeconds: 1, requestedAction: { v: 2, kind: 'recover_execution_run' } },
           { surface: 'cli', authority: 'present_user' });
         }
         if (cliEntry) {
@@ -834,7 +834,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
           expect(input).toEqual({ runId: recipient.runId });
           return readExecutionRun({ sessionId, runId: recipient.runId, signal });
         },
-      }).sessionSendMessage!({ sessionId, recipient, localId, message: 'Fresh input', wait: true, timeoutSeconds: 1,
+      }).sessionSendMessage!({ sessionId, recipient, localId, message: 'Fresh input', reply: 'wait', timeoutSeconds: 1,
         callerSurface: 'cli', actionCaller: { kind: 'host' },
         requestedAction: { v: 1, kind: 'enqueue' },
         context: { surface: 'cli', authority: 'present_user', ...(external

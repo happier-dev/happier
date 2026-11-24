@@ -1038,7 +1038,7 @@ describe('CLI Session target composition', () => {
           { kind: 'agent_team_broadcast' as const, teamId: 'native-team' },
         ]) {
           const refusal = await exactRoot.execute('session.message.send', {
-            sessionId: childId, message: 'Must not reach primary', recipient, wait: false,
+            sessionId: childId, message: 'Must not reach primary', recipient, reply: 'none',
           }, { surface: 'cli' });
           expect(refusal, JSON.stringify(refusal)).toMatchObject({ ok: true, result: {
             status: 'rejected', code: 'session_input_target_update_required',
@@ -1054,7 +1054,7 @@ describe('CLI Session target composition', () => {
           ] } });
           expect(getActionSpec('session.status.get').outputSchema!.safeParse(status.ok ? status.result : null).success).toBe(true);
           const send = await root.execute('session.message.send', { sessionId: target, message: 'Must not reach primary',
-            recipient: { kind: 'agent_team_broadcast', teamId: 'native-team' }, wait: false }, { surface: 'cli' });
+            recipient: { kind: 'agent_team_broadcast', teamId: 'native-team' }, reply: 'none' }, { surface: 'cli' });
           expect(send, JSON.stringify(send)).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
             { target: { sessionId: childId }, result: { ok: true, result: {
               status: 'rejected', code: 'session_input_target_update_required',
