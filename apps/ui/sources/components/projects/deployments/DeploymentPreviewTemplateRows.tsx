@@ -481,5 +481,5 @@ function PreviewWatcherChoice(props: Readonly<{
       if (option) props.onChoose(option.value);
     }}
     itemTrigger={{ title: t('projects.deployments.settingsSections.previewEditor.watcherAccount'),
-      detailFormatter: () => options[selected]?.label ?? t('common.select') }} />;
+      detailFormatter: () => options[selected]?.label ?? t('common.choose') }} />;
 }
