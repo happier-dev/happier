@@ -13,6 +13,7 @@ import { sync, syncHydrateLocalState, syncRestore, syncSwitchServer } from '@/sy
 import { abortServerFetches } from '@/sync/http/client';
 import {
     invalidateAllServerReachabilitySupervisors,
+    peekServerReachabilityState,
     startServerReachabilitySupervisor,
     stopServerReachabilitySupervisor,
     subscribeServerReachabilityState,
@@ -52,12 +53,24 @@ let activeSwitchPromise: Promise<AuthCredentials | null> | null = null;
 // The cold restore's transport phase. Boot paints once restore's local phase has
 // run, so the UI can ask for a switch, retry or disconnect while the carrier is
 // still pending; those wait here instead of racing a second bootstrap.
-let coldRestorePromise: Promise<void> | null = null;
+type ColdHomeReadinessScope = Readonly<{
+    snapshot: ReturnType<typeof getActiveServerSnapshot>;
+    token: string;
+}>;
+let coldRestore: Readonly<ColdHomeReadinessScope & { transport: Promise<void> }> | null = null;
 const coldRestoreListeners = new Set<() => void>();
 
 /** First-paint consumers wait only while the connection owner's cold restore is active. */
 export function isColdActiveServerRestorePending(): boolean {
-    return coldRestorePromise !== null;
+    return coldRestore !== null;
+}
+
+/** During first admission, read the Home's existing authenticated probe before Sync owns its endpoint state. */
+export function getColdActiveServerReadiness(): Pick<NonNullable<ReturnType<typeof peekServerReachabilityState>>, 'phase' | 'reason'> | null {
+    const scope = coldRestore ?? (failedApplyRecovery?.duringColdAdmission ? failedApplyRecovery.scope : null);
+    if (!scope?.token || !capturePublicationTargetForSnapshot(scope.snapshot)) return null;
+    const state = peekServerReachabilityState(scope.snapshot.serverUrl, scope.token);
+    return state && { phase: state.phase, reason: state.reason };
 }
 
 export function subscribeColdActiveServerRestore(listener: () => void): () => void {
@@ -81,7 +94,7 @@ export function commitHomeApplicationCarrierEligibility(
 }
 
 async function awaitColdRestore(): Promise<void> {
-    if (coldRestorePromise) await coldRestorePromise.catch(() => undefined);
+    if (coldRestore) await coldRestore.transport.catch(() => undefined);
 }
 let lastAppliedGeneration = -1;
 // The private credential identity the singleton Sync runtime was applied with
@@ -93,7 +106,11 @@ let activeRecoveryPromise: Promise<void> | null = null;
 let recoveryRuntime: IrohHomeTunnelRuntime | null = null;
 let recoveryUnsubscribe: (() => void) | null = null;
 
-let stopFailedApplyRecovery: (() => void) | null = null;
+let failedApplyRecovery: Readonly<{
+    stop(): void;
+    scope: ColdHomeReadinessScope;
+    duringColdAdmission: boolean;
+}> | null = null;
 
 /**
  * A failed apply has no socket, so nothing else is watching this Home. The reachability
@@ -104,31 +121,40 @@ let stopFailedApplyRecovery: (() => void) | null = null;
 function recoverFailedApplyWhenHomeAnswers(
     snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
     credentials: AuthCredentials | null,
+    duringColdAdmission = false,
 ): void {
     // Retry owns this failed attempt; do not arm another automatic admission.
     // A pre-existing offline subscription remains available to a manual Retry.
     if (activeRecoveryPromise) return;
-    stopFailedApplyRecovery?.();
-    stopFailedApplyRecovery = null;
     const token = credentials?.token?.trim();
     if (!token || isAppliedActiveServerRuntimeAvailable() || !capturePublicationTargetForSnapshot(snapshot)) return;
+    // Auth can retry as cold restore settles. Keep the same Home's existing observation and backoff.
+    const previous = failedApplyRecovery;
+    if (previous?.scope.token === token && capturePublicationTargetForSnapshot(previous.scope.snapshot)) return;
+    previous?.stop();
     let subscribed = false;
     const stop = (): void => {
-        if (stopFailedApplyRecovery === stop) stopFailedApplyRecovery = null;
+        if (failedApplyRecovery?.stop === stop) failedApplyRecovery = null;
         unsubscribe();
+        if (duringColdAdmission) notifyColdRestoreListeners();
         fireAndForget(stopServerReachabilitySupervisor(snapshot.serverUrl, credentials?.token ?? null), {
             tag: 'connectionManager.failedApplyRecovery.stop',
         });
     };
     const unsubscribe = subscribeServerReachabilityState(snapshot.serverUrl, (state) => {
-        if (!subscribed || state.phase !== 'online') return;
+        if (!subscribed) return;
+        if (state.phase !== 'online') {
+            if (duringColdAdmission) notifyColdRestoreListeners();
+            return;
+        }
         stop();
         fireAndForget(retryActiveServerConnection(), {
             tag: 'connectionManager.failedApplyRecovery.retry',
         });
     }, credentials?.token ?? null);
     subscribed = true;
-    stopFailedApplyRecovery = stop;
+    failedApplyRecovery = { stop, scope: { snapshot, token }, duringColdAdmission };
+    if (duringColdAdmission) notifyColdRestoreListeners();
     fireAndForget(startServerReachabilitySupervisor({
         serverUrl: snapshot.serverUrl,
         token: credentials?.token ?? null,
@@ -450,7 +476,7 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
         lastAppliedGeneration = targetGeneration;
         appliedCredentialScopeKey = readCredentialScopeKey(credentials);
         publishAppliedActiveServerSnapshot(syncTarget);
-        stopFailedApplyRecovery?.();
+        failedApplyRecovery?.stop();
     }
 }
 
@@ -482,7 +508,7 @@ export async function disconnectActiveServerConnection(): Promise<void> {
     if (activeSwitchPromise) {
         await activeSwitchPromise.catch(() => null);
     }
-    stopFailedApplyRecovery?.();
+    failedApplyRecovery?.stop();
     const snapshot = getActiveServerSnapshot();
     const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
     if (!publicationTarget) return;
@@ -536,16 +562,23 @@ export function restoreConnectionToActiveServer(credentials: AuthCredentials): P
         generation: snapshot.generation,
     });
     const transport = restoreTransportToActiveServer(credentials, snapshot);
+    const token = credentials.token.trim();
+    coldRestore = { transport, snapshot, token };
+    const unsubscribeReadiness = token
+        ? subscribeServerReachabilityState(snapshot.serverUrl, notifyColdRestoreListeners, token)
+        : () => {};
     const clearColdRestore = (): void => {
-        if (coldRestorePromise !== transport) return;
-        coldRestorePromise = null;
+        unsubscribeReadiness();
+        if (coldRestore?.transport !== transport) return;
+        coldRestore = null;
         notifyColdRestoreListeners();
     };
-    coldRestorePromise = transport;
     notifyColdRestoreListeners();
     void transport.then(clearColdRestore, () => {
+        if (coldRestore?.transport === transport) {
+            recoverFailedApplyWhenHomeAnswers(snapshot, credentials, true);
+        }
         clearColdRestore();
-        recoverFailedApplyWhenHomeAnswers(getActiveServerSnapshot(), credentials);
     });
     return transport;
 }
@@ -565,5 +598,5 @@ async function restoreTransportToActiveServer(
     lastAppliedGeneration = Math.max(lastAppliedGeneration, snapshot.generation);
     appliedCredentialScopeKey = readCredentialScopeKey(credentials);
     publishAppliedActiveServerSnapshot(syncTarget);
-    stopFailedApplyRecovery?.();
+    failedApplyRecovery?.stop();
 }

@@ -258,7 +258,8 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
             subscribeColdActiveServerRestore } = await import('./connectionManager');
         const restoreStates: boolean[] = [];
         const unsubscribe = subscribeColdActiveServerRestore(() => {
-            restoreStates.push(isColdActiveServerRestorePending());
+            const pending = isColdActiveServerRestorePending();
+            if (restoreStates.at(-1) !== pending) restoreStates.push(pending);
         });
         expect(isColdActiveServerRestorePending()).toBe(false);
         const restore = restoreConnectionToActiveServer(credentials);
@@ -368,7 +369,8 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
             subscribeColdActiveServerRestore } = await import('./connectionManager');
         const restoreStates: boolean[] = [];
         const unsubscribe = subscribeColdActiveServerRestore(() => {
-            restoreStates.push(isColdActiveServerRestorePending());
+            const pending = isColdActiveServerRestorePending();
+            if (restoreStates.at(-1) !== pending) restoreStates.push(pending);
         });
         await expect(restoreConnectionToActiveServer(credentials)).rejects.toBeTruthy();
         expect(isColdActiveServerRestorePending()).toBe(false);
