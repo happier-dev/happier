@@ -5982,12 +5982,14 @@ keeps callers awaiting that read on the replacement attempt. A caller awaiting
 an explicit post-claim refresh can then read the published Collection intent.
 On the wire, `materializations.read` sends each distinct Machine UI-artifact list
 once in `uiArtifactSets`; a materialization row names it by index
-(`uiArtifactSet`) instead of repeating it (every Machine reporting the same
-bundled plugin reports the same list). The server route encodes with Protocol's
+(`uiArtifactSet`). Indexed rows inherit the snapshot's Machine and Home identity.
+The server route encodes with Protocol's
 `encodePluginAccountAvailabilityMaterializationsReadV1`; the action output schema
 decodes, admitting each list once and sharing that frozen list across rows, and
 the UI projection keeps that one list per replacement instead of copying it per
-row. An inline `uiArtifacts` row is still decoded (admitted on its own).
+row. The decoder accepts earlier indexed rows with an explicit matching identity
+and earlier inline `uiArtifacts` rows. Live declaration bodies stay with their
+Machine, and matching portable release facts remain at the response's top level.
 This is an undeployed 0.3 source contract, not a released wire transition.
 
 Catalog-scale Action, contribution-projection and Account-settings schemas in

@@ -525,6 +525,7 @@ describe("plugin Availability operations", () => {
             tier: 'reactNative' as const, platform: 'web' as const, artifactDigest: marker(offset + index), hostUiApiRange: '^1.0.0',
         }));
         const pluginIds = [PLUGIN_ID, DISABLED_PLUGIN_ID];
+        const declarationMarker = 'Live installation declaration stays with its Machine';
         // Observe Zod's real execution, including when it runs these schemas as nested fields.
         const snapshotParser = vi.spyOn(PluginMachineMaterializationSnapshotV1Schema._zod, 'run');
         const rowParser = vi.spyOn(PluginMachineMaterializationV1Schema._zod, 'run');
@@ -534,6 +535,7 @@ describe("plugin Availability operations", () => {
                     input: { expectedRevision: null, snapshot: { serverIdentityId: SERVER_IDENTITY_ID, machineId, materializations: pluginIds.map((pluginId, index) => ({
                         serverIdentityId: SERVER_IDENTITY_ID, machineId, materializationId: `bundled-${pluginId}`, pluginId,
                         version: RELEASE.version, sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts: artifactsForPlugin(index * 6),
+                        declaredManifest: { ...releaseFacts().normalizedManifest, id: pluginId, displayName: declarationMarker },
                         enabled: true, trustState: 'trusted', observedAt: 1,
                     })) } } })).resolves.toMatchObject({ outcome: 'replaced' });
             }
@@ -583,6 +585,11 @@ describe("plugin Availability operations", () => {
                         const lists = rows.filter(row => row.pluginId === PLUGIN_ID).map(row => row.uiArtifacts);
                         expect(lists[0]).toEqual(artifactsForPlugin(0));
                         expect(new Set(lists).size).toBe(1);
+                        expect(rows.every(row => row.serverIdentityId === SERVER_IDENTITY_ID && row.declaredManifest === undefined)).toBe(true);
+                        expect(response.body).not.toContain(declarationMarker);
+                        // Identity bytes scale with Machine envelopes, even when an installation repeats either value.
+                        expect(response.body.split(`"${SERVER_IDENTITY_ID}"`).length - 1).toBe(machineIds.length);
+                        expect(response.body.split(`"${MACHINE_ID}"`).length - 1).toBe(1);
                     }
                     expect({ snapshots: snapshotParser.mock.calls.length, rows: rowParser.mock.calls.length })
                         .toEqual({ snapshots: 0, rows: 0 });

@@ -870,6 +870,25 @@ describe('Plugin Account availability v1', () => {
     expect(materializationsRead?.availabilityCursor).toBe(12);
   });
 
+  it('admits compact and earlier indexed materializations with the same qualified identity', () => {
+    const schema = availability.PluginAvailabilityMaterializationsReadActionOutputV1Schema;
+    const identity = { serverIdentityId: 'srv_availability_fixture', machineId: 'machine-1' };
+    const row = {
+      materializationId: 'installation-1', pluginId: 'com.acme.fixture', version: '1.2.3',
+      sourceClass: 'localPath', portableRelease: false, uiArtifactSet: 0,
+      enabled: true, trustState: 'trusted', observedAt: 1,
+    };
+    const wire = (materialization: object) => ({
+      availabilityCursor: 12, uiArtifactSets: [[]],
+      snapshots: [{ ...identity, materializations: [materialization] }],
+    });
+    const earlier = schema.parse(wire({ ...identity, ...row }));
+    expect(schema.parse(wire(row))).toEqual(earlier);
+    expect(earlier.snapshots[0]?.materializations[0]).toMatchObject(identity);
+    expect(schema.safeParse(wire({ ...row, machineId: 'other-machine' })).success).toBe(false);
+    expect(schema.safeParse(wire({ ...row, uiArtifactSet: 1 })).success).toBe(false);
+  });
+
   it('does not publish a URL-bearing hosted-frame selection contract', () => {
     expect(availability).not.toHaveProperty('SelectedVerifiedHostedWebArtifactSourceV1Schema');
     expect(availability).not.toHaveProperty('SelectedVerifiedHostedWebArtifactHandleV1Schema');

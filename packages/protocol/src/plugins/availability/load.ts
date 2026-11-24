@@ -82,9 +82,9 @@ export const PluginAccountAvailabilityMaterializationsReadWireEnvelopeV1Schema =
 }));
 
 /**
- * Replaces each row's `uiArtifactSet` index with its shared admitted list (an
- * inline `uiArtifacts` list is admitted on its own). An unknown index is left
- * in place, so the strict decoded schema refuses that row.
+ * Expands indexed rows with their shared artifact list and snapshot identity.
+ * Explicit identities on older rows still pass through the snapshot check.
+ * Inline lists are admitted on their own, and invalid indices fail admission.
  */
 export function expandPluginMachineUiArtifactSetsV1(
   wire: Readonly<{ snapshots: readonly unknown[]; uiArtifactSets?: readonly (readonly PluginMachineUiArtifactV1[])[] }>,
@@ -98,7 +98,12 @@ export function expandPluginMachineUiArtifactSetsV1(
       if ('uiArtifactSet' in row) {
         const { uiArtifactSet, ...materialization } = row;
         const set = typeof uiArtifactSet === 'number' ? sets[uiArtifactSet] : undefined;
-        return set ? { ...materialization, uiArtifacts: set } : row;
+        return set ? {
+          serverIdentityId: snapshot.serverIdentityId,
+          machineId: snapshot.machineId,
+          ...materialization,
+          uiArtifacts: set,
+        } : row;
       }
       const inline = PluginMachineUiArtifactSetV1Schema.safeParse(row.uiArtifacts);
       return inline.success ? { ...row, uiArtifacts: admitUiArtifactSet(inline.data) } : row;
@@ -106,14 +111,18 @@ export function expandPluginMachineUiArtifactSetsV1(
   }) };
 }
 
-/** Server transport encoding: each distinct Machine UI-artifact list once, rows name it by index. */
+/** Server transport encoding: Machine identity once per snapshot, each artifact list once per response. */
 export function encodePluginAccountAvailabilityMaterializationsReadV1<T extends Readonly<{
-  snapshots: readonly Readonly<{ materializations: readonly Readonly<{ uiArtifacts: readonly PluginMachineUiArtifactV1[] }>[] }>[];
+  snapshots: readonly Readonly<{ materializations: readonly Readonly<{
+    serverIdentityId?: string;
+    machineId?: string;
+    uiArtifacts: readonly PluginMachineUiArtifactV1[];
+  }>[] }>[];
 }>>(response: T): Record<string, unknown> {
   const uiArtifactSets: (readonly PluginMachineUiArtifactV1[])[] = [];
   const indexByContent = new Map<string, number>();
   const snapshots = response.snapshots.map(snapshot => ({ ...snapshot, materializations: snapshot.materializations.map(row => {
-    const { uiArtifacts, ...materialization } = row;
+    const { serverIdentityId: _serverIdentityId, machineId: _machineId, uiArtifacts, ...materialization } = row;
     const key = JSON.stringify(uiArtifacts);
     let uiArtifactSet = indexByContent.get(key);
     if (uiArtifactSet === undefined) {

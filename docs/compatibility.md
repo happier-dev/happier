@@ -2065,10 +2065,13 @@ input field. No stored shape changes (version-3 rows already address bodies by
 digest), so 0.2 data is unaffected; the scoped `../0.2` frontier has no
 Availability V1 intent reads, so there is no released predecessor to adapt.
 
-`materializations.read` also changes transport: rows reference a shared
-`uiArtifactSets` entry by `uiArtifactSet` index (inline `uiArtifacts` rows still
-decode). Older strict readers reject the new fields, so the same reload-together
-rule applies; reported and stored materializations are unchanged.
+`materializations.read` sends each Machine's `serverIdentityId` and `machineId`
+in its snapshot envelope. Rows inherit that qualified identity and reference a
+shared `uiArtifactSets` entry by `uiArtifactSet` index. The decoder also reads
+earlier indexed rows with explicit identities and earlier inline `uiArtifacts`
+rows. Explicit identities still have to match the snapshot. Older strict
+development readers require matching Protocol, server, UI and CLI sources.
+Reported and stored materializations and the V1 wire epoch are unchanged.
 
 The later private version-4 storage change keeps the same response and claim
 contracts. Apply the provider's schema migration before loading the server.
