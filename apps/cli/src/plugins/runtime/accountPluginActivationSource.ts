@@ -1,6 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import axios from '@/api/client/credentialAxios';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -9,13 +8,16 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadAction
     PluginAvailabilityUiArtifactReadActionInputV1Schema, PluginAvailabilityUiArtifactReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema, PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
     PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityIntentSetActionOutputV1Schema,
-    resolvePluginAccountExecutionSelectionV1, createPluginAccountBundledSelectionV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, snapshotPluginReleaseFactsV1,
+    resolvePluginAccountExecutionSelectionV1, createPluginAccountBundledSelectionV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1,
     type PluginAvailabilityIntentReadActionOutputV1, type PluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import { createPluginUiArtifactArchiveV1, decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui/artifactArchive';
 import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import {
+    assertIntentPage, postAvailability, readNamedAccountPluginIntentReads, snapshotIntentRead,
+    type AccountReadBinding,
+} from '@/plugins/availability/accountReads';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { StoredCredentials } from '@/persistence';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
@@ -35,33 +37,19 @@ import { PluginDiagnosticError } from './moduleFailure';
 import { projectAccountContributionRegistry } from './accountContributionProjection';
 
 type AccountBundledSelection = Parameters<typeof resolvePluginAccountExecutionSelectionV1>[0]['bundled'];
-type AccountReadBinding = Readonly<{ credentials: StoredCredentials; serverUrl: string; signal?: AbortSignal }>;
 
-function accountArtifactUnavailable(): PluginDiagnosticError {
-    return new PluginDiagnosticError({ code: 'plugin_account_execution_artifact_unavailable',
-        message: 'plugin_account_execution_artifact_unavailable' });
+function accountArtifactUnavailable(message: string): PluginDiagnosticError {
+    return new PluginDiagnosticError({ code: 'plugin_account_execution_artifact_unavailable', message });
 }
 
-async function postAvailability(input: AccountReadBinding, path: string, body: unknown): Promise<unknown> {
-    input.signal?.throwIfAborted();
-    const response = await axios.post(`${input.serverUrl.replace(/\/+$/, '')}${path}`, body, {
-        headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${input.credentials.token}` },
-        timeout: 0, ...(input.signal ? { signal: input.signal } : {}),
-    });
-    input.signal?.throwIfAborted();
-    return response.data;
-}
-
-function snapshotIntentRead(pluginId: string, response: PluginAvailabilityIntentReadActionOutputV1): PluginAvailabilityIntentReadActionOutputV1 {
-    if ((response.intent && response.intent.pluginId !== pluginId)
-        || (response.release && response.release.ref.pluginId !== pluginId)
-        || response.uiArtifacts.some(link => link.release.pluginId !== pluginId)
-        || response.packageAssets.some(link => link.release.pluginId !== pluginId)) {
-        throw new Error('plugin_account_execution_identity_mismatch');
+function missingHostedAccountArtifact(read: PluginAvailabilityIntentReadActionOutputV1): PluginDiagnosticError {
+    if (!read.hostingCapability.enabled) {
+        return accountArtifactUnavailable('Ask your Happier Home administrator to enable plugin artifact hosting, then try again.');
     }
-    return Object.freeze({ ...response,
-        release: response.release ? snapshotPluginReleaseFactsV1(response.release) : null,
-    });
+    if (read.intent?.offlineUiHosting !== 'enabled') {
+        return accountArtifactUnavailable('Enable artifact hosting for this plugin in Plugins, then try again.');
+    }
+    return accountArtifactUnavailable('Connect a Machine with the selected plugin version installed and trusted. Wait for artifact hosting to finish, then try again.');
 }
 
 async function readIntent(input: AccountReadBinding & Readonly<{ pluginId: string; omitDeclarations?: true }>) {
@@ -112,35 +100,6 @@ async function readCurrentAccountPluginIntentCensus(input: AccountReadBinding & 
     } while (cursor);
     if (knownPluginIds.some(pluginId => !reads.has(pluginId))) throw new Error('plugin_account_execution_unavailable');
     return reads;
-}
-
-/** Exact named intent reads: one request per Availability page of the named set, never the Account census. */
-async function readNamedAccountPluginIntentReads(input: AccountReadBinding & Readonly<{ pluginIds: readonly string[] }>) {
-    const pluginIds = [...new Set(input.pluginIds)].sort();
-    const reads = new Map<string, PluginAvailabilityIntentReadActionOutputV1>();
-    for (let start = 0; start < pluginIds.length; start += PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE) {
-        const named = pluginIds.slice(start, start + PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE);
-        assertIntentPage(input, PluginAvailabilityIntentsListActionOutputV1Schema.parse(await postAvailability(input,
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
-                pluginIds: named,
-                omitDeclarations: true,
-            })), reads);
-    }
-    if (pluginIds.some(pluginId => !reads.has(pluginId))) throw new Error('plugin_account_execution_unavailable');
-    return reads;
-}
-
-/** Admits one strict intent page into `reads`: a failed or duplicated read fails the whole read. */
-function assertIntentPage(input: Readonly<{ isCurrent?: () => boolean }>,
-    page: ReturnType<typeof PluginAvailabilityIntentsListActionOutputV1Schema.parse>,
-    reads: Map<string, PluginAvailabilityIntentReadActionOutputV1>): void {
-    if (input.isCurrent?.() === false) throw new Error('plugin_account_execution_retired');
-    if (page.failedPluginIds.length > 0) throw new Error('plugin_account_execution_unavailable');
-    for (const entry of page.intentReads) {
-        const response = snapshotIntentRead(entry.pluginId, entry.response);
-        if (reads.has(entry.pluginId)) throw new Error('plugin_account_execution_duplicate_read');
-        reads.set(entry.pluginId, response);
-    }
 }
 
 /** Account intent is default-on; an unavailable census never becomes an enabled fact. */
@@ -342,12 +301,19 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
             resolveRelativeModule: async artifactId => {
                 if (!isCurrent(pluginId)) throw new Error('plugin_account_execution_retired');
                 const graph = graphs.get(artifactId);
-                if (!graph || graph.tier !== 'reactNative') throw accountArtifactUnavailable();
                 const release = selection.release;
+                if (!graph || graph.tier !== 'reactNative') {
+                    throw accountArtifactUnavailable(release
+                        ? 'Install a plugin package that includes its Account runtime, then select that version in Plugins.'
+                        : 'Update Happier to install the bundled plugin’s Account runtime, then try again.');
+                }
                 const slot = release?.uiSlots.find(slot => slot.artifactId === artifactId && slot.platform === 'web' && slot.tier === 'reactNative');
                 const link = release && slot ? read.uiArtifacts.find(link => link.release.version === release.ref.version
                     && isPluginUiReleaseSlotCompatibleWithArtifactLinkV1(slot, link)) : null;
-                if (release && (!slot || !link)) throw accountArtifactUnavailable();
+                if (release && !slot) {
+                    throw accountArtifactUnavailable('Install a plugin package that includes its Account runtime, then select that version in Plugins.');
+                }
+                if (release && !link) throw missingHostedAccountArtifact(read);
                 const artifactRoot = resolve(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
                 const entryPath = resolve(release ? root : artifactRoot, graph.entry);
                 const cacheKey = JSON.stringify([accountScopeKey, selection.custodyId]);
@@ -364,7 +330,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                     }
                     const artifact = await runWithServerHttpBaseUrl(input.serverUrl, () => createCredentialedAccountArtifactStore(input.credentials)
                         .openStoredEnvelope(response.artifact, { signal: input.signal }));
-                    if (typeof artifact.body !== 'string') throw accountArtifactUnavailable();
+                    if (typeof artifact.body !== 'string') throw new Error('plugin_account_execution_artifact_invalid');
                     const opened = openPluginUiArtifactArchiveV1({ pluginId, expectedArtifactDigest: graph.digest,
                         header: artifact.header, body: decodePluginUiArtifactArchiveBodyV1(artifact.body) });
                     if (!opened || createCanonicalJsonSigningInput(opened.artifactGraph) !== createCanonicalJsonSigningInput(graph)) {

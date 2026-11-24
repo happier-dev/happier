@@ -1,4 +1,8 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import axios from "axios";
 import tweetnacl from "tweetnacl";
 import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
@@ -63,6 +67,9 @@ import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSch
 import { createAccountPluginDataStorageHost } from "../../../../../cli/src/plugins/runtime/context/accountPluginDataStorage";
 import { pluginDataRoutes } from "@/app/api/routes/plugins/data/pluginDataRoutes";
 import { registerAccountEncryptionRoutes } from "@/app/api/routes/account/registerAccountEncryptionRoutes";
+import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
+import { ACTION_INVOKE_ACTION_ID_V1 } from "@happier-dev/protocol/actions/actionIds";
+import { createActionExecutor } from "@happier-dev/protocol/actions/actionExecutor";
 import { AccountEncryptionCurrentnessResponseSchema, PluginManifestV2Schema } from "@happier-dev/protocol";
 import {
     resolveCurrentPluginWebhookClaimAuthoritiesTxV1,
@@ -299,14 +306,17 @@ describe("plugin Availability operations", () => {
     });
 
     async function seedAccountAndMachine(options: Readonly<{
+        accountId?: string;
         encryptionMode?: "plain" | "e2ee";
+        contentPublicKey?: Uint8Array;
     }> = {}) {
+        const accountId = options.accountId ?? ACCOUNT_ID;
         const encryptionMode = options.encryptionMode ?? "plain";
         await db.account.create({
             data: {
-                id: ACCOUNT_ID,
+                id: accountId,
                 ...(encryptionMode === "e2ee"
-                    ? createSignedAccountContentBinding()
+                    ? createSignedAccountContentBinding(options.contentPublicKey)
                     : { publicKey: null }),
                 encryptionMode,
             },
@@ -314,7 +324,7 @@ describe("plugin Availability operations", () => {
         await db.machine.create({
             data: {
                 id: MACHINE_ID,
-                accountId: ACCOUNT_ID,
+                accountId,
                 metadata: "{}",
                 installationId: "machine-installation-availability",
             },
@@ -331,6 +341,244 @@ describe("plugin Availability operations", () => {
             resolveServerIdentityId: async () => SERVER_IDENTITY_ID,
         });
     }
+
+    it.each(["plain", "e2ee"] as const)("publishes the reviewed install's Account executable on a %s Account without a client lease", async encryptionMode => {
+        const accountId = `${ACCOUNT_ID}-${encryptionMode}`;
+        const keys = encryptionMode === "e2ee" ? tweetnacl.box.keyPair() : null;
+        await seedAccountAndMachine({ accountId, encryptionMode, contentPublicKey: keys?.publicKey });
+        const service = operations();
+        const publisher = { machineId: MACHINE_ID, installationId: "machine-installation-availability", keyPair: tweetnacl.sign.keyPair() };
+        await db.machine.update({
+            where: { id: MACHINE_ID },
+            data: { installationPublicKey: new Uint8Array(publisher.keyPair.publicKey) },
+        });
+        const { packLocalPlugin } = await import("../../../../../cli/src/plugins/packaging/pack");
+        const { createPluginReloadController } = await import("../../../../../cli/src/plugins/runtime/reload/controller");
+        const { createDaemonPluginRegistryRuntimeLifecycle } = await import("../../../../../cli/src/plugins/runtime/reload/registryRuntimeLifecycle");
+        const { createDaemonArchivePluginChangePreparer } = await import("../../../../../cli/src/plugins/daemon/archiveChangePreparer");
+        const { createDaemonPluginChangeService } = await import("../../../../../cli/src/plugins/daemon/changeService");
+        const { createPluginRegistryStateStore } = await import("../../../../../cli/src/plugins/store/registry/currentState");
+        const { createDaemonPluginAvailabilityReporter } = await import("../../../../../cli/src/plugins/availability/daemonReporter");
+        const { createDaemonPluginRuntimeOwner } = await import("../../../../../cli/src/plugins/daemon/runtimeOwner");
+        const { runWithServerHttpBaseUrl } = await import("../../../../../cli/src/api/client/serverHttpBaseUrl");
+        const { buildCurrentAccountStoredContentCompatibilityHttpHeaders } = await import("../../../../../cli/src/api/clientCompatibility/cliClientCompatibility");
+        const { resolveAccountSettingsScopeKey } = await import("../../../../../cli/src/settings/accountSettings/accountSettingsScopeKey");
+        const { publishPluginAccountAvailabilityChanges } = await import("../../../../../cli/src/plugins/runtime/context/pluginAccountSettingsChangeBroker");
+        const { resolveExecutablePluginRuntimeRegistry } = await import("../../../../../cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry");
+        const { createCommittedContributedActionInvoker } = await import("../../../../../cli/src/plugins/runtime/invocation/actions/createCommittedContributedActionDeps");
+        const { createUnavailableActionTransportDeps } = await import("../../../../../cli/src/testkit/actionTransportDeps");
+        const { getResolvedContributionRegistry } = await import("../../../../../cli/src/plugins/projection/registry/builtIn/snapshot");
+        const manifest = PluginManifestV2Schema.parse({
+            schemaVersion: 2, id: PLUGIN_ID, version: RELEASE.version, displayName: "Portable Note",
+            entrypoints: { daemon: "./daemon.mjs" }, engines: { happier: "^0.3.0" }, runtime: { apiVersion: 1 },
+            contributes: { actions: [{
+                id: "note", title: "Note", scopes: ["global"], surfaces: ["cli"], dangerLevel: "safe",
+                execution: { target: "account", account: { artifactId: "account-runtime", exportName: "activate" } },
+            }] },
+        });
+        const relativePath = "react-native/account-runtime/entry.cjs.bundle";
+        const bytes = Buffer.from('exports.activate = api => api.actions.register("note", () => "portable-note");\n');
+        const digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath, bytes }]);
+        const graph = {
+            artifactId: "account-runtime", tier: "reactNative", entry: relativePath, digest,
+            files: [{ relativePath, byteSize: bytes.byteLength, digest: computePluginUiArtifactSha256DigestV1(bytes) }],
+            hostUiApiRange: "^1.0.0", executable: { exports: ["activate"] }, builtWith: { bundler: "esbuild", version: "0.27.2" },
+        };
+        const root = await mkdtemp(join(tmpdir(), "happier-publication-install-"));
+        const project = join(root, "plugin");
+        const machineHome = join(root, "machine");
+        const accountHome = join(root, "account");
+        const archivePath = join(root, "portable-note.tgz");
+        const reloadController = createPluginReloadController({ happyHomeDir: machineHome });
+        try {
+            const generated = join(project, "dist", "happier-plugin-ui");
+            await mkdir(join(project, ".happier-plugin"), { recursive: true });
+            await mkdir(join(generated, "react-native", "account-runtime"), { recursive: true });
+            await writeFile(join(project, "package.json"), JSON.stringify({
+                name: "@acme/portable-note", version: RELEASE.version, keywords: ["happier-plugin"],
+                happier: { manifest: ".happier-plugin/plugin.json" }, files: [".happier-plugin", "daemon.mjs", "dist"],
+            }));
+            await writeFile(join(project, ".happier-plugin", "plugin.json"), JSON.stringify(manifest));
+            await writeFile(join(project, "daemon.mjs"), "export function activate() {}\n");
+            await writeFile(join(generated, "ui-artifacts.json"), JSON.stringify({ version: 2, entries: [graph] }));
+            await writeFile(join(generated, relativePath), bytes);
+            const packed = await packLocalPlugin({ locator: join(project, ".happier-plugin", "plugin.json"), outPath: archivePath });
+            expect(packed, JSON.stringify(packed)).toMatchObject({ ok: true });
+            const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({ happyHomeDir: machineHome, reloadController });
+            const stateStore = createPluginRegistryStateStore({ happyHomeDir: machineHome, runtimeLifecycle });
+            await stateStore.initialize();
+            const initial = await reloadController.acquireRuntimeRegistry({
+                resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+                    happyHomeDir: machineHome, generation: reloadController.getState().generation + 1,
+                }),
+            });
+            await initial.release();
+            const changes = createDaemonPluginChangeService({
+                prepare: createDaemonArchivePluginChangePreparer({ happyHomeDir: machineHome, runtimeLifecycle }),
+            });
+            const review = await changes.requestPluginChange({ kind: "installArchive", locator: archivePath });
+            expect(review, JSON.stringify(review)).toMatchObject({ kind: "reviewRequired" });
+            if (review.kind !== "reviewRequired") throw new Error("Expected archived installation review");
+            const committed = await changes.decidePluginChange({ pendingChangeId: review.pendingChangeId, decision: "installAndTrust" });
+            expect(committed, JSON.stringify(committed)).toMatchObject({ kind: "committed", pluginId: PLUGIN_ID });
+            const inventory = await stateStore.readAvailabilityInventory();
+            expect(inventory.releasePublications[0]?.facts.uiSlots).toEqual(expect.arrayContaining([
+                expect.objectContaining({ tier: "reactNative", platform: "web", artifactDigest: digest }),
+            ]));
+            const credentials = {
+                token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString("base64url")}.signature`,
+                encryption: keys ? { type: "dataKey" as const, publicKey: keys.publicKey, machineKey: keys.secretKey } : null,
+            };
+            const reporter = createDaemonPluginAvailabilityReporter({
+                credentials, getMachineId: () => MACHINE_ID,
+                serverFeaturesSnapshotStore: { getSnapshot: () => ({
+                    status: "ready",
+                    features: { capabilities: { serverIdentity: { serverIdentityId: SERVER_IDENTITY_ID } } } as FeaturesResponse,
+                }) },
+            });
+            const post = PluginAvailabilityActionHttpPathsV1;
+            const writes: Readonly<{ status: number; code?: string }>[] = [];
+            const accountModeReads: number[] = [];
+            await withAuthenticatedTestApp(app => {
+                registerPluginAvailabilityRoutes(app, { operations: service });
+                registerAccountEncryptionRoutes(app);
+                changesRoutes(app);
+            }, async app => {
+                const originalAdapter = axios.defaults.adapter;
+                axios.defaults.adapter = async config => {
+                    const path = new URL(config.url!).pathname;
+                    const body = typeof config.data === "string" ? JSON.parse(config.data) : config.data;
+                    const signed = path === post["account.plugins.availability.release.publish"]
+                        || path === post["account.plugins.availability.materializations.report"];
+                    const response = await app.inject({
+                        method: config.method?.toUpperCase(), url: path, payload: body,
+                        headers: {
+                            ...config.headers.toJSON(), "x-test-user-id": accountId,
+                            ...(signed ? { [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                                createSignedPluginInstallationPublisherHeader({ ...publisher, path, body }) } : {}),
+                        },
+                    });
+                    const result = { data: response.json(), status: response.statusCode, statusText: "", headers: {}, config };
+                    if (path === "/v1/account/encryption" || path === "/v1/account/encryption/currentness") accountModeReads.push(result.status);
+                    if (path === post["account.plugins.availability.uiArtifact.publish"]) {
+                        writes.push({ status: result.status, ...(result.status >= 400 ? { code: result.data.error } : {}) });
+                    }
+                    if (config.validateStatus && !config.validateStatus(result.status)) {
+                        throw new axios.AxiosError(`Fixture HTTP ${result.status}`, undefined, config, undefined, result);
+                    }
+                    return result;
+                };
+                try {
+                    const origin = `http://${encryptionMode}-account-artifact-publication.test`;
+                    await runWithServerHttpBaseUrl(origin, async () => {
+                        const sources = inventory.accountExecutableSources ?? [];
+                        expect(sources).toHaveLength(1);
+                        await reloadController.shutdown();
+                        const machineController = createPluginReloadController({ happyHomeDir: machineHome });
+                        const abort = new AbortController();
+                        const scopeKey = resolveAccountSettingsScopeKey(credentials);
+                        const unexpectedCredentialRequest = (): never => { throw new Error("Fixture has no Connected Account"); };
+                        const publications: Promise<void>[] = [];
+                        const owner = createDaemonPluginRuntimeOwner({
+                            happyHomeDir: machineHome, staleCandidateCleanup: "disabled", reloadController: machineController,
+                            startupMode: "pluginRecovery", signal: abort.signal,
+                            accountStorageDependencies: { readCredentials: async () => credentials,
+                                isCurrentAccount: () => true, resolveAccountScopeKey: () => scopeKey, resolveBaseUrl: () => origin },
+                            connectedAccounts: { getBinding: unexpectedCredentialRequest, requestSelection: unexpectedCredentialRequest,
+                                materialize: unexpectedCredentialRequest, listAccounts: unexpectedCredentialRequest,
+                                materializeListedAccount: unexpectedCredentialRequest, watch: unexpectedCredentialRequest },
+                            availabilityReporter: { ...reporter, publishAccountExecutables: current => {
+                                const publication = reporter.publishAccountExecutables!(current);
+                                publications.push(publication);
+                                return publication;
+                            } },
+                        });
+                        try {
+                            await owner.initialize();
+                            expect(publications.length).toBeGreaterThan(0);
+                            await Promise.all(publications);
+                            expect(writes).toEqual([]);
+                            const requestHeaders = { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), "x-test-user-id": accountId };
+                            const cursor = await app.inject({ method: "GET", url: "/v2/cursor", headers: requestHeaders });
+                            expect(cursor.statusCode, cursor.body).toBe(200);
+                            const enabled = await app.inject({
+                                method: "POST", url: post["account.plugins.availability.intent.set"],
+                                headers: requestHeaders,
+                                payload: { pluginId: PLUGIN_ID, enabled: true, desiredVersion: RELEASE.version,
+                                    offlineUiHosting: "enabled", writableCollections: [], expectedRevision: null },
+                            });
+                            expect(enabled.statusCode, enabled.body).toBe(200);
+                            const source = sources[0]!;
+                            const slot = source.artifacts[0]!.slots.find(candidate => candidate.platform === "web")!;
+                            const tampered = Buffer.from(bytes);
+                            tampered[0] ^= 1;
+                            if (encryptionMode === "plain") {
+                                const archive = createPluginUiArtifactArchiveV1({ pluginId: PLUGIN_ID, artifactGraph: graph, files: [{ relativePath, bytes }] })!;
+                                const invalid = await app.inject({
+                                    method: "POST", url: post["account.plugins.availability.uiArtifact.publish"],
+                                    headers: { "x-test-user-id": accountId },
+                                    payload: { release: source.release.ref, slot, accountArtifactId: randomUUID(), artifact: {
+                                        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                                        header: encodePlainArtifactStoredContent(archive.header),
+                                        body: encodePlainArtifactStoredContent({ body: encodePluginUiArtifactArchiveBodyV1({
+                                            v: 1, files: [{ relativePath, bytesBase64: tampered.toString("base64") }],
+                                        }) }),
+                                    } },
+                                });
+                                expect(invalid.statusCode, invalid.body).toBe(400);
+                                expect(invalid.json()).toEqual({ error: "plugin_ui_artifact_invalid_content" });
+                            }
+                            const installedFile = join(source.installedRoot, "dist", "happier-plugin-ui", relativePath);
+                            await writeFile(installedFile, tampered);
+                            await reporter.publishAccountExecutables?.(await stateStore.readAccountExecutableSources([PLUGIN_ID]));
+                            expect(writes).toEqual([]);
+                            await writeFile(installedFile, bytes);
+                            const page = await app.inject({ method: "GET", url: `/v2/changes?after=${cursor.json().cursor}&kinds=pluginDomain`, headers: requestHeaders });
+                            expect(page.statusCode, page.body).toBe(200);
+                            const changes = page.json().changes;
+                            expect(changes, page.body).toEqual(expect.arrayContaining([
+                                expect.objectContaining({ hint: { pluginDomain: "availability", pluginId: PLUGIN_ID } }),
+                            ]));
+                            const startupPublications = publications.length;
+                            // Deliver the real Home change page at the socket boundary.
+                            publishPluginAccountAvailabilityChanges(scopeKey, changes);
+                            await vi.waitFor(() => expect(publications.length).toBeGreaterThan(startupPublications));
+                            await Promise.all(publications.slice(startupPublications));
+                            expect(writes, JSON.stringify({ writes, accountModeReads })).toEqual(
+                                inventory.releasePublications[0]!.facts.uiSlots.map(() => ({ status: 200 })),
+                            );
+                            const headless = createPluginReloadController({ happyHomeDir: accountHome });
+                            try {
+                                const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+                                    invokeContributedAction: createCommittedContributedActionInvoker({
+                                        acquireRuntimeRegistryLease: () => headless.acquireRuntimeRegistry({
+                                            resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+                                                happyHomeDir: accountHome, contributes: getResolvedContributionRegistry(),
+                                                accountExecution: { credentials, serverUrl: origin, isCurrent: () => true },
+                                            }),
+                                        }),
+                                    }),
+                                });
+                                const result = await executor.execute(ACTION_INVOKE_ACTION_ID_V1,
+                                    { action: { pluginId: PLUGIN_ID, localId: "note" }, input: {} }, { surface: "cli" });
+                                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: "portable-note" });
+                            } finally { await headless.shutdown(); }
+                            await reporter.publishAccountExecutables?.(sources);
+                            expect(writes).toHaveLength(inventory.releasePublications[0]!.facts.uiSlots.length);
+                        } finally {
+                            abort.abort();
+                            await owner.changeService.shutdown();
+                            await machineController.shutdown();
+                            await Promise.allSettled(publications);
+                        }
+                    });
+                } finally { axios.defaults.adapter = originalAdapter; }
+            });
+        } finally {
+            await reloadController.shutdown();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
 
     it("retains a release-less bundled Account disable intent and re-enables it without a release", async () => {
         await seedAccountAndMachine();

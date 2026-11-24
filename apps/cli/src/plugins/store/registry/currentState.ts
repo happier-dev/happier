@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
 
+import { derivePluginAccountExecutionArtifactSlots } from '@happier-dev/protocol/plugins/contributions/catalog';
+import type { PluginUiReleaseSlotV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 import { snapshotPluginReleaseFactsV1, projectPluginMachineUiArtifactV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { PluginAvailabilityReleasePublishActionInputV1, PluginMachineMaterializationV1, PluginInstallReviewPrincipalDigest, PluginInstallReviewPrincipalPresentationV1, PluginUpdatePolicyV1 } from '@happier-dev/protocol';
 import { PluginInstallReviewPrincipalDigestSchema, PluginInstallReviewPrincipalPresentationV1Schema } from '@happier-dev/protocol/plugins/permissions/grants';
@@ -237,9 +240,16 @@ export type PluginRegistryStateMutationResult = Readonly<{
  * the daemon boundary supplies those live transport facts without becoming a
  * second install-state owner.
  */
+export type PluginAccountExecutableSource = Readonly<{
+  release: Pick<PluginAvailabilityReleasePublishActionInputV1['facts'], 'ref' | 'archiveDigestSha256'>;
+  installedRoot: string;
+  artifacts: readonly Readonly<{ graph: PluginUiArtifactsManifestEntryV2; slots: readonly PluginUiReleaseSlotV1[] }>[];
+}>;
+
 export type PluginRegistryAvailabilityInventory = Readonly<{
   revision: number;
   releasePublications: readonly PluginAvailabilityReleasePublishActionInputV1[];
+  accountExecutableSources?: readonly PluginAccountExecutableSource[];
   materializations: readonly Omit<
     PluginMachineMaterializationV1,
     'serverIdentityId' | 'machineId'
@@ -351,6 +361,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     approvedAuthorityManifestsByPluginId: Readonly<Record<string, CanonicalPluginManifest>>;
   }>>;
   readAvailabilityInventory: () => Promise<PluginRegistryAvailabilityInventory>;
+  readAccountExecutableSources: (pluginIds: readonly string[] | null) => Promise<readonly PluginAccountExecutableSource[]>;
   readAvailabilityInventoryForCommit: (
     record: PluginRegistryCommitRecord,
   ) => Promise<PluginRegistryAvailabilityInventory>;
@@ -620,10 +631,42 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     return await readCommittedState(commit);
   }
 
+  function installationTrustState(pluginId: string, installation: PluginInstallationStateRevision['plugins'][string], catalogRecord: PluginStateRecord) {
+    return isPluginTrustRecordAuthorized(installation.trust, { pluginId, distribution: installation.source.distribution })
+      ? 'trusted' as const
+      : catalogRecord.source.trustPolicy === 'untrusted' ? 'revoked' as const : 'untrusted' as const;
+  }
+
+  function projectAccountExecutableSource(input: Readonly<{
+    release: PluginAvailabilityReleasePublishActionInputV1['facts'];
+    catalogRecord: PluginStateRecord;
+    enabled: boolean;
+    trustState: ReturnType<typeof installationTrustState>;
+  }>): PluginAccountExecutableSource | null {
+    const installedRoot = input.catalogRecord.install.installedPath;
+    if (!input.enabled || input.trustState !== 'trusted' || !installedRoot) return null;
+    const { ref, archiveDigestSha256, normalizedManifest, uiSlots } = input.release;
+    if (uiSlots.length === 0) return null;
+    const accountSlots = derivePluginAccountExecutionArtifactSlots(normalizedManifest.contributes);
+    const byArtifact = new Map<string, { graph: PluginUiArtifactsManifestEntryV2; slots: PluginUiReleaseSlotV1[] }>();
+    for (const slot of uiSlots) {
+      if (slot.tier !== 'reactNative' || !slot.artifactGraph || !accountSlots.some(account =>
+        account.contributionId === slot.contributionId && account.registrationRight.target.artifactId === slot.artifactId)) continue;
+      let artifact = byArtifact.get(slot.artifactId);
+      if (!artifact) {
+        artifact = { graph: slot.artifactGraph, slots: [] };
+        byArtifact.set(slot.artifactId, artifact);
+      }
+      artifact.slots.push(slot);
+    }
+    return byArtifact.size > 0 ? { release: { ref, archiveDigestSha256 }, installedRoot, artifacts: [...byArtifact.values()] } : null;
+  }
+
   async function projectAvailabilityInventory(
     current: Awaited<ReturnType<typeof readCommittedState>>,
   ): Promise<PluginRegistryAvailabilityInventory> {
     const releasePublications: PluginAvailabilityReleasePublishActionInputV1[] = [];
+    const accountExecutableSources: PluginAccountExecutableSource[] = [];
     const installedMaterializations = Object.entries(current.revision.plugins).map(([
       pluginId,
       installation,
@@ -649,14 +692,11 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         }));
       }
       const uiArtifacts = Object.freeze((release?.uiSlots ?? []).map(projectPluginMachineUiArtifactV1));
-      const trustState = isPluginTrustRecordAuthorized(installation.trust, {
-        pluginId,
-        distribution: installation.source.distribution,
-      })
-        ? 'trusted' as const
-        : catalogRecord.source.trustPolicy === 'untrusted'
-          ? 'revoked' as const
-          : 'untrusted' as const;
+      const trustState = installationTrustState(pluginId, installation, catalogRecord);
+      if (release) {
+        const source = projectAccountExecutableSource({ release, catalogRecord, enabled: installation.enabled, trustState });
+        if (source) accountExecutableSources.push(source);
+      }
       return Object.freeze({
         materializationId: installation.materializationId,
         pluginId,
@@ -694,6 +734,7 @@ export function createPluginRegistryStateStore(params?: Readonly<{
         : []);
     return Object.freeze({
       revision: current.commit.revision,
+      ...(accountExecutableSources.length > 0 ? { accountExecutableSources: Object.freeze(accountExecutableSources) } : {}),
       releasePublications: Object.freeze([...releasePublications].sort((left, right) => (
         `${left.facts.ref.pluginId}\u0000${left.facts.ref.version}`.localeCompare(
           `${right.facts.ref.pluginId}\u0000${right.facts.ref.version}`,
@@ -1967,6 +2008,19 @@ export function createPluginRegistryStateStore(params?: Readonly<{
     readAvailabilityInventoryForCommit: async (record) => (
       await projectAvailabilityInventory(await readCommittedState(record))
     ),
+    readAccountExecutableSources: async (pluginIds) => {
+      if (pluginIds?.length === 0) return [];
+      const current = await readPersistedCurrent();
+      if (!current) return [];
+      return (pluginIds ?? Object.keys(current.revision.plugins)).flatMap(pluginId => {
+        const installation = current.revision.plugins[pluginId];
+        const catalogRecord = current.catalog.plugins[pluginId];
+        if (!installation?.availability?.portableRelease || !catalogRecord) return [];
+        const source = projectAccountExecutableSource({ release: installation.availability.release, catalogRecord,
+          enabled: installation.enabled, trustState: installationTrustState(pluginId, installation, catalogRecord) });
+        return source ? [source] : [];
+      });
+    },
     readSnapshot: async () => {
       const current = await readPersistedCurrent();
       if (!current) {

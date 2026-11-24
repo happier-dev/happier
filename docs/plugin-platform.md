@@ -3554,9 +3554,20 @@ artifacts and resources; they do not prompt for trust or replace Account policy.
 Account-hosted sign-in requires the selected declaration and its compiled
 Account runtime artifact on the invoking host. A fresh Account selects eligible
 bundled declarations by default. Neon and Supabase token sign-in can begin with
-an empty credential list and no connected Machine. If the artifact is missing,
-sign-in reports the artifact error and asks the person to repair the Happier or
-plugin installation before retrying.
+an empty credential list and no connected Machine. For a portable release, keep
+a Machine with the trusted selected version connected until hosting finishes.
+A missing artifact reports the applicable next step in the Action or sign-in
+result.
+
+In 0.3 development source, the installing daemon supplies exact Account
+executable bytes from the admitted immutable package. An applied install,
+reconnect, or Account Availability change can trigger publication for the
+enabled selected release when artifact hosting is enabled. The daemon verifies
+the compiler graph and file digests before sealing the contents with the
+Account Artifact codec. The existing Home publication operation binds each
+link to the exact admitted release slot and verifies plaintext against that
+slot. The Account activation host opens and verifies hosted bytes before
+execution, including in encrypted Accounts.
 
 Availability validates and normalizes declarations at claim/release publication.
 Its stored-declaration readers check the identifying envelope rather than

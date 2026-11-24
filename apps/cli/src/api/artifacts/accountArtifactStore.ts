@@ -1139,6 +1139,15 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(options?.authorizationHeaders ? { authorizationHeaders: options.authorizationHeaders } : {}) }, stored) };
     },
     /** Qualified host APIs admit their own identity; reuse the Account codec, not ordinary Artifact visibility. */
+    prepareStoredEnvelope: async (content: Readonly<{
+      header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1; signal?: AbortSignal;
+    }>) => {
+      content.signal?.throwIfAborted();
+      const codec = await createCodec({ credentials: contentCredentials, mode: await readAccountMode({ signal: content.signal }) });
+      content.signal?.throwIfAborted();
+      return { header: codec.encode(content.header), body: codec.encode({ body: content.body }),
+        dataEncryptionKey: codec.dataEncryptionKey };
+    },
     openStoredEnvelope: async (envelope: Readonly<{ header: string; body: string; dataEncryptionKey: string }>,
       options?: Readonly<{ signal?: AbortSignal }>): Promise<Readonly<{ header: Readonly<Record<string, unknown>>; body: ArtifactBodyV1 | null }>> => {
       options?.signal?.throwIfAborted();

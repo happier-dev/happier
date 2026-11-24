@@ -4,6 +4,9 @@ import type { ServerFeaturesSnapshotStore } from '@/features/serverFeaturesSnaps
 import type { StoredCredentials } from '@/persistence';
 import type { DaemonPluginAvailabilityReporter } from '@/plugins/daemon/runtimeOwner';
 import { logger } from '@/ui/logger';
+import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
+
+import { publishInstalledAccountExecutables } from './accountExecutablePublication';
 
 import {
   createServerPluginAvailabilityPublisher,
@@ -28,6 +31,7 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
   credentials: StoredCredentials;
   serverFeaturesSnapshotStore: Pick<ServerFeaturesSnapshotStore, 'getSnapshot'>;
   getMachineId: () => string;
+  resolveServerUrl?: () => string;
   signal?: AbortSignal;
 }>): DaemonPluginAvailabilityReporter {
   const publisher = createServerPluginAvailabilityPublisher({
@@ -139,6 +143,13 @@ export function createDaemonPluginAvailabilityReporter(params: Readonly<{
   }
 
   return Object.freeze({
+    publishAccountExecutables(sources) {
+      return publishInstalledAccountExecutables({
+        credentials: params.credentials,
+        serverUrl: (params.resolveServerUrl ?? resolveServerHttpBaseUrl)(),
+        signal: params.signal,
+      }, sources);
+    },
     report(inventory) {
       pendingLatest = { inventory };
       if (!inFlight) {

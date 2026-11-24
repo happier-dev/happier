@@ -333,11 +333,11 @@ it('reports missing Account artifact availability on first and repeated lookup i
             { operation: 'beginConnect', service, modeId: 'setup-token' },
             { native: async () => { throw new Error('Account artifact failure must not replay on a Machine'); } }));
         expect(registry.pluginDiagnosticsByPluginId[service.pluginId]).toEqual(expect.arrayContaining([
-            expect.objectContaining({ code: 'plugin_account_execution_artifact_unavailable', message: 'plugin_account_execution_artifact_unavailable' }),
+            expect.objectContaining({ code: 'plugin_account_execution_artifact_unavailable', message: expect.stringMatching(/Update Happier/) }),
         ]));
         const unavailable = { status: 'unavailable', code: 'plugin_account_execution_artifact_unavailable',
             diagnostic: expect.objectContaining({ code: 'plugin_account_execution_artifact_unavailable', severity: 'error',
-                message: expect.any(String), remediation: { kind: 'retry' } }) };
+                message: expect.stringMatching(/Update Happier/), remediation: { kind: 'retry' } }) };
         expect(outcomes).toEqual([unavailable, unavailable]);
         expect(fixture.machineRequests).toBe(0);
         expect(fixture.promotedResourceCount).toBe(0);

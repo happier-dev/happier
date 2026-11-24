@@ -2058,6 +2058,7 @@ export async function startDaemon(
         credentials,
         serverFeaturesSnapshotStore,
         getMachineId: () => machineId,
+        resolveServerUrl: readDaemonHomeServerHttpBaseUrl,
         signal: homeTransportCancellation.signal,
       }),
       connectedAccounts: connectedAccountPurposeBindingRuntime.owner,

@@ -102,8 +102,16 @@ it('reads a bundled Account Action from the catalog that advertised it despite a
     // rather than reinterpret the Machine catalog's absence as unknown_action.
     const result = await bridge.executeActionByToolName('action_execute', { actionId: id,
       input: { v: 1, resource: { kind: 'issue', url: 'https://github.com/example/repo/issues/1' } } }, 'catalog-session');
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'plugin_daemon_module_load_failed',
-      details: { name: 'PluginError', code: 'plugin_daemon_module_load_failed',
-        message: 'plugin_account_execution_artifact_unavailable' } });
+    expect(result, JSON.stringify(result)).toMatchObject({
+      ok: false,
+      errorCode: 'plugin_account_execution_artifact_unavailable',
+      effectAttempted: false,
+      details: {
+        name: 'PluginError',
+        code: 'plugin_account_execution_artifact_unavailable',
+        message: expect.stringMatching(/Update Happier/),
+        actionHandlerInvocation: 'notStarted',
+      },
+    });
   } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
 });

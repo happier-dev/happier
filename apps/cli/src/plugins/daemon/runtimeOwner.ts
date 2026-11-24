@@ -132,6 +132,7 @@ export type DaemonPluginRuntimeOwner = Readonly<{
  */
 export type DaemonPluginAvailabilityReporter = Readonly<{
   report: (inventory: PluginRegistryAvailabilityInventory) => Promise<void>;
+  publishAccountExecutables?: (sources: NonNullable<PluginRegistryAvailabilityInventory['accountExecutableSources']>) => Promise<void>;
 }>;
 
 /**
@@ -797,6 +798,10 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             runtimeMaterializations: lease.registry.readReleaseLessMaterializations?.() ?? [],
           });
           await reporter.report(complete);
+          if (complete.accountExecutableSources && reporter.publishAccountExecutables) {
+            void reporter.publishAccountExecutables(complete.accountExecutableSources)
+              .catch((error: unknown) => reportAvailabilityFailure(error, complete.revision));
+          }
         } catch (error) { failures.push(error); }
       }
       // Native provisioners need declaration admission before Save/acquire,
@@ -1163,6 +1168,12 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           ? params.accountStorageDependencies.resolveAccountScopeKey()
           : getActiveAccountSettingsSnapshot()?.scopeKey;
         if (accountScopeKey !== currentScopeKey) return;
+        const publish = params.availabilityReporter?.publishAccountExecutables;
+        if (publish && pluginIds?.length !== 0) {
+          void stateStore.readAccountExecutableSources(pluginIds)
+            .then(publish)
+            .catch((error: unknown) => reportAvailabilityFailure(error, -1));
+        }
         const contributes = params.reloadController.getState().activeRegistry?.contributes;
         const changedPluginIds = [...new Set(pluginIds === null ? [
           ...Object.keys(contributes?.pluginEnablementById ?? {}),

@@ -205,7 +205,7 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
         if (activationFailure) {
             if (activationFailure.code === 'plugin_account_execution_artifact_unavailable') {
                 throw new PluginError({ code: activationFailure.code,
-                    message: 'The plugin’s Account runtime is missing. Update Happier if the plugin was bundled, or reinstall the plugin from Plugins.',
+                    message: activationFailure.message,
                     remediation: { kind: 'retry' } });
             }
             throw new PluginError({ code: 'connected_account_service_unavailable',

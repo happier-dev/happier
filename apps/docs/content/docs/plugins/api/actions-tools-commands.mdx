@@ -665,6 +665,10 @@ target handler through the canonical dispatcher.
   { artifactId, exportName } }` names one portable Account handler. Its root
   `run` binds through `activateAccount`; the same handler can run from a UI or
   an authenticated headless host without acquiring Machine services.
+  For an installed package, select its version for the Account and enable
+  artifact hosting in Plugins. Keep a Machine with that trusted version
+  connected until hosting finishes. The hosted runtime can then run on a
+  headless host even after the installing Machine disconnects.
 - Omitted `scopes` default to `['global']` and omitted `dangerLevel` defaults
   to `'safe'`; declare them only when an Action differs.
 - `host` is not a public plugin target; canonical host ActionSpecs keep their
