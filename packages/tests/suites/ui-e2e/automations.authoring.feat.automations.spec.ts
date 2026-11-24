@@ -701,9 +701,10 @@ test.describe('ui e2e: automations authoring', () => {
         await page.getByTestId('workflow-editor-redo').click();
         await expect(pending).toHaveCount(1);
         await page.getByTestId('workflow-editor-save').click();
-        await expect.poll(async () => (await readTriggers()).flatMap(set => set.triggers).length).toBe(1);
+        const savedTrigger = page.locator('[data-testid^="workflow-editor-trigger:saved:"][data-testid$="-starts"]');
+        await expect(savedTrigger).toHaveCount(1);
         const sets = await readTriggers();
-        expect(sets[0]?.triggers[0]).toMatchObject({ kind: 'pluginEvent', filter });
+        expect(sets.flatMap(set => set.triggers)).toMatchObject([{ kind: 'pluginEvent', filter }]);
         const saved = await invokeP04Action(context, 'f2-saved', 'workflow.definition.get', { definitionId });
         expect(WorkflowDefinitionGetResultV1Schema.parse(saved.data).metadata.title).toBe(renamed);
         const readRuns = async () => {
