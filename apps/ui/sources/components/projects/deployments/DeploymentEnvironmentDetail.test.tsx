@@ -2383,7 +2383,7 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
-  it.each(['degraded', 'passing', 'deploying'] as const)('uses one history read for Recent activity and current health (%s)', async phase => {
+  it.each(['degraded', 'passing', 'deploying', 'deployingWithoutAnObservation'] as const)('uses one history read for Recent activity and current health (%s)', async phase => {
     const base = environmentDetailForHome();
     const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
     if (!servingId) throw new Error('Expected a serving receipt in the fixture');
@@ -2393,7 +2393,8 @@ describe('Project deployments page', () => {
       deployment: createDeploymentReceiptHeaderV1({ id: 'working-attempt', state: 'running', requestedAtMs: 7, startedAtMs: 8, settledAtMs: undefined }),
     });
     const listHistory = vi.fn();
-    const { controller, detail } = controllerFor({ receipt: serving, history: phase === 'deploying' ? [deploying, serving, earlier] : [serving, earlier], onListHistory: listHistory, detail: { ...base, healthAggregate: {
+    const inProgress = phase === 'deploying' || phase === 'deployingWithoutAnObservation';
+    const { controller, detail } = controllerFor({ receipt: serving, history: inProgress ? [deploying, serving, earlier] : [serving, earlier], onListHistory: listHistory, detail: { ...base, healthAggregate: phase === 'deployingWithoutAnObservation' ? undefined : {
       v: 1, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
       protection: base.environment.protection, status: phase === 'passing' ? 'up' : phase === 'deploying' ? 'down' : 'degraded',
       n: 3, down: phase === 'passing' ? 0 : phase === 'deploying' ? 3 : 1, degraded: 0, unknown: 0,
@@ -2412,8 +2413,8 @@ describe('Project deployments page', () => {
       const recentRowIds = screen.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('project-deployments.receipt.row.') && typeof node.props.onPress === 'function')
         .map(row => row.props.testID);
-      expect([...new Set(recentRowIds)].slice(0, phase === 'deploying' ? 3 : 2)).toEqual([
-        ...(phase === 'deploying' ? ['project-deployments.receipt.row.working-attempt'] : []),
+      expect([...new Set(recentRowIds)].slice(0, inProgress ? 3 : 2)).toEqual([
+        ...(inProgress ? ['project-deployments.receipt.row.working-attempt'] : []),
         `project-deployments.receipt.row.${servingId}`,
         'project-deployments.receipt.row.earlier-attempt',
       ]);
