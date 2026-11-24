@@ -2,7 +2,7 @@ import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositionV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { readDeploymentDomainCloudflareConnectorV1, type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { parseMachineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
@@ -200,9 +200,10 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
 /** Native children consume only their own saved value-free operand. */
 export function cloudflareDomainConnectorForTarget(content: DeploymentDomainContentV1,
     target: Readonly<{ machineId: string; installationId: string }>): DeploymentDomainChildRpcV1['cloudflareConnector'] {
-    const prepared = content.cloudflarePreparation;
-    const connector = prepared?.connectors?.find(item => item.machineId === target.machineId && item.installationId === target.installationId);
-    return prepared && connector ? { tunnelId: prepared.tunnelId, grantRef: connector.grantRef,
+    const selected = readDeploymentDomainCloudflareConnectorV1(content, target);
+    if (!selected) return undefined;
+    const { prepared, connector } = selected;
+    return { tunnelId: prepared.tunnelId, grantRef: connector.grantRef,
         ...(prepared.connectorsPerMachine === undefined ? {} : { connectorsPerMachine: prepared.connectorsPerMachine }),
-        connector: { imageRef: connector.imageRef, version: connector.version }, networkName: connector.networkName } : undefined;
+        connector: { imageRef: connector.imageRef, version: connector.version }, networkName: connector.networkName };
 }

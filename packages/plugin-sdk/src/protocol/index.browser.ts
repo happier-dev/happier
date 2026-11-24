@@ -158,6 +158,8 @@ export { ProtocolWorkspaceExecutionConfigAddressV1Schema } from './projectExecut
 export { ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema } from './projectExecution.js';
 export { ProtocolWorkspaceWorkerPreferenceReadResultV1Schema } from './projectExecution.js';
 export { ProtocolWorkspaceWorkerPreferenceSetInputV1Schema } from './projectExecution.js';
+export type { PublicTelemetryCollectorDomainInputV1 } from './deployment.js';
+export type { PublicTelemetryCollectorDomainResultV1 } from './deployment.js';
 export type { ReviewAttentionV1 } from './protocolFacade.js';
 export { ReviewAttentionV1ProtocolSchema } from './protocolFacade.js';
 export type { ReviewRoundBindingV1 } from './protocolFacade.js';
@@ -236,3 +238,4 @@ export { readOwnedNoticeArtifactV1 } from './accountNotice.js';
 export { readPaddedBase64DecodedLength } from './encoding.js';
 export { resolveAccountDisplayLabelV1 } from './discussionContent.js';
 export { resolveLaunchProfilePlacementDirectoryIntentV1 } from './launchProfilePreferences.js';
+export { selectPublicTelemetryCollectorDomainV1 } from './deployment.js';

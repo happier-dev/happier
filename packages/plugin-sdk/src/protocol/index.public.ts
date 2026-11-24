@@ -221,6 +221,9 @@ export {
     readDeploymentReceiptArtifactV1,
     readDeploymentTargetLinkArtifactV1,
     readDeploymentDomainServingUrlV1,
+    selectPublicTelemetryCollectorDomainV1,
+    type PublicTelemetryCollectorDomainInputV1,
+    type PublicTelemetryCollectorDomainResultV1,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
 } from './deployment.js';

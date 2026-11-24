@@ -4,7 +4,7 @@ import { DeploymentArtifactContentReferenceV1Schema, readDeploymentArtifactHeade
     type DeploymentArtifactDocumentV1, type DeploymentArtifactHeaderV1, type DeploymentArtifactReadResultV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { DeploymentEnvironmentContentStoredReadV1Schema } from '@happier-dev/deployments/contracts/v1';
-import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+export { readDeploymentDomainArtifactV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { DeploymentStepV1Schema, type DeploymentStepV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
 import type { DeploymentContentV1 } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
 export const DeploymentEnvironmentArtifactHeaderV1Schema = z.strictObject({ kind: z.literal(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1), title: z.string() });
@@ -36,7 +36,4 @@ export function readDeploymentReceiptArtifactHeaderV1(reference: ContentReferenc
 
 export function readDeploymentEnvironmentArtifactV1(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null): DeploymentArtifactReadResultV1<z.infer<typeof DeploymentEnvironmentContentStoredReadV1Schema>> {
     return readDeploymentArtifactContentV1(reference, artifact, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DeploymentEnvironmentContentStoredReadV1Schema);
-}
-export function readDeploymentDomainArtifactV1(reference: ContentReference, artifact: DeploymentArtifactDocumentV1 | null): DeploymentArtifactReadResultV1<z.infer<typeof DeploymentDomainContentV1Schema>> {
-    return readDeploymentArtifactContentV1(reference, artifact, 'deployment-domain.v1', DeploymentDomainContentV1Schema);
 }

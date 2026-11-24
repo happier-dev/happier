@@ -2734,6 +2734,8 @@
 | `./protocol` | `ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema` | value | any |
 | `./protocol` | `ProtocolWorkspaceWorkerPreferenceReadResultV1Schema` | value | any |
 | `./protocol` | `ProtocolWorkspaceWorkerPreferenceSetInputV1Schema` | value | any |
+| `./protocol` | `PublicTelemetryCollectorDomainInputV1` | type | any |
+| `./protocol` | `PublicTelemetryCollectorDomainResultV1` | type | any |
 | `./protocol` | `ReviewAttentionV1` | type | any |
 | `./protocol` | `ReviewAttentionV1ProtocolSchema` | value | any |
 | `./protocol` | `ReviewRoundBindingV1` | type | any |
@@ -2812,6 +2814,7 @@
 | `./protocol` | `readPaddedBase64DecodedLength` | value | any |
 | `./protocol` | `resolveAccountDisplayLabelV1` | value | any |
 | `./protocol` | `resolveLaunchProfilePlacementDirectoryIntentV1` | value | any |
+| `./protocol` | `selectPublicTelemetryCollectorDomainV1` | value | any |
 | `./providers` | `AgentProviderRequirementsV1` | type | any |
 | `./providers` | `BundledProviderCatalogParserId` | type | any |
 | `./providers` | `BundledProviderWireProtocol` | type | any |

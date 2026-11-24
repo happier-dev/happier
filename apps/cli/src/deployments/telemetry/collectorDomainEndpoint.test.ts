@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import * as deploymentProtocol from '@happier-dev/plugin-sdk/protocol';
 import { DeploymentDomainHeaderV1Schema, DeploymentDomainMachineTopologyV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -60,7 +61,7 @@ it('resolves only the selected collector Domain over its actual shared privateOr
         .toMatchObject({ kind: 'unavailable', reason: 'target_mismatch' });
 });
 
-it('uses only the settled public HTTPS route for the selected Domain, collector deployment and installation', async () => {
+it.each(['save', 'picker'] as const)('%s uses only the settled public HTTPS route for the selected Domain, collector deployment and installation', async surface => {
     const reference = { contentArtifactId: 'domain-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
     const controller = { machineId: 'collector-host', installationId: 'collector-installation' };
     const collector = { machineId: 'collector-child', deploymentId: 'collector-deployment' };
@@ -89,7 +90,8 @@ it('uses only the settled public HTTPS route for the selected Domain, collector 
             body: JSON.stringify({ hostname: 'collector.example.test', target, cloudflarePreparation: preparation }),
             revision: { headerVersion: 1, bodyVersion: 1 } }; },
     };
-    const resolve = () => readTelemetryCollectorDomainForHost(input);
+    const resolve = () => surface === 'save' ? readTelemetryCollectorDomainForHost(input)
+        : deploymentProtocol.selectPublicTelemetryCollectorDomainV1({ ...input, domain: domain ? DeploymentDomainHeaderV1Schema.parse(domain) : null });
     expect(await resolve()).toEqual({ kind: 'ready', endpoint: 'https://collector.example.test/' });
     domain = { ...base, state: 'pending' };
     expect(await resolve()).toMatchObject({ kind: 'unavailable', reason: 'collector_route_unavailable', state: 'pending' });

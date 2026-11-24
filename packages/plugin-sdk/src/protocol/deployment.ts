@@ -32,7 +32,8 @@ import {
 import { readDeploymentTargetLinkArtifactV1 as canonicalReadTargetLink } from '@happier-dev/protocol/deployments/deploymentTargetLinkContentV1';
 
 import { projectProtocolValue } from './projectProtocolValue.js';
-import { readDeploymentDomainServingUrlV1 as canonicalReadDomainServingUrl } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { readDeploymentDomainServingUrlV1 as canonicalReadDomainServingUrl,
+    selectPublicTelemetryCollectorDomainV1 as canonicalSelectPublicTelemetryCollectorDomain } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import type { ProtocolComposableSchema } from './protocolFacade.js';
 
 export type {
@@ -73,6 +74,8 @@ export const readDeploymentTargetLinkArtifactV1: (
 ) => ReturnType<typeof canonicalReadTargetLink> = projectProtocolValue(canonicalReadTargetLink);
 
 export const readDeploymentDomainServingUrlV1: typeof canonicalReadDomainServingUrl = projectProtocolValue(canonicalReadDomainServingUrl);
+export const selectPublicTelemetryCollectorDomainV1: typeof canonicalSelectPublicTelemetryCollectorDomain = projectProtocolValue(canonicalSelectPublicTelemetryCollectorDomain);
+export type { PublicTelemetryCollectorDomainInputV1, PublicTelemetryCollectorDomainResultV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 
 export type { DeploymentDeploySemanticInputV1, DeploymentCorrelationV1, DeploymentEnvironmentHeaderV1, DeploymentReceiptHeaderV1, EnvironmentVariableBindingV1, DeploymentSecretBindingSourceV1 };
 export type { DeploymentContentV1 } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
