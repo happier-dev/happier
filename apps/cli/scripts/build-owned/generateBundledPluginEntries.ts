@@ -1928,7 +1928,7 @@ export async function prepareBundledPluginUiManifestForWorkspaceBuild(params: Re
       const manifest = await normalizeBundledSourceManifest({ packageRoot,
         manifest: await loadPluginManifest(params.repoRoot, pluginPackageId, dependencies), dependencies });
       await synchronizeSerializedPluginManifest({ packageRoot, packageName: params.packageName, manifest, mode: 'write' });
-    });
+    }, { workspaceRoot: params.repoRoot });
   }, {
     lockPath: resolveWorkspaceBundleLockPath(params.repoRoot),
     heldLockValue: params.heldLockValue,

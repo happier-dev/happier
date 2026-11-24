@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +50,33 @@ describe('per-Plugin TypeScript inspection worker', () => {
       await session.close().catch(() => {});
     }
   }, 60_000);
+  it('loads transitive workspace imports from the captured source', async () => {
+    const root = await createFixture();
+    const cliCommon = fileURLToPath(new URL('../../../../../packages/cli-common/', import.meta.url));
+    const require = createRequire(import.meta.url);
+    await mkdir(join(root, 'node_modules'), { recursive: true });
+    await symlink(dirname(require.resolve('tsx/package.json')), join(root, 'node_modules/tsx'),
+      process.platform === 'win32' ? 'junction' : 'dir');
+    await cp(cliCommon, join(root, 'packages/cli-common'), {
+      recursive: true,
+      filter: path => path === cliCommon || /\.(?:mjs|cjs)$/u.test(basename(path)),
+    });
+    await mkdir(join(root, 'packages/agents'), { recursive: true });
+    await writeFile(join(root, 'packages/agents/package.json'), JSON.stringify({
+      name: '@happier-dev/agents',
+      exports: { './agent-ids': { 'happier-source': './agent-ids.mts' } },
+    }));
+    await writeFile(join(root, 'packages/agents/agent-ids.mts'), 'export const AGENT_IDS = ["captured"];');
+    const authored = join(root, 'plug#in', 'authored.mts');
+    await writeFile(authored, 'export { AGENT_IDS } from "@happier-dev/agents/agent-ids";');
+    const session = createTypescriptModuleInspectionSession({ workspaceRoot: root });
+    try {
+      await expect(session.inspect(authored)).resolves.toMatchObject({ AGENT_IDS: ['captured'] });
+    } finally {
+      await session.close();
+    }
+  }, 120_000);
+
   it('shares one dependency graph within an inspection session and isolates the next session', async () => {
     const root = await createFixture();
     const shared = join(root, 'plug#in', 'shared.mts');

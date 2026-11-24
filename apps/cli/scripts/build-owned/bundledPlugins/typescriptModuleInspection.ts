@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { fileURLToPath } from 'node:url';
@@ -83,14 +84,15 @@ function projectInspectionPayload(path: string, payload: unknown): unknown {
 
 export function createTypescriptModuleInspectionSession({
   onSpawn,
-}: Readonly<{ onSpawn?: (pid: number | undefined) => void }> = {}): TypescriptModuleInspectionSession {
+  workspaceRoot = fileURLToPath(new URL('../../../../../', import.meta.url)),
+}: Readonly<{ onSpawn?: (pid: number | undefined) => void; workspaceRoot?: string }> = {}): TypescriptModuleInspectionSession {
   const workerPath = fileURLToPath(new URL('./typescriptModuleInspectionWorker.mjs', import.meta.url));
-  const sourceRuntimePath = fileURLToPath(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
+  const sourceRuntimePath = resolve(workspaceRoot, 'packages/cli-common/registerSourceRuntime.mjs');
   const child = spawn(process.execPath, ['--conditions=happier-source', '--import', sourceRuntimePath,
     '--max-old-space-size=2048', workerPath], {
     // Global tsx hooks also consult cwd. Inspect against this source tree, not
     // a caller's declaration-emission tsconfig (which may resolve stale SDKs).
-    cwd: fileURLToPath(new URL('../../../../../', import.meta.url)),
+    cwd: workspaceRoot,
     env: esbuildServiceEnvironment(),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -262,8 +264,11 @@ export async function inspectTypescriptModule(path: string, options?: Typescript
   }
 }
 
-export async function withTypescriptModuleInspectionSession<T>(operation: () => Promise<T>): Promise<T> {
-  const session = createTypescriptModuleInspectionSession();
+export async function withTypescriptModuleInspectionSession<T>(
+  operation: () => Promise<T>,
+  options?: Readonly<{ workspaceRoot?: string }>,
+): Promise<T> {
+  const session = createTypescriptModuleInspectionSession(options);
   try {
     return await activeInspectionSession.run(session, operation);
   } finally {
