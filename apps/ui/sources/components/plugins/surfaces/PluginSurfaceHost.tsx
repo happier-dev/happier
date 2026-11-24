@@ -182,6 +182,7 @@ import {
     resolvePluginUiRendererTechnicalAdmission,
     resolvePluginUiHostedWebArtifactTechnicalAdmission,
     type PluginUiHostedWebArtifactTechnicalAdmission,
+    type PluginUiRendererTechnicalAdmission,
 } from '@/sync/domains/plugins/ui/artifactAdoption';
 import type { PluginAccountHostedArtifactPublicationResult } from '@/sync/domains/plugins/availability/accountHostedArtifactPublication';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -3531,6 +3532,20 @@ function PluginSurfaceHostMount(props: Readonly<(
                 ? <PluginSurfaceLoadingMarker reason={reason} />
                 : renderPluginSurfaceUnavailable(reason, props.unavailableAction, state, onRetry, projectedBrand?.displayName, diagnosticDetail)
     );
+    const renderTechnicalAdmissionRefusal = (admission: Extract<PluginUiRendererTechnicalAdmission<unknown>,
+        { kind: 'unavailable' }> | null): React.ReactElement => {
+        if (admission?.code === 'required_host_methods_unavailable') {
+            // A retained declaration can reopen while Administration resolves
+            // its exact Machine caller. The bound controller registers the
+            // control when that caller is available on either mount.
+            if (accountUnionMount && !accountExecutionOrigin && machineConnectionPending && !pluginExecution.selectedSupply
+                && admission.missingHostMethods.length === 1 && admission.missingHostMethods[0] === 'actionControl') {
+                return renderUnavailable('plugin_execution_origin_pending', 'loading');
+            }
+            return renderUnavailable(admission.code, 'unavailable', undefined, admission.missingHostMethods.join(', '));
+        }
+        return renderUnavailable('artifact_technical_admission_unavailable');
+    };
     const renderAccountEncryptionModeReadiness = (): React.ReactElement => (
         accountEncryptionModeReadiness.status === 'loading'
             ? renderUnavailable('account_encryption_mode_pending', 'loading')
@@ -3869,11 +3884,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             }
             : undefined;
         if (canonicalHostedSource && hostedWebTechnicalAdmission?.kind !== 'available') {
-            return renderUnavailable(hostedWebTechnicalAdmission?.kind === 'unavailable'
-                ? hostedWebTechnicalAdmission.code
-                : 'artifact_technical_admission_unavailable', 'unavailable', undefined,
-                hostedWebTechnicalAdmission?.kind === 'unavailable' && hostedWebTechnicalAdmission.code === 'required_host_methods_unavailable'
-                    ? hostedWebTechnicalAdmission.missingHostMethods.join(', ') : undefined);
+            return renderTechnicalAdmissionRefusal(hostedWebTechnicalAdmission);
         }
 
         const hostedArtifactAdmission = hostedWebTechnicalAdmission?.kind === 'available'
@@ -4138,11 +4149,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             return renderMountedTargetProjectionFallback();
         }
         if (reactNativeTechnicalAdmission?.kind !== 'available') {
-            return renderUnavailable(reactNativeTechnicalAdmission?.kind === 'unavailable'
-                ? reactNativeTechnicalAdmission.code
-                : 'artifact_technical_admission_unavailable', 'unavailable', undefined,
-                reactNativeTechnicalAdmission?.kind === 'unavailable' && reactNativeTechnicalAdmission.code === 'required_host_methods_unavailable'
-                    ? reactNativeTechnicalAdmission.missingHostMethods.join(', ') : undefined);
+            return renderTechnicalAdmissionRefusal(reactNativeTechnicalAdmission);
         }
         const renderOccurrenceId = readOptionalString(baseControllerFacts.occurrenceId);
         const pluginVersion = readOptionalString(contribution?.pluginVersion) ?? '0.0.0';

@@ -18790,6 +18790,97 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         } finally { await screen.unmount(); }
     });
 
+    it('reopens a native app page and dispatches its required Action control after Machine selection settles', async () => {
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions');
+        const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+        const { createDefaultWorkspaceWorkerPreferenceV1 } = await import('@happier-dev/protocol/workspaces/projectWorkerPreferencesV1');
+        const { setPluginMachineExecutionOriginPreference } = await import('@/sync/domains/machines/administration/selectionPreferences');
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { unionPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const scope = pluginSurfaceAccountLifetime.value!.scope;
+        await primeCrossPathArtifact();
+        const hostApiMethods: PluginUiHostMethodV1[] = ['context', 'executeAction', 'actionControl'];
+        const { model, placement, targetFixture } = await projectPlacementFromBinding(bindingDeclaration({
+            id: 'reopen-action-page', container: 'appPage', target: { kind: 'app' },
+        }), { hostApiMethods });
+        const machineId = 'machine_1';
+        const serverIdentityId = 'srv_server_dash_1';
+        const pluginId = placement.pluginId;
+        const origin = mountedExecutionOrigin(pluginId, machineId, 'materialization-cross-path-current', serverIdentityId);
+        const requiredPlacement = { ...placement, renderer: { ...placement.renderer,
+            requiredHostMethods: hostApiMethods } };
+        const machineProjection = {
+            phase: 'current' as const, interactionEnabled: true, machineId, serverId: scope.serverId, serverIdentityId,
+            selectableExecutionOrigins: [origin], projection: { ...model,
+                surfacePlacementsById: { [placement.id]: requiredPlacement },
+                installedPackagesById: { ...model.installedPackagesById, [pluginId]: {
+                    ...model.installedPackagesById[pluginId]!, executionOrigin: origin,
+                    sourceCustody: targetFixture.mountedTarget.sourceCustody, declaresContributionPoints: false,
+                    declaredExecution: { daemonActions: true, contributionPoints: false },
+                } },
+            },
+        };
+        const projection = unionPluginUiProjections([machineProjection], new Map([[pluginId, origin]])).pluginUiProjection!;
+        const priorTargets = storage.getState().settings.machineAdministrationTargetsLocalV1;
+        onTestFinished(() => storage.setState({ settings: { ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: priorTargets } }));
+        storage.setState({ settings: { ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: setPluginMachineExecutionOriginPreference(priorTargets, pluginId, origin) } });
+        const next = { ...createDefaultWorkspaceWorkerPreferenceV1(), allowAdHoc: true };
+        const effects: unknown[] = [];
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            projectWorkerAction: async input => {
+                effects.push(input);
+                return { status: 'applied', preference: next, revision: 1, provenance: 'saved' };
+            },
+        }));
+        const binding = { executeHostAction: executor.execute };
+        const backend = { backendId: 'commonJs' as const, available: true, loadInstalledBundle: async () => () => null };
+        const page = projection.surfacePlacementsById[placement.id]!;
+        const refreshingProjection = unionPluginUiProjections([{ ...machineProjection, phase: 'establishing',
+            interactionEnabled: false, unavailableReasonCode: 'plugin_source_not_ready' }]).pluginUiProjection!;
+        const refreshing = { ...refreshingProjection, surfacePlacementsById: { [placement.id]: {
+            ...page, hostSupplies: refreshingProjection.surfacePlacementsById[placement.id]?.hostSupplies ?? [],
+        } } };
+        const render = (open: boolean, currentProjection = projection) => <AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: currentProjection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+            machineId: null, serverId: scope.serverId, platform: 'web', accountLifetime: pluginSurfaceAccountLifetime.value,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {},
+        }}>{open ? <PluginSurfacePlacementHost placement={currentProjection.surfacePlacementsById[placement.id]!}
+            pluginUiProjection={currentProjection} platform="web" binding={binding} reactNativeLoaderBackend={backend} /> : null}
+        </AppShellPluginUiProjectionValueProvider>;
+        reactNativeSurfaceProps.length = 0;
+        const screen = await renderScreen(render(true));
+        try {
+            await vi.waitFor(() => expect(reactNativeSurfaceProps, surfaceFixtureDiagnostics(screen, pluginId)).not.toHaveLength(0));
+            expect(readMountedHostApi().version().methods).toContain('actionControl');
+            await screen.update(render(false));
+            reactNativeSurfaceProps.length = 0;
+
+            // The app shell can retain the declaration while the same Machine
+            // refreshes the supplier that binds new page instances.
+            await screen.update(render(true, refreshing));
+            expect(Boolean(screen.findByTestId('plugin-surface-unavailable-diagnostic-required_host_methods_unavailable'))).toBe(false);
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_execution_origin_pending')).toBeTruthy();
+            expect(effects).toHaveLength(0);
+
+            await screen.update(render(true));
+            await vi.waitFor(() => expect(reactNativeSurfaceProps, surfaceFixtureDiagnostics(screen, pluginId)).not.toHaveLength(0));
+            const reopened = readMountedHostApi();
+            expect(reopened.version().methods).toContain('actionControl');
+            await act(async () => { await reopened.actionControl({ action: 'projects.worker.preferences.set',
+                presentation: { title: 'Allow for this project' } }, {
+                prepare: () => ({ input: { workspace: { serverId: scope.serverId, refId: 'workspace-a' },
+                    expectedRevision: 'absent', expected: { kind: 'absent' }, next } }),
+            }); });
+            const button = screen.root.findAll(node => node.props.title === 'Allow for this project'
+                && typeof node.props.onPress === 'function')[0]!;
+            await act(async () => { button.props.onPress(); });
+            await vi.waitFor(() => expect(effects).toHaveLength(1));
+        } finally { await screen.unmount(); }
+    });
+
     async function createApprovalPageFixture(requireApproval = true) {
         const { createHomeGovernanceHarness } = await import('@/dev/testkit/harness/homeGovernanceHarness');
         const homes = createHomeGovernanceHarness();
