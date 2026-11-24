@@ -31,7 +31,8 @@ import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/sugge
 const initialState = storage.getState();
 afterEach(() => storage.setState(initialState, true));
 
-it.each([[2, 1], [32, 17]])('publishes a hydrated query page once for %i Sessions and %i Machines', async (sessionCount, machineCount) => {
+it.each([[2, 1], [32, 17], [200, 370]])('publishes a hydrated query page once for %i Sessions and %i Machines', async (sessionCount, machineCount) => {
+    const deliverConcurrentPage = machineCount === 370;
     const serverId = `query-display-publication-${sessionCount}`;
     const secret = new Uint8Array(32).fill(63);
     const dataKey = new Uint8Array(32).fill(64);
@@ -49,21 +50,28 @@ it.each([[2, 1], [32, 17]])('publishes a hydrated query page once for %i Session
         const sharedMetadata = SessionSharedMetadataV1Schema.parse({ v: 1, summary: { text: `Summary ${index}`, updatedAt: 2 } });
         const ownerMetadata = SessionOwnerMetadataV1Schema.parse({ v: 1,
             workspace: { name: `Session ${index}`, path: '/workspace', host: `machine-${index % machineCount}` } });
+        const plain = deliverConcurrentPage && index > 0;
+        const displayCrypto = plain ? createSessionDisplayCrypto({ sessionMode: 'plain', accountMode: 'plain', credentials }) : crypto;
         const display = projectSessionDisplayV1({ sharedMetadata, ownerMetadata });
         return createCompactSessionListRowFixture({
             ...createPlainSessionCurrentProjectionRecordFixture({ id, metadataVersion: 2 }),
-            viewer, encryptionMode: 'e2ee', dataEncryptionKey, metadata: await sessionEncryption.encryptRaw(sharedMetadata),
+            viewer, encryptionMode: plain ? 'plain' : 'e2ee', dataEncryptionKey: plain ? null : dataEncryptionKey,
+            metadata: plain ? JSON.stringify(sharedMetadata) : await sessionEncryption.encryptRaw(sharedMetadata),
             displayProjectionV1: SessionDisplayProjectionV1Schema.parse({ v: 1, sourceMetadataVersion: 2, metadataLayoutVersion: 1,
-                shared: await crypto.encodeSharedDisplay(display.shared), owner: crypto.encodeOwnerDisplay(display.owner!) }),
+                shared: await displayCrypto.encodeSharedDisplay(display.shared), owner: displayCrypto.encodeOwnerDisplay(display.owner!) }),
         });
     }));
     const keyReadStarted = createDeferred<void>();
     const releaseKeys = createDeferred<void>();
     const worker = createFakeCryptoWorker();
+    let heldFirstKeyRead = false;
     encryption.configureNativeCryptoWorker({
         worker: { ...worker, decryptDataKeyEnvelopeV1: async request => {
-            keyReadStarted.resolve();
-            await releaseKeys.promise;
+            if (!heldFirstKeyRead) {
+                heldFirstKeyRead = true;
+                keyReadStarted.resolve();
+                await releaseKeys.promise;
+            }
             return worker.decryptDataKeyEnvelopeV1(request);
         } },
         routing: { mode: 'auto', minBatchSize: 1, minPayloadBytes: 0 },
@@ -73,6 +81,10 @@ it.each([[2, 1], [32, 17]])('publishes a hydrated query page once for %i Session
     const readRows = () => storage.getState().sessionListRowsByServerId[serverId];
     const readMachines = () => storage.getState().machineListByServerId[serverId];
     const sessionDataKeys = new Map<string, Uint8Array>();
+    const detailReads: string[] = [];
+    const queryRows = deliverConcurrentPage
+        ? sessions.map((row, index) => index === 0 ? row : { ...row, displayProjectionV1: undefined })
+        : sessions;
     const refresh = () => fetchAndApplySessions({
         serverId, credentials, encryption,
         accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(),
@@ -80,8 +92,13 @@ it.each([[2, 1], [32, 17]])('publishes a hydrated query page once for %i Session
         source: { kind: 'query', allowV1Fallback: false, body: { v: 1, storage: 'active', includeInactive: true,
             audiences: [], tagIds: [] } },
         request: async path => {
-            expect(path).toBe('/v2/sessions/query');
-            return Response.json(SessionListQueryResponseV1Schema.parse({ sessions, nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
+            if (path === '/v2/sessions/query') {
+                return Response.json(SessionListQueryResponseV1Schema.parse({
+                    sessions: queryRows, nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+                }));
+            }
+            detailReads.push(path);
+            return Response.json({ error: 'unavailable' }, { status: 503 });
         },
         getCurrentSessionListRenderable: sessionId => readRows()?.[sessionId],
         applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'query', mode: 'replace' }),
@@ -113,15 +130,37 @@ it.each([[2, 1], [32, 17]])('publishes a hydrated query page once for %i Session
         expect.soft(commits - beforeHydration).toBe(1);
         expect.soft(publications).toHaveLength(0);
 
+        if (deliverConcurrentPage) {
+            // A separate cold ordinary read can deliver current inline displays while the query key is in flight.
+            await act(async () => {
+                await fetchAndApplySessions({
+                    serverId, credentials, encryption, sessionDataKeys, contentDemand: 'list-projection',
+                    accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(),
+                    request: async () => Response.json(V2SessionListResponseSchema.parse({
+                        sessions: sessions.slice(1), nextCursor: null, hasNext: false,
+                    })),
+                    getCurrentSessionListRenderable: id => readRows()?.[id],
+                    applySessionListRenderables: rows => storage.getState().applyServerScopedSessionListRows(serverId, rows, { source: 'ordinary', mode: 'replace' }),
+                    applySessionListRenderablePatches: patches => storage.getState().applyServerScopedSessionListRowPatches(serverId, patches),
+                    applySessions() {}, log: { log() {} },
+                });
+            });
+            expect(sessions.slice(1).map(row => readRows()?.[row.id]?.metadata?.name))
+                .toEqual(sessions.slice(1).map((_, index) => `Session ${index + 1}`));
+            expect(readRows()?.[sessions[0]!.id]).toBeUndefined();
+        }
+        const beforeQueryPublication = commits;
+        publications.length = 0;
         await act(async () => {
             releaseKeys.resolve();
             await hydration;
         });
         const hydrated = mounted.getCurrent();
         expect(hydrated.inventory?.map(machine => machine.id)).toEqual(machines.map(machine => machine.id));
-        expect(Object.values(hydrated.rows ?? {}).map(row => [row.id, row.metadata?.name]))
+        expect(sessions.map(({ id }) => [id, hydrated.rows?.[id]?.metadata?.name]))
             .toEqual(sessions.map((row, index) => [row.id, `Session ${index}`]));
-        expect.soft(commits - beforeHydration).toBe(2);
+        expect.soft(detailReads).toEqual([]);
+        expect.soft(commits - beforeQueryPublication).toBe(1);
         expect.soft(publications).toHaveLength(1);
         expect.soft(publications.at(-1)).toBe(hydrated.rows);
 

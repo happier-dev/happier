@@ -1985,7 +1985,17 @@ export async function fetchAndApplySessions(params: {
     });
     // Descriptor demand changes no opened document, tuple, or publication clock.
     if (observedSessions.length) params.applySessions(observedSessions, 'projection');
-    let pendingQueryRows: Map<string, SessionListRenderableSession> | undefined;
+    type PendingQueryRow = Readonly<{
+        renderable: SessionListRenderableSession;
+        row?: SessionListRow;
+        previous?: ReturnType<CurrentSessionListRenderableLookup>;
+    }>;
+    const pendingQueryRows = isQuerySource && params.getCurrentSessionListRenderable
+        ? new Map<string, PendingQueryRow>()
+        : undefined;
+    const buildPageRow = (row: SessionListRow, previous: ReturnType<CurrentSessionListRenderableLookup>) =>
+        buildRenderableFromRowAndCache(row, credentials, accountCurrentness, cachedSessionListEntries[row.id],
+            params.getExistingSession?.(row.id), previous, admissionScope);
     const publishRenderablePage = (renderables: SessionListRenderableSession[]) => {
         appliedRenderableCount = renderables.length;
         const staleMetadataPreservedRows = countStaleMetadataPreservedRows(
@@ -2022,23 +2032,20 @@ export async function fetchAndApplySessions(params: {
                 backgroundRows: backgroundSnapshotRows,
             },
             () => [
-                ...sessions.map((row) => buildRenderableFromRowAndCache(
-                    row,
-                    credentials,
-                    accountCurrentness,
-                    cachedSessionListEntries[row.id],
-                    params.getExistingSession?.(row.id),
-                    params.getCurrentSessionListRenderable?.(row.id),
-                    admissionScope,
-                )),
-                ...retainedCachedSessionIds.map((sessionId) => buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!)),
+                ...sessions.map(row => {
+                    const previous = params.getCurrentSessionListRenderable?.(row.id);
+                    const renderable = buildPageRow(row, previous);
+                    pendingQueryRows?.set(row.id, { renderable, row, previous });
+                    return renderable;
+                }),
+                ...retainedCachedSessionIds.map(sessionId => {
+                    const renderable = buildRenderableFromCachedEntry(cachedSessionListEntries[sessionId]!);
+                    pendingQueryRows?.set(sessionId, { renderable });
+                    return renderable;
+                }),
             ],
         );
-        if (isQuerySource && params.getCurrentSessionListRenderable) {
-            pendingQueryRows = new Map(renderables.map(row => [row.id, row]));
-        } else {
-            publishRenderablePage(renderables);
-        }
+        if (!pendingQueryRows) publishRenderablePage(renderables);
     }
 
     if (!shouldContinue()) {
@@ -2062,7 +2069,7 @@ export async function fetchAndApplySessions(params: {
     // Gather before awaiting: compact omissions never enter the full-document opener.
     // The transport owner chunks at the real body boundary and shares pending reads.
     const openedDisplayRows = new Map<string, SessionListRenderableSession>();
-    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? pendingQueryRows?.get(id)
+    const readCurrentDisplay = (id: string) => openedDisplayRows.get(id) ?? pendingQueryRows?.get(id)?.renderable
         ?? params.getCurrentSessionListRenderable?.(id);
     const encryptionScope: EncryptionScopeInput = typeof params.serverId === 'string' && params.serverId.trim().length > 0
         ? { serverId: params.serverId.trim() } : {};
@@ -2149,6 +2156,24 @@ export async function fetchAndApplySessions(params: {
         openedDisplayRows.set(row.id, buildSessionListRenderableFromSession(source, previous ?? undefined, undefined, undefined,
             { shared: shared.display, ...(owner?.ok ? { owner: owner.display } : {}) }));
     }
+    if (shouldApplyRenderables && pendingQueryRows) {
+        if (!isDataKeyHydrationCurrent()) return buildFetchResult();
+        const renderables: SessionListRenderableSession[] = [];
+        for (const [id, pending] of pendingQueryRows) {
+            if (!isSessionCurrent(id)) continue;
+            const current = params.getCurrentSessionListRenderable?.(id);
+            // Rebuild only rows whose admitted content changed while the query opened its display keys.
+            const renderable = pending.row && current !== pending.previous
+                ? buildPageRow(pending.row, current)
+                : pending.renderable;
+            const opened = openedDisplayRows.get(id);
+            renderables.push(opened ? applySessionListRenderablePatch(renderable, opened) : renderable);
+        }
+        // Compatibility reads use the admitted store rows after the one query publication.
+        pendingQueryRows.clear();
+        openedDisplayRows.clear();
+        publishRenderablePage(renderables);
+    }
     const displayDemand = inlineDisplayOnly ? [] : sessions.filter(row => isCompactSessionListRow(row) && isSessionCurrent(row.id)
         // A missing sidecar is not demand for a Session body. The viewport,
         // route or explicit query owns the first read; its tuple writer persists
@@ -2166,20 +2191,6 @@ export async function fetchAndApplySessions(params: {
                 currentRenderable: readCurrentDisplay(row.id),
                 isRequiredHydrationRow: requiredHydrationSessionIds.has(row.id) && !isListProjectionDemand,
                 fullDocumentDemand: !isListProjectionDemand, admissionScope }))));
-    if (pendingQueryRows) {
-        // Scalar rows and inline displays come from the same query response. The
-        // compatibility read below has its own lifetime and can publish separately.
-        if (!isDataKeyHydrationCurrent()) return buildFetchResult();
-        const renderables: SessionListRenderableSession[] = [];
-        for (const [id, row] of pendingQueryRows) {
-            if (!isSessionCurrent(id)) continue;
-            const opened = openedDisplayRows.get(id);
-            renderables.push(opened ? applySessionListRenderablePatch(row, opened) : row);
-        }
-        pendingQueryRows = undefined;
-        openedDisplayRows.clear();
-        publishRenderablePage(renderables);
-    }
     if (compactDemand.length) {
         const parts = await readSessionParts({ request: (path, init) => request(path, { ...init,
             headers: { ...Object.fromEntries(new Headers(init.headers)), Authorization: `Bearer ${credentials.token}` } }),
