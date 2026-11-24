@@ -400,6 +400,39 @@ describe('ConnectedServiceRefreshCoordinator qualified refresh integration', () 
       }
     }, 30_000);
 
+  it.each([
+    ['an unclassified reconnect', 'unknown', true],
+    ['a provider grant rejection', 'invalid_grant', false],
+  ] as const)('re-derives needs_reauth after %s from the next status read only when no provider rejected the grant', async (_case, statusReason, clears) => {
+    const harness = await createBuiltInQualifiedRefreshHarness();
+    createdRegistries.push(harness);
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('A status read makes no provider request'); }));
+    const profile: QualifiedConnectedAccountProfileV4 = {
+      ref: harness.account, status: 'needs_reauth', statusReason, authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+      credentialRevision: harness.firstRevision, configurationRevision: null, configurationReady: true,
+      kind: 'oauth', expiresAt: null, displayName: 'work', scopes: [],
+    };
+    const quotas = new ConnectedServiceQuotasCoordinator({
+      api: { getAccountEncryptionMode: async () => 'plain' } as unknown as ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'],
+      credentials: harness.credentials, quotaFetchers: [], now: () => harness.now,
+      randomBytes: length => new Uint8Array(length), discoveryEnabled: false,
+      qualifiedHealth: harness.coordinator,
+      qualifiedConnectedAccountRuntime: {
+        resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: harness.establishedRuntimeOwner,
+        listScheduledAccounts: async () => [profile], readQuota: async () => null,
+        writeProviderAccountUsage: async () => ({ success: true }),
+      },
+    });
+    try {
+      await quotas.tickOnce();
+      const healthWrites = harness.mutateCredentialHealth.mock.calls.map(([input]) => (input.patch as { health?: { status?: string } }).health?.status);
+      // A login that reads as usable again clears a reconnect no provider asked for; a rejected grant stays.
+      expect(healthWrites).toEqual(clears ? ['connected'] : []);
+    } finally {
+      await quotas.disposeInBandQuotaPersistence();
+    }
+  }, 30_000);
+
   it('parks a healthy bound V4 OAuth account without expiry instead of polling its credential', async () => {
     const harness = await createBuiltInQualifiedRefreshHarness();
     createdRegistries.push(harness);

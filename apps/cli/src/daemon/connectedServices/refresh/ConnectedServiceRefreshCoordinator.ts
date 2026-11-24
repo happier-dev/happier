@@ -407,6 +407,15 @@ function isReconnectRequiredProfileStatus(status: unknown): boolean {
   return status === 'needs_reauth';
 }
 
+/**
+ * A reconnect holds when a provider rejected the grant or the configuration changed. One no
+ * provider classified (a runtime that could not read its own stored credential) is re-derived
+ * by the next scheduled status read, so a credential that reads again needs no human reconnect.
+ */
+function holdsReconnectRequired(profile: Pick<QualifiedConnectedAccountProfileV4, 'status' | 'statusReason'>): boolean {
+  return isReconnectRequiredProfileStatus(profile.status) && profile.statusReason !== 'unknown';
+}
+
 function readBoundedPluginDiagnosticCode(
   result: PluginConnectedAccountHealthResult | QualifiedConnectedAccountRefreshSettlement['result'],
 ): string | undefined {
@@ -1054,11 +1063,11 @@ export class ConnectedServiceRefreshCoordinator {
       }
       this.scheduledHealthProbeAtByKey.set(key, { ...identity, basis, at: -Infinity });
     }
-    if (!available || isReconnectRequiredProfileStatus(profile.status)) {
+    if (!available || holdsReconnectRequired(profile)) {
       this.scheduledHealthProbeAtByKey.set(key, { ...identity, basis, at: Infinity });
     }
     const nextDeadline = () => {
-      if (!available || isReconnectRequiredProfileStatus(profile.status)) return null;
+      if (!available || holdsReconnectRequired(profile)) return null;
       const at = (binding ? this.credentialHealthReprobeState.get(bindingKey(binding))?.nextProbeAt : undefined)
         ?? this.credentialHealthReprobeState.get(key)?.nextProbeAt
         ?? this.scheduledHealthProbeAtByKey.get(key)?.at;
@@ -1067,7 +1076,7 @@ export class ConnectedServiceRefreshCoordinator {
     const scheduledAt = (binding ? this.credentialHealthReprobeState.get(bindingKey(binding))?.nextProbeAt : undefined)
       ?? this.credentialHealthReprobeState.get(key)?.nextProbeAt
       ?? this.scheduledHealthProbeAtByKey.get(key)?.at ?? Infinity;
-    const due = available && !isReconnectRequiredProfileStatus(profile.status) && scheduledAt <= now;
+    const due = available && !holdsReconnectRequired(profile) && scheduledAt <= now;
     return { due, nextDeadline, settle: async (outcome, settlementSignal = signal) => {
       const signal = settlementSignal;
       signal?.throwIfAborted();
@@ -1149,7 +1158,7 @@ export class ConnectedServiceRefreshCoordinator {
     try {
       // Reconnecting replaces the credential revision and clears this status.
       // An expiry-only status probe cannot rehabilitate a rejected refresh grant.
-      if (isReconnectRequiredProfileStatus(profile.status)) return;
+      if (holdsReconnectRequired(profile)) return;
       const statusInvocation = scheduledStatus ? await scheduledStatus() :
         await runtime.establishedRuntimeOwner.invokeWithReceipt({ ...(signal ? { signal } : {}),
           account: profile.ref,
