@@ -31,10 +31,59 @@ it('opens the preset Add dialog with every supported item family and preserves i
     try {
         await act(async () => screen.pressByTestId('preset.setup.items.add'));
         const body = screen.tree.findByType(CapabilityAddModalBody);
-        expect(body.props.config.modes.map((mode: { key: string }) => mode.key)).toEqual(['all', 'setup', 'software', 'apps']);
+        expect(body.props.config.modes.map((mode: { key: string }) => mode.key)).toEqual(['all', 'setup', 'software', 'agents', 'apps']);
         await act(async () => body.props.onClose());
         expect(onChange).not.toHaveBeenCalled();
         expect(setup).toEqual({ scripts: [{ body: 'echo retained' }] });
+        expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.create'))).toHaveLength(0);
+        expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toHaveLength(0);
+    } finally { await screen.unmount(); }
+});
+
+it('adds a captured Account Agent declaration once without effects while another Home is selected', async () => {
+    onTestFinished(await installRealActionExecutorModuleLoader());
+    const serverId = await homes.addHome({ name: 'Agent preset Home', serverUrl: 'https://preset-agents.test',
+        serverIdentityId: 'srv_preset_agents', accountId: 'owner', currentAccount: true });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(serverId);
+    onTestFinished(() => account.dispose());
+    const { PLUGIN_MANIFEST } = await import('../../../../../../../packages/plugins/qwen/src/manifest');
+    const manifest = { ...PLUGIN_MANIFEST, id: 'example.preset-agent' };
+    const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1, hostingCapability: { enabled: false },
+        intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1' },
+        release: { ref: { pluginId: manifest.id, version: manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+            normalizedManifest: manifest, collectionContracts: [], uiSlots: [],
+            packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } }, packageAssets: [], uiArtifacts: [] });
+    const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    replacePluginAccountAvailabilityProjection({ scope: account.accountLifetime.scope,
+        snapshot: { availabilityCursor: 1, intentReads: [{ pluginId: manifest.id, response }], materializations: [], snapshots: [] } });
+    const otherHome = await homes.addHome({ name: 'Other Home', serverUrl: 'https://other-agent-preset.test',
+        serverIdentityId: 'srv_other_agent_preset', accountId: 'other', currentAccount: true });
+    const { HappierUiEnvironmentProvider, projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
+    const { createPluginSurfaceContextFixture } = await import('@/dev/testkit/fixtures/pluginSurfaceContextFixture');
+    const environment = projectHappierUiEnvironment(createPluginSurfaceContextFixture());
+    const PresentationProvider = ({ children }: React.PropsWithChildren) =>
+        <HappierUiEnvironmentProvider environment={environment}>{children}</HappierUiEnvironmentProvider>;
+    const changes: MachineSetupV1[] = [];
+    const screen = await renderScreen(<StoreMachineScopeContext.Provider value={{ serverId: otherHome, machineId: 'foreign-machine' }}>
+        <ModalProvider><ItemList><MachineSetupSection editable scope={account.accountLifetime.scope}
+        name="Agent development" setup={{ scripts: [{ body: 'echo retained' }] }} onChange={next => { if (next) changes.push(next); }} testID="preset.setup" /></ItemList></ModalProvider>
+        </StoreMachineScopeContext.Provider>, { wrapper: PresentationProvider });
+    try {
+        await act(async () => screen.pressByTestId('preset.setup.items.add'));
+        const config = () => screen.tree.findByType(CapabilityAddModalBody).props.config;
+        await act(async () => config().onModeChange('agents'));
+        const pick = () => config().catalog.items.find((entry: unknown) => config().catalog.itemKey(entry) === 'agent:example.preset-agent/qwen');
+        await waitForHomeGovernance(() => expect(pick()).toBeDefined());
+        expect(changes).toHaveLength(0);
+        await act(async () => { await config().detailFooter(pick()).primary.onPress(); });
+        expect(changes).toEqual([{ scripts: [{ body: 'echo retained' }], items: [{ kind: 'agent', agentId: 'example.preset-agent/qwen' }] }]);
+        const { t } = await import('@/text');
+        expect(config().detailFooter(pick()).primary.disabledReason).toBe(t('machinePresets.setup.alreadyInPreset'));
+        // Invoking the disabled detail action cannot add the same catalog Agent twice.
+        await act(async () => { await config().detailFooter(pick()).primary.onPress(); });
+        expect(changes).toHaveLength(1);
         expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.create'))).toHaveLength(0);
         expect(homes.requestsFor(machinePresetActionEndpointPathV1('machines.presets.update'))).toHaveLength(0);
     } finally { await screen.unmount(); }

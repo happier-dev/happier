@@ -7,7 +7,7 @@ import { REGISTRY_ITEMS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/registri
 import { CapabilityAddDetailAction, CapabilityAddModalBody, openCapabilityAddModalHost, type CapabilityAddModalConfig } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
-import { useMachineSetupRecipeOptions, useSoftwareOptions, type StoreSoftwareItem } from '@/components/store/catalog/storeSoftware';
+import { useMachineSetupAgentOptions, useMachineSetupRecipeOptions, useSoftwareOptions, type StoreSoftwareItem } from '@/components/store/catalog/storeSoftware';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
 import { readStoreAppTemplateRef, storeAppPresetItem } from '@/components/store/presets/storePresetDoor';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -18,7 +18,7 @@ import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark'
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
-import { addMachineSetupItem, addMachineSetupSoftware, containsMachineSetupItem } from './machineSetupItems';
+import { addMachineSetupItem, addMachineSetupSoftware, containsMachineSetupItem, type MachineSetupAgentOffer } from './machineSetupItems';
 
 const TEST_ID = 'machine-setup.add';
 
@@ -30,6 +30,7 @@ type Params = Readonly<{
   onChange: (next: MachineSetupV1) => void;
 }>;
 type Offer = Readonly<{ kind: 'setup' | 'software'; option: StoreSoftwareItem; ref: MachineRecipeReferenceV1 }>
+  | Readonly<{ kind: 'agent'; option: MachineSetupAgentOffer }>
   | Readonly<{ kind: 'app'; summary: RegistryCatalogItemSummary }>;
 
 /** The existing preset Add dialog, reading inert Account offerings without a Machine support claim. */
@@ -40,15 +41,19 @@ export function openMachineSetupAddItems(params: Params) {
 }
 
 const offerKey = (offer: Offer) => offer.kind === 'app'
-  ? `app:${offer.summary.sourceId}/${offer.summary.itemId}` : actionInputOptionValueKey(offer.option.value);
-const title = (offer: Offer) => offer.kind === 'app' ? offer.summary.title : offer.option.label;
+  ? `app:${offer.summary.sourceId}/${offer.summary.itemId}` : offer.kind === 'agent'
+    ? `agent:${offer.option.agentId}` : actionInputOptionValueKey(offer.option.value);
+const title = (offer: Offer) => offer.kind === 'app' ? offer.summary.title
+  : offer.kind === 'agent' ? offer.option.title : offer.option.label;
 const description = (offer: Offer) => offer.kind === 'app' ? offer.summary.description : offer.option.description;
 const mark = (offer: Offer, size: number) => <StoreItemMark size={size} facts={offer.kind === 'app'
   ? { kind: 'app', title: offer.summary.title, brand: offer.summary.brandMark }
+  : offer.kind === 'agent' ? { kind: 'agent', title: offer.option.title, iconToken: offer.option.icon ?? null }
   : { kind: 'software', title: offer.option.label,
     bundledPluginId: offer.ref.pluginId, iconToken: offer.option.icon ?? null }} />;
 
 function offeredItem(offer: Offer): MachinePresetItemV1 | null {
+  if (offer.kind === 'agent') return { kind: 'agent', agentId: offer.option.agentId };
   if (offer.kind !== 'app') return { kind: offer.kind === 'software' ? 'softwareRecipe' : 'setupRecipe',
     selection: { ref: offer.ref, inputs: {} } };
   const { sourceId, itemId, version } = offer.summary;
@@ -62,10 +67,12 @@ export function MachineSetupAddItemsModal(props: CustomModalInjectedProps & Read
   const [demanded, setDemanded] = React.useState(true);
   const [setup, setSetup] = React.useState(params.setup);
   const target = React.useMemo(() => ({ scope: params.scope, machine: null }), [params.scope]);
-  const recipesDemanded = demanded && mode !== 'apps';
+  const recipesDemanded = demanded && (mode === 'all' || mode === 'setup' || mode === 'software');
+  const agentsDemanded = demanded && (mode === 'all' || mode === 'agents');
   const appsDemanded = demanded && (mode === 'all' || mode === 'apps');
   const recipes = useMachineSetupRecipeOptions(target, { presented: recipesDemanded });
   const software = useSoftwareOptions(target, { presented: recipesDemanded });
+  const agents = useMachineSetupAgentOptions(target, { presented: agentsDemanded });
   const apps = useRegistryItems({ kind: 'app', query }, appsDemanded, params.scope);
   const execution = useMountedActionExecution(params.scope);
   const externalActionTarget = useStoreActionTarget(undefined, true, params.scope);
@@ -80,10 +87,12 @@ export function MachineSetupAddItemsModal(props: CustomModalInjectedProps & Read
   }, [recipesDemanded, recipes.state, software.state]);
   const items = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return [...offers.filter(offer => (mode === 'all' || mode === offer.kind)
+    const declarations: Offer[] = [...offers,
+      ...(agentsDemanded ? (agents.offers ?? []).map((option): Offer => ({ kind: 'agent', option })) : [])];
+    return [...declarations.filter(offer => (mode === 'all' || mode === offer.kind || mode === 'agents' && offer.kind === 'agent')
       && (!needle || `${title(offer)} ${description(offer) ?? ''}`.toLocaleLowerCase().includes(needle))),
       ...(appsDemanded ? apps.items.map((summary): Offer => ({ kind: 'app', summary })) : [])];
-  }, [offers, query, mode, appsDemanded, apps.items]);
+  }, [offers, agentsDemanded, agents.offers, query, mode, appsDemanded, apps.items]);
   const contains = (offer: Offer) => {
     const item = offeredItem(offer);
     return item !== null && containsMachineSetupItem(setup, item);
@@ -108,12 +117,14 @@ export function MachineSetupAddItemsModal(props: CustomModalInjectedProps & Read
       { key: 'all', kind: 'catalog', label: t('common.all'), icon: 'squares-four' },
       { key: 'setup', kind: 'catalog', label: t('machinePresets.setup.itemsGroupSetup'), icon: 'gear' },
       { key: 'software', kind: 'catalog', label: t('machinePresets.setup.itemsGroupSoftware'), icon: 'cube' },
+      { key: 'agents', kind: 'catalog', label: t('settingsAgents.title'), icon: 'robot' },
       { key: 'apps', kind: 'catalog', label: t('machinePresets.setup.itemsGroupApps'), icon: 'rocket-launch' },
     ],
     catalog: {
       query, onQueryChange: setQuery, searchPlaceholder: t('machinePresets.setup.addItemsSearch'), items,
       itemKey: offerKey, anatomy,
-      loading: recipesDemanded && (recipes.state.status === 'loading' || software.state.status === 'loading') || appsDemanded && apps.loading,
+      loading: recipesDemanded && (recipes.state.status === 'loading' || software.state.status === 'loading')
+        || agentsDemanded && agents.offers === null || appsDemanded && apps.loading,
       ...(appsDemanded && apps.hasNextPage ? { loadMore: { label: t('common.more'), loading: apps.loading, onPress: apps.nextPage } } : {}),
       sourceFailures: appsDemanded ? apps.sourceFailures : [],
       footer: failed && items.length > 0 ? failure : undefined,
