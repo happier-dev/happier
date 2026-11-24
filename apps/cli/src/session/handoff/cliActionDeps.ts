@@ -184,6 +184,9 @@ export function createCliSessionHandoffActionDeps(
         return { ok: false, errorCode: source.errorCode, error: source.error };
       }
       const sourceMachineId = source.sourceMachineId;
+      // Workspace endpoints bind to the admitted Home identity (as destination
+      // preflight does); the local profile label is only the fallback.
+      const accountServerId = context?.serverIdentityId?.trim() || serverId;
       return await callMachineAction({
         machineId: sourceMachineId,
         method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3,
@@ -200,7 +203,7 @@ export function createCliSessionHandoffActionDeps(
           ...(stateTransfer ? { stateTransfer } : {}),
           preferredTransportStrategies: ['direct_peer', 'server_routed_stream'],
           ...(workspaceAction ? { workspaceAction } : {}),
-          ...(serverId ? { accountServerId: serverId } : {}),
+          ...(accountServerId ? { accountServerId } : {}),
           ...(actionRequestId ? { actionRequestId } : {}),
           ...(handoffTargetReplacementApproval ? { handoffTargetReplacementApproval } : {}),
           ...(handoffTargetReplacementApprovalReceiptId ? {

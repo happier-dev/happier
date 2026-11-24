@@ -2,7 +2,8 @@ import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
 import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionRpcTransport';
-import { isActionSpecRpcSpecInScopes, SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES } from './actionSpecRpcRegistration';
+import { isActionSpecRpcSpecInScopes, MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,
+    SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES } from './actionSpecRpcRegistration';
 import type { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import type { RpcLocalActionContext, RpcHandlerContext } from '@/api/rpc/types';
 import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
@@ -374,10 +375,12 @@ async function resolveRpcActionExecutor<TActionId extends ActionId>(params: RpcA
     return module.createCliActionExecutor(buildActionExecutorDepsForRpc({ executorParams: params.executorParams }));
 }
 
-/** The installed handoff coordinator owns these effects; its registration admits requester Session custody. */
-function isInstalledSessionHandoffEffect(actionId: ActionId): boolean {
+/** Native Session lifecycle owners (handoff coordinator, Fork and Continue) run these effects;
+ * their registration admits the requester's own Session custody before any effect. */
+const INSTALLED_SESSION_LIFECYCLE_RPC_SCOPES = [...SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES, ...MACHINE_SESSION_LIFECYCLE_RPC_SCOPES];
+function isInstalledSessionLifecycleEffect(actionId: ActionId): boolean {
     return listActionSpecRpcRegistrations().some(spec => spec.id === actionId
-        && isActionSpecRpcSpecInScopes(spec, SESSION_HANDOFF_LIFECYCLE_RPC_SCOPES));
+        && isActionSpecRpcSpecInScopes(spec, INSTALLED_SESSION_LIFECYCLE_RPC_SCOPES));
 }
 
 /** Runtime-owned effects retain requester custody without re-entering its transport executor. */
@@ -385,7 +388,7 @@ export function readRequesterAccountRpcActionExecutor(
     params: Pick<RpcActionDispatchRequest, 'actionId' | 'requesterApprovalDecision' | 'callerInputAuthorization'>,
 ) {
     return ACTION_ID_FAMILIES_V1.execution_run_control.some(actionId => actionId === params.actionId)
-        || isInstalledSessionHandoffEffect(params.actionId)
+        || isInstalledSessionLifecycleEffect(params.actionId)
         || params.actionId === 'approval.request.decide' && params.requesterApprovalDecision
         ? undefined : params.callerInputAuthorization?.requesterAccountExecutor;
 }

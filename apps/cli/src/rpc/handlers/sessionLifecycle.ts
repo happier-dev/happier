@@ -311,6 +311,7 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
             const phaseInput = input && typeof input === 'object' && Reflect.get(input, 'kind') === 'targeted_action_rpc'
                 ? Reflect.get(input, 'input') : input;
             if (!isHandoffPhaseBound(phaseInput, context)) return { ok: false, errorCode: 'invalid_request' };
+            // Custody gate is skipped when requesterSessionBootstrap is already set; only in-process code (invokeLocal rpcContext, an admitted sealed bootstrap) sets it today.
             if (!admission || admission.actorAccountId === admission.custodianAccountId || context.requesterSessionBootstrap) {
                 return await handler(input, context);
             }

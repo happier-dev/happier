@@ -24,6 +24,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { registerMachineSessionHandoffRpcHandlers } from '@/api/machine/sessionHandoff/handlers';
 import type { RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import { MACHINE_SESSION_LIFECYCLE_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
+import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 
@@ -153,24 +155,40 @@ it('retains admitted handoff custody through source enrichment and rejects a cha
   expect(native).toHaveBeenCalledOnce();
 });
 
-it.each(['custody', 'no custody'] as const)(
-  'starts an admitted foreign requester handoff at the installed native coordinator once (%s)', async custodyCase => {
-  const home = 'srv_handoff_home';
+type ForeignRequesterCorridor = Readonly<{
+  actionId: 'session.handoff' | 'session.fork';
+  nativeMethod: string;
+  binding: Readonly<Record<string, unknown>>;
+  custody: boolean;
+  input: unknown;
+  register(rpc: RpcHandlerManager, requesterSessionRuntime: NonNullable<Parameters<typeof registerSessionLifecycleRpcHandlers>[0]['requesterSessionRuntime']>,
+    activeServerDir: string): void;
+}>;
+
+const corridorHome = 'srv_handoff_home';
+// The receiving daemon's local profile label differs from the admitted Home identity.
+const corridorProfile = 'env_source_profile';
+const corridorSessionId = 'cmwagqalz008omccdtt4qggcq';
+const corridorMachineId = 'source';
+const corridorTargetMachineId = 'destination';
+const corridorInstallationId = 'source-installation';
+
+/** One admitted foreign requester Action through real local RPC, lifecycle registration and requester executor. */
+async function runForeignRequesterAction(corridor: ForeignRequesterCorridor) {
+  const home = corridorHome;
+  const sessionId = corridorSessionId;
+  const machineId = corridorMachineId;
+  const installationId = corridorInstallationId;
   const serverHttpBaseUrl = 'https://handoff.example.test';
-  const sessionId = 'cmwagqalz008omccdtt4qggcq';
-  const machineId = 'source';
-  const targetMachineId = 'destination';
-  const installationId = 'source-installation';
   const target = { kind: 'machine' as const, machineId };
   // An Account bearer names its Account (`sub`); the Action automation owner reads it.
   const token = ['e30', Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url'), 'fixture'].join('.');
   const credentials = { token, encryption: null };
-  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-admission', binding: {
-    actionId: 'session.handoff', accountId: 'requester', custodianAccountId: 'custodian',
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-admission', binding: {
+    actionId: corridor.actionId, accountId: 'requester', custodianAccountId: 'custodian',
     authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
-    serverIdentityId: home, machineId, installationId, target, requestId: 'handoff-request',
-    requestEnvelopeDigest: 'a'.repeat(43), handoffAdmission: { sessionId, sourceMachineId: machineId,
-      sourceInstallationId: installationId, targetMachineId, targetInstallationId: 'destination-installation' },
+    serverIdentityId: home, machineId, installationId, target, requestId: 'requester-request',
+    requestEnvelopeDigest: 'a'.repeat(43), ...corridor.binding,
   } });
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: {}, capabilities: {
     encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } })));
@@ -195,72 +213,117 @@ it.each(['custody', 'no custody'] as const)(
   if (!projected) throw new Error('The test requester must have admitted custody');
   // External Action ingress retains the frozen projection's private ports on an extensible carrier.
   const root: typeof projected = Object.defineProperties({ ...projected }, Object.getOwnPropertyDescriptors(projected));
-  const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-requester-native-'));
+  const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-requester-native-'));
   try {
-    const rpc = new RpcHandlerManager({ scopePrefix: machineId, encryptionMode: 'plain' });
+    // The receiving Machine's real RPC authorizer admits requester execution on this isolation-off Machine.
+    const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain',
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId,
+        resolveCustodianAccountId: async () => 'custodian', resolveInstallationId: () => installationId,
+        resolveHomeServerIdentityId: async () => home, verifyMachineAdmission: async () => true }) });
     // The requester's retained Session custody is read from the daemon's persisted
     // custody store (a persistence boundary); only its public identity facts are modelled.
     const requesterCustody = { credentials, attribution, serverHttpBaseUrl,
       getBoundSessionId: () => sessionId, isCurrent: async () => true } as unknown as RequesterSessionRuntimeContext['bootstrap'];
-    const nativeRefusal = { ok: false as const, errorCode: 'handoff_target_requires_sandbox_preset',
-      error: 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.' };
-    // The native coordinator is the Machine-effect boundary: it moves the Session.
-    const coordinateSessionHandoff = vi.fn<NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['coordinateSessionHandoff']>>(
-      async () => nativeRefusal);
-    registerMachineSessionHandoffRpcHandlers({ rpcHandlerManager: rpc, localMachineId: machineId,
-      runtimeConfig: { activeServerDir }, coordinateSessionHandoff,
-      requesterSessionRuntime: { serverId: home, release: async () => {},
-        resolve: async () => custodyCase === 'custody'
-          ? { bootstrap: requesterCustody } as unknown as RequesterSessionRuntimeContext : null } });
+    corridor.register(rpc, { serverId: home, release: async () => {},
+      resolve: async () => corridor.custody ? { bootstrap: requesterCustody } as unknown as RequesterSessionRuntimeContext : null },
+    activeServerDir);
     const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'custodian', machineId, installationId,
       role: 'use' as const, encryptionMode: 'plain' as const };
     const verifyMachineAdmissionCurrent = async () => true;
-    const sourceStarts: unknown[] = [];
+    const nativeStarts: unknown[] = [];
     const requesterExecutor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials, sessionId,
-      mode: 'plain', ctx: null, serverId: home, serverIdentityId: home, serverHttpBaseUrl,
+      mode: 'plain', ctx: null, serverId: corridorProfile, serverIdentityId: home, serverHttpBaseUrl,
       externalActionMachineInstallationId: installationId,
       externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32)).secretKey,
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
       // The installed host forwards the admitted requester with its receiving Machine admission.
       machineActionDirectTargetTransport: { machineId, invoke: async (method, request, options) => {
-        if (method === RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3) {
-          sourceStarts.push(request);
-          // Cost contract: one native SOURCE start per admitted handoff.
-          if (sourceStarts.length > 1) throw new Error('second SOURCE handoff start for one admitted handoff');
+        if (method === corridor.nativeMethod) {
+          nativeStarts.push(request);
+          // Cost contract: one native start per admitted requester Action.
+          if (nativeStarts.length > 1) throw new Error(`second native ${corridor.actionId} start for one admitted Action`);
         }
         return await rpc.invokeLocal(method, request, { ...options, rpcContext: { machineAdmission,
           verifyMachineAdmissionCurrent, callerInputAuthorization: root,
           ...(options?.localActionContext ? { localActionContext: options.localActionContext } : {}) } });
       } },
     }));
-    // Cost contract: one admitted handoff is one requester Action execution.
-    const requesterActionExecutions: string[] = [];
+    // Cost contract: one admitted requester Action is one requester Action execution.
+    const executions: string[] = [];
     const admittedRequesterExecutor: typeof requesterExecutor = { ...requesterExecutor, execute: async (actionId, input, context) => {
-      requesterActionExecutions.push(actionId);
+      executions.push(actionId);
       return await requesterExecutor.execute(actionId, input, context);
     } };
     Object.defineProperty(root, 'requesterAccountExecutor', { value: admittedRequesterExecutor, enumerable: false });
-
-    const result = await admittedRequesterExecutor.execute('session.handoff', { sessionId, targetMachineId, workspaceAction: { kind: 'none' } }, {
-      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: home,
-      externalActionExecutionAuthorization: root, externalActionTarget: target, actionRequestId: 'handoff-request',
-      machineAdmission, verifyMachineAdmissionCurrent, presentUserConfirmation: { actionId: 'session.handoff' },
+    // Receiving ingress stamps its local profile and the admitted Home identity.
+    const result = await admittedRequesterExecutor.execute(corridor.actionId, corridor.input, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: corridorProfile, serverIdentityId: home,
+      externalActionExecutionAuthorization: root, externalActionTarget: target, actionRequestId: 'requester-request',
+      machineAdmission, verifyMachineAdmissionCurrent, presentUserConfirmation: { actionId: corridor.actionId },
     });
-
-    expect(requesterActionExecutions).toEqual(['session.handoff']);
-    expect(sourceStarts).toHaveLength(1);
-    if (custodyCase === 'no custody') {
-      expect(result).toMatchObject({ ok: false });
-      expect(coordinateSessionHandoff).not.toHaveBeenCalled();
-      return;
-    }
-    expect(result).toMatchObject(nativeRefusal);
-    expect(coordinateSessionHandoff).toHaveBeenCalledOnce();
-    const native = coordinateSessionHandoff.mock.calls[0]![0];
-    expect(native.actionInput).toMatchObject({ sessionId, sourceMachineId: machineId, targetMachineId });
-    expect(native.context?.requesterSessionBootstrap).toBe(requesterCustody);
-    expect(native.context?.machineAdmission?.actorAccountId).toBe('requester');
+    return { result, executions, nativeStarts, requesterCustody };
   } finally {
     await rm(activeServerDir, { recursive: true, force: true });
   }
+}
+
+it.each(['custody', 'no custody'] as const)(
+  'starts an admitted foreign requester handoff at the installed native coordinator once (%s)', async custodyCase => {
+  const nativeRefusal = { ok: false as const, errorCode: 'handoff_target_requires_sandbox_preset',
+    error: 'This machine runs new sessions in a sandbox. Hand off to a sandbox preset.' };
+  // The native coordinator is the Machine-effect boundary: it moves the Session.
+  const coordinateSessionHandoff = vi.fn<NonNullable<Parameters<typeof registerMachineSessionHandoffRpcHandlers>[0]['coordinateSessionHandoff']>>(
+    async () => nativeRefusal);
+  const { result, executions, nativeStarts, requesterCustody } = await runForeignRequesterAction({
+    actionId: 'session.handoff', nativeMethod: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, custody: custodyCase === 'custody',
+    binding: { handoffAdmission: { sessionId: corridorSessionId, sourceMachineId: corridorMachineId,
+      sourceInstallationId: corridorInstallationId, targetMachineId: corridorTargetMachineId,
+      targetInstallationId: 'destination-installation' } },
+    input: { sessionId: corridorSessionId, targetMachineId: corridorTargetMachineId, workspaceAction: { kind: 'none' } },
+    register: (rpc, requesterSessionRuntime, activeServerDir) => registerMachineSessionHandoffRpcHandlers({ rpcHandlerManager: rpc,
+      localMachineId: corridorMachineId, runtimeConfig: { activeServerDir }, coordinateSessionHandoff, requesterSessionRuntime }),
+  });
+
+  expect(executions).toEqual(['session.handoff']);
+  expect(nativeStarts).toHaveLength(1);
+  // Workspace endpoints bind to the admitted Home identity, never the local profile label.
+  expect(nativeStarts[0]).toMatchObject({ accountServerId: corridorHome });
+  if (custodyCase === 'no custody') {
+    expect(result).toMatchObject({ ok: false });
+    expect(coordinateSessionHandoff).not.toHaveBeenCalled();
+    return;
+  }
+  expect(result).toMatchObject(nativeRefusal);
+  expect(coordinateSessionHandoff).toHaveBeenCalledOnce();
+  const native = coordinateSessionHandoff.mock.calls[0]![0];
+  expect(native.actionInput).toMatchObject({ sessionId: corridorSessionId, sourceMachineId: corridorMachineId,
+    targetMachineId: corridorTargetMachineId, accountServerId: corridorHome });
+  expect(native.context?.requesterSessionBootstrap).toBe(requesterCustody);
+  expect(native.context?.machineAdmission?.actorAccountId).toBe('requester');
+});
+
+it.each(['custody', 'no custody'] as const)(
+  'forks an admitted foreign requester Session at the installed native lifecycle once (%s)', async custodyCase => {
+  const nativeRefusal = { ok: false as const, errorCode: 'session_fork_unavailable', error: 'session_fork_unavailable' };
+  // The native lifecycle handler is the Machine-effect boundary: it spawns the child.
+  const nativeFork = vi.fn<NonNullable<SessionLifecycleActionHandlers['session.fork']>>(async () => nativeRefusal);
+  const { result, executions, nativeStarts, requesterCustody } = await runForeignRequesterAction({
+    actionId: 'session.fork', nativeMethod: RPC_METHODS.SESSION_FORK, custody: custodyCase === 'custody', binding: {},
+    input: { sessionId: corridorSessionId, forkPoint: { type: 'latest' } },
+    register: (rpc, requesterSessionRuntime) => registerSessionLifecycleRpcHandlers({ rpcHandlerManager: rpc,
+      actionIds: ['session.fork'], scopes: MACHINE_SESSION_LIFECYCLE_RPC_SCOPES, requesterSessionRuntime,
+      actionExecutor: createSessionLifecycleRpcActionExecutor({ 'session.fork': nativeFork }) }),
+  });
+
+  expect(executions).toEqual(['session.fork']);
+  expect(nativeStarts).toHaveLength(1);
+  if (custodyCase === 'no custody') {
+    expect(result).toMatchObject({ ok: false });
+    expect(nativeFork).not.toHaveBeenCalled();
+    return;
+  }
+  expect(result).toMatchObject({ ok: false, errorCode: nativeRefusal.errorCode });
+  expect(nativeFork).toHaveBeenCalledOnce();
+  expect(nativeFork.mock.calls[0]?.[0]).toMatchObject({ parentSessionId: corridorSessionId, forkPoint: { type: 'latest' } });
+  expect(nativeFork.mock.calls[0]?.[1]?.requesterSessionBootstrap).toBe(requesterCustody);
 });
