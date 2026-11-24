@@ -112,6 +112,19 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
         : active && snapshot.nativePhase === 'stopped'
             ? 'managed_service_native_cleanup_unconfirmed' : undefined;
     const endpointUrl = servingCurrent && !unavailableReason ? snapshot.baseUrl : null;
+    const launchEnvironment = handle.kind === 'workspace' && active ? handle.launchEnvironment : undefined;
+    const launchWarning = launchEnvironment?.kind === 'unavailable' ? launchEnvironment.code
+        : launchEnvironment?.kind === 'conflict' ? launchEnvironment.reason : undefined;
+    // Contributor reasons can contain private launch details. Publish the typed
+    // host code and a recovery message through the existing service output.
+    const diagnostics: NonNullable<LocalServiceLaunchTargetV1['diagnostics']> = launchWarning
+        ? [{ code: launchWarning, severity: 'warning', message: 'Local capture could not start. Restart this service to retry capture.' }] : [];
+    if (snapshot.state === 'failed' || snapshot.state === 'unhealthy') {
+        // The supervisor owns sanitization and retention bounds for process output.
+        for (const { code, severity, message } of snapshot.diagnostics) {
+            diagnostics.push({ code, severity, ...(message !== undefined ? { message } : {}) });
+        }
+    }
     return {
         id: handle.serviceId, source: 'managed_service',
         sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId },
@@ -131,12 +144,7 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
         ...(handle.kind === 'workspace' ? { subtitle: handle.cwd } : {}), confidence: 'high',
         state: snapshot.state === 'starting' ? 'starting' : 'available',
         serviceState: snapshot.state,
-        // The supervisor owns sanitization and retention bounds. Publish only its
-        // presentation fields while failed; private details/remediation stay local.
-        ...((snapshot.state === 'failed' || snapshot.state === 'unhealthy') && snapshot.diagnostics.length > 0
-            ? { diagnostics: snapshot.diagnostics.map(({ code, severity, message }) => ({
-                code, severity, ...(message !== undefined ? { message } : {}),
-            })) } : {}),
+        ...(diagnostics.length ? { diagnostics } : {}),
         ...(unavailableReason ? { unavailableReason } : {}),
         ...(snapshot.startedAtMs !== null ? { startedAtMs: snapshot.startedAtMs } : {}),
         endpointKind: handle.endpointKind === 'none' && snapshot.baseUrl ? 'http' : handle.endpointKind,

@@ -69,8 +69,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { DaemonLocalServiceLauncherSnapshotResponseV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
+import { DaemonLocalServiceLauncherSnapshotResponseV1Schema, DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceLauncherSnapshotV1Schema, LocalServiceStartApprovalReviewV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createDefaultWorkspaceExecutionSettingsV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { createProcessActionOwnerAdapters } from '@/daemon/processes/actions/processActionOwnerAdapters';
 import { MachineProcessesStartAgainResultV1Schema } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
@@ -1070,8 +1069,10 @@ describe('accepted Project Service declaration starter', () => {
             Object.assign(runtime, { inspectSourceProjectManifest });
         }
         const projectionLifetime = new AbortController();
+        let prepareServiceLaunchEnvironments: NonNullable<import('@/plugins/runtime/composition/executableTypes').ResolvedExecutablePluginRuntimeRegistry['prepareServiceLaunchEnvironments']> | undefined;
         const starter = createProjectServiceDeclarationStarter({ resolveRuntime: async () => runtime,
-            acquirePluginRuntime: async () => ({ registry: { projectManagedServices: owner, retirementSignal: projectionLifetime.signal }, release: async () => {} }) });
+            acquirePluginRuntime: async () => ({ registry: { projectManagedServices: owner, retirementSignal: projectionLifetime.signal,
+                ...(prepareServiceLaunchEnvironments ? { prepareServiceLaunchEnvironments } : {}) }, release: async () => {} }) });
         const projectDefinitionAccount = { account: { credentials }, serverHttpBaseUrl: runtime.serverHttpBaseUrl };
         const targets = (await discoverLocalServiceRunTargets({ roots: [], acceptedWorkspaceRefs: [workspace], projectDefinitionAccount })).targets;
         const target = targets.find(target => 'declaration' in target && target.declaration.selection.kind === 'manifest');
@@ -1116,6 +1117,7 @@ describe('accepted Project Service declaration starter', () => {
             savePlacement(value: ProjectServicePlacementV1) { savedPlacement = value; },
             setNativeTool(value: NonNullable<typeof nativeTool>) { nativeTool = value; },
             bindWorkerStatusTransport(handler: NonNullable<typeof workerStatusTransport>) { workerStatusTransport = handler; },
+            setServiceLaunchEnvironmentContribution(prepare: NonNullable<typeof prepareServiceLaunchEnvironments>) { prepareServiceLaunchEnvironments = prepare; },
             trustSetupDigest(value: string) { trustedSetupDigest = value; },
             publishSource(value: boolean) { sourceListed = value; },
             mintSourceEpoch(value: number) { mintedEpoch = value; },
@@ -3382,9 +3384,9 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const input = { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) };
         const preparation = await createLocalServicesDaemonRestartPreparation({ featureGate: gate,
             ingress: h.ingress, routes: { actionRoutes } })({ actionId: 'localServices.actions.restartManaged', input, context });
-        expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_workspace_unavailable' } });
+        expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_account_rows_unavailable' } });
         const result = await executor.execute('localServices.actions.restartManaged', input, context);
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_workspace_unavailable' } });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'denied', reasonCode: 'project_account_rows_unavailable' } });
         expect(approvals).toEqual([]);
         expect(original.snapshot().state).toBe('running');
         await original.stop();
@@ -3430,6 +3432,14 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     });
     it.each(['rpc', 'ui'] as const)('reaches fresh replacement through the actual receiving Machine Restart Action handler on %s', async surface => {
         const h = await fixture();
+        let captureAvailable = false;
+        // The plugin contribution is an external runtime boundary. Keep the
+        // launch composition, process, feed and reviewed Restart path real.
+        if (surface === 'ui') h.setServiceLaunchEnvironmentContribution(async () => [{
+            contribution: { pluginId: 'fixture.capture', localId: 'capture' },
+            result: captureAvailable ? { kind: 'replace', defaults: { OTEL_SERVICE_NAME: 'fixture-service' }, release: async () => {} }
+                : { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'unsupported_otlp_transport' },
+        }]);
         const channel = await createRequesterCurrentnessSocketHarness();
         cleanups.push(() => channel.close());
         const review = await h.selectStart();
@@ -3437,6 +3447,14 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
             .toMatchObject({ status: 'succeeded' });
         const old = h.owner.listProjectServices()[0]!;
+        const selectedRow = LocalServiceLauncherSnapshotV1Schema.parse(await h.routes.getSnapshot({ workspaceRoot: h.root }))
+            .targets.find(target => target.sourceClass?.kind === 'managed_service' && target.sourceClass.managedServiceId === old.instanceId);
+        if (selectedRow?.sourceClass?.kind !== 'managed_service') throw new Error('Expected the selected running service row');
+        if (surface === 'ui') {
+            expect(selectedRow).toMatchObject({ serviceState: 'running', actions: expect.arrayContaining(['manage']),
+                diagnostics: [expect.objectContaining({ code: 'service_launch_environment_unavailable', severity: 'warning' })] });
+            captureAvailable = true;
+        }
         const actionRoutes = createLocalServiceActionRoutes({ machineId: 'machine', projectManagedServices: h.owner,
             inventoryRegistry: createLocalServiceInventoryRegistry(), restartManagedService: h.starter.restartManagedService,
             prepareRestartManagedService: h.starter.prepareRestartManagedService,
@@ -3504,7 +3522,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             } });
         const request = { requestId: 'received-restart', action: 'restart_managed' as const, force: false,
             expectedEffectDigest: review.reviewedEffectDigest,
-            target: { kind: 'managed_service' as const, machineId: 'machine', managedServiceId: old.instanceId,
+            target: { kind: 'managed_service' as const, machineId: 'machine',
+                managedServiceId: selectedRow.sourceClass.managedServiceId,
                 workspaceId: h.workspace.id, declaration: h.request.declaration, cwd: h.root } };
         const input = { ...request, confirmationNonce: createLocalServiceActionConfirmationNonceV1(request) };
         const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
@@ -3559,5 +3578,12 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         expect(old.snapshot().state).toBe('stopped');
         expect(h.owner.listProjectServices()[0]?.instanceId).not.toBe(old.instanceId);
         expect(h.owner.listProjectServices()[0]?.snapshot().state).toBe('running');
+        if (surface === 'ui') {
+            const newTarget = LocalServiceLauncherSnapshotV1Schema.parse(await h.routes.getSnapshot({ workspaceRoot: h.root }))
+                .targets.find(target => target.sourceClass?.kind === 'managed_service'
+                    && target.sourceClass.managedServiceId === h.owner.listProjectServices()[0]?.instanceId);
+            expect(newTarget).toMatchObject({ serviceState: 'running' });
+            expect(newTarget?.diagnostics).toBeUndefined();
+        }
     });
 });

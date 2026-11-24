@@ -76,6 +76,7 @@ import { configuration } from '@/configuration';
 import { formatProcessOwnerTag, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { classifySpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { logger } from '@/ui/logger';
+import type { ProjectServiceLaunchEnvironmentResult } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import { isWorkspacePathWithin } from '@/daemon/local/services/inventory/provenance';
 import type { LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { throwNativeServiceControlFailure, type ManagedServiceNativeControlResult } from './managedServiceNativeControl';
@@ -320,6 +321,7 @@ export interface ManagedServiceProcessHandle {
     snapshot(): ManagedServiceProcessSnapshot;
     readonly terminalView?: SessionTerminalViewTargetV1;
     readonly portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
+    readonly launchEnvironment?: ProjectServiceLaunchEnvironmentResult;
     readNativeLogs?(options?: ManagedServiceNativeLogReadOptionsForHost): Promise<ManagedServiceNativeLogResultV1>;
     watchNativeLogs?(options: Omit<ManagedServiceNativeLogWatchV1, 'kind' | 'maxBytes'>): Promise<Readonly<{ dispose(): Promise<void> }>>;
     /** Host-private live admission read; absent boundary doubles cannot admit previews. */
@@ -400,12 +402,15 @@ Readonly<{
     exec?: never;
 }>);
 
+type ProjectManagedServiceLaunch = HostAuthorizedPluginExecLaunch & Readonly<{
+    portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
+    launchEnvironment?: ProjectServiceLaunchEnvironmentResult;
+}>;
+
 export type ProjectManagedServiceLaunchAuthorizer = (input: Readonly<{
     endpoint: Readonly<{ baseUrl: string; port: number }> | null;
     signal: AbortSignal;
-}>) => Promise<HostAuthorizedPluginExecLaunch & Readonly<{
-    portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
-}>>;
+}>) => Promise<ProjectManagedServiceLaunch>;
 
 type ManagedServiceProcessSupervision = {
     readonly lifecycle: AbortController;
@@ -1120,13 +1125,13 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         let serviceTerminal: Awaited<ReturnType<TerminalPtySessionManager['spawnManagedService']>> | undefined;
         let terminalView: SessionTerminalViewTargetV1 | undefined;
         let portSource: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1 | undefined;
+        let launchEnvironment: ProjectManagedServiceLaunch['launchEnvironment'];
         let retainedLaunchRelease: HostAuthorizedPluginExecLaunch['release'] | null = null;
         let launchRedactedValues: readonly string[] = Object.values(spec.launch?.env ?? {})
             .flatMap(value => readCredentialRedactionValues({ rawCredential: value }));
-        const retainLaunchDiagnostics = (launch: HostAuthorizedPluginExecLaunch & Readonly<{
-            portSource?: import('@happier-dev/protocol/local/services/launcher/v1').LocalServicePortSourceV1;
-        }>): void => {
+        const retainLaunchDiagnostics = (launch: ProjectManagedServiceLaunch): void => {
             portSource = launch.portSource;
+            launchEnvironment = launch.launchEnvironment;
             // Project secrets may use arbitrary environment names. Treat values
             // as private rather than inferring secrecy from a variable's name.
             launchRedactedValues = Object.values(launch.env)
@@ -2694,6 +2699,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             snapshot: () => snapshot,
             ...(terminalView ? { terminalView } : {}),
             get portSource() { return portSource; },
+            get launchEnvironment() { return launchEnvironment; },
             nativeControlCapabilities: Object.freeze({ start: Boolean(nativeControl?.start),
                 stop: Boolean(nativeControl?.stop), restart: Boolean(nativeControl?.restart) }),
             readNativeLogs,

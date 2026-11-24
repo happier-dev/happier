@@ -17,7 +17,7 @@ export function mergeProjectLaunchLayers<T>(project: Readonly<Record<string, T>>
 
 type Environment = Readonly<Record<string, string>>;
 export type ProjectServiceLaunchEnvironmentResult = Readonly<{ kind: 'ready' | 'unchanged' }>
-    | Readonly<{ kind: 'unavailable'; code: string; reason?: string }>
+    | Extract<PreparedServiceLaunchEnvironmentContribution['result'], { kind: 'unavailable' }>
     | Readonly<{ kind: 'conflict'; reason: 'replacement_key_conflict'; names: readonly string[] }>;
 export type ProjectServiceLaunchEnvironmentInput = Omit<ServiceLaunchEnvironmentHostInput, 'workspace' | 'readEnvironment' | 'physicalRootIdentity'> & Readonly<{
     prepareServiceLaunchEnvironments(input: Omit<ServiceLaunchEnvironmentHostInput, 'workspace'>): Promise<readonly PreparedServiceLaunchEnvironmentContribution[]>;

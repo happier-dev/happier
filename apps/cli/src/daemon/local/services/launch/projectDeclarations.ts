@@ -960,9 +960,6 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                     });
                     if (preparedEnvironment.kind !== 'prepared') throw new ServiceStartRefusal(preparedEnvironment.code);
                     preparedLaunchInput = preparedEnvironment.launchInput;
-                    if (preparedLaunchInput.service.kind === 'unavailable' || preparedLaunchInput.service.kind === 'conflict') {
-                        context.operationProgress?.update({ phase: 'starting', label: 'Service capture unavailable. Restart the service to retry capture.' });
-                    }
                     const launch = await authorizePreparedProjectCommand({ ...setupInput!, preparation: current.preparation },
                         { ...current.plan, preparedLaunchInput }, current.command, signal);
                     try {
@@ -973,6 +970,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         // its existing cleanup proves the owned process tree settled.
                         retained = true;
                         return { ...launch,
+                            launchEnvironment: preparedLaunchInput.service,
                             ...(preparedLaunchInput.portSource ? { portSource: preparedLaunchInput.portSource } : {}),
                             ...(current.command.kind === 'native' && current.command.source.tool === 'flox'
                                 ? { waitForGracefulRootExitBeforeTreeStop: true as const } : {}),
