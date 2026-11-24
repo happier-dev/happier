@@ -24,6 +24,7 @@ import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTarget
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 import { isApprovalReviewerModelEligible } from './approvalReviewerEligibility';
 import { logger } from "@/ui/logger";
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { configuration } from '@/configuration';
 import type { ApiSessionClient } from "@/api/session/sessionClient";
 import { AgentState } from "@/api/types";
@@ -205,6 +206,7 @@ export type PermissionRespondRpcResult =
             | 'permission_response_invalid'
             | 'present_user_required';
         requestId: string;
+        failureCause?: ActionFailureCauseV1;
     }>;
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
@@ -1835,26 +1837,37 @@ export abstract class BasePermissionHandler {
             }
             return undefined;
         };
-        const managerQuestionRefusal = (requestId: string): PermissionRespondRpcResult => ({
-            ok: false, errorCode: 'present_user_required', requestId,
-        });
+        const questionAnswerRefusal = (
+            requestId: string, rpcContext: RpcHandlerContext | undefined, clause: string,
+        ): PermissionRespondRpcResult => {
+            const errorCode = 'present_user_required';
+            logger.info('Question answer refused', {
+                clause, workerSessionId: this.session.sessionId, requestId,
+                callId: rpcContext?.transportRequestId ?? rpcContext?.sessionActionOrigin?.requestId,
+            });
+            return { ok: false, errorCode, requestId, failureCause: {
+                phase: `rpc.handler.manager_question.${clause}`, errorCode, errorClass: 'RpcError', httpStatus: null,
+            } };
+        };
         const handleManagerQuestionResponse = async (
             requestId: string,
             rpcContext: RpcHandlerContext | undefined,
             response: PermissionResponse | null,
         ): Promise<PermissionRespondRpcResult> => {
             const origin = rpcContext?.sessionActionOrigin;
-            if (!rpcContext || !origin) return managerQuestionRefusal(requestId);
+            if (!rpcContext || !origin) return questionAnswerRefusal(requestId, rpcContext, 'origin_missing');
             return await this.requestCoordinator.withResponseClaim(requestId, async (): Promise<PermissionRespondRpcResult> => {
                 const context = this.requestCoordinator.getResponseContext(requestId);
                 if (!context) return { ok: false, errorCode: 'permission_request_not_found', requestId };
                 const actor = this.resolvePresentUserPermissionActor(rpcContext);
                 const readSession = this.session.readQuestionSessionSnapshot?.bind(this.session);
-                if (!actor || !context.currentHandler || !readSession
-                    || rpcContext.signal.aborted
-                    || (response && (!response.approved || !response.answers
-                        || (response.decision !== undefined && response.decision !== 'approved')))) {
-                    return managerQuestionRefusal(requestId);
+                if (!actor) return questionAnswerRefusal(requestId, rpcContext, 'actor_missing');
+                if (!context.currentHandler) return questionAnswerRefusal(requestId, rpcContext, 'handler_missing');
+                if (!readSession) return questionAnswerRefusal(requestId, rpcContext, 'reader_missing');
+                if (rpcContext.signal.aborted) return questionAnswerRefusal(requestId, rpcContext, 'aborted');
+                if (response && (!response.approved || !response.answers
+                    || (response.decision !== undefined && response.decision !== 'approved'))) {
+                    return questionAnswerRefusal(requestId, rpcContext, 'response_ineligible');
                 }
                 let admitted: boolean;
                 try {
@@ -1864,22 +1877,21 @@ export abstract class BasePermissionHandler {
                         question: isAgentStructuredQuestionRequest(context),
                         lasting: context.questionV1?.lasting !== false, readSession,
                     });
-                } catch (error) {
-                    logger.debug(`${this.getLogPrefix()} Manager question admission unavailable`, error);
-                    return managerQuestionRefusal(requestId);
+                } catch {
+                    return questionAnswerRefusal(requestId, rpcContext, 'admission_unavailable');
                 }
-                if (!admitted || rpcContext.signal.aborted) return managerQuestionRefusal(requestId);
+                if (!admitted) return questionAnswerRefusal(requestId, rpcContext, 'admission_refused');
+                if (rpcContext.signal.aborted) return questionAnswerRefusal(requestId, rpcContext, 'aborted');
                 if (!response) {
                     let currentHandler: SessionQuestionHandlerV1;
                     try {
                         currentHandler = await resolveInitialQuestionHandler({
                             sessionId: origin.caller.sessionId, lasting: false, readSession,
                         });
-                    } catch (error) {
-                        logger.debug(`${this.getLogPrefix()} Manager question pass-up unavailable`, error);
-                        return managerQuestionRefusal(requestId);
+                    } catch {
+                        return questionAnswerRefusal(requestId, rpcContext, 'pass_up_unavailable');
                     }
-                    if (rpcContext.signal.aborted) return managerQuestionRefusal(requestId);
+                    if (rpcContext.signal.aborted) return questionAnswerRefusal(requestId, rpcContext, 'aborted');
                     const changed = await this.requestCoordinator.changeQuestionHandler({
                         requestId, expectedCreatedAt: context.createdAt, expectedHandler: context.currentHandler, currentHandler,
                     });
@@ -1922,7 +1934,7 @@ export abstract class BasePermissionHandler {
                     && isAgentStructuredQuestionRequest(context) && context.questionV1?.lasting !== true);
             };
             if (nonPerson && !isTokenQuestionAnswerEligible()) {
-                return managerQuestionRefusal(response.id);
+                return questionAnswerRefusal(response.id, rpcContext, 'token_ineligible');
             }
             permissionDecisionActorV1 ??= !nonPerson
                 ? this.resolvePresentUserPermissionActor(rpcContext) ?? undefined : undefined;

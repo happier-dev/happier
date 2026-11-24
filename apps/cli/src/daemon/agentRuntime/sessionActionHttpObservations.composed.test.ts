@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
@@ -57,6 +58,8 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import { createDaemonSessionAccountActionExecutor } from './createDaemonSessionAccountActionExecutor';
 import { AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { createHappierMcpServer } from '@/mcp/createHappierMcpServer';
+import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { configuration } from '@/configuration';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
@@ -1150,6 +1153,50 @@ it.each(['bound', 'restricted', 'stopped-at-raise', 'foreign-witness', 'wrong-ha
     await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ ...authority, capabilityDigest: hashPrivateBearer('C'.repeat(43)) });
     await f.close();
   }
+});
+
+it('retains the worker question refusal through the Session Action and its MCP result', async () => {
+  const f = await fixture();
+  const requestId = 'worker-question';
+  const worker = createMutableApiSessionClientFixture({ sessionId: childId, agentState: { requests: {
+    [requestId]: { tool: 'AskUserQuestion', kind: 'user_action', createdAt: 100,
+      arguments: { questions: [{ question: 'Continue?' }] }, questionV1: { mode: 'wait', lasting: false },
+      currentHandler: { kind: 'session', sessionId } },
+  } }, overrides: { readQuestionSessionSnapshot: async () => null } });
+  new ProviderEnforcedPermissionHandler(worker, { logPrefix: '[Manager question refusal]' });
+  // Home's authenticated socket is the boundary here. The SQLite socket
+  // integration separately exercises the real actor minting and snapshot read.
+  const transport = vi.fn<SessionActionRpcTransport>(request => worker.rpcHandlerManager.handleRequest({
+    method: `${request.sessionId}:${request.method}`, params: request.input,
+    callerAuthority: 'account_automation', sessionActionOrigin: request.origin,
+    authorization: { kind: 'session.permission.respond', sessionId: childId,
+      actor: { kind: 'accountUser', accountId: storage.account.id, relationship: 'owner' } },
+  }, undefined, 'authenticated_home_socket'));
+  f.setSessionActionRpcTransport(transport);
+  const execute = vi.fn<Parameters<typeof createActionToolExecutorBridge>[0]['executor']['execute']>(
+    (actionId, input, context) => f.execute(f.operation(actionId, input as Operation['input']),
+      { sessionId, isCurrent: async () => true, signal: context.signal }));
+  const bridge = createActionToolExecutorBridge({ executor: { execute }, surface: 'agent' });
+  const server = new McpServer({ name: 'manager-refusal', version: '1' });
+  registerHappierMcpBuiltInTools(server, { sessionId, surface: 'agent', deps: { ...bridge,
+    changeTitle: async () => { throw new Error('Unexpected title change'); } } });
+  const client = new Client({ name: 'manager', version: '1' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const toolResult = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+      actionId: 'session.user_action.answer', input: { sessionId: childId, requestId,
+        answers: [{ question: 'Continue?', values: ['Yes'] }] },
+    } }));
+    const failureCause = { phase: 'rpc.handler.manager_question.admission_refused',
+      errorCode: 'present_user_required', errorClass: 'RpcError', httpStatus: null };
+    await expect(transport.mock.results[0]?.value).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required', requestId, failureCause });
+    await expect(execute.mock.results[0]?.value).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required', failureCause });
+    const payload = toolResult.content[0];
+    expect(toolResult.isError).toBe(true);
+    expect(payload?.type === 'text' && JSON.parse(payload.text)).toMatchObject({ errorCode: 'present_user_required', failureCause });
+  } finally { await client.close(); await server.close(); await f.close(); }
 });
 
 it('reads the active Discussion source through its original signed transcript root', async () => {

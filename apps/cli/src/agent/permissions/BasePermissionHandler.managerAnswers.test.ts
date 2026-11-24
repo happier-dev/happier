@@ -4,6 +4,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGran
 
 import type { AgentState } from '@/api/types';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import { logger } from '@/ui/logger';
 import { ProviderEnforcedPermissionHandler } from './providerEnforced/handler';
 import { ServerBoundPermissionRpcHandlerManager } from './testkit/serverBoundPermissionRpcHandlerManager';
 import type { QuestionSessionSnapshot } from './sessionQuestionManager';
@@ -138,13 +139,58 @@ describe('manager answers at the registered question RPC owner', () => {
             : reason === 'missing-answer' ? { id: 'question', approved: true }
             : reason === 'session-grant' ? { ...answer, decision: 'approved_for_session' }
             : answer;
-        await expect(rpc(response, context)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        const cause = reason === 'missing-actor' ? 'actor_missing'
+            : reason === 'facts-error' ? 'admission_unavailable'
+            : ['deny', 'abort', 'missing-answer', 'session-grant'].includes(reason) ? 'response_ineligible'
+            : 'admission_refused';
+        await expect(rpc(response, context)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required',
+            failureCause: { phase: `rpc.handler.manager_question.${cause}` } });
         if (!['deny', 'abort', 'missing-answer', 'session-grant'].includes(reason)) {
             await expect(rpc({ id: 'question', disposition: 'pass_up' }, context))
                 .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
         }
         expect(session.agentState.requests!.question).toBeDefined();
         expect(session.agentState.completedRequests!.question).toBeUndefined();
+    });
+
+    it.each(['handler_missing', 'reader_missing', 'aborted'] as const)(
+        'reports %s on the registered manager answer RPC', async clause => {
+            const { session, rpc } = prepareQuestion();
+            const controller = new AbortController();
+            if (clause === 'handler_missing') delete session.agentState.requests!.question!.currentHandler;
+            if (clause === 'reader_missing') Object.defineProperty(session, 'readQuestionSessionSnapshot', { value: undefined });
+            if (clause === 'aborted') controller.abort();
+            await expect(rpc(answer, { ...managerContext(), signal: controller.signal }))
+                .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required', requestId: 'question',
+                    failureCause: { phase: `rpc.handler.manager_question.${clause}` } });
+            expect(session.agentState.completedRequests).toEqual({});
+        });
+
+    it('logs a single content-free refusal when admission facts cannot be read', async () => {
+        const { session, rpc } = prepareQuestion();
+        session.readQuestionSessionSnapshot = async () => { throw new Error('private fixture diagnostic'); };
+        const info = vi.spyOn(logger, 'info');
+        try {
+            await rpc(answer, { ...managerContext(), transportRequestId: 'receiver-call' });
+            expect(info.mock.calls).toEqual([['Question answer refused', {
+                clause: 'admission_unavailable', workerSessionId: 'worker', requestId: 'question', callId: 'receiver-call',
+            }]]);
+        } finally {
+            info.mockRestore();
+        }
+    });
+
+    it('names the failed pass-up lookup separately from answer admission', async () => {
+        const { session, rpc } = prepareQuestion();
+        const read = session.readQuestionSessionSnapshot.bind(session);
+        session.readQuestionSessionSnapshot = async id => {
+            if (id === 'lead') throw new Error('Session facts unavailable');
+            return read(id);
+        };
+        await expect(rpc({ id: 'question', disposition: 'pass_up' }, managerContext()))
+            .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required',
+                failureCause: { phase: 'rpc.handler.manager_question.pass_up_unavailable' } });
+        expect(session.agentState.requests!.question!.currentHandler).toEqual({ kind: 'session', sessionId: 'manager' });
     });
 
     it('accepts omission of an optional authored question through the real form projection', async () => {
@@ -445,7 +491,8 @@ describe('manager answers at the registered question RPC owner', () => {
     it('does not let a person invocation impersonate a manager pass-up', async () => {
         const { session, rpc } = prepareQuestion();
         await expect(rpc({ id: 'question', disposition: 'pass_up' }))
-            .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+            .resolves.toMatchObject({ ok: false, errorCode: 'present_user_required',
+                failureCause: { phase: 'rpc.handler.manager_question.origin_missing' } });
         expect(session.agentState.requests!.question).toMatchObject({ currentHandler: { kind: 'session', sessionId: 'manager' } });
         expect(session.agentState.completedRequests).toEqual({});
     });

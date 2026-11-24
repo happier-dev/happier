@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS, parseSocketRpcAuthorizationContext } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
+import { callSocketRpc, createSocketTransportAdapter } from '@happier-dev/sync-client';
 
 import { db } from "@/storage/db";
 import { inTx } from '@/storage/inTx';
@@ -18,6 +19,18 @@ import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, getSoc
 import { rpcHandler } from "./rpcHandler";
 import { registerSocketRoomDiscovery } from './socketRoomDiscovery';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { auth } from '@/app/auth/auth';
+import { getAccountSessionSocketRoom } from '@/app/api/socketRooms';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
+import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
+import { registerAccountEncryptionRoutes } from '../routes/account/registerAccountEncryptionRoutes';
+import { registerSessionListingRoutes } from '../routes/session/registerSessionListingRoutes';
+import { withAuthenticatedTestApp } from '../testkit/sqliteFastify';
+import { ApiSessionClient } from '../../../../../cli/src/api/session/sessionClient';
+import { ProviderEnforcedPermissionHandler } from '../../../../../cli/src/agent/permissions/providerEnforced/handler';
+import { createApiSessionSocketStub } from '../../../../../cli/src/testkit/backends/apiSessionSocketHarness';
+import { createMutableApiSessionClientFixture, createPlainSessionFixture } from '../../../../../cli/src/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '../../../../../cli/src/testkit/backends/sessionMetadata';
 
 const RELEASED_SERVER_V0_2_0_PROVENANCE = Object.freeze({
     tag: "server-v0.2.0",
@@ -502,6 +515,97 @@ describe("rpcHandler", () => {
         expect(forwarded.callerAuthority).toBe("present_user");
         expect(forwarded.authorization).not.toHaveProperty("authority");
         expect(parseSocketRpcAuthorizationContext(forwarded.authorization)).toEqual(forwarded.authorization);
+    });
+
+    it('forwards a same-Account manager answer with the worker snapshot Account', async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
+        await auth.init();
+        await db.account.update({ where: { id: accountId }, data: { encryptionMode: 'plain' } });
+        const installationId = randomUUID();
+        await db.machine.update({ where: { id: machineId }, data: { installationId, active: true,
+            metadata: encodePlainMachineStoredContent({ host: 'test', platform: 'linux', happyCliVersion: '0.3.0',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+        const metadata = createTestMetadata({ machineId });
+        const storedMetadata = { encryptionMode: 'plain' as const, metadata: JSON.stringify(metadata) };
+        const managerId = sessionId;
+        await db.session.update({ where: { id: managerId }, data: storedMetadata });
+        const { id: workerId } = await db.session.create({ data: { ...storedMetadata, accountId, tag: randomUUID() } });
+        await db.sessionFollowEdge.create({ data: { sourceSessionId: workerId, managerSourceSessionId: workerId,
+            sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: workerId }),
+            destinationSessionId: managerId, relation: 'manager', policyJson: JSON.stringify({ preset: 'important' }) } });
+        await db.accessKey.createMany({ data: [managerId, workerId].map(id => ({
+            accountId, machineId, sessionId: id, data: '{}',
+        })) });
+        const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+        const compatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
+            declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
+        const presence = createSessionPublisherPresence();
+        const managerPublisher = createAuthenticatedFakeSocket({ id: 'manager-publisher', data: { clientType: 'session-scoped' } });
+        const target = createTarget('worker-publisher', undefined);
+        Object.assign(target.socket, { connected: true, data: {
+            clientType: 'session-scoped', sessionId: workerId, accountStoredContentCompatibility: compatibility,
+        } });
+        for (const [id, socket] of [[managerId, managerPublisher], [workerId, target.socket]] as const) {
+            const registration = await presence.registerPublisher({ socket, binding: { accountId, machineId, sessionId: id },
+                completeActivitySnapshot: { state: 'idle', activeCount: 0 } });
+            expect(registration).toMatchObject({ status: 'registered' });
+        }
+        const caller = createAuthenticatedFakeSocket({ id: 'manager-daemon', data: { clientType: 'machine-scoped',
+            machineId, authTokenKind: 'account', verifiedMachineInstallationId: installationId,
+            accountStoredContentCompatibility: compatibility } });
+        const method = RPC_METHODS.SESSION_USER_ACTION_ANSWER;
+        const { io } = createIo({
+            [getAccountSessionSocketRoom(accountId, managerId)]: [[managerPublisher]],
+            [getAccountSessionSocketRoom(accountId, workerId)]: [[target.socket]],
+            [`rpc:${accountId}:${workerId}:${method}`]: [[target.socket]],
+        });
+        rpcHandler(accountId, caller as unknown as Socket, { io, sessionPublisherPresence: presence });
+        const sourceSocket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, packet) => {
+            let ack: unknown;
+            await getSocketHandler(caller, event)(packet, (value: unknown) => { ack = value; });
+            return ack;
+        } });
+
+        await withAuthenticatedTestApp(app => {
+            registerSessionListingRoutes(app);
+            registerAccountEncryptionRoutes(app);
+        }, async app => {
+            const serverUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+            const socket = createApiSessionSocketStub();
+            const client = new ApiSessionClient(token, createPlainSessionFixture({ id: workerId, metadata }), {
+                metadataAuthority: { kind: 'owner', credentials: { token, encryption: null } },
+                durableMutationDeliveryInitiallyActive: false,
+                transport: { serverId: 'question-home', serverUrl,
+                    createSessionSocketTransport: () => ({ socket, transport: createSocketTransportAdapter(socket) }) },
+            });
+            try {
+                const requestId = 'worker-question';
+                const worker = createMutableApiSessionClientFixture({ sessionId: workerId, agentState: { requests: {
+                    [requestId]: { tool: 'AskUserQuestion', kind: 'user_action', createdAt: 100,
+                        arguments: { questions: [{ question: 'Continue?' }] }, questionV1: { mode: 'wait', lasting: false },
+                        currentHandler: { kind: 'session', sessionId: managerId } },
+                } }, overrides: { readQuestionSessionSnapshot: client.readQuestionSessionSnapshot.bind(client) } });
+                new ProviderEnforcedPermissionHandler(worker, { logPrefix: '[Home manager answer]' });
+                target.emitWithAck.mockImplementation((_event, packet) =>
+                    worker.rpcHandlerManager.handleRequest(packet, undefined, 'authenticated_home_socket'));
+                const answer = await callSocketRpc({ socket: sourceSocket, target: { kind: 'session', id: workerId },
+                    method, content: { mode: 'plain' }, params: { id: requestId, approved: true, answers: { 'Continue?': ['Yes'] } },
+                    authorization: { kind: 'session.action', sessionId: workerId, origin: { v: 1,
+                        caller: { kind: 'session', sessionId: managerId, starterDepth: 0, turnDepth: 0 },
+                        sourceTurnId: 'manager-turn', requestId: 'manager-answer', callerPermissionMode: 'default' } } });
+                expect(target.emitWithAck).toHaveBeenCalledOnce();
+                expect(target.emitWithAck.mock.calls[0]?.[1].authorization).toEqual({ kind: 'session.permission.respond',
+                    sessionId: workerId, actor: { kind: 'accountUser', accountId, relationship: 'owner' } });
+                await expect(client.readQuestionSessionSnapshot(workerId)).resolves.toMatchObject({ accountId, managerSessionId: managerId });
+                expect(answer == null).toBe(true);
+                expect(worker.getAgentStateSnapshot()?.completedRequests?.[requestId]).toMatchObject({
+                    answeredBy: { kind: 'session', sessionId: managerId },
+                });
+            } finally {
+                await client.close();
+            }
+        }, { authentication: 'real' });
     });
 
     it("routes delegated permission RPCs through the owner room", async () => {

@@ -3229,6 +3229,14 @@ only the requested fields against current metadata when replayed. A role-only
 request retains its existing `intent.role` path and workspace-write admission.
 Both use the same Action approval, target authority and receiving role owner;
 the configuration-copy RPC remains the owner of explicit report copies.
+
+In 0.3 development, a worker that refuses a manager's question answer returns
+`present_user_required`. The Session MCP tool result carries the worker's
+`failureCause.phase` under `rpc.handler.manager_question`, with a suffix such
+as `actor_missing` or `admission_refused`. The receiving worker logs the same
+clause at info level with the worker Session ID, question request ID and call
+ID when available.
+
 In 0.3 development, Workflow Action leaves forward Session role and notes edits
 through the installed executor's signed Workflow origin. Home binds the assigned
 Run executor and exact target Session. The assigned executor evaluates accepted
