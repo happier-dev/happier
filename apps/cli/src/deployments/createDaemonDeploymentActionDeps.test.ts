@@ -1003,9 +1003,15 @@ describe('installed deployment storage and target composition', () => {
     });
     it('requires Manage for definition writes and Use source overrides before native acquisition', async () => {
         const environment = createDeploymentEnvironmentDetailV1();
-        vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true,
-            environmentId: environment.environment.id, revision: 1 } });
+        const { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } = await import(
+            '@happier-dev/protocol/automations/automationActionTriggerV1');
+        vi.spyOn(axios, 'request').mockImplementation(async request =>
+            new URL(request.url!).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1
+                ? { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) }
+                : { status: 200, data: { ok: true, environmentId: environment.environment.id, revision: 1 } });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'member' } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
             if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
             return { status: 200, data: { id: 'definition', ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
@@ -1067,6 +1073,61 @@ describe('installed deployment storage and target composition', () => {
             { ...context, machineAdmission: { ...context.machineAdmission, role: 'manage' }, externalActionExecutionAuthorization: signed }))
                 .resolves.toMatchObject({ ok: false, errorCode: binding.admittedMachineRole === 'use'
                     ? 'deployment_access_denied' : 'action_forbidden' });
+        }
+        // The signed Home root names a Team grantee and a different receiving
+        // Account. Run storage belongs to the grantee, while the existing host
+        // path consumes Home's admitted Machine role for the exact create.
+        const createActionId = (await import('@happier-dev/protocol/deployments/deploymentActionIdsV1')).DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1;
+        const create = DeploymentActionInputSchemasV1[createActionId].parse({ ...prepared, projectSourceId: 'source-app',
+            requestKey: 'team-workflow-create', protection: 'nonProduction', purpose: 'standard', deployerMode: 'members', controllerMachineId: 'machine-a' });
+        const receiverCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [createActionId]: ['agent'] } });
+        const receiver = createCliActionExecutorFromCredentials({ credentials: receiverCredentials, machineId: 'machine-a',
+            serverId: 'home', serverIdentityId: 'home', serverApiUrl: 'https://home.test', deploymentAction: deps.deploymentAction,
+            pluginActionExecutionOwner: 'current_process', actionsSettingsProvider: createActionSettingsProvider({
+                accountSettings: accountSettingsParse({ actionsSettingsV1: settings }), allowEnvironmentOverride: false }) });
+        const previousFetch = globalThis.fetch;
+        vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) =>
+            String(input) === 'https://home.test/v1/features'
+                ? Response.json({ features: { workflows: { enabled: true } }, capabilities: {} })
+                : previousFetch(input, init));
+        const runId = 'team-deploy-run';
+        const memberToken = `header.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.signature`;
+        const receiverKeys = tweetnacl.sign.keyPair();
+        const { WORKFLOW_RUN_STORAGE_HTTP_PATH } = await import('@/daemon/workflows/workflowRunStorageClient');
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+            const path = new URL(url).pathname;
+            if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
+            expect(path).toBe(WORKFLOW_RUN_STORAGE_HTTP_PATH);
+            expect(body).toMatchObject({ operation: 'get', runId });
+            return { status: 200, data: { ok: false, errorCode: 'not_found' } };
+        });
+        for (const role of ['manage', 'use'] as const) {
+            const requestId = `${runId}/create-${role}/0`;
+            const createEnvelope = { v: 1 as const, requestId, target, input: create };
+            const signed = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
+                ...authorization.binding, admittedMachineRole: role, actionId: createActionId, requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(createEnvelope), workflowActionOrigin: { runId, requestId },
+            } });
+            const sealed = sealExternalActionRequesterAccountContextV1({ authorization: signed,
+                purpose: { kind: 'external_action' }, credentials: { token: memberToken, secret: null, encryption: null },
+                installationPublicKey: receiverKeys.publicKey, randomBytes: length => new Uint8Array(randomBytes(length)),
+            });
+            const admitted = await prepareRequesterAccountActionContext({ authorization: sealed, purpose: { kind: 'external_action' },
+                machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: receiverKeys.secretKey,
+                serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test', ownCredentials: receiverCredentials,
+                isCurrent: async () => true, createExecutor: () => receiver });
+            if (!admitted) throw new Error('Expected the Team member’s admitted requester custody');
+            try {
+                const result = await receiver.execute(createActionId, create, { ...context, surface: 'agent',
+                    authority: 'account_automation', actionCaller: { kind: 'host' }, externalActionTarget: target,
+                    actionRequestId: requestId, originalActionEnvelope: createEnvelope,
+                    externalActionExecutionAuthorization: admitted.authorization,
+                    machineAdmission: { ...context.machineAdmission, role }, serverId: 'home', serverIdentityId: 'home' });
+                expect(result, JSON.stringify(result)).toMatchObject(role === 'manage' ? { ok: true } : { ok: false, errorCode: 'deployment_access_denied' });
+            } finally {
+                await admitted.dispose();
+            }
         }
     });
     it('rejects Use candidates that replace stored environment, ports, or service definitions', async () => {

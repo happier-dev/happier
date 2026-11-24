@@ -43,6 +43,7 @@ import {
   ExternalActionRequestEnvelopeSchema,
   isExternalActionResolvedTargetAllowedV1,
   isExternalActionMachineWorkflowActionIdV1,
+  isExternalActionDeploymentWorkflowActionIdV1,
 } from '../actions/externalActionApi.js';
 import { isExternalActionAuthorizationBoundToEnvelope } from '../actions/externalActionExecutionAuthorization.js';
 export { resolveApprovalExecutor, type ApprovalExecutor } from './resolveApprovalExecutor.js';
@@ -491,21 +492,42 @@ export function buildApprovalRequesterConfirmationV1(params: Readonly<{
 export const APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 =
   'This action needs confirmation, but the person who requested it could not be identified. Send a new request from your signed-in Happier app.';
 
+/** Signed Account Workflow roots may open an ordinary Account Ask without asserting a person started the Run. */
+function isOwnAccountDeploymentWorkflowApprovalV1(input: Readonly<{
+  authorization?: z.infer<typeof ExternalActionExecutionAuthorizationV1Schema> | null;
+  actionId: string; requestId?: string | null; runId: string; accountId?: string | null;
+}>): boolean {
+  const binding = input.authorization?.binding;
+  const workflow = binding?.workflowActionOrigin;
+  return binding !== undefined && 'authentication' in binding && binding.authentication.kind === 'account'
+    && binding.target.kind === 'machine' && binding.accountId === binding.custodianAccountId
+    && binding.accountId === input.accountId && binding.actionId === input.actionId
+    && binding.requestId === input.requestId && workflow?.requestId === binding.requestId && workflow.runId === input.runId
+    && !workflow.sessionLeaf && !workflow.sessionAuthority && !workflow.reviewedChild
+    && isExternalActionDeploymentWorkflowActionIdV1(input.actionId);
+}
+
 /** Required requester consent never falls back to the executor's Account owner. */
 export function resolveApprovalRequesterConfirmationV1(params: Readonly<{
   context?: ActionExecutorContext; actionId: ActionId; input: unknown; required: boolean;
 }>): Readonly<{ ok: true; requesterConfirmation: ApprovalRequesterConfirmationV1 | null }>
   | Readonly<{ ok: false; errorCode: 'approval_requester_unavailable'; error: typeof APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 }> {
   const caller = readInitiatingActionCallerV1(params.context?.actionCaller);
-  // An origin Session and daemon custody do not identify a Workflow's person.
-  // Refuse before artifact creation, including explicit and nested requests.
+  // A Workflow's origin Session and daemon custody do not identify a person.
   const context = params.context;
   const starter = caller?.kind === 'workflowRun' && !context?.actionRequestAttributionV1
     ? caller.authenticatedStarterV1 : undefined;
   const starterBound = starter && starter.requester.accountId === context?.runtimeAccountId
     && starter.requester.serverId === (context?.serverIdentityId ?? context?.serverId);
   if (caller?.kind === 'workflowRun' && !context?.actionRequestAttributionV1?.requester && !starterBound) {
-    return { ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 };
+    // The installed ingress is the producer of the recovered caller and signs the exact Ask.
+    const accountWorkflowAsk = !params.required && context?.authority === 'account_automation'
+      && context.executionRunWorkflowRunId === caller.runId && context.signExternalActionApprovalInput !== undefined
+      && isOwnAccountDeploymentWorkflowApprovalV1({ authorization: context.externalActionExecutionAuthorization,
+        actionId: params.actionId, requestId: context.actionRequestId, runId: caller.runId, accountId: context.runtimeAccountId });
+    if (!accountWorkflowAsk) return {
+      ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1,
+    };
   }
   // A detached Workflow Agent has no Session persona to bind requester
   // confirmation. This owner runs only when an approval is being prepared.
@@ -559,15 +581,23 @@ export async function admitApprovalRequesterDecisionV1(params: Readonly<{
     const origin = request.executionOriginV1;
     const starter = !origin?.actionRequestAttributionV1 && origin?.caller.kind === 'workflowRun'
       ? origin.caller.authenticatedStarterV1 : undefined;
+    const authorization = origin?.caller.kind === 'workflowRun' && origin.externalActionInputSignature !== undefined
+      ? ExternalActionExecutionAuthorizationV1Schema.safeParse(origin.externalActionExecutionAuthorization)
+      : undefined;
+    const accountWorkflowAsk = origin?.caller.kind === 'workflowRun' && authorization?.success
+      && isOwnAccountDeploymentWorkflowApprovalV1({ authorization: authorization.data,
+        actionId: origin.actionId, requestId: origin.requestId, runId: origin.caller.runId, accountId: origin.accountId });
     if (!['executed', 'failed', 'rejected', 'canceled'].includes(request.status)
-      && origin?.caller.kind === 'workflowRun' && !origin.actionRequestAttributionV1?.requester && !starter) {
+      && origin?.caller.kind === 'workflowRun' && !origin.actionRequestAttributionV1?.requester && !starter && !accountWorkflowAsk) {
       return { ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 };
     }
     const checkOnlyExecutionApproved = request.automaticChecks?.humanApprovalRequired === false
       && isApprovalRequestExecutionApproved(request);
-    if (starter && (!checkOnlyExecutionApproved && context.authority !== 'present_user'
-      || context.runtimeAccountId !== starter.requester.accountId
-      || (context.serverIdentityId ?? context.serverId) !== starter.requester.serverId)) {
+    const decidingAccount = starter?.requester.accountId ?? (accountWorkflowAsk ? origin?.accountId : undefined);
+    const decidingHome = starter?.requester.serverId ?? (accountWorkflowAsk ? origin?.serverIdentityId : undefined);
+    if (decidingAccount && (!checkOnlyExecutionApproved && context.authority !== 'present_user'
+      || context.runtimeAccountId !== decidingAccount
+      || (context.serverIdentityId ?? context.serverId) !== decidingHome)) {
       return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
     }
     // Session-only proof cannot authorize an ordinary Account-owned request.

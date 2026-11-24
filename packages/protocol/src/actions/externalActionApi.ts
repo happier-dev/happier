@@ -50,7 +50,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
-  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReviewedCandidateV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
 import { DeploymentReadAdmissionV1Schema, DeploymentTelemetryReadFactsV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -1468,7 +1468,7 @@ export const ExternalActionWorkflowOriginV1Schema = lazyZodSchema(() => z.strict
 }).check(z.refine(value => !value.sessionLeaf || !value.sessionAuthority,
   'A Workflow origin carries one admitted caller.')));
 
-/** Installed Machine roots retain the receiver's host caller through approval. */
+/** Signed roots allowed to run on an installed Machine for an accepted Workflow. */
 export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boolean {
   return ManagedMachineActionIdV1Schema.safeParse(actionId).success
     || actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
@@ -1481,6 +1481,11 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
     || isDeploymentDomainChildActionIdV1(actionId)
     || isDeploymentBackupActionIdV1(actionId) || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     || deploymentOperationForRootActionV1(actionId) !== undefined;
+}
+
+/** Deployments consume the installed Workflow root's caller and permission ceiling. */
+export function isExternalActionDeploymentWorkflowActionIdV1(actionId: string): boolean {
+  return isDeploymentActionIdV1(actionId) && isExternalActionMachineWorkflowActionIdV1(actionId);
 }
 
 /** The incumbent Workflow signed-root admission, shared by issuance and rechecks. */

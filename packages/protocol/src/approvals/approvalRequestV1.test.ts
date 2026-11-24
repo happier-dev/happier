@@ -3,6 +3,9 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '../actions/actionSp
 import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from '../actions/actionIds.js';
+import { DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from '../actions/externalActionApi.js';
+import type { ActionExecutorContext } from '../actions/actionExecutor.js';
 import { createProviderErrorV1 } from '../providers/errors.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
@@ -20,6 +23,7 @@ import {
   requiresExactDaemonApprovalReplay,
   isMountedPluginBlockingApprovalEligibleForLiveClient,
   admitApprovalRequesterDecisionV1,
+  resolveApprovalRequesterConfirmationV1,
 } from './approvalRequestV1.js';
 
 it.each(['matching', 'other-account', 'other-home', 'checking', 'human-required'] as const)(
@@ -45,6 +49,47 @@ it.each(['matching', 'other-account', 'other-home', 'checking', 'human-required'
       serverId: kind === 'other-home' ? 'other' : 'home' } }))
       .toMatchObject(kind === 'matching' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
   });
+
+describe('starter-less signed Deployment Workflow approval', () => {
+  const actionId = DEPLOYMENT_TARGET_LINK_ACTION_ID_V1;
+  const accountId = 'run-owner';
+  const serverIdentityId = 'stable-home';
+  const runId = 'deployment-run';
+  const requestId = `${runId}/link/0`;
+  const target = { kind: 'machine' as const, machineId: 'machine' };
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-signed-workflow', binding: {
+    serverIdentityId, accountId, custodianAccountId: accountId, machineId: target.machineId, installationId: 'installation',
+    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', actionId, requestId, target,
+    requestEnvelopeDigest: 'a'.repeat(43), workflowActionOrigin: { runId, requestId },
+  } });
+  const caller = { kind: 'workflowRun' as const, runId,
+    authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'default' as const } };
+  const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'agent' }, requestedSurface: 'agent', actionId, actionArgs: {}, summary: 'Link the deployment',
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller, actionId, requestId, accountId,
+      serverId: 'profile', serverIdentityId, machineId: target.machineId, target, externalActionInputSignature: 'a'.repeat(86),
+      externalActionExecutionAuthorization: authorization },
+  });
+
+  it.each([
+    ['the present owner', 'present_user', accountId, true],
+    ['another Account', 'present_user', 'other-account', false],
+    ['a non-present owner', 'account_automation', accountId, false],
+  ] as const)('admits the signed Ask decision only for a present owner (%s)', async (_name, authority, runtimeAccountId, admitted) => {
+    const decision = await admitApprovalRequesterDecisionV1({ request, context: { authority, runtimeAccountId, serverIdentityId } });
+    expect(decision).toMatchObject(admitted ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
+  });
+
+  it('still refuses when requester confirmation is required', () => {
+    const context: ActionExecutorContext = { authority: 'account_automation', actionCaller: caller, surface: 'agent',
+      runtimeAccountId: accountId, serverIdentityId, actionRequestId: requestId, executionRunWorkflowRunId: runId,
+      externalActionExecutionAuthorization: authorization, signExternalActionApprovalInput: () => 'a'.repeat(86) };
+    expect(resolveApprovalRequesterConfirmationV1({ context, actionId, input: {}, required: false }))
+      .toMatchObject({ ok: true, requesterConfirmation: null });
+    expect(resolveApprovalRequesterConfirmationV1({ context, actionId, input: {}, required: true }))
+      .toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
+  });
+});
 
 it.each(['built_in', 'target'] as const)('retains automatic check progress privately while %s public reads omit approval custody', family => {
   const original = family === 'built_in' ? { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,

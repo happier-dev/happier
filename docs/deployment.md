@@ -5090,10 +5090,16 @@ After an outcome-unknown cleanup and daemon replacement, the old receipt is
 retained; a fresh approved teardown request observes native facts and completes
 with its own receipt rather than borrowing the old operation's authority.
 Workflow deployment mutations dispatch through the installed controller before
-preparation and approval. The receiver restores the selected approval policy
-from the exact accepted invocation; an Account waiver cannot erase its Require
-decision. An issued Workflow root and admitted receipt retain their continuation
-custody while the run is paused for approval: the approved finite effect executes
+preparation and approval. For same-Account signed roots, the receiver restores
+the Run caller, its permission ceiling and the selected approval policy from the
+exact accepted invocation. An Account waiver cannot erase its Require decision.
+A signed unattended Workflow whose requester and Machine custodian are the
+same Account may request ordinary Account approval. That request identifies the
+Run and leaves requester-specific consent to its existing owner. Across Accounts,
+the existing deployment admission and Machine role still apply. An approved
+Workflow step carries its own admitted receipt. An issued
+Workflow root and admitted receipt retain their continuation custody while the
+Run is paused for approval: the approved finite effect executes
 before Workflow resume. Paused runs cannot issue fresh roots. Replay uses the
 accepted Run's permission ceiling, while the existing installation signature
 binds the prepared effect. Detached approval replay restores private content

@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { executeOwnServerDatabaseOperationForHost } from './databaseConnection';
+import { randomBytes } from 'node:crypto';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol';
+import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
+import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
+import { createWorkflowCoordinator, workflowInvocationKey } from '@/daemon/workflows/coordinator';
+import { createCredentialedWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AutomationOccurrenceKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceKeyV1';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import axios from 'axios';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -15,6 +24,7 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentActionInputSchemasV1,
     DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema, DeploymentBindingsSetResultV1Schema,
+    DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkResultV1Schema,
     DeploymentReceiptListResultV1Schema, DeploymentReceiptGetResultV1Schema,
     ProjectDeploymentDefaultsOutputV1Schema } from '@happier-dev/protocol';
 import { DeploymentDeployAdmissionInputV1Schema, DeploymentBackupRestoreResultV1Schema,
@@ -67,6 +77,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { createActionSettingsProvider, createSnapshotActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { createDaemonApprovalExecutionOriginCurrentness } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -127,16 +138,19 @@ import { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/work
 import { prepareWorkflowDeploymentResultCapture } from '@/deployments/targets/workflowDeploymentResult';
 import { resolveDeploymentPreviewWorkflowSourceForHost } from '../../previewWorkflowSourceForHost';
 import { createWorkflowRunActionOwner } from '@/session/actions/workflowRunActions';
-import { createWorkflowRunStorageClient, WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
-import { createPlainWorkflowRunKeyCensusFixture } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { createWorkflowRunStorageClient, WORKFLOW_RUN_STORAGE_HTTP_PATH, type WorkflowRunStorageOperation } from '@/daemon/workflows/workflowRunStorageClient';
+import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit } from '@/daemon/workflows/workflowRunStorage.testkit';
 import { WorkflowActionInputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { createDaemonDeploymentChildExecutor } from '../../deploymentChild';
 import { createAccountArtifactStore, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
 import { createCliDeploymentActionDeps } from '../../createCliDeploymentActionDeps';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { encodeRequesterCredentials } from '@/persistence';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
@@ -322,7 +336,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_repository_production', 'promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_refused', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_repository_production', 'promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_refused', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_review', 'public_preview_copy_review_changed_policy', 'public_preview_copy_review_changed_permission', 'public_preview_copy_review_link', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['telemetry_delivery', 'telemetry_own_collector', 'telemetry_no_header'] as const)
             .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['stop_first_route_direct', 'stop_first_route_tunnel', 'stop_first_replaces_start_first'] as const)
@@ -341,8 +355,11 @@ describe('own-server target at the Action host boundary', () => {
         // integration budget, including setup; no shorter per-wait deadline.
         const waitForNativeRead = (assertion: () => unknown) => vi.waitFor(assertion,
             { timeout: 60_000 - (Date.now() - startedAt) });
-        const previewCompanion = scenario.startsWith('public_preview_companion_');
-        const previewCopy = previewCompanion || scenario === 'public_preview_copy' || scenario === 'public_preview_copy_failure'
+        const previewCopyReview = scenario.startsWith('public_preview_copy_review');
+        const linkReview = scenario === 'public_preview_copy_review_link';
+        const changedPermission = scenario === 'public_preview_copy_review_changed_permission';
+        const previewCompanion = previewCopyReview || scenario.startsWith('public_preview_companion_');
+        const previewCopy = previewCopyReview || previewCompanion || scenario === 'public_preview_copy' || scenario === 'public_preview_copy_failure'
             || scenario === 'public_preview_configure_failure';
         const publicCopy = scenario === 'public_copy' || scenario === 'public_restore_drill' || previewCopy;
         const uploadedVolume = scenario.startsWith('standalone_public_restore_volume_upload');
@@ -2081,7 +2098,9 @@ describe('own-server target at the Action host boundary', () => {
                         const repositoryIdentity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' };
                         const { ownership: _sourceOwnership, ...backupConfiguration } = recordedCapture.configuration;
                         const policy = { v: 1 as const, enabled: true, forkPreviews: 'off' as const, repository: repositoryIdentity,
-                            runtimeTargetLinkId: template.environment.runtimeTargetLinkId, domain: null, bindingBlueprints: [], data: [{
+                            runtimeTargetLinkId: template.environment.runtimeTargetLinkId, domain: null,
+                            bindingBlueprints: previewCopyReview ? [{ purpose: 'variable' as const, name: 'PUBLIC_API_ORIGIN', phase: 'runtime' as const,
+                                source: { kind: 'value' as const, value: 'fixture' } }] : [], data: [{
                                 kind: 'template' as const, templateRef,
                                 dataExportNames: ['DATABASE_URL'], connectTo: { service: 'app' },
                                 copyFrom: { environmentId: promotionSource.environment.id,
@@ -2158,9 +2177,26 @@ describe('own-server target at the Action host boundary', () => {
                                 serving = native.serving;
                                 runtimeGrants = native.grants;
                             };
+                            const reviewedLinkId = 'replaced-runtime-link';
+                            let linkWrites = 0;
                             vi.spyOn(axios, 'request').mockImplementation(async http => {
                                 const path = new URL(http.url ?? serverHttpBaseUrl).pathname;
                                 const method = http.method?.toUpperCase();
+                                if (previewCopyReview && path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)
+                                    return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+                                if (method === 'POST' && path === '/v1/machines/managed/actions/list')
+                                    return { status: 200, data: { machines: [] } };
+                                if (linkReview && method === 'POST' && path === `/v1/deployments/environments/${template.environment.id}/targets`) {
+                                    const linked = DeploymentTargetLinkInputV1Schema.parse(http.data);
+                                    expect(linked.replacesLinkId).toBe(template.environment.runtimeTargetLinkId);
+                                    expect(linked.expectedTargetLinkRevision).toBe(template.targetLinks[0]!.targetLink.revision);
+                                    expect(readContent(linked.contentArtifactId)).toEqual({});
+                                    linkWrites++;
+                                    return { status: 200, data: DeploymentTargetLinkResultV1Schema.parse({
+                                        ok: true, environmentId: linked.environmentId, revision: template.environment.revision + 1,
+                                        targetLinkId: reviewedLinkId, targetLinkRevision: 1,
+                                    }) };
+                                }
                                 if (path.startsWith('/v1/account/saved-secrets/'))
                                     return nativeHttp.request({ ...http, url: `${secretFixture.origin}${path}` });
                                 if (method === 'GET' && path.endsWith('/deployment-defaults')) return { status: 200, data: ProjectDeploymentDefaultsOutputV1Schema.parse({
@@ -2513,12 +2549,221 @@ describe('own-server target at the Action host boundary', () => {
                             if (scenario !== 'public_preview_configure_failure')
                                 await boundary.setRepositoryMissing('s3:https://fixture.invalid/destination-safety');
                             if (scenario === 'public_preview_configure_failure') await boundary.setRepositoryConfigExitCode(12);
-                            const created = await executor.execute(ActionIdSchema.parse(create.actionId), await operands(create),
-                                { ...actionContext, actionRequestId: 'native-preview-create' });
+                            const createActionId = ActionIdSchema.parse(linkReview ? 'deployments.targets.link' : create.actionId);
+                            const replacement = { replacesLinkId: template.targetLinks[0]!.targetLink.id,
+                                expectedTargetLinkRevision: template.targetLinks[0]!.targetLink.revision,
+                                machines: [{ machineId: 'machine-a', installationId: 'installation-a' }] };
+                            const createInput = linkReview ? { serverId: 'home', environmentId: template.environment.id,
+                                expectedRevision: template.environment.revision, role: 'runtime', targetKind: 'ownServer',
+                                targetId: 'own-server', requestKey: 'reviewed-stateless-move', ...replacement,
+                            } : await operands(create);
+                            const createContext = { ...actionContext, actionRequestId: 'native-preview-create' };
+                            const created = await (async () => {
+                                if (!previewCopyReview) return executor.execute(createActionId, createInput, createContext);
+                                const previousFetch = globalThis.fetch;
+                                vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) =>
+                                    String(input) === `${serverHttpBaseUrl}/v1/features`
+                                        ? Response.json({ features: { workflows: { enabled: true } }, capabilities: {} })
+                                        : previousFetch(input, init));
+                                const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
+                                const invocationId = 'preview-create-invocation';
+                                const requestId = `${runId}/${invocationId}/0`;
+                                const authorization = { admittedPermissionCeiling: 'default' as const, principal: { kind: 'host' as const } };
+                                const definition = { version: 1, inputs: [], defaults: {},
+                                    blocks: [{ kind: 'action', id: create.id, actionId: createActionId, input: {} }] };
+                                const origin = { kind: 'automation' as const, automationId: 'preview-automation' };
+                                const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ startedBy: 'trigger', authoredDefinition: definition, definition,
+                                    materializedLeaves: [{ sourceKey: '$root', blockId: create.id, kind: 'action', selection: {},
+                                        authoredWorkspace: { kind: 'inherit' }, executionTarget: { kind: 'session' },
+                                        actionId: createActionId, actionInput: createInput, actionContract: { inputSchema: { type: 'object' }, outputSchema: {} } }],
+                                    frozenChildren: {}, workDepth: 3, metadata: null, inputs: {}, machineId: 'machine-a',
+                                    executionTarget: { kind: 'session' },
+                                    workspaceTarget: { project: { machineId: 'machine-a', directory: repository, checkoutRootPath: repository } },
+                                    source: origin, authorization });
+                                const sealAccepted = (snapshot: typeof accepted) => serializeWorkflowStoredContentEnvelopeV1(
+                                    sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                                        binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: snapshot }));
+                                const acceptedEnvelope = sealAccepted(accepted);
+                                let permissionChanged = false;
+                                const workflowStorage = createWorkflowRunStorageTestkit({ accountId, runId, machineId: 'machine-a',
+                                    state: 'running', origin, acceptedEnvelope,
+                                    keyCensus: createPlainWorkflowRunKeyCensusFixture({ accountId, runId }) });
+                                const capturedInput = accepted.materializedLeaves[0]?.actionInput;
+                                if (!capturedInput) throw new Error('Expected the captured Action input');
+                                const recordedExecution = { kind: 'action' as const, actionId: createActionId, actionRequestId: requestId,
+                                    localInputId: 'preview-create-input', input: capturedInput };
+                                const progress = (leaf: boolean, output?: ReturnType<typeof normalizeStrictJsonValue>) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+                                    mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId, runId,
+                                        recordId: leaf ? invocationId : 'root', sequence: leaf ? '1' : '0',
+                                        parentRecordId: leaf ? 'root' : null, memberOrdinal: '0', attempt: '0' },
+                                    progress: { kind: 'happier.workflow-progress.v1', blockKind: leaf ? 'action' : 'root',
+                                        invocationPath: { blockId: leaf ? create.id : '$root', scope: [] }, attempt: '0',
+                                        logicalInvocationRecordId: leaf ? invocationId : 'root',
+                                        ...(leaf ? { execution: { ...recordedExecution, ...(output === undefined ? {} : { output }) } } : {}) } }));
+                                await workflowStorage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: '{}',
+                                    rootInvocation: { id: 'root', contentEnvelope: progress(false) } });
+                                const contentEnvelope = progress(true);
+                                await workflowStorage.execute({ operation: 'invocations.admit', runId, parentAttempt: 0,
+                                    expectedRevision: workflowStorage.run().revision, checkpointEnvelope: '{}',
+                                    invocations: [{ id: invocationId, parentRecordId: 'root', sequence: '1', memberOrdinal: '0', contentEnvelope }] });
+                                await workflowStorage.execute({ operation: 'invocations.fact', runId, invocationId, invocationAttempt: '0',
+                                    expectedContentRevision: '0', expectedLifecycle: 'pending', lifecycle: 'admitting', contentEnvelope });
+                                const otherPost = axios.post.bind(axios);
+                                vi.spyOn(axios, 'post').mockImplementation(async (url, data, config) => {
+                                    if (new URL(url).pathname !== WORKFLOW_RUN_STORAGE_HTTP_PATH) return otherPost(url, data, config);
+                                    const operation = data as WorkflowRunStorageOperation;
+                                    const stored = await workflowStorage.execute(operation);
+                                    if (permissionChanged && operation.operation === 'get') {
+                                        if (!stored || typeof stored !== 'object') throw new Error('Expected the stored Workflow Run');
+                                        return { status: 200, data: { ...stored,
+                                            acceptedEnvelope: sealAccepted({ ...accepted, authorization: { ...authorization, admittedPermissionCeiling: 'read-only' } }),
+                                        } };
+                                    }
+                                    return { status: 200, data: stored };
+                                });
+                                const signedRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-preview-fixture', binding: {
+                                    accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+                                    serverIdentityId: host.serverId, machineId: 'machine-a', installationId: 'installation-a', admittedMachineRole: 'manage',
+                                    actionId: createActionId, requestId, requestEnvelopeDigest: 'a'.repeat(43), target: actionContext.externalActionTarget,
+                                    ...(linkReview ? { deploymentLinkAdmission: { environmentId: template.environment.id,
+                                        owner: template.environment.owner, replacement } }
+                                        : { deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(createActionId, createInput) }),
+                                    workflowActionOrigin: { runId, requestId },
+                                } });
+                                const privateKey = Buffer.concat([installationSeed, installationPublicKey]);
+                                const verify = (args: { authorization: typeof signedRoot; effectActionId: string; target: typeof signedRoot.binding.target }) =>
+                                    verifyExternalActionExecutionAuthorizationCurrent({ ...args, privateKey, installationId: 'installation-a', serverHttpBaseUrl });
+                                const reviewPolicy = setScopedActionApprovalPreference({ settings: accountSettings.actionsSettingsV1!,
+                                    actionId: createActionId, scope: { kind: 'environment', environmentId: template.environment.id },
+                                    surface: 'agent', mode: 'required' });
+                                const prepareRequester = (root: typeof signedRoot) => prepareRequesterAccountActionContext({
+                                    authorization: root, purpose: { kind: 'external_action' }, machineId: 'machine-a',
+                                    installationId: 'installation-a', installationPrivateKey: privateKey,
+                                    serverId: 'home', serverIdentityId: host.serverId, serverHttpBaseUrl, ownCredentials: credentials,
+                                    isCustodyCurrent: async () => true,
+                                    isCurrent: () => verify({ authorization: root, effectActionId: createActionId, target: signedRoot.binding.target }),
+                                    createExecutor: () => reviewExecutor,
+                                });
+                                const reviewExecutor: ReturnType<typeof createCliActionExecutorFromCredentials> = createCliActionExecutorFromCredentials({
+                                    ...previewExecutorHost, credentials: { ...credentials, credentialProvenance: 'stored_session' },
+                                    pluginActionExecutionOwner: 'current_process', externalActionMachineRequestPrivateKey: privateKey,
+                                    externalActionMachineInstallationId: 'installation-a',
+                                    machineActionDirectTargetTransport: { machineId: 'machine-a',
+                                        async invoke() { throw new Error('Preview approval must stay on its installed controller'); } },
+                                    actionsSettingsProvider: createActionSettingsProvider({ accountSettings: { ...accountSettings, actionsSettingsV1: reviewPolicy } }),
+                                    prepareApprovalExecutionAuthorization: createDaemonApprovalExecutionAuthorizationPreparer({
+                                        machineId: 'machine-a', serverId: 'home', serverBaseUrl: serverHttpBaseUrl,
+                                        resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-a', serverIdentityId: host.serverId }),
+                                        daemonWorkSignal: caller.signal, prepareRequesterAccountContext: ({ authorization: root }) => prepareRequester(root),
+                                    }),
+                                    isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({
+                                        accountId, machineId: 'machine-a', serverId: 'home', externalActionMachinePublicKey: installationPublicKey,
+                                        resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-a', serverIdentityId: host.serverId }),
+                                        resolveTarget: async ({ target }) => target ?? null,
+                                        isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
+                                        verifyExternalExecutionAuthorization: verify,
+                                        readWorkflowActionAdmission: createCredentialedWorkflowActionAdmissionReader({ credentials, serverHttpBaseUrl }),
+                                    }),
+                                });
+                                const admitted = await prepareRequester(sealExternalActionRequesterAccountContextV1({
+                                    authorization: signedRoot, purpose: { kind: 'external_action' }, credentials: encodeRequesterCredentials(credentials),
+                                    installationPublicKey, randomBytes,
+                                }));
+                                if (!admitted) throw new Error('Expected signed Preview Create custody');
+                                try {
+                                    const { executionRunWorkflowRunId: _workflow, ...receiverContext } = createContext;
+                                    const prepared = await reviewExecutor.prepare(createActionId, createInput, {
+                                        ...receiverContext, surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
+                                        externalActionExecutionAuthorization: admitted.authorization,
+                                        signExternalActionApprovalInput: ({ authorization: proof, ...effect }) =>
+                                            signExternalActionApprovalInputV1({ ...effect, authorizationToken: proof.token, privateKey }),
+                                    });
+                                    const review = prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result;
+                                    expect(review, JSON.stringify(review)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                                    if (!review.ok) throw new Error(review.errorCode);
+                                    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(review.result);
+                                    const approvalStore = createCliApprovalsArtifactStore({ credentials, serverHttpBaseUrl, serverId: 'home',
+                                        getAccountEncryptionMode: async () => 'plain' });
+                                    expect(await approvalStore.approvalsGet({ artifactId, serverId: 'home' })).toMatchObject({
+                                        actionArgs: linkReview ? { replacesLinkId: replacement.replacesLinkId }
+                                            : { contentArtifactId: expect.any(String), preview: { templateEnvironmentId: template.environment.id } },
+                                    });
+                                    expect(previewEnvironments.size).toBe(0);
+                                    expect(linkWrites).toBe(0);
+                                    await workflowStorage.execute({ operation: 'invocations.fact', runId, invocationId, invocationAttempt: '0',
+                                        expectedContentRevision: '1', expectedLifecycle: 'admitting', lifecycle: 'waiting_for_approval',
+                                        contentEnvelope: progress(true, normalizeStrictJsonValue(review.result)) });
+                                    permissionChanged = changedPermission;
+                                    if (scenario === 'public_preview_copy_review_changed_policy') {
+                                        template.environment.revision++;
+                                        template.content.previewTemplate!.enabled = false;
+                                    }
+                                    const decision = await reviewExecutor.execute('approval.request.decide', { artifactId, decision: 'approve',
+                                        serverIdentityId: host.serverId, originServerId: 'home' }, { ...receiverContext, surface: 'cli', serverIdentityId: host.serverId, authority: 'present_user' });
+                                    if (!decision.ok) return decision;
+                                    const retained = await approvalStore.approvalsGet({ artifactId, serverId: 'home' });
+                                    const settled = retained?.v === 2 ? retained.execution : undefined;
+                                    if (linkReview) {
+                                        expect(settled, JSON.stringify({ settled, failures: await readHomeBoundaryFailures() })).toMatchObject({ ok: true });
+                                        expect(linkWrites).toBe(1);
+                                        const store = createInMemoryWorkflowCoordinatorStore();
+                                        const path = { blockId: create.id, scope: [] };
+                                        const key = workflowInvocationKey({ runId, ...path, attempt: 0 });
+                                        const workspace = accepted.workspaceTarget.project;
+                                        await store.ensureIntent({ key, recordId: invocationId, runId, blockId: path.blockId, blockKind: 'action',
+                                            memberOrdinal: '0', path, attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'waiting_for_approval',
+                                            workspace: { descriptor: workspace }, execution: { ...recordedExecution,
+                                                output: normalizeStrictJsonValue(review.result) } });
+                                        const coordinator = createWorkflowCoordinator({ store,
+                                            resolveWorkspace: async () => ({ ok: true, workspace }),
+                                            executeStep: async () => { throw new Error('Link does not spawn an Agent'); },
+                                            action: { executor: reviewExecutor, buildContext: async () => createContext,
+                                                observeRun: async () => { throw new Error('Link does not spawn a Run'); } },
+                                        });
+                                        expect(await coordinator.run({ ...accepted, runId })).toMatchObject({ state: 'succeeded' });
+                                        expect(store.read(key)).toMatchObject({ lifecycle: 'completed', result: { targetLinkId: reviewedLinkId } });
+                                        expect(linkWrites).toBe(1);
+                                    }
+                                    if (settled?.ok) expect(retained).toMatchObject({ executionOriginV1: { caller: { kind: 'workflowRun', runId },
+                                        callerPermissionMode: 'default' } });
+                                    if (!settled) throw new Error('Expected a settled Preview review');
+                                    return settled.ok ? { ok: true as const, result: settled.result }
+                                        : { ok: false as const, errorCode: settled.errorCode ?? 'action_failed',
+                                            error: settled.error ?? 'action_failed', details: settled.details };
+                                } finally {
+                                    await admitted.dispose?.();
+                                }
+                            })();
+                            if (linkReview) {
+                                expect(created, JSON.stringify({ created, failures: await readHomeBoundaryFailures() }))
+                                    .toMatchObject({ ok: true, result: { targetLinkId: reviewedLinkId } });
+                                return;
+                            }
+                            if (changedPermission) {
+                                expect(created, JSON.stringify(created)).toMatchObject({ ok: false, errorCode: 'approval_stale',
+                                    details: { reason: 'permission_changed' } });
+                                expect(previewEnvironments.size).toBe(0);
+                                return;
+                            }
+                            if (scenario === 'public_preview_copy_review_changed_policy') {
+                                expect(created, JSON.stringify(created)).toMatchObject({ ok: false, errorCode: 'deployment_conflict',
+                                    details: { requiredFact: 'deploymentActionResult' } });
+                                expect(previewEnvironments.size).toBe(0);
+                                return;
+                            }
                             // The exact PR repository owns both services. Catalog selection
                             // supplies fresh bindings and metadata without another Compose source.
                             if (!previewCompanion || created.ok) expect(environment.content.definition, JSON.stringify(created)).toEqual({
                                 ...template.content.definition, ref: git('rev-parse', 'HEAD') });
+                            if (previewCopyReview) {
+                                expect(created, JSON.stringify({ created, failures: created.ok ? [] : await readHomeBoundaryFailures() })).toMatchObject({ ok: true });
+                                expect(previewEnvironments.size).toBe(1);
+                                expect(environment.content.previewProvenance).toMatchObject({ templateEnvironmentId: template.environment.id });
+                                expect(environment.content.bindings).toEqual(expect.arrayContaining([
+                                    expect.objectContaining({ purpose: 'variable', name: 'PUBLIC_API_ORIGIN' }),
+                                ]));
+                                return;
+                            }
                             const mainEnvironmentId = environment.environment.id;
                             if (scenario === 'public_preview_configure_failure') {
                                 expect(created, JSON.stringify(created)).toMatchObject({ ok: false, errorCode: 'backup_required', effectAttempted: true,

@@ -178,7 +178,7 @@ import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secret
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { readApprovalRequesterDecisionV1, readLiveCliApprovalOriginScope, resolveApprovalExecutor, type ApprovalRequestV2, type StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { resolveCliApprovalDecisionPlacement } from './approvals/decisionPlacement';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, isExternalActionDeploymentWorkflowActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isApprovalDecisionReviewerBindingV1 } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
 import { createHostApprovalOriginCurrentness } from './approvals/hostOriginCurrentness';
@@ -1817,8 +1817,14 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           invocation: createOneShotPatInvocation(async () => actionFailure('approval_requester_unavailable')) };
       const binding = context.externalActionExecutionAuthorization?.binding;
       const workflowOrigin = binding?.workflowActionOrigin;
-      if (!context.approvedActionReplay && isControllerDeploymentMutationAction(actionId, input) && binding?.actionId === actionId && workflowOrigin
-        && !workflowOrigin.sessionLeaf && !workflowOrigin.sessionAuthority) {
+      // An approved step already carries its admitted receipt. Foreign Machine roots
+      // still use the Home-admitted host route, which need not open the requester's Run.
+      if (!context.approvedActionReplay && binding?.actionId === actionId && workflowOrigin
+        && !workflowOrigin.sessionLeaf && !workflowOrigin.sessionAuthority
+        && !('stepApprovalArtifactId' in workflowOrigin && workflowOrigin.stepApprovalArtifactId)
+        && (isControllerDeploymentMutationAction(actionId, input)
+          || (binding.accountId === binding.custodianAccountId && !workflowOrigin.reviewedChild
+            && isExternalActionDeploymentWorkflowActionIdV1(actionId)))) {
         try {
           const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
           const serverBaseUrl = requester?.serverHttpBaseUrl ?? resolveActionServerApiUrl();
@@ -1830,7 +1836,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (!policy || !admission) return { context,
             invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
           // The signed root admits the effect; its accepted Run owns caller provenance and selected policy.
-          context = { ...context, ...policy };
+          context = { ...context, ...policy, executionRunWorkflowRunId: admission.run.id };
         } catch {
           return { context, invocation: createOneShotPatInvocation(async () => actionFailure('admission_unavailable')) };
         }
