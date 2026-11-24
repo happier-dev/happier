@@ -357,7 +357,7 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   expect(rawPresetBody).toMatchObject({ kind: 'found', preset: { content: { t: 'encrypted' } } });
   expect(rawPresetBody).not.toHaveProperty('opened');
   const readPreset = (account: Account) => act(account, 'machines.presets.get', presetAddress);
-  const opened = { kind: 'opened', presetId, content: { name: presetContent.name } };
+  const opened = { kind: 'opened', presetId, content: presetContent };
   expect(await readPreset(departed)).toMatchObject({ kind: 'found', opened });
   expect(await act(departed, 'machines.presets.list', { homeId: home.serverId, sharedWithTeamId: teamId }))
     .toMatchObject({ kind: 'listed', opened: expect.arrayContaining([opened]) });
