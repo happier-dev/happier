@@ -23,9 +23,11 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { getConnectedAccountAuthentication, getConnectedServiceRegistrySnapshot, subscribeConnectedServiceRegistry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { waitForTestEvent } from '@/dev/testkit';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { usePluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { commitExternalVoiceProviderRegistration, resetExternalVoiceProviderRegistrationsForTests } from '@/voice/registry/externalVoiceProviderRegistrations';
 import { createVoiceProviderRegistry, projectVoiceProviderAccountCredentialSlot } from '@/voice/registry/providerRegistry';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
@@ -276,6 +278,8 @@ let reloadProjection: (() => void) | undefined;
 let runtimeLease: ReturnType<typeof createBundledConversationRuntimeHostLease> | undefined;
 let bundledRuntimes: Awaited<ReturnType<typeof createBundledConversationRuntimes>> = [];
 function ProjectionReader() {
+  // Present the Machine source whose admitted descriptor AppShell observes.
+  usePluginUiProjectionCurrentness({ machineId: descriptorMachineId, serverId: account!.scope.serverId });
   reloadProjection = useAppShellPluginUiProjection().reloadConnectedAccountProjection;
   return null;
 }
@@ -455,9 +459,11 @@ beforeEach(async () => {
   beforePurposeRead = undefined;
   afterAcknowledgement = undefined;
   omitSettingsReceipt = false;
-  const features = createRootLayoutFeaturesResponse({ features: { connectedServices: { enabled: true } } });
+  const serverIdentityId = `srv_voice_credential_${crypto.randomUUID()}`;
+  const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } },
+    features: { connectedServices: { enabled: true } } });
   if (!tryWriteServerEnabledBitInPlace(features, 'connectedServices.accountGroups', true)) throw new Error('Missing Connected Services feature fixture');
-  account = await createSecretSettingsTestHarness({ features, voiceEnabled: true, settings: settingsParse({
+  account = await createSecretSettingsTestHarness({ serverIdentityId, features, voiceEnabled: true, settings: settingsParse({
     schemaVersion: 7, secrets: [], voiceSettingsV1: { credentialBindings: [] },
   }) });
   account.catalogRows.set(PURPOSES_PATH, {
@@ -513,9 +519,10 @@ beforeEach(async () => {
   });
   await refreshConnectedAccountCatalog(account.scope, 'purposes');
   await publishProfile();
-  storage.getState().applyMachines([createMachineFixture({ id: descriptorMachineId,
-    active: true, activeAt: Date.now(), daemonStateVersion: 1,
-  })], true, { sourceServerId: account.scope.serverId });
+  await publishMachineInventoryForTest(account.scope, [createHydratedPlainMachineFixture({
+    id: descriptorMachineId, accountId: account.scope.accountId,
+    machine: { active: true, activeAt: Date.now(), daemonStateVersion: 1 },
+  })]);
   gestureObservation = observeGesture();
 });
 afterEach(async () => {
