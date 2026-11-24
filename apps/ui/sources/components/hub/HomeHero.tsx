@@ -50,6 +50,12 @@ type Frame = Readonly<{
 
 const bottomOf = (box: Measured) => box.y + box.height;
 
+function sameMeasurement(left: Measured | null, right: Measured | null): boolean {
+  return left === right || (left !== null && right !== null
+    && left.x === right.x && left.y === right.y
+    && left.width === right.width && left.height === right.height);
+}
+
 function measureInWindow(
   node: View | null,
 ): Promise<Readonly<{
@@ -120,14 +126,18 @@ export function useHomeHeroFrame(
       };
       // Composer-derived atmosphere geometry stays still for the entire focus interval, including
       // shrinking a prefilled draft. Content lays out normally; blur or a resized pane takes a new frame.
-      setFrame((previous) =>
-        previous &&
-        writing.current &&
-        previous.rect.width === paneBox.width &&
-        previous.rect.height === paneBox.height
-          ? { ...previous, rect: paneBox }
-          : next_,
-      );
+      setFrame((previous) => {
+        if (!previous) return next_;
+        const sameRect = sameMeasurement(previous.rect, paneBox);
+        if (writing.current && previous.rect.width === paneBox.width && previous.rect.height === paneBox.height) {
+          return sameRect ? previous : { ...previous, rect: paneBox };
+        }
+        if (sameRect && sameMeasurement(previous.headline, next_.headline)
+          && sameMeasurement(previous.composer, next_.composer)
+          && sameMeasurement(previous.suggestions, next_.suggestions)
+          && sameMeasurement(previous.next, next_.next)) return previous;
+        return next_;
+      });
     });
   }, []);
   const geometry = React.useMemo<AtmosphereStageGeometry | null>(() => {

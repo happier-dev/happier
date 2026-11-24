@@ -66,14 +66,16 @@ describe('Home atmosphere geometry while the composer is focused', () => {
         const before = hook.getCurrent().hero;
         // The measured band starts at 300; its resting card starts below the padding and instrument strip.
         expect(before?.composerTop).toBe(336);
+        await measure();
+        expect(hook.getCurrent().hero).toBe(before);
         await act(async () => { hook.getCurrent().onComposerFocus(); });
         composerHeight = 70;
         composerTop = 285;
         await measure();
-        expect(hook.getCurrent().hero).toEqual(before);
+        expect(hook.getCurrent().hero).toBe(before);
         composerHeight = 230;
         await measure();
-        expect(hook.getCurrent().hero).toEqual(before);
+        expect(hook.getCurrent().hero).toBe(before);
         paneHeight = 600;
         await measure();
         expect(hook.getCurrent().hero?.aboveBottom).toBe(559);
