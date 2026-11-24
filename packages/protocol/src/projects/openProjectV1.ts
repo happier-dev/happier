@@ -13,6 +13,7 @@ import type { WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from './sources/projectSourceV1.js';
 import { ScmRepositoryProvisioningFailureResponseSchema, ScmRepositoryProvisioningRemediationSchema } from '../scm/repositoryProvisioning.js';
 import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
+import { MachineProvisionerNativeCauseV1Schema } from '../machines/managed/providerFactsV1.js';
 
 const IdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 const PathSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.refine(value => !value.includes('\0'))));
@@ -107,6 +108,7 @@ export const OpenProjectRefusalV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('refused'), code: IdSchema,
   effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
+  nativeCause: z.optional(MachineProvisionerNativeCauseV1Schema),
   /** Own destination display fact. A later Open receives ordinary admission. */
   destinationReview: z.optional(z.strictObject({
     accountId: IdSchema, serverId: IdSchema, machineId: IdSchema,

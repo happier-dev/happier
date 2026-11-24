@@ -138,14 +138,27 @@ describe('Session holder bootstrap in a managed guest', () => {
         expect(probes).toBe(1);
     });
 
-    it.each(['platform', 'placement'] as const)('retains command failure at the %s boundary', async phase => {
-        await expect(ensureManagedGuestSessionHolder({ version: 'test',
-            io: { exec: async ({ command }) => command.startsWith('uname') && phase !== 'platform'
-                ? { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }
-                : { status: 127, stdout: 'private output', stderr: 'private credential' },
+    it('retains a placement failure with its exit status and a redacted stderr tail', async () => {
+        const secret = 'holder-fixture-private-token';
+        const placement = ensureManagedGuestSessionHolder({ version: 'test',
+            platform: { os: 'linux', arch: 'x86_64', home: '/home/guest' },
+            io: { exec: async () => ({ status: 1, stdout: 'private output',
+                stderr: `${'old diagnostic\n'.repeat(1024)}\nAuthorization: Bearer ${secret}\nchmod: Operation not permitted` }),
                 putFile: async () => { throw new Error('must not upload'); } },
             resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array(), sha256: 'unused' },
                 helper: { bytes: new Uint8Array(), sha256: 'unused' } }),
+        });
+        await expect(placement).rejects.toMatchObject({ code: 'remote_command_failed', details: { kind: 'managedNative',
+            nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 1, stderrTruncated: true,
+                stderr: expect.stringMatching(/chmod: Operation not permitted$/u) } } });
+        await expect(placement).rejects.not.toMatchObject({ details: { nativeCause: { stderr: expect.stringContaining(secret) } } });
+    });
+
+    it('retains a platform probe refusal before artifact resolution', async () => {
+        await expect(ensureManagedGuestSessionHolder({ version: 'test',
+            io: { exec: async () => ({ status: 127, stdout: '', stderr: '' }),
+                putFile: async () => { throw new Error('must not upload'); } },
+            resolveArtifacts: async () => { throw new Error('must not resolve artifacts'); },
         })).rejects.toMatchObject({ code: 'remote_command_failed' });
     });
     // The guest is this host's shell in a private HOME: putFile and exec are the

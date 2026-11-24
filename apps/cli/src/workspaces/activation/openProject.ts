@@ -87,18 +87,24 @@ function privateExecutionDiagnostic(error: unknown, code?: string): Readonly<{ r
   return undefined;
 }
 function projectRefusal(code: string, error?: unknown): Extract<OpenProjectResultV1, { kind: 'refused' }> {
-  logger.warnLocalFile('[Project Open] Refused', { code, ...privateExecutionDiagnostic(error, code) });
+  let refusal: Extract<OpenProjectResultV1, { kind: 'refused' }> = { kind: 'refused', code };
   if (error && typeof error === 'object') {
+    const failure = normalizeActionExecutorThrownError(error, 'projects.open');
+    const details = failure.details;
     const result = OpenProjectResultV1Schema.safeParse({ kind: 'refused', code,
       ...('details' in error && error.details && typeof error.details === 'object' && 'destinationReview' in error.details
         ? { destinationReview: error.details.destinationReview } : {}),
-      failureCause: normalizeActionExecutorThrownError(error, 'projects.open').failureCause,
+      failureCause: failure.failureCause,
+      ...(details && typeof details === 'object' && 'kind' in details && details.kind === 'managedNative' && 'nativeCause' in details
+        ? { nativeCause: details.nativeCause } : {}),
       ...('retryNotBeforeMs' in error && error.retryNotBeforeMs !== undefined ? { retryNotBeforeMs: error.retryNotBeforeMs } : {}),
       ...('remediation' in error && error.remediation !== undefined ? { remediation: error.remediation } : {}),
     });
-    if (result.success && result.data.kind === 'refused') return result.data;
+    if (result.success && result.data.kind === 'refused') refusal = result.data;
   }
-  return { kind: 'refused', code };
+  logger.warnLocalFile('[Project Open] Refused', { code, ...privateExecutionDiagnostic(error, code),
+    ...(refusal.nativeCause ? { nativeCause: refusal.nativeCause } : {}) });
+  return refusal;
 }
 function unconfirmedOutcome(reason: string, operationId?: string): Extract<OpenProjectResultV1, { kind: 'outcomeUnknown' }> {
   logger.warnLocalFile('[Project Open] Outcome unknown', { reason, ...(operationId ? { operationId } : {}) });

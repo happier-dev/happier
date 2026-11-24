@@ -5,13 +5,14 @@ import { Duplex, PassThrough } from 'node:stream';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
+import { ensureManagedGuestSessionHolder } from '@happier-dev/cli-common/machines/managed';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol';
 import { SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectResultV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -34,6 +35,44 @@ import { readProjectAccountRows, withdrawActiveProjectAccountRowsSnapshot } from
 import { openProject } from '@/workspaces/activation/openProject';
 import { createStartedProductionDaemonWorkspaceSyncRuntime as createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 import { acquireWorkspaceSyncTestScmRuntime, createWorkspaceSyncNativeProcessTestBoundary } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
+
+it('reports the guest command failure before accepting a managed folder', async () => {
+  const serverId = 'srv_managed_holder_refusal';
+  const serverUrl = 'https://managed-holder-refusal.invalid';
+  await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl });
+  const diagnose = vi.spyOn(logger, 'warnLocalFile');
+  const writes = vi.spyOn(axios, 'post');
+  onTestFinished(() => { diagnose.mockRestore(); writes.mockRestore(); });
+  const token = `header.${Buffer.from('{"sub":"owner"}').toString('base64url')}.signature`;
+  const controller = { machineId: 'host', installationId: 'installation' };
+  const artifact = { bytes: new Uint8Array(), sha256: 'unused' };
+  const result = await openProject({ serverId, machineId: controller.machineId,
+    source: { kind: 'folder', path: '/home/happier/project' },
+    materialization: { kind: 'attach', targetManaged: { managedId: 'lima-guest', controller } },
+  }, { serverId, serverHttpBaseUrl: serverUrl, machineId: controller.machineId, accountId: 'owner',
+    readCredentials: async () => ({ token, encryption: null }),
+    openManagedProjectWorkspace: async ({ lifetime }) => {
+      await ensureManagedGuestSessionHolder({ version: 'test', platform: { os: 'linux', arch: 'x86_64', home: '/home/happier-bootstrap' },
+        signal: lifetime, io: {
+          exec: async () => ({ status: 1, stdout: '', stderr: 'Authorization: Bearer fixture-private-token\nmkdir: Permission denied' }),
+          putFile: async () => { throw new Error('A refused placement cannot upload'); },
+        }, resolveArtifacts: async () => ({ holder: artifact, helper: artifact }) });
+      throw new Error('The fixture must refuse placement');
+    },
+  }, { signal: new AbortController().signal, callerAuthority: 'present_user',
+    machineAdmission: { ...controller, actorAccountId: 'owner', custodianAccountId: 'owner', role: 'manage', encryptionMode: 'plain' },
+    verifyMachineAdmissionCurrent: async () => true,
+  });
+  const nativeCause = { localCause: 'native_command_failed', exitCode: 1, stderr: expect.stringContaining('mkdir: Permission denied') };
+  expect(OpenProjectResultV1Schema.parse(result)).toMatchObject({
+    kind: 'refused', code: 'remote_command_failed', effectAttempted: false, nativeCause,
+  });
+  expect(diagnose).toHaveBeenCalledWith('[Project Open] Refused', expect.objectContaining({
+    nativeCause: expect.objectContaining(nativeCause),
+  }));
+  expect(JSON.stringify([result, diagnose.mock.calls])).not.toContain('fixture-private-token');
+  expect(writes).not.toHaveBeenCalled();
+});
 
 it('routes admitted native Project Open through retained requester custody before host checkout preparation', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'managed-project-open-'));

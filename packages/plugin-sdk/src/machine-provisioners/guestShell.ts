@@ -1,25 +1,13 @@
 /** @moduleRealm any */
-import { projectPluginFailureText } from '../diagnostics.js';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type ManagedGuestCliBuildInputV1, type MachineProvisionerNativeCauseV1 } from '../machineProvisioners.js';
+import { projectMachineProvisionerGuestCommandFailure } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { ManagedGuestCliBuildInputV1, MachineProvisionerNativeCauseV1 } from '../machineProvisioners.js';
+
+export { projectMachineProvisionerGuestCommandFailure };
 
 export const quoteMachineProvisionerShellArgument = (value: string): string => "'" + value.replaceAll("'", "'\\''") + "'";
 const quote = quoteMachineProvisionerShellArgument;
 
 type NativeCommandFailure = Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>;
-
-/** Pass stderr only for operations whose output is safe to excerpt. */
-export function projectMachineProvisionerGuestCommandFailure(
-  input: Readonly<{ command: NativeCommandFailure['command']; exitCode: number | null; stderr?: string | Uint8Array; stderrTruncated?: boolean }>,
-): NativeCommandFailure {
-  const stderr = (typeof input.stderr === 'string' ? input.stderr : new TextDecoder().decode(input.stderr)).trim();
-  // Project the complete retained text before bounding the excerpt.
-  const projected = stderr ? projectPluginFailureText(new Error(stderr)) : '';
-  return {
-    localCause: 'native_command_failed', command: input.command, exitCode: input.exitCode,
-    ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-    ...(input.stderrTruncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
-  };
-}
 
 /** Run the supplier from the staged context and confirm its binary before setup. */
 export function buildMachineProvisionerPreparationInstallScript(input: Readonly<{

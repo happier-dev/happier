@@ -1040,6 +1040,13 @@ failure format.
 
 ## Session and Project admission refusal details (unreleased 0.3)
 
+When the managed Session holder command exits unsuccessfully, Project Open
+includes the existing native command cause in the refusal and daemon log.
+The cause carries the exit status and, when available, a bounded stderr tail
+after credential and path redaction. Readers still accept refusals without
+the cause. Earlier strict 0.3 readers require matching source under the
+development direct cut. The cause changes no authorization or retry behavior.
+
 The reviewed Prepare-to-Session authorization and Project requester admission
 publish fixed reason labels in existing Action failure details. Project Setup's
 domain failure also accepts optional details while retaining its result shape

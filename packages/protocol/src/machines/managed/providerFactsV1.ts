@@ -11,6 +11,7 @@ import { ActionInputIssueSchema } from '../../actions/executor/actionInputValida
 import { MachineSetupSourceApplyV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { HomeEnrollmentCarrierFailureV1Schema } from '../../ssh/commandFailure.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
+import { projectPluginFailureMessage } from '../../plugins/failureProjection.js';
 import { providerAmountFieldsV1 } from '../../common/providerAmountV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
@@ -269,6 +270,23 @@ export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.unio
     'TimeoutError', 'SandboxTimeoutError', 'InternalFailure', 'ExecutionError', 'RemoteError', 'ConflictError', 'ClientClosedError']) }),
 ]));
 export type MachineProvisionerNativeCauseV1 = z.infer<typeof MachineProvisionerNativeCauseV1Schema>;
+
+type NativeCommandFailure = Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>;
+
+/** Pass stderr only for operations whose output is safe to excerpt. */
+export function projectMachineProvisionerGuestCommandFailure(
+  input: Readonly<{ command: NativeCommandFailure['command']; exitCode: number | null; stderr?: string | Uint8Array; stderrTruncated?: boolean }>,
+): NativeCommandFailure {
+  const stderr = (typeof input.stderr === 'string' ? input.stderr : new TextDecoder().decode(input.stderr)).trim();
+  // Project the complete retained text before bounding the excerpt.
+  const projected = stderr ? projectPluginFailureMessage(stderr) : '';
+  return {
+    localCause: 'native_command_failed', command: input.command, exitCode: input.exitCode,
+    ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
+    ...(input.stderrTruncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
+  };
+}
+
 export const ManagedRecoveryHintV1Schema = lazyDefinition(() => z.strictObject({ reference: id(), reason: id(), consoleUrl: z.optional(z.url().check(z.refine((value) => { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password; }))) }));
 export const AcquireResultV1Schema = lazyDefinition(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('bound'), resource: ManagedResourceV1Schema,

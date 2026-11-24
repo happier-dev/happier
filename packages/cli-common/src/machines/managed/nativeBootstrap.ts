@@ -4,10 +4,10 @@ import type { ManagedNativeInvocation } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
 import { MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readGuestCliFailureOutput } from '@happier-dev/protocol/ssh/commandFailure';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
-import { AcquireResultV1Schema, type ManagedBootstrapCarrierV1, type ManagedGuestPlatformV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { AcquireResultV1Schema, projectMachineProvisionerGuestCommandFailure, type ManagedBootstrapCarrierV1, type ManagedGuestPlatformV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
@@ -216,7 +216,12 @@ export async function ensureManagedGuestSessionHolder(input: Readonly<{
     const socketDirectory = `${platform.home}/.happier/holder/run`;
     const run = async (command: string) => {
         const result = await input.io.exec({ command, signal: input.signal });
-        if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Session holder placement command failed in the guest.');
+        if (result.status !== 0) throw createActionExecuteFailureError({
+            ok: false, errorCode: 'remote_command_failed', error: 'Session holder placement command failed in the guest.',
+            details: { kind: 'managedNative', nativeCause: projectMachineProvisionerGuestCommandFailure({
+                command: 'run', exitCode: result.status, stderr: result.stderr,
+            }) },
+        });
         return result.stdout;
     };
     await run(`umask 077; mkdir -p ${q(directory)} ${q(socketDirectory)} && chmod 700 ${q(socketDirectory)}`);
