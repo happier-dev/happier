@@ -1826,7 +1826,7 @@ export function inspectUsableSourceDevSharedDepsLastGreen(opts = {}) {
  * Source authors copy the workspace outputs directly. The package build
  * records own their currentness independently of the CLI host copies.
  */
-export async function prepareSourceDevAuthorPackages({ repoRoot, packageNames }) {
+export async function prepareSourceDevAuthorPackages({ repoRoot, packageNames, waitForAdmission, signal }) {
   const env = createWorkspaceChildBuildEnv();
   await ensureWorkspacePackagesBuiltByName(repoRoot, packageNames, {
     env,
@@ -1834,7 +1834,8 @@ export async function prepareSourceDevAuthorPackages({ repoRoot, packageNames })
     includeDevDependencies: false,
     quiet: true,
     timeoutMs: resolveSourceDevWorkspaceBuildTimeoutMs(),
-    waitForAdmission: false,
+    waitForAdmission,
+    signal,
   });
 }
 

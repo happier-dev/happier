@@ -2917,6 +2917,7 @@ await runPluginAuthorMaterializationChild();
     const service = createDaemonPluginChangeService({
       prepare: async (request) => await preparePath(
         request,
+        undefined,
         installed ? { installedUpdate: { pluginId: 'acme.descriptor' } } : undefined,
       ),
     });

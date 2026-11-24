@@ -1495,9 +1495,12 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
     if (!prepare) throw new Error('Expected daemon change preparation owner');
 
     await expect(prepare({ kind: 'update', pluginId: 'acme.plugin' })).resolves.toBe(prepared);
-    expect(prepareMock).toHaveBeenCalledWith(expectedRequest, {
-      installedUpdate: { pluginId: 'acme.plugin' },
-    });
+    const context = { installedUpdate: { pluginId: 'acme.plugin' } };
+    if (source.kind === 'path') {
+      expect(prepareMock).toHaveBeenCalledWith(expectedRequest, undefined, context);
+    } else {
+      expect(prepareMock).toHaveBeenCalledWith(expectedRequest, context);
+    }
   });
 
   it('threads stable service producers through initial and replacement registry lifecycles', async () => {

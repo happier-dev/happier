@@ -348,7 +348,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
       kind: 'registerWorkspace',
       projectRoot: '/workspace/project',
       trust: 'accept',
-    });
+    }, expect.any(AbortSignal));
 
     const unregister = await app.inject({
       method: 'POST',
@@ -359,7 +359,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
     expect(controlPluginDevelopment).toHaveBeenLastCalledWith({
       kind: 'unregisterExplicit',
       rootPath: '/workspace/plugin',
-    });
+    }, expect.any(AbortSignal));
   });
 
   it('projects a daemon-owned pending change status without creating another request', async () => {
@@ -546,7 +546,7 @@ describe('registerDaemonPluginChangeRoutes', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual(row.result);
-    expect(owners.decidePluginChange).toHaveBeenCalledWith(row.payload);
+    expect(owners.decidePluginChange).toHaveBeenCalledWith(row.payload, expect.any(AbortSignal));
   });
 
   /**

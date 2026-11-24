@@ -455,7 +455,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         return origin ? await approvalStore.readPluginChangeApprovalRetirement({ pendingReview, ...origin }) : false;
       },
     } : {}),
-    prepare: async (request, signal) => {
+    prepare: async (request, signal, preparation) => {
       if (request.kind === 'update') {
         const installed = (
           await createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir }).read()
@@ -474,13 +474,14 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
             installedUpdate: { pluginId: request.pluginId },
           });
         }
-        return await preparePath(update.request, {
+        return await preparePath(update.request, signal, {
+          ...preparation,
           installedUpdate: { pluginId: request.pluginId },
-        }, signal);
+        });
       }
       if (request.kind === 'installNpm' || request.kind === 'installMarketplace') return await prepareNpm(request);
       if (request.kind === 'installArchive') return await prepareArchive(request);
-      return await preparePath(request, undefined, signal);
+      return await preparePath(request, signal, preparation);
     },
     onCleanupFailure: (pluginId, error) => {
       logger.warn('[PLUGIN RUNTIME] Temporary plugin candidate cleanup failed', {
@@ -592,7 +593,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         },
       });
     },
-    submitObservation: async (observation) => {
+    submitObservation: async (observation, preparation) => {
       const request = {
         kind: 'development' as const,
         ...(observation.request.pluginId ? { pluginId: observation.request.pluginId } : {}),
@@ -605,7 +606,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
           ? { sdkRegistryOrigin: observation.request.sdkRegistryOrigin }
           : {}),
       };
-      const result = await baseChangeService.requestPluginChange(request);
+      const result = await baseChangeService.requestPluginChange(request, preparation
+        ? { signal: preparation.signal }
+        : { waitForWorkspaceBuildAdmission: false });
       if (result.kind === 'reviewRequired') await publishDevelopmentReview(request.sourceRootPath);
       const status = result.kind === 'reviewRequired'
         ? await baseChangeService.statusPluginChange({ pendingChangeId: result.pendingChangeId }) : null;
@@ -663,6 +666,7 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
               ? { kind: 'reload', rootPath: registeredRootId }
               : { kind: 'registerExplicit', rootPath: registeredRootId,
                   ...(request.sdkRegistryOrigin ? { sdkRegistryOrigin: request.sdkRegistryOrigin } : {}) },
+            options?.signal,
           );
           if (baseChangeService.hasPendingDevelopmentSourceChange(registeredRootId)) {
             return await baseChangeService.requestPluginChange(request, options);
@@ -682,11 +686,11 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       }
       return await baseChangeService.requestPluginChange(request, options);
     },
-    async controlPluginDevelopment(request) {
+    async controlPluginDevelopment(request, signal) {
       const sourceRootPath = request.kind === 'registerExplicit' || request.kind === 'reload' || request.kind === 'invalidate'
         ? await realpath(request.rootPath).catch(() => null) : null;
       const rejoinsReview = sourceRootPath !== null && baseChangeService.hasPendingDevelopmentSourceChange(sourceRootPath);
-      const result = await developmentRoots!.control(request);
+      const result = await developmentRoots!.control(request, signal);
       if (rejoinsReview && sourceRootPath && baseChangeService.hasPendingDevelopmentSourceChange(sourceRootPath)) {
         await publishDevelopmentReview(sourceRootPath);
       }
@@ -707,14 +711,14 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
         ? projectPendingWorkspaceTrust(pending)
         : await baseChangeService.statusPluginChange(request);
     },
-    async decidePluginChange(decision) {
+    async decidePluginChange(decision, signal) {
       const pending = readPendingWorkspaceTrust(decision.pendingChangeId);
       if (!pending) return await baseChangeService.decidePluginChange(decision);
       const result = await developmentRoots!.control({
         kind: 'registerWorkspace',
         projectRoot: pending.projectRoot,
         trust: decision.decision === 'cancel' ? 'deny' : 'accept',
-      });
+      }, signal);
       if (result.kind === 'failed') {
         return Object.freeze({ kind: 'failed' as const, code: result.code, message: result.message });
       }

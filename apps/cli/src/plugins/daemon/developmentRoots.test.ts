@@ -373,7 +373,7 @@ describe('daemon plugin development root ownership', () => {
     })).resolves.toBe('adopted');
     expect(submitObservation).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({ observedRevision: 1 }),
-    }));
+    }), undefined);
     await first.stop();
 
     starts.length = 0;

@@ -58,6 +58,8 @@ export type PendingWorkspaceProjectTrust = Readonly<{
   pluginRoot: string;
 }>;
 
+type InteractiveDevelopmentPreparation = Readonly<{ signal?: AbortSignal }>;
+
 type DevelopmentSubmissionResult = Readonly<{
   kind: string;
   pluginId?: string;
@@ -184,7 +186,7 @@ function defaultStartSourceObserver(
 
 export type DaemonPluginDevelopmentRootsOwner = Readonly<{
   initialize(): Promise<void>;
-  control(request: DaemonPluginDevelopmentControlRequest): Promise<DaemonPluginDevelopmentControlResult>;
+  control(request: DaemonPluginDevelopmentControlRequest, signal?: AbortSignal): Promise<DaemonPluginDevelopmentControlResult>;
   readStatus(): DaemonPluginDevelopmentStatus;
   /** Projects an adopted observation, including one that awaited installation approval. */
   recordSourceCommit(commit: DevelopmentSourceCommit): void;
@@ -213,7 +215,7 @@ export type DaemonPluginDevelopmentRootsOwner = Readonly<{
  */
 export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
   happyHomeDir: string;
-  submitObservation(observation: DaemonPluginDevelopmentSubmission): Promise<DevelopmentSubmissionResult>;
+  submitObservation(observation: DaemonPluginDevelopmentSubmission, preparation?: InteractiveDevelopmentPreparation): Promise<DevelopmentSubmissionResult>;
   hasPendingSourceChange?: (rootPath: string) => boolean;
   startCollectionObserver?: (
     rootPath: string,
@@ -324,6 +326,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
   const deliverObservation = async (
     sourceRootPath: string,
     observation: DaemonPluginDevelopmentObservation,
+    preparation?: InteractiveDevelopmentPreparation,
   ): Promise<'adopted' | 'retained'> => {
     const source = sources.get(sourceRootPath);
     const observedRevision = (observedRevisionBySource.get(sourceRootPath) ?? 0) + 1;
@@ -405,7 +408,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
             ...(prior?.pluginId ? { pluginId: prior.pluginId } : {}),
             observedRevision,
           }),
-        }));
+        }), preparation);
         if (observedRevisionBySource.get(sourceRootPath) !== observedRevision) return 'retained';
         if (result.kind === 'failed' && result.code === 'plugin_dev_conflict') {
           // This refusal proves a real registry commit advanced the prepared
@@ -466,6 +469,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
     ownerRoot: string,
     sourcePath: string,
     sdkRegistryOrigin?: string,
+    initialPreparation?: InteractiveDevelopmentPreparation,
   ): Promise<void> => {
     const canonicalSource = await realpath(sourcePath);
     const existing = sources.get(canonicalSource);
@@ -492,12 +496,15 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
     try {
       handle = await startSourceObserver(
         canonicalSource,
-        async (observation) => await deliverObservation(canonicalSource, observation),
+        async (observation) => await deliverObservation(canonicalSource, observation, initialPreparation),
         sdkRegistryOrigin,
       );
     } catch (error) {
       if (sources.get(canonicalSource) === source) sources.delete(canonicalSource);
       throw error;
+    } finally {
+      // Only the first refresh belongs to the initiating request.
+      initialPreparation = undefined;
     }
     if (sources.get(canonicalSource) !== source) {
       handle.stop();
@@ -603,7 +610,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
     }
   };
 
-  const reconcileCollection = async (rootPath: string): Promise<void> => {
+  const reconcileCollection = async (rootPath: string, preparation?: InteractiveDevelopmentPreparation): Promise<void> => {
     const root = roots.get(rootPath);
     if (!root || stopped) return;
     if (root.reconciling) {
@@ -627,7 +634,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
         }
         if (!removalFailed) {
           for (const candidate of discoveredCandidates) {
-            if (!nextCandidates.has(candidate)) await attachSource(rootPath, candidate);
+            if (!nextCandidates.has(candidate)) await attachSource(rootPath, candidate, undefined, preparation);
             nextCandidates.add(candidate);
           }
         }
@@ -643,6 +650,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
     rootPath: string,
     trustBoundaryRoot: string,
     persisted: boolean,
+    preparation?: InteractiveDevelopmentPreparation,
   ): Promise<void> => {
     const canonicalRoot = await realpath(rootPath).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return resolve(rootPath);
@@ -663,14 +671,14 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       reconcileAgain: false,
     };
     roots.set(canonicalRoot, state);
-    await reconcileCollection(canonicalRoot);
+    await reconcileCollection(canonicalRoot, preparation);
     if (stopped) return;
     state.observer = await startCollectionObserver(canonicalRoot, () => {
       void reconcileCollection(canonicalRoot);
     });
   };
 
-  const registerExplicit = async (rootPath: string, sdkRegistryOrigin?: string): Promise<string> => {
+  const registerExplicit = async (rootPath: string, sdkRegistryOrigin?: string, preparation?: InteractiveDevelopmentPreparation): Promise<string> => {
     const canonicalRoot = await realpath(resolve(rootPath));
     const registered = roots.get(canonicalRoot);
     if (!registered) {
@@ -685,11 +693,11 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
         reconciling: false,
         reconcileAgain: false,
       });
-      await attachSource(canonicalRoot, canonicalRoot, sdkRegistryOrigin);
+      await attachSource(canonicalRoot, canonicalRoot, sdkRegistryOrigin, preparation);
     } else if (registered.kind === 'explicit' && registered.sdkRegistryOrigin !== sdkRegistryOrigin) {
       throw new Error('Unregister the plugin development root before changing its SDK registry');
     } else {
-      await invalidate(canonicalRoot);
+      await invalidate(canonicalRoot, preparation);
     }
     const existingRegistration = persistedState.explicitRoots.find((entry) => entry.rootPath === canonicalRoot);
     if (!existingRegistration || existingRegistration.sdkRegistryOrigin !== sdkRegistryOrigin) {
@@ -761,7 +769,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
     return { kind: 'status', status: readStatus() };
   };
 
-  const invalidate = async (rootPath: string): Promise<void> => {
+  const invalidate = async (rootPath: string, preparation?: InteractiveDevelopmentPreparation): Promise<void> => {
     const canonicalRoot = await realpath(resolve(rootPath));
     if (params.hasPendingSourceChange?.(canonicalRoot)) return;
     const source = sources.get(canonicalRoot);
@@ -773,16 +781,16 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
       const owners = [...source.owners];
       source.handle?.stop();
       sources.delete(canonicalRoot);
-      await attachSource(owners[0] ?? canonicalRoot, canonicalRoot, roots.get(canonicalRoot)?.sdkRegistryOrigin);
+      await attachSource(owners[0] ?? canonicalRoot, canonicalRoot, roots.get(canonicalRoot)?.sdkRegistryOrigin, preparation);
       for (const owner of owners.slice(1)) sources.get(canonicalRoot)?.owners.add(owner);
       return;
     }
     const explicitRoot = roots.get(canonicalRoot);
     if (explicitRoot?.kind === 'explicit') {
-      await attachSource(canonicalRoot, canonicalRoot, explicitRoot.sdkRegistryOrigin);
+      await attachSource(canonicalRoot, canonicalRoot, explicitRoot.sdkRegistryOrigin, preparation);
       return;
     }
-    if (roots.get(canonicalRoot)?.collection) await reconcileCollection(canonicalRoot);
+    if (roots.get(canonicalRoot)?.collection) await reconcileCollection(canonicalRoot, preparation);
   };
 
   return Object.freeze({
@@ -799,14 +807,15 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
         }
       }
     },
-    async control(request) {
+    async control(request, signal) {
+      const preparation = { signal };
       if (request.kind === 'status') return { kind: 'status', status: readStatus() };
       try {
         if (request.kind === 'registerExplicit' || request.kind === 'invalidate' || request.kind === 'reload') {
           const canonicalRoot = request.kind === 'registerExplicit'
-            ? await registerExplicit(request.rootPath, request.sdkRegistryOrigin)
+            ? await registerExplicit(request.rootPath, request.sdkRegistryOrigin, preparation)
             : await realpath(resolve(request.rootPath));
-          if (request.kind !== 'registerExplicit') await invalidate(canonicalRoot);
+          if (request.kind !== 'registerExplicit') await invalidate(canonicalRoot, preparation);
           const plugin = pluginStatusBySource.get(canonicalRoot);
           if (plugin?.diagnostic
             && (plugin.phase === 'unavailable' || plugin.phase === 'retained_incumbent')) {
@@ -856,7 +865,7 @@ export function createDaemonPluginDevelopmentRootsOwner(params: Readonly<{
           await persist();
         }
         clearPendingProjectTrust(projectRoot);
-        await registerCollection('workspace', canonicalPluginRoot, projectRoot, true);
+        await registerCollection('workspace', canonicalPluginRoot, projectRoot, true, preparation);
         return { kind: 'status', status: readStatus() };
       } catch (error) {
         return {

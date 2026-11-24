@@ -54,9 +54,9 @@ describe('Git vendor plugin installation', () => {
     const prepare = createDaemonPathPluginChangePreparer({ happyHomeDir, readGitPluginPointer,
       runtimeLifecycle: { prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }) } });
     const changes = createDaemonPluginChangeService({ prepare: async (request, signal) => {
-      if (request.kind !== 'update') return prepare(request, undefined, signal);
+      if (request.kind !== 'update') return prepare(request, signal);
       const update = resolveInstalledPluginUpdate(request.pluginId, (await store.read()).plugins[request.pluginId]);
-      return prepare(update.request, { installedUpdate: { pluginId: request.pluginId } }, signal);
+      return prepare(update.request, signal, { installedUpdate: { pluginId: request.pluginId } });
     } });
     try {
       await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true });

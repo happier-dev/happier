@@ -63,7 +63,7 @@ import type {
   PreparedDaemonPluginChangeCandidate,
   PreparedPluginDevelopmentCandidate,
 } from './changeContract';
-import { DaemonPluginChangePreparationError } from './changeService';
+import { DaemonPluginChangePreparationError, type DaemonPluginChangePreparationOptions } from './changeService';
 import { derivePluginInstallReviewPrincipal } from './installReviewPrincipal';
 import { projectPluginInstallationReview } from './installationReview';
 import { projectPluginTransactionChangeResult } from './transactionChangeResult';
@@ -78,8 +78,8 @@ import {
   type PluginAuthorityReviewEvaluation,
 } from './updateReviewPolicy';
 
-export type DaemonPathPluginChangePreparationContext = Readonly<{
-  installedUpdate: Readonly<{ pluginId: string }>;
+export type DaemonPathPluginChangePreparationContext = DaemonPluginChangePreparationOptions & Readonly<{
+  installedUpdate?: Readonly<{ pluginId: string }>;
 }>;
 
 type RunPluginUiArtifactBuildBoundary = (params: Readonly<{
@@ -151,8 +151,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
     Promise<Readonly<{ resources: readonly ManagedResourceDependencyV1[]; reviewed: boolean }>>;
 }>): (
   request: PluginChangeRequest,
-  context?: DaemonPathPluginChangePreparationContext,
   signal?: AbortSignal,
+  context?: DaemonPathPluginChangePreparationContext,
 ) => Promise<PreparedDaemonPluginChange> {
   const createMutationStore = (
     onApplied?: (record: PluginRegistryCommitRecord) => void,
@@ -167,8 +167,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
 
   const prepare = async (
     request: PluginChangeRequest,
-    context?: DaemonPathPluginChangePreparationContext,
     signal?: AbortSignal,
+    context?: DaemonPathPluginChangePreparationContext,
   ): Promise<PreparedDaemonPluginChange> => {
     let trustedDevelopmentPluginId: string | null = null;
     let developmentAuthoringSource: Awaited<ReturnType<typeof resolvePluginAuthoringSource>> | null = null;
@@ -243,6 +243,8 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
       const preparedRoot = await preparePluginDevelopmentRoot({
         sourceRootPath,
         prepareDependencies,
+        waitForWorkspaceBuildAdmission: context?.waitForWorkspaceBuildAdmission,
+        signal,
         ...(request.kind === 'development' && request.sdkRegistryOrigin
           ? { sdkRegistryOrigin: request.sdkRegistryOrigin }
           : {}),

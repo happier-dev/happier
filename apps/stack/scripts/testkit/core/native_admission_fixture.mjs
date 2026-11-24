@@ -78,7 +78,8 @@ export function buildNativeAdmissionFixtureEnv(env = process.env) {
     && !key.startsWith('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_')
     && !key.startsWith('HSTACK_EXEC_CONTROLLER_')
     && key !== 'control_input_pid'
-    && !['VITEST_MAX_THREADS', 'VITEST_MIN_THREADS',
+    && !['HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB', 'HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB',
+      'VITEST_MAX_THREADS', 'VITEST_MIN_THREADS',
       'VITEST_MAX_FORKS', 'VITEST_MIN_FORKS', 'HAPPIER_VITEST_GOVERNOR_MAX_WORKERS',
       'HAPPIER_VITEST_MAX_WORKERS', 'VITEST_UI_MAX_FORKS', 'GOMAXPROCS'].includes(key)));
   // CLI --import affects only the test runner. Fixture Node children also
@@ -266,7 +267,16 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     await copyFile(join(dirname(admissionClientSourcePath), 'admission_socket.mjs'), join(proc, 'admission_socket.mjs'));
     // The fixture worker has no dedicated physical scope. Keep the runner's
     // working set and CPU usage out of its broker history.
+    const admissionMemory = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/admission_memory.mjs')).href;
     await writeFile(join(proc, 'admission_memory.mjs'), [
+      `import { existsSync, readFileSync } from 'node:fs';`,
+      `import { readLinuxHostAvailableMemoryKiB as readHost } from ${JSON.stringify(admissionMemory)};`,
+      `export function readLinuxHostAvailableMemoryKiB() {`,
+      `  const fixturePath = ${JSON.stringify(memoryOverridePath)};`,
+      `  if (!existsSync(fixturePath)) return readHost();`,
+      `  const memory = JSON.parse(readFileSync(fixturePath, 'utf8'));`,
+      `  return memory.hostAvailableMemoryKiB ?? memory.availableMemoryKiB;`,
+      `}`,
       'export const readProcessJobScopeWorkingSetKiB = () => null;',
       'export const readProcessJobScopeCpuUsageUsec = () => null;',
       '',

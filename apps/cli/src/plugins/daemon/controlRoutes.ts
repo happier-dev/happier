@@ -264,7 +264,12 @@ export function registerDaemonPluginChangeRoutes(
     if (!parsed.success) {
       return await reply.code(400).send({ kind: 'failed', code: 'invalid_plugin_change_request' });
     }
-    return await params.service.requestPluginChange(parsed.data);
+    const lifetime = createDaemonControlRequestLifetime(request, reply);
+    try {
+      return await params.service.requestPluginChange(parsed.data, { signal: lifetime.signal });
+    } finally {
+      lifetime.dispose();
+    }
   });
 
   app.post(PLUGIN_CHANGE_DECISION_PATH, { preHandler: params.requireAuth }, async (request, reply) => {
@@ -272,7 +277,12 @@ export function registerDaemonPluginChangeRoutes(
     if (!parsed.success) {
       return await reply.code(400).send({ kind: 'failed', code: 'invalid_plugin_change_decision' });
     }
-    return await params.service.decidePluginChange(parsed.data);
+    const lifetime = createDaemonControlRequestLifetime(request, reply);
+    try {
+      return await params.service.decidePluginChange(parsed.data, lifetime.signal);
+    } finally {
+      lifetime.dispose();
+    }
   });
 
   app.post(PLUGIN_CHANGE_STATUS_PATH, { preHandler: params.requireAuth }, async (request, reply) => {
@@ -305,9 +315,14 @@ export function registerDaemonPluginChangeRoutes(
         code: 'plugin_development_runtime_unavailable',
       });
     }
-    return await params.service.controlPluginDevelopment(
-      parsed.data as DaemonPluginDevelopmentControlRequest,
-    );
+    const lifetime = createDaemonControlRequestLifetime(request, reply);
+    try {
+      return await params.service.controlPluginDevelopment(
+        parsed.data as DaemonPluginDevelopmentControlRequest, lifetime.signal,
+      );
+    } finally {
+      lifetime.dispose();
+    }
   });
 
   app.post(PLUGIN_ACTION_EXECUTE_PATH, { preHandler: params.requireAuth }, async (request, reply) => {

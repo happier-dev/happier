@@ -15,11 +15,9 @@ export type PreparedPluginDevelopmentRoot = Readonly<{
   cleanup: () => Promise<void>;
 }>;
 
-export type RunManagedPluginPnpmBoundary = (params: Readonly<{
-  projectRoot: string;
-  args: readonly string[];
-  sdkRegistryOrigin?: string | null;
-}>) => Promise<ManagedPluginPnpmRunResult>;
+export type RunManagedPluginPnpmBoundary = (
+  params: Parameters<typeof runManagedPluginPnpm>[0],
+) => Promise<ManagedPluginPnpmRunResult>;
 
 async function hasAuthorProvidedPnpmLockfile(rootPath: string): Promise<boolean> {
   try {
@@ -44,6 +42,8 @@ export async function preparePluginDevelopmentRoot(
     sourceRootPath: string;
     prepareDependencies: boolean;
     sdkRegistryOrigin?: string | null;
+    waitForWorkspaceBuildAdmission?: boolean;
+    signal?: AbortSignal;
   }>,
   dependencies: Readonly<{
     runManagedPluginPnpm?: RunManagedPluginPnpmBoundary;
@@ -51,6 +51,7 @@ export async function preparePluginDevelopmentRoot(
 ): Promise<PreparedPluginDevelopmentRoot> {
   const sourceRootPath = await realpath(resolve(params.sourceRootPath));
   if (params.prepareDependencies) {
+    params.signal?.throwIfAborted();
     await runPluginAuthorPhase({ phase: 'dependency prep', projectRoot: sourceRootPath }, async () => {
       const hasAuthorLockfile = await hasAuthorProvidedPnpmLockfile(sourceRootPath);
       const managedPnpm = await (dependencies.runManagedPluginPnpm ?? runManagedPluginPnpm)({
@@ -61,6 +62,8 @@ export async function preparePluginDevelopmentRoot(
           ...(hasAuthorLockfile ? ['--frozen-lockfile'] : ['--lockfile=false']),
         ],
         sdkRegistryOrigin: normalizePluginSdkRegistryOrigin(params.sdkRegistryOrigin),
+        ...(params.waitForWorkspaceBuildAdmission === false ? { waitForWorkspaceBuildAdmission: false } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
       });
       if (!managedPnpm.ok) throw new Error(managedPnpm.message);
       if (managedPnpm.result.exitCode !== 0 || managedPnpm.result.signal !== null) {

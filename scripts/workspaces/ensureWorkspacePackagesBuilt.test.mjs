@@ -37,6 +37,7 @@ import {
   inspectSourceDevSharedDepsForSourceDev,
   inspectUsableSourceDevSharedDepsLastGreen,
   prepareBundledWorkspaceDependenciesForCli,
+  prepareSourceDevAuthorPackages,
   syncSharedDepsForSourceDev,
 } from '../../apps/cli/scripts/buildSharedDeps.mjs';
 import {
@@ -78,6 +79,7 @@ import { bundleWorkspacePackageWithRuntimeDependencies } from '@happier-dev/cli-
 import { buildNativeAdmissionFixtureEnv, holdNativeAdmissionFixtureMemory, installNativeAdmissionFixture, installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
 import { readSlotAddress } from '../../apps/stack/scripts/utils/proc/admission_socket.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES } from '../../apps/stack/scripts/utils/dev_targets/command_resources.mjs';
 import { readWorkspacePackages, resolveWorkspaceSource } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 
 function readFixturePackageName(packageDir) {
@@ -102,7 +104,7 @@ function writeUiHostedGuestFixture(root) {
     join(root, 'node_modules/shiki'), process.platform === 'win32' ? 'junction' : 'dir');
 }
 
-for (const preparation of ['named', 'remote-validation']) test(`${preparation} workspace preparation releases dependency and dist custody while compiler capacity is unavailable`, { skip: process.platform !== 'linux', timeout: 30_000 }, async (t) => {
+for (const preparation of ['named', 'remote-validation', 'plugin-pack']) test(`${preparation} workspace preparation releases dependency and dist custody while compiler capacity is unavailable`, { skip: process.platform !== 'linux', timeout: 30_000 }, async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'happier-workspace-capacity-order-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const native = await installWorkspaceAdmissionProcessFixture(t, root);
@@ -110,14 +112,18 @@ for (const preparation of ['named', 'remote-validation']) test(`${preparation} w
   const repoRoot = join(root, 'native-owner');
   writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['packages/*'] });
   writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
+  const packageLeaf = preparation === 'plugin-pack' ? 'plugin-sdk' : 'example';
+  const name = `@happier-dev/${packageLeaf}`;
   for (const app of ['ui', 'cli', 'server']) {
     mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
     writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}`,
-      dependencies: { '@happier-dev/example': 'workspace:*' } }));
+      dependencies: { [name]: 'workspace:*' } }));
   }
-  const packageDir = join(repoRoot, 'packages', 'example');
+  const packageDir = join(repoRoot, 'packages', packageLeaf);
   mkdirSync(join(packageDir, 'src'), { recursive: true });
-  const manifest = { name: '@happier-dev/example', type: 'module', main: './dist/index.js', scripts: { build: 'fixture-build' } };
+  const buildScript = preparation === 'plugin-pack'
+    ? 'node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json' : 'fixture-build';
+  const manifest = { name, type: 'module', main: './dist/index.js', scripts: { build: buildScript } };
   writeFileSync(join(packageDir, 'package.json'), JSON.stringify(manifest));
   writeFileSync(join(packageDir, 'src', 'index.ts'), 'export const ready = true;\n');
   const memory = join(root, 'memory');
@@ -149,19 +155,34 @@ process.exitCode = result.status ?? 1;
     HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' };
   const buildOptions = { env, quiet: true, signal: t.signal,
     workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: launcher } };
-  const build = preparation === 'named'
-    ? ensureWorkspacePackagesBuiltByName(repoRoot, [manifest.name], buildOptions)
-    : prepareRemoteValidationWorkspace({ repoDir: repoRoot, componentRelativeDir: 'apps/server', validationKind: 'runtime', env,
+  let build;
+  if (preparation === 'plugin-pack') {
+    // The host passes its raw-memory floor while the jobs budget cannot fit the SDK build.
+    const gib = 1024 * 1024;
+    await native.setMemoryObservation({ hostAvailableMemoryKiB: 27 * gib, availableMemoryKiB: 1, totalMemoryKiB: 70 * gib });
+    withPatchedProcessEnv(t, { ...env, HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB: undefined,
+      HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB: String(25 * gib) });
+    build = prepareSourceDevAuthorPackages({ repoRoot, packageNames: [name], signal: t.signal });
+  } else if (preparation === 'named') {
+    build = ensureWorkspacePackagesBuiltByName(repoRoot, [name], buildOptions);
+  } else {
+    build = prepareRemoteValidationWorkspace({ repoDir: repoRoot, componentRelativeDir: 'apps/server', validationKind: 'runtime', env,
       // Only the package-manager/compiler process adapter is redirected; the
       // remote preparation, graph, admission and publication owners stay real.
       loadWorkspaceBuildOwner: async () => ({ ensureWorkspacePackagesBuiltForComponent: (dir, options) =>
         ensureWorkspacePackagesBuiltForComponent(dir, { ...buildOptions, ...options }) }) });
-  void build.catch(() => {});
+  }
+  let settled = false;
+  void build.finally(() => { settled = true; }).catch(() => {});
   const lockPath = resolveWorkspacePackageBuildLockPath(packageDir, manifest);
   try {
     for (;;) {
       t.signal.throwIfAborted();
       if ((await native.brokerStatus()).waitingCount === 1) break;
+      if (settled) {
+        await build;
+        assert.fail('workspace build completed while package memory was unavailable');
+      }
       await new Promise(resolveWait => setTimeout(resolveWait, 10));
     }
     // A compiler queued for capacity must not prevent another preparer from
@@ -172,11 +193,17 @@ process.exitCode = result.status ?? 1;
     const queued = await native.brokerStatus();
     assert.equal(queued.activeCount, 1, 'only the physical pressure holder retains admission');
     assert.equal(queued.waitingCount, 1, 'the compiler still waits for capacity');
+    if (preparation === 'plugin-pack') {
+      const [request] = queued.waitingByClassAndFloor;
+      assert.equal(request.className, 'package-dist');
+      assert.equal(request.floorKiB, HEAVYWEIGHT_COMMAND_RESOURCES['package-dist'].memoryKiB);
+      assert.ok(queued.unreservedMemoryKiB < request.floorKiB, 'the queued build cannot fit in current memory');
+    }
   } finally {
     await pressure.release(() => writeFileSync(memory, '73400320 73400320\n'));
-    const result = await build;
-    assert.deepEqual(result.built, [manifest.name]);
   }
+  const result = await build;
+  if (preparation !== 'plugin-pack') assert.deepEqual(result.built, [name]);
   assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
 });
 

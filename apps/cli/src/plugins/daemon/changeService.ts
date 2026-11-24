@@ -72,18 +72,21 @@ type PluginChangeApplyOrBusyResult =
   | PluginChangeApplyResult
   | Readonly<{ kind: 'busy'; pluginId: string }>;
 
+export type DaemonPluginChangePreparationOptions = Readonly<{ waitForWorkspaceBuildAdmission?: boolean }>;
+
 export type DaemonPluginChangeService = Readonly<{
   requestPluginChange: (
     request: PluginChangeRequest,
-    options?: Readonly<{ retainReview?: boolean; signal?: AbortSignal }>,
+    options?: Readonly<{ retainReview?: boolean; signal?: AbortSignal }> & DaemonPluginChangePreparationOptions,
   ) => Promise<PluginChangeRequestResult>;
-  decidePluginChange: (decision: PluginChangeDecision) => Promise<PluginChangeDecisionResult>;
+  decidePluginChange: (decision: PluginChangeDecision, signal?: AbortSignal) => Promise<PluginChangeDecisionResult>;
   statusPluginChange: (request: PluginChangeStatusRequest) => Promise<PluginChangeStatusResult>;
   /** Every change still awaiting or executing a present-user decision. */
   listPendingPluginChanges: () => Promise<PluginChangeListResult>;
   /** Thin daemon-owned development-root registration/reload/status seam. */
   controlPluginDevelopment?: (
     request: DaemonPluginDevelopmentControlRequest,
+    signal?: AbortSignal,
   ) => Promise<DaemonPluginDevelopmentControlResult>;
   shutdown: () => Promise<void>;
 }>;
@@ -142,7 +145,7 @@ function failedPluginChange(
 }
 
 export function createDaemonPluginChangeService(params: Readonly<{
-  prepare: (request: PluginChangeRequest, signal?: AbortSignal) => Promise<PreparedDaemonPluginChange>;
+  prepare: (request: PluginChangeRequest, signal?: AbortSignal, options?: DaemonPluginChangePreparationOptions) => Promise<PreparedDaemonPluginChange>;
   readApprovalRetirement?: (review: Extract<PluginPendingChangeEntry, { kind: 'reviewRequired' }>) => Promise<boolean>;
   findOpenDevelopmentApproval?: (intent: PluginInstallIntent) => Promise<string | null>;
   createPendingChangeId?: () => string;
@@ -424,7 +427,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
         }
         let prepared: PreparedDaemonPluginChange;
         try {
-          prepared = await params.prepare(preparationRequest, options?.signal);
+          prepared = await params.prepare(preparationRequest, options?.signal, options);
         } catch (error) {
           if (options?.signal?.aborted) return { kind: 'cancelled' };
           if (error instanceof PluginRegistryProfileRequiredError) {

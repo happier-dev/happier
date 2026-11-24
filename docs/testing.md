@@ -1392,6 +1392,11 @@ requests release their offered capacity and partial leases, then wait for their
 own resource changes. A head blocked by an active publication also waits without
 reserving its floor before its first offer. A physically fitting request can wait without an admission
 deadline; `--no-wait` instead returns a typed busy result.
+Source-workspace plugin packs, author checks and interactive daemon
+registration wait for compiler capacity when declared bundled author
+dependencies need rebuilding. The same package batch owns the reservation,
+and cancellation removes the pending request. Daemon startup and automatic
+source observations keep their nonblocking policy.
 
 The broker excludes its queued control clients' proportional resident memory
 from host memory pressure during its existing observations. It credits each

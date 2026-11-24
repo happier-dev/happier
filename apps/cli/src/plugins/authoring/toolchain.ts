@@ -319,10 +319,16 @@ export async function materializePrepublicationAuthorWorkspacePackages(params: R
   }
 }
 
+type SourceAuthorWorkspaceBuildOptions = Readonly<{
+  waitForAdmission?: boolean;
+  signal?: AbortSignal;
+}>;
+
 export async function materializeSourceCliBundledPrepublicationPackages(
   runtimeRoot: string,
   packageNames: readonly string[],
   projectRoot: string,
+  { waitForAdmission, signal }: SourceAuthorWorkspaceBuildOptions = {},
 ): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const repoRoot = findRepoRoot(runtimeRoot);
   // The repository publisher is loaded only by the source workspace host.
@@ -330,7 +336,7 @@ export async function materializeSourceCliBundledPrepublicationPackages(
   if (!isRecord(publisher) || typeof publisher.prepareSourceDevAuthorPackages !== 'function') {
     throw new Error('The source Happier CLI public author package publisher is unavailable');
   }
-  await publisher.prepareSourceDevAuthorPackages({ repoRoot, packageNames });
+  await publisher.prepareSourceDevAuthorPackages({ repoRoot, packageNames, waitForAdmission, signal });
   return await materializePrepublicationAuthorWorkspacePackages({
     projectRoot,
     bundles: resolveWorkspaceBundlesFromPackageJson({
@@ -374,6 +380,7 @@ async function materializePackagedCliBundledPrepublicationPackages(params: Reado
 async function materializeBundledPrepublicationPackages(
   packageNames: readonly string[],
   projectRoot: string,
+  workspaceBuild: SourceAuthorWorkspaceBuildOptions,
 ): Promise<PluginAuthorBundledPrepublicationMaterialization> {
   const runtimeAuthority = resolveAuthoritativePackagedRuntimeProjectRoot();
   if (!runtimeAuthority) {
@@ -383,7 +390,7 @@ async function materializeBundledPrepublicationPackages(
   assertPluginAuthorPrepublicationRuntimeDeclarations(runtimeRoot, packageNames);
   const runtimePackageJson = readRuntimePackageJson(runtimeRoot);
   if (isSourceWorkspaceAuthoringAuthority(runtimeAuthority)) {
-    return await materializeSourceCliBundledPrepublicationPackages(runtimeRoot, packageNames, projectRoot);
+    return await materializeSourceCliBundledPrepublicationPackages(runtimeRoot, packageNames, projectRoot, workspaceBuild);
   }
   return await materializePackagedCliBundledPrepublicationPackages({
     runtimeRoot,
@@ -654,6 +661,7 @@ export async function runManagedPluginPnpm(
     projectRoot: string;
     args: readonly string[];
     sdkRegistryOrigin?: string | null;
+    waitForWorkspaceBuildAdmission?: boolean;
     signal?: AbortSignal;
   }>,
   deps: Pick<
@@ -687,7 +695,10 @@ export async function runManagedPluginPnpm(
     args: params.args,
     ...(params.signal ? { signal: params.signal } : {}),
     materialize: deps.materializeBundledPrepublicationPackages
-      ?? ((packageNames) => materializeBundledPrepublicationPackages(packageNames, projectRoot)),
+      ?? ((packageNames) => materializeBundledPrepublicationPackages(packageNames, projectRoot, {
+        waitForAdmission: params.waitForWorkspaceBuildAdmission,
+        ...(params.signal ? { signal: params.signal } : {}),
+      })),
   });
   try {
     return {
