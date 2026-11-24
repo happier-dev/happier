@@ -24,6 +24,13 @@ export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version:
 } }, metricMigration, costMigration, worktreeMigration, { version: 7, id: 'exception-application-origin', async up(tx) {
  // Earlier retained exceptions have no proven application origin; never infer one from their text.
  await tx.execute('ALTER TABLE captureExceptions ADD COLUMN applicationOrigin TEXT');
+} }, { version: 8, id: 'clear-previous-query-capture', async up(tx) {
+ // Queries and their transaction links precede the current normalization and masking contract.
+ await tx.execute("DELETE FROM captureSummaries WHERE kind IN ('query','transaction')");
+ // Summaries and details expire independently. A detail without either surviving owner has no current shape guarantee.
+ await tx.execute(`DELETE FROM captureDetails AS detail
+  WHERE NOT EXISTS (SELECT 1 FROM captureSummaries AS summary WHERE summary.worktree = detail.worktree AND summary.id = detail.id)
+    AND NOT EXISTS (SELECT 1 FROM captureExceptions AS exception WHERE exception.worktree = detail.worktree AND exception.id = detail.id)`);
 } }];
 const summaryFields = ['id','worktree','kind','source','at','shape','traceId','spanId','durationMs','outcome','parentSpanId','spanKind','serviceName','endpointMethod','endpointRoute','httpStatusCode','statementKind','parameterIdentity','executionIdentity','callsite','transactionId','retryOf','connectionId','severityNumber'] as const;
 const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi'] as const;

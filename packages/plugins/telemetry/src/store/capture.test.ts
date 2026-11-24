@@ -47,6 +47,42 @@ describe('capture store through SQLite', () => {
   } finally { f.close(); }
  });
 
+ it('clears the previous query capture shape and linked transactions while preserving other capture data', async () => {
+  const f = fixture();
+  try {
+   for (const migration of captureMigrations.filter(migration => migration.version <= 7)) await migration.up(f.db);
+   const store = createCaptureStore(f.db, () => {});
+   await store.write([
+    { id: 'query', worktree: 'chosen', kind: 'query', source: 'wire', at: 1, shape: 'select ?', transactionId: 'tx',
+     physicalRootIdentity: '/chosen', detail: { parameters: ['previous format'] } },
+    { id: 'tx', worktree: 'chosen', kind: 'transaction', source: 'wire', at: 1, detail: { executionIds: ['query'] } },
+    { id: 'expired-first', worktree: 'chosen', kind: 'query', source: 'otlp', at: 1,
+     detail: { span: { database: { maskedParameters: ['previous format'] } } } },
+    { id: 'query', worktree: 'other', kind: 'log', source: 'otlp', at: 1,
+     physicalRootIdentity: '/other', detail: { log: { body: 'unrelated log' } } },
+   ]);
+   // Retention can expire the summary before its separately retained detail.
+   await f.db.execute('DELETE FROM captureSummaries WHERE worktree = ? AND id = ?', ['chosen', 'expired-first']);
+   await f.db.execute('CREATE TABLE unrelated (value TEXT)');
+   await f.db.execute('INSERT INTO unrelated VALUES (?)', ['retained']);
+   for (const migration of captureMigrations.filter(migration => migration.version > 7)) {
+    await f.db.transaction(migration.up);
+   }
+   expect(await store.list({ worktree: 'chosen', limit: 10 })).toEqual([]);
+   expect(await store.detail('chosen', 'query')).toBeNull();
+   expect(await store.detail('chosen', 'tx')).toBeNull();
+   expect(await store.detail('chosen', 'expired-first')).toBeNull();
+   expect(await store.detail('other', 'query')).toEqual({ log: { body: 'unrelated log' } });
+   expect(await store.worktreePartitions('/other')).toEqual(['other']);
+   expect(await f.db.query('SELECT value FROM unrelated')).toEqual([{ value: 'retained' }]);
+
+   await store.write([{ id: 'current', worktree: 'chosen', kind: 'query', source: 'wire', at: 2,
+    physicalRootIdentity: '/chosen', shape: 'select ?', detail: { parameters: ['[redacted]'] } }]);
+   expect(await store.list({ worktree: 'chosen', kind: 'query', limit: 10 })).toEqual([expect.objectContaining({ id: 'current' })]);
+   expect(await store.detail('chosen', 'current')).toEqual({ parameters: ['[redacted]'] });
+  } finally { f.close(); }
+ });
+
  it('keeps demanded details out of selected summary reads and clears only the selected worktree', async () => {
   const f = fixture();
   try {
