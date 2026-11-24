@@ -14,7 +14,7 @@ export { HealthCheckKindCatalogV1ProtocolSchema } from '@happier-dev/protocol/pl
 export type { HealthCheckSourceSelectorV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export { HealthCheckSourceSelectorV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export type { HealthCheckDomainSetupIntentV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
-export { HealthCheckDomainSetupIntentV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+export { HealthCheckContributedSetupIntentV1ProtocolSchema, HealthCheckDomainSetupIntentV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export type { HealthCheckSetupPreviewInputV1, HealthCheckSetupPreviewResultV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 export { HealthCheckSetupPreviewInputV1ProtocolSchema, HealthCheckSetupPreviewResultV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckSourceV1';

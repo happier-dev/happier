@@ -110,6 +110,14 @@ function readRendererDraft(value: unknown, subject: HealthCheckSubjectV1): Rende
     };
 }
 
+function contributedCheckDraft(kind: HealthCheckKindCatalogV1[number], config?: unknown) {
+    return {
+        contributedKind: kind,
+        contributedValidator: compilePluginJsonSchema(kind.configSchema),
+        contributedDraft: contributedConfigDraft(kind.configSchema, config),
+    };
+}
+
 function readSavedCheckDraft(check: Check | undefined, kind: HealthCheckKindCatalogV1[number] | undefined): Draft | null {
     if (!check) return null;
     const cadence = {
@@ -117,11 +125,7 @@ function readSavedCheckDraft(check: Check | undefined, kind: HealthCheckKindCata
         consecutiveFailuresBeforeAlerting: check.consecutiveFailuresBeforeAlerting,
         ...(check.binding.kind === 'domain' ? { domainCondition: check.binding.condition } : {}),
     };
-    if (kind) return {
-        ...EMPTY, ...cadence, contributedKind: kind,
-        contributedValidator: compilePluginJsonSchema(kind.configSchema),
-        contributedDraft: contributedConfigDraft(kind.configSchema, check.config),
-    };
+    if (kind) return { ...EMPTY, ...cadence, ...contributedCheckDraft(kind, check.config) };
     if (check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1) {
         if (check.binding.kind === 'domain' && (check.kind.localId === 'http' || check.kind.localId === 'certificate')) {
             return { ...EMPTY, ...cadence, kind: check.kind.localId };
@@ -284,6 +288,7 @@ function text(label: string, value: string, onChange: (next: string) => void, op
 
 function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; existing: readonly Check[];
     sourceOptions: SourceOptions;
+    newContributedCheck?: HealthCheckSetupDraftV1['newContributedCheck'];
     observerMachineId?: string; selectedCheckId?: string; rendererDraft?: RendererDraft; signal: AbortSignal }>): ReactElement {
     const t = usePluginTranslation();
     const host = usePluginHostApi();
@@ -304,7 +309,12 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const selectedKind = catalog?.find(kind =>
         kind.pluginId === selectedCheck?.kind.pluginId && kind.id === selectedCheck.kind.localId);
     const restoredDraft = useMemo(() => readSavedCheckDraft(selectedCheck, selectedKind), [selectedCheck, selectedKind]);
-    const draft = editedDraft ?? restoredDraft ?? EMPTY;
+    const intent = props.newContributedCheck;
+    const initialKind = intent && catalog?.find(kind => kind.pluginId === intent.kind.pluginId && kind.id === intent.kind.localId);
+    const initialDraft = useMemo(() => initialKind && intent ? {
+        ...EMPTY, ...contributedCheckDraft(initialKind, intent.config),
+    } : null, [initialKind, intent]);
+    const draft = editedDraft ?? restoredDraft ?? initialDraft ?? EMPTY;
     const [{ editedAlerts, preparedSource }, setAlertDraft] = useState({
         editedAlerts: props.rendererDraft?.alerts,
         preparedSource: props.rendererDraft?.alerts === undefined ? resumedPreview?.testContext : undefined,
@@ -362,8 +372,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         setEditedDraft(null);
         setRefusedSave(false);
     };
-    const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set({ contributedKind: kind,
-        contributedValidator: compilePluginJsonSchema(kind.configSchema), contributedDraft: contributedConfigDraft(kind.configSchema) });
+    const selectContributed = (kind: HealthCheckKindCatalogV1[number]) => set(contributedCheckDraft(kind));
     const readInstalledKinds = useCallback(async () => {
         setLoadingKinds(true);
         setKindsUnavailable(false);
@@ -382,8 +391,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     }, [host, props.signal]);
     const savedContributedKind = selectedCheck && selectedCheck.kind.pluginId !== HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
     useEffect(() => {
-        if (savedContributedKind && catalog === null) void readInstalledKinds();
-    }, [catalog, readInstalledKinds, savedContributedKind]);
+        if ((savedContributedKind || intent) && catalog === null) void readInstalledKinds();
+    }, [catalog, intent, readInstalledKinds, savedContributedKind]);
     const issues = fieldIssues(draft, t);
     const candidate = buildHealthCheckSetupInput(props.subject, existing, draft, { ...props.sourceOptions,
         ...(alerts === undefined ? {} : { alerts }),
@@ -526,6 +535,16 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             disabled: !canAdd, busy: saving, testID: 'health-setup-add',
             onPress: async () => { if (candidate.success) await submit(candidate.data); } });
 
+    if (intent && !initialDraft) {
+        const waiting = catalog === null && !kindsUnavailable;
+        return h(Stack, { gap: 'medium' },
+            h(Text, { value: waiting ? t(`${K}.loadingKinds`, 'Loading check kinds…')
+                : kindsUnavailable ? t(`${K}.kindsUnavailable`, 'Check kinds could not be loaded. Try again.')
+                    : t(`${K}.requestedKindUnavailable`, 'This check kind is unavailable on the selected Machine.') }),
+            h(ModalCardFooterActions, { cancel: { testID: 'health-setup-cancel',
+                onPress: () => { void host.settleEphemeralInput({ kind: 'cancelled' }, { signal: props.signal }); } } },
+                waiting ? null : h(Button, { title: t(`${K}.retry`, 'Retry'), onPress: () => { void readInstalledKinds(); } })));
+    }
     // What to check leads: the saved check being edited, its kind and that kind's fields; alerts, what happens when it
     // needs attention and the one Save follow. A check opened to edit is its own sheet: no other saved check to pick
     // and its kind fixed.
@@ -611,6 +630,7 @@ function HealthCheckSetupSurface(context: RenderContext): ReactElement {
         return h(Text, { valueKey: `${K}.unavailable`, fallback: 'Open Add check from a watched service to set up its check.' });
     }
     return h(HealthCheckSetupForm, { subject: launch.draft.subject, existing: launch.draft.checks ?? [],
+        newContributedCheck: launch.draft.newContributedCheck,
         sourceOptions: { ...(launch.draft.investigation ? { investigation: launch.draft.investigation } : {}),
             ...(launch.draft.alerts ? { alerts: launch.draft.alerts } : {}), ...(launch.draft.domain ? { domain: launch.draft.domain } : {}) },
         rendererDraft: launch.rendererDraft,

@@ -405,7 +405,8 @@ it('adds a declared contributed kind with its closed configuration through the s
 
 // J5: an installed kind with variants, a list of records and a nested threshold (the telemetry Key flow's
 // declared shape) is authored through typed fields that round-trip into its saved configuration.
-it.each([false, true])('authors a Key flow through its declared schema (saved=%s)', async saved => {
+it.each(['new', 'saved', 'from-route'] as const)('authors a Key flow through its declared schema (%s)', async mode => {
+  const saved = mode === 'saved';
   const text = { type: 'string', minLength: 1 };
   const keyFlowSchema = { type: 'object', additionalProperties: false, required: ['environmentId', 'serviceName', 'measure', 'windowMs', 'threshold'],
     properties: {
@@ -430,8 +431,12 @@ it.each([false, true])('authors a Key flow through its declared schema (saved=%s
       windowMs: 600_000, threshold: { operator: 'above', value: 450 } },
     periodMs: 300_000, consecutiveFailuresBeforeAlerting: 3,
   } as const;
-  const { page, settled } = await mount({ initialInput: { v: 1, subject,
+  const { page, settled } = await mount({ initialInput: { v: 1,
+    subject: mode === 'from-route' ? { kind: 'environment', environmentId: 'env-prod' } : subject,
     ...(saved ? { checks: [existing], selectedCheckId: existing.checkId } : {}),
+    ...(mode === 'from-route' ? { newContributedCheck: { kind: existing.kind,
+      config: { environmentId: existing.config.environmentId, serviceName: existing.config.serviceName,
+        measure: existing.config.measure } } } : {}),
   } }, {
     executeAction: async () => [{ pluginId: 'happier.telemetry', id: 'key-flow', title: 'Key flow', action: 'health/key-flow',
       configSchema: keyFlowSchema }],
@@ -440,6 +445,12 @@ it.each([false, true])('authors a Key flow through its declared schema (saved=%s
   if (saved) {
     await vi.waitFor(() => expect(field('Route')?.value).toBe('/checkout'));
     expect(field('Value')?.value).toBe('450');
+  } else if (mode === 'from-route') {
+    await vi.waitFor(() => expect(field('Route')?.value).toBe('/checkout'));
+    expect(field('Method')?.value).toBe('POST');
+    expect(field('Service name')?.value).toBe('billing-api');
+    expect((await addButton(page)).state?.disabled).toBe(true);
+    await type('Window ms', '600000');
   } else {
     await act(async () => { await page.press(await page.getByRole('button', { name: 'More checks' })); });
     expect(field('Configuration')).toBeNull();

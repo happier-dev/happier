@@ -228,7 +228,19 @@ export const HealthCheckDomainSetupIntentV1Schema = lazyZodSchema(() => z.strict
 export type HealthCheckDomainSetupIntentV1 = z.infer<typeof HealthCheckDomainSetupIntentV1Schema>;
 export const HealthCheckDomainSetupIntentV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckDomainSetupIntentV1Schema));
 
-/** Draft-only Domain intent is never persisted in the saved source. */
+/** The installed kind owns validation when the person applies the completed draft. */
+const HealthCheckContributedSetupIntentV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: asProtocolZod(PluginContributionIdentityV1Schema),
+    config: PluginJsonValueV2Schema,
+}));
+export const HealthCheckContributedSetupIntentV1ProtocolSchema = lazyDefinition(() =>
+    projectZodProtocolSchema(HealthCheckContributedSetupIntentV1Schema));
+const setupIntent = lazyZodSchema(() => z.strictObject({
+    domain: z.optional(HealthCheckDomainSetupIntentV1Schema),
+    newContributedCheck: z.optional(HealthCheckContributedSetupIntentV1Schema),
+}));
+
+/** Draft-only launch intent stays outside the saved source. */
 const emptyEnvironmentDraft = lazyZodSchema(() => z.strictObject({
     ...z.partial(emptyEnvironmentSource).shape,
     subject: emptyEnvironmentSource.shape.subject,
@@ -236,9 +248,9 @@ const emptyEnvironmentDraft = lazyZodSchema(() => z.strictObject({
 }));
 export const HealthCheckSetupDraftV1Schema = lazyZodSchema(() => z.union([z.strictObject({
     ...z.partial(HealthCheckSetupInputV1BaseSchema).shape,
-    domain: z.optional(HealthCheckDomainSetupIntentV1Schema),
+    ...setupIntent.shape,
 }).check(z.refine(draft => !draft.domain || draft.subject?.kind === 'environment')),
-z.strictObject({ ...emptyEnvironmentDraft.shape, domain: z.optional(HealthCheckDomainSetupIntentV1Schema) }),
+z.strictObject({ ...emptyEnvironmentDraft.shape, ...setupIntent.shape }),
 ]));
 export type HealthCheckSetupDraftV1 = z.infer<typeof HealthCheckSetupDraftV1Schema>;
 export const HealthCheckSetupDraftV1ProtocolSchema = lazyDefinition(() => projectZodProtocolSchema(HealthCheckSetupDraftV1Schema));

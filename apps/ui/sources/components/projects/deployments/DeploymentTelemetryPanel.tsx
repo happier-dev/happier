@@ -8,6 +8,7 @@ import type {
   DatabaseCaptureEndpointV1,
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
+import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import {
   CaptureEndpoints,
   CaptureLogs,
@@ -337,6 +338,18 @@ function DeploymentTelemetryTabs(props: Readonly<{
             subject: { kind: 'environment', environmentId: environment.id, machineId: environment.controllerMachineId },
             // A Key flow is checked on the collector that keeps its requests (J5 "Check from").
             controllerMachineId: collectorId,
+            newContributedCheck: {
+              kind: TELEMETRY_KEY_FLOW_HEALTH_KIND_V1,
+              config: {
+                environmentId: environment.id,
+                serviceName: addingCheck.serviceName,
+                measure: {
+                  kind: 'route',
+                  routes: [{ method: addingCheck.method, route: addingCheck.route }],
+                  statistic: 'p95',
+                },
+              },
+            },
           })}
         />
       ) : null}

@@ -59,6 +59,14 @@ waiting while the child is active. A recovered unknown outcome leaves the
 Receipt open to reconciliation. A later known outcome is a distinct occurrence.
 Re-delivery of an occurrence rejoins its original Run.
 
+## Author a Key flow from a measured route (0.3 development)
+
+In an Environment's telemetry route list, **Add check** opens the existing
+Monitoring editor with the Environment, observing Machine, emitted service,
+HTTP method and route filled in. The editor starts with p95 selected. Choose
+the window and threshold before saving. The installed telemetry check kind
+validates the finished draft and the Monitoring source stores the saved check.
+
 ## Browser exception setup (0.3 development)
 
 “Add telemetry to this app” supplies the agent with copyable app code in the

@@ -132,6 +132,7 @@
 | `.` | `HEALTH_CHECK_EVENT_REFS_V1` | value | any |
 | `.` | `HEALTH_CHECK_KINDS_V1` | value | any |
 | `.` | `HEALTH_CHECK_SETUP_OPEN_ACTION_REF_V1` | value | any |
+| `.` | `HealthCheckContributedSetupIntentV1ProtocolSchema` | value | any |
 | `.` | `HealthCheckDnsConfigV1ProtocolSchema` | value | any |
 | `.` | `HealthCheckDomainSetupIntentV1` | type | any |
 | `.` | `HealthCheckDomainSetupIntentV1ProtocolSchema` | value | any |

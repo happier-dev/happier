@@ -3,7 +3,7 @@ import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployme
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
-import type { HealthCheckDomainSetupIntentV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import type { HealthCheckDomainSetupIntentV1, HealthCheckSetupDraftV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { TriggerSubject } from './accountTriggerRows';
 import { createDefaultWhen, readDeviceTimeZone, type TriggerWhenValue } from './sessionTriggerForm';
@@ -26,6 +26,7 @@ export function subjectStarterEventSeed(
     deploymentEnvironment?: DeploymentEnvironmentRefV1;
     controllerMachineId?: string;
     domain?: HealthCheckDomainSetupIntentV1;
+    newContributedCheck?: HealthCheckSetupDraftV1['newContributedCheck'];
   }>,
 ): PluginUiOpenAutomationEventRequestV1 | undefined {
   const eventRef = starter ? STARTER_EVENT[starter] : undefined;
@@ -45,7 +46,8 @@ export function subjectStarterEventSeed(
   const nativeSourceInstanceId = createHealthCheckSourceInstanceIdV1(subject);
   if (starter === 'addCheck') {
     return { eventRef, ...observer, sourceInstanceId: nativeSourceInstanceId,
-      setupInput: { v: 1, subject, ...(params.domain ? { domain: params.domain } : {}) } };
+      setupInput: { v: 1, subject, ...(params.domain ? { domain: params.domain } : {}),
+        ...(params.newContributedCheck ? { newContributedCheck: params.newContributedCheck } : {}) } };
   }
   return params.serverId
     ? { eventRef, ...observer, setupInput: { v: 1, serverId: params.serverId, nativeSourceInstanceId } }
