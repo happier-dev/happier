@@ -1062,6 +1062,7 @@ describe('Project Open RPC', () => {
     { mode: 'plain', action: 'create_relationship', fault: 'endpoint_write_failure' },
     { mode: 'plain', action: 'create_relationship', fault: 'enabled_graph_ack' },
     { mode: 'plain', action: 'create_relationship', fault: 'remote_source_ack' },
+    { mode: 'plain', action: 'create_relationship', fault: 'remote_source_refusal' },
     { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal' },
     { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal_cleanup' },
     { mode: 'plain', action: 'create_relationship', fault: 'engine_refusal_cancelled' },
@@ -1129,7 +1130,7 @@ describe('Project Open RPC', () => {
     const cipher = createProjectAccountRowCipherV1({ mode, material, randomBytes: n => new Uint8Array(n) });
     const key = { kind: 'workspace-ref' as const, serverId: homeId, id: 'bob-checkout' };
     const workspace = { id: key.id, serverId: homeId,
-      machineId: fault === 'remote_source_ack' ? 'remote-source' : 'machine', rootPath: root, createdAtMs: 1 };
+      machineId: fault === 'remote_source_ack' || fault === 'remote_source_refusal' ? 'remote-source' : 'machine', rootPath: root, createdAtMs: 1 };
     const rows: ProjectAccountRowV1[] = fault === 'folder_attach' ? [] : [{ key, revision: 0, content: cipher.seal({ key, value: workspace }) }];
     const source = { id: 'bob-source', revision: 1, name: 'Bob Source', createdByAccountId: 'bob', audience: [],
       repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
@@ -1357,6 +1358,13 @@ describe('Project Open RPC', () => {
         }
       } };
     }
+    // L12 READY218: Home refused the SOURCE's target bootstrap before it ran. The SOURCE's
+    // wire settlement carries that owner's typed cause; the opening Machine passes it on.
+    const sourceRefusalCause = { phase: 'rpc.admission.machine', errorClass: 'Error' as const, errorCode: 'custodian_only', httpStatus: 403 };
+    if (fault === 'remote_source_refusal') {
+      runtime = { ...runtime, callWorkspaceSource: async () => ProjectOpenSyncMaterializationResultV1Schema.parse({
+        kind: 'refused', code: 'RPC_FORBIDDEN', failureCause: sourceRefusalCause }) };
+    }
     // Existing-checkout attachment needs the daemon-applied runtime lifetime,
     // but no plugin contributions. Publish it through the real runtime owner.
     const pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: installed.directory,
@@ -1500,6 +1508,10 @@ describe('Project Open RPC', () => {
         && config?.headers?.Authorization === `Bearer ${token}`).length;
       const initialMachineReads = machineReads();
       const opened = await register(RPC_METHODS.PROJECTS_OPEN, runtime)(input, context);
+      if (fault === 'remote_source_refusal') {
+        expect(opened).toMatchObject({ kind: 'refused', code: 'RPC_FORBIDDEN', failureCause: sourceRefusalCause });
+        return;
+      }
       if (fault === 'engine_refusal_cleanup' || fault === 'engine_refusal_cancelled') {
         expect(nativeEngineRefused).toBe(true);
         expect(opened).toEqual({ kind: 'outcomeUnknown' });

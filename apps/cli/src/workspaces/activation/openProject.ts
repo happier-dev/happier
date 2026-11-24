@@ -5,6 +5,7 @@ import { configuration } from '@/configuration';
 import type { preparePrivateProjectOpenCheckout, PrivateProjectCheckoutOpenRuntime } from './privateProjectOpenCheckout';
 import { randomUUID } from 'node:crypto';
 import { posix } from 'node:path';
+import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type ProjectOpenSyncMaterializationResultV1, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
@@ -542,7 +543,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         });
         const materialized = ProjectOpenSyncMaterializationResultV1Schema.safeParse(sourceMaterialization);
         if (!materialized.success || materialized.data.kind === 'outcomeUnknown') return outcomeUnknown('Source Sync did not confirm materialization');
-        if (materialized.data.kind === 'refused') return refused(materialized.data.code);
+        // The SOURCE owner's typed cause reaches the person unchanged.
+        if (materialized.data.kind === 'refused') return refused(materialized.data.code,
+          materialized.data.failureCause ? { failureCause: materialized.data.failureCause } : undefined);
         copyOnceBaseline = materialized.data.copyOnceBaseline;
         copyOnceExcludedPaths = materialized.data.copyOnceExcludedPaths;
       }
@@ -697,7 +700,13 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
 
 /** Thin source-host route for the incumbent source-controller-only copy/create operations. */
 export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, runtime: ProjectOpenRuntime, context?: RpcHandlerContext): Promise<ProjectOpenSyncMaterializationResultV1> {
-  const refused = projectRefusal;
+  // The wire settlement carries the code and, unchanged, a typed cause its owner attached.
+  const refused = (code: string, error?: unknown): ProjectOpenSyncMaterializationResultV1 => {
+    projectRefusal(code, error);
+    const cause = error && typeof error === 'object' && 'failureCause' in error
+      ? ActionFailureCauseV1Schema.safeParse(error.failureCause) : null;
+    return { kind: 'refused', code, ...(cause?.success ? { failureCause: cause.data } : {}) };
+  };
   const homeId = await resolveServerProfileHomeIdentityId(runtime.serverId);
   if (!homeId || !await isServerProfileHomeIdentity(runtime.serverId, input.serverId)) return refused('target_mismatch');
   if ((input.source.kind !== 'workspace' && input.source.kind !== 'source')
@@ -734,8 +743,8 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
     } catch (error) {
       logger.warnLocalFile('[Project Open] Source Sync settlement failed', { effectsIssued: issued, code: codeOf(error),
         error: error instanceof Error ? error.stack ?? error.message : String(error) });
-      if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code);
-      return issued ? unconfirmedOutcome('Source Sync exception after effects') : refused(codeOf(error));
+      if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code, error.cause);
+      return issued ? unconfirmedOutcome('Source Sync exception after effects') : refused(codeOf(error), error);
     }
   }
   if (!admission || admission.machineId !== runtime.machineId || !context?.verifyMachineAdmissionCurrent) return refused('machine_admission_unavailable');
@@ -802,7 +811,8 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
   } catch (error) {
     logger.warnLocalFile('[Project Open] Source Sync settlement failed', { effectsIssued, code: codeOf(error),
       error: error instanceof Error ? error.stack ?? error.message : String(error) });
-    if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code);
-    return effectsIssued ? unconfirmedOutcome('Source Sync exception after effects') : refused(context.signal.aborted ? 'cancelled' : codeOf(error));
+    if (error instanceof WorkspaceSyncPreparationRefusal && !context.signal.aborted) return refused(error.code, error.cause);
+    return effectsIssued ? unconfirmedOutcome('Source Sync exception after effects')
+      : context.signal.aborted ? refused('cancelled') : refused(codeOf(error), error);
   }
 }

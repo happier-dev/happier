@@ -160,7 +160,8 @@ export function projectOpenProjectRefusalV1(result: z.infer<typeof OpenProjectRe
 export const ProjectOpenSyncMaterializationResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('materialized'), copyOnceBaseline: z.optional(WorkspaceManifestSchema),
     copyOnceExcludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))) }),
-  z.strictObject({ kind: z.literal('refused'), code: IdSchema }),
+  // The SOURCE owner's typed cause travels to the opening Machine unchanged.
+  z.strictObject({ kind: z.literal('refused'), code: IdSchema, failureCause: z.optional(ActionFailureCauseV1Schema) }),
   z.strictObject({ kind: z.literal('outcomeUnknown') }),
 ]));
 export type ProjectOpenSyncMaterializationResultV1 = z.infer<typeof ProjectOpenSyncMaterializationResultV1Schema>;
