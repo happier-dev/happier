@@ -23,6 +23,8 @@ import type { ItemRowActionsProps } from '@/components/ui/lists/ItemRowActions';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { TelemetryCaptureInvoke } from '@/components/projects/deployments/telemetryCaptureReads';
+import { installHostResourceWatchSocket } from '@/components/projects/deployments/resourceWatchSocket.testFixture';
+import { createTelemetryCaptureFixtureTransport, TelemetryCaptureFixtureProvider } from '@/dev/testkit/fixtures/telemetryCaptureFixtures';
 import { t } from '@/text';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
@@ -38,7 +40,6 @@ const { LocalServicesSurfaceHost } = await import('@/components/sessions/localSe
 const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
-const { TelemetryCaptureInvokeContext } = await import('@/components/projects/deployments/telemetryCaptureReads');
 const HOME_IDENTITY = 'srv_service_logs';
 const WORKTREE = {
     machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo', projectId: 'accepted-project',
@@ -152,27 +153,17 @@ describe('Machine service shared log viewer', () => {
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             } } };
         } });
-        homes.answer(serverId, actionPath, { select: (body, request) => {
+        homes.answer(serverId, actionPath, { select: body => {
             const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
-            const reply = (result: unknown): HomeDomainAnswer => ({ body: {
-                v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result },
-            } });
             const continuation = envelope.resourceContinuation;
-            if (!continuation) return reply(page);
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)
-                return reply({ ok: true, resource: continuation.params.resource, ...content });
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
-                return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content.digest });
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE)
-                return reply({ ok: true, closed: true });
-            // The follow stays quiet until the page closes it.
-            return new Promise<HomeDomainAnswer>(resolve => {
-                const idle = () => resolve(reply({ ok: true, status: 'idle' }));
-                if (request.signal?.aborted) idle();
-                else request.signal?.addEventListener('abort', idle, { once: true });
-            });
+            if (continuation && continuation.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)
+                throw new Error('Expected finite log Resource read');
+            const result = continuation
+                ? { ok: true, resource: continuation.params.resource, ...content } : page;
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } };
         } });
+        const socket = installHostResourceWatchSocket({ actionId, digest: () => content.digest });
         const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
             lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
             capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
@@ -182,7 +173,7 @@ describe('Machine service shared log viewer', () => {
             await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-logs')).not.toBeNull());
             expect(screen.findHostByTestId('machine-service-logs-empty')).not.toBeNull();
             expect(screen.findHostByTestId('machine-service-logs-lines')).toBeNull();
-        } finally { await screen.unmount(); }
+        } finally { await screen.unmount(); socket.mockRestore(); }
     });
 
     it('leads a refused journal read to the recipe it names, on this Machine', async () => {
@@ -252,33 +243,42 @@ describe('Machine service shared log viewer', () => {
                     id: contributionId, pluginId, resourceKind: 'config', scope: 'surface',
                 } },
             };
-            const invoke = vi.fn<TelemetryCaptureInvoke>(async (request) => request.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1
-                ? { ok: true, source, coverage: { lostObservations: 0, reason: null }, enabled: true }
-                : { ok: true, source, items: [] });
+            const invoke = vi.fn<TelemetryCaptureInvoke>(async () =>
+                ({ ok: true, source, coverage: { lostObservations: 0, reason: null }, enabled: true }));
+            const readCapture = vi.fn<TelemetryCaptureInvoke>(async () => ({ ok: true, source, items: [] }));
+            const transport = createTelemetryCaptureFixtureTransport(readCapture);
             const screen = await renderScreen(
-                <TelemetryCaptureInvokeContext.Provider value={invoke}>
+                <TelemetryCaptureFixtureProvider invoke={invoke} transport={transport}>
                     <LocalServicesSurfaceHost machineId={workspace.machineId} serverId={serverId}
                         workspaceRoot={workspace.rootPath} workspaceRefId={workspace.workspaceId}
                         inventoryState={buildLocalServiceInventoryState({ rows: [] })}
                         launcherState={launcherState} pluginUiProjection={projection} testID="workspace-services" />
-                </TelemetryCaptureInvokeContext.Provider>,
+                </TelemetryCaptureFixtureProvider>,
             );
             try {
                 await vi.waitFor(() => expect(screen.findByTestId('workspace-services-view:logs')).not.toBeNull());
                 expect(invoke).not.toHaveBeenCalled();
+                expect(readCapture).not.toHaveBeenCalled();
+                expect(transport.watchers).toBe(0);
                 const shownLogsAction = () => screen.findAllByType(ItemRowActions).flatMap(menu => (menu.props as ItemRowActionsProps).actions)
                     .find(action => action.id === 'show-logs');
                 await vi.waitFor(() => expect(shownLogsAction()).toBeDefined());
                 await act(async () => { shownLogsAction()?.onPress?.(); });
                 expect(screen.findHostByTestId('workspace-services-logs')).not.toBeNull();
                 if (occurrenceScope === 'selected checkout') {
-                    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+                    await vi.waitFor(() => expect(readCapture).toHaveBeenCalledWith(expect.objectContaining({
                         scope, collectorMachineId: workspace.machineId, actionId: DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
                         input: expect.objectContaining({ source }),
                     })));
+                    await vi.waitFor(() => expect(transport.watchers).toBe(1));
+                    expect(invoke).toHaveBeenCalledTimes(1);
+                    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ actionId: DATABASE_CAPTURE_STATUS_ACTION_ID_V1 }));
+                    expect(readCapture).toHaveBeenCalledTimes(1);
                 } else {
                     await flushHookEffects();
                     expect(invoke).not.toHaveBeenCalled();
+                    expect(readCapture).not.toHaveBeenCalled();
+                    expect(transport.watchers).toBe(0);
                 }
             } finally { await screen.unmount(); }
         },
@@ -296,17 +296,16 @@ describe('Machine service shared log viewer', () => {
         let resourceReads = 0;
         let watchOpens = 0;
         let watchCloses = 0;
-        let watchNexts = 0;
-        const pending = new Map<string, () => void>();
+        let deliver: (() => void) | undefined;
         const content = () => {
             const bytes = Buffer.from(JSON.stringify(current));
             return { contentType: 'application/json' as const, bytesBase64: bytes.toString('base64'),
                 digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
         };
         const emit = async () => {
-            await vi.waitFor(() => expect(pending.size).toBe(1));
+            await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
             await act(async () => {
-                pending.values().next().value!();
+                deliver?.();
                 await flushHookEffects();
             });
         };
@@ -323,7 +322,7 @@ describe('Machine service shared log viewer', () => {
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
             } } };
         } });
-        homes.answer(serverId, actionPath, { select: (body, request) => {
+        homes.answer(serverId, actionPath, { select: body => {
             const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse(authorized.success ? authorized.data.envelope : body);
             const reply = (result: unknown): HomeDomainAnswer => ({ body: {
@@ -336,36 +335,20 @@ describe('Machine service shared log viewer', () => {
                 firstReads++;
                 return reply(first);
             }
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
-                resourceReads++;
-                if (resourceFailure) return reply({ ok: false, code: 'service_transport_unavailable', reason: 'unavailable' });
-                return reply({ ok: true, resource: continuation.params.resource, ...content() });
-            }
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
-                watchOpens++;
-                return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest });
-            }
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) {
-                watchCloses++;
-                return reply({ ok: true, closed: true });
-            }
-            watchNexts++;
-            const subscriptionId = continuation.params.subscriptionId;
-            return new Promise<HomeDomainAnswer>(resolve => {
-                const finish = (value: unknown) => {
-                    pending.delete(subscriptionId);
-                    request.signal?.removeEventListener('abort', aborted);
-                    resolve(reply(value));
-                };
-                const aborted = () => finish({ ok: true, status: 'idle' });
-                pending.set(subscriptionId, () => finish({ ok: true, status: 'event', event: {
-                    version: 1, kind: 'invalidated', subscriptionId,
-                    digest: resourceFailure ? `sha256:${'0'.repeat(64)}` : content().digest,
-                } }));
-                request.signal?.addEventListener('abort', aborted, { once: true });
-                if (request.signal?.aborted) aborted();
-            });
+            // The mounted follower opens once on the Home socket. HTTP only serves finite snapshots.
+            if (continuation.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)
+                throw new Error('Expected finite log Resource read');
+            resourceReads++;
+            if (resourceFailure) return reply({ ok: false, code: 'service_transport_unavailable', reason: 'unavailable' });
+            return reply({ ok: true, resource: continuation.params.resource, ...content() });
         } });
+        const socket = installHostResourceWatchSocket({ actionId, digest: () => content().digest,
+            onOpen(watch) {
+                watchOpens++;
+                deliver = () => watch.invalidate(resourceFailure ? `sha256:${'0'.repeat(64)}` : content().digest);
+            },
+            onDisconnect() { watchCloses++; deliver = undefined; },
+        });
         const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
             lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
             capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
@@ -403,13 +386,17 @@ describe('Machine service shared log viewer', () => {
             current = { kind: 'page', page: { ...first.page, text: 'first [REDACTED]\ncontinued 🌍\n' } };
             await emit();
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('continued 🌍'));
+            const beforePause = resourceReads;
             await screen.pressByTestIdAsync('machine-service-logs-follow');
             await vi.waitFor(() => expect(watchCloses).toBe(1));
+            // Replacing the live subscriber with a static one settles one finite snapshot.
+            await vi.waitFor(() => expect(resourceReads).toBe(beforePause + 1));
             expect(screen.getTextContent()).toContain('continued 🌍');
-            const paused = { resourceReads, watchNexts };
+            const paused = { resourceReads, watchOpens };
             current = { kind: 'page', page: { ...first.page, text: 'first [REDACTED]\nresumed 🌍\n' } };
             await flushHookEffects();
-            expect({ resourceReads, watchNexts }).toEqual(paused);
+            expect({ resourceReads, watchOpens }).toEqual(paused);
+            expect(screen.getTextContent()).not.toContain('resumed 🌍');
             await screen.pressByTestIdAsync('machine-service-logs-follow');
             await vi.waitFor(() => expect(watchOpens).toBe(2));
             await emit();
@@ -431,10 +418,10 @@ describe('Machine service shared log viewer', () => {
             expect.soft(screen.getTextContent()).toContain('first [REDACTED]');
             await screen.update(render(false));
             await vi.waitFor(() => expect(watchCloses).toBe(watchOpens));
-            await vi.waitFor(() => expect(pending.size).toBe(0));
-            const hidden = { firstReads, resourceReads, watchOpens, watchNexts };
+            expect(deliver).toBeUndefined();
+            const hidden = { firstReads, resourceReads, watchOpens };
             await flushHookEffects();
-            expect({ firstReads, resourceReads, watchOpens, watchNexts }).toEqual(hidden);
-        } finally { await screen.unmount(); }
+            expect({ firstReads, resourceReads, watchOpens }).toEqual(hidden);
+        } finally { await screen.unmount(); socket.mockRestore(); }
     });
 });
