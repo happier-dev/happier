@@ -55,6 +55,8 @@ export type { SelectedPaneDestinationV1 } from './selectedPaneDestination';
 export type PaneId = 'right' | 'details' | 'bottom';
 
 export type PaneScopeState = Readonly<{
+    /** Device-local choice survives closing the Simulator tab; capture work does not. */
+    simulatorPreviewSelectedId?: string;
     mainHidden: boolean;
     /** A detail page selected in the main column; absent/null keeps the route's primary page. */
     mainTabId?: string | null;
@@ -91,6 +93,7 @@ export type AppPaneState = Readonly<{
 }>;
 
 export type AppPaneAction =
+    | { type: 'setSimulatorPreviewSelection'; scopeId: string; simulatorId: string }
     | { type: 'setSelectedPanePresentation'; scopeId: string; tabKey: string; presentation: Readonly<{ windowId: string }> | null }
     | { type: 'mergePersistedScopes'; scopes: Readonly<Record<string, PaneScopeState>> }
     | { type: 'restoreScope'; scopeId: string; scope: PaneScopeState; selectedPaneTabKey?: string }
@@ -193,6 +196,7 @@ function createEmptyScopeState(initialRight?: InitialRightPaneState): PaneScopeS
 function isEmptyScopeState(scope: PaneScopeState): boolean {
     return (
         scope.mainHidden === false
+        && scope.simulatorPreviewSelectedId === undefined
         && scope.mainTabId == null
         && scope.right.isOpen === false
         && scope.right.activeTabId == null
@@ -232,6 +236,7 @@ function getOwnPaneTabStateEntry(
 function arePaneScopeStatesEqual(left: PaneScopeState, right: PaneScopeState): boolean {
     return (
         left.mainHidden === right.mainHidden
+        && left.simulatorPreviewSelectedId === right.simulatorPreviewSelectedId
         && (left.mainTabId ?? null) === (right.mainTabId ?? null)
         && left.right.isOpen === right.right.isOpen
         && left.right.activeTabId === right.right.activeTabId
@@ -674,6 +679,9 @@ export function appPaneReduce(state: AppPaneState, action: AppPaneAction): AppPa
                     openIfMissing: action.openIfMissing,
                 })
             ));
+        case 'setSimulatorPreviewSelection':
+            return upsertScope(state, action.scopeId, scope => scope.simulatorPreviewSelectedId === action.simulatorId
+                ? scope : { ...scope, simulatorPreviewSelectedId: action.simulatorId });
         case 'setDetailsTabState':
             return updateScopeDetails(state, action.scopeId, (details) => (
                 applySetDetailsTabState(details, action.tabKey, action.nextState)

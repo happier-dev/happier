@@ -95,6 +95,7 @@ const paneSlotStateSchema = z.object({
 });
 
 export const paneScopeStateSchema = z.object({
+    simulatorPreviewSelectedId: z.optional(z.string()),
     mainHidden: z._default(z.boolean(), false),
     mainTabId: z.optional(z.nullable(z.string())),
     right: paneSlotStateSchema,

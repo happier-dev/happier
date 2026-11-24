@@ -93,6 +93,7 @@ export function normalizePersistedPaneScopes(
         const details = migrateLegacyDetailsWorkspaceState(scope.details);
         const normalized: PaneScopeState = {
             mainHidden: restoreOpenPanes && scope.mainHidden === true,
+            ...(scope.simulatorPreviewSelectedId === undefined ? {} : { simulatorPreviewSelectedId: scope.simulatorPreviewSelectedId }),
             ...(scope.mainTabId === undefined ? {} : { mainTabId: scope.mainTabId }),
             right: normalizePersistedPaneSlot(scope.right, restoreOpenPanes),
             details: restoreOpenPanes || !details.isOpen ? details : { ...details, isOpen: false },
@@ -117,6 +118,7 @@ export function serializePersistedPaneScope(
     const { preserveDesktopVisibility, previous } = options;
     return {
         mainHidden: preserveDesktopVisibility ? previous?.mainHidden === true : scope.mainHidden,
+        ...(scope.simulatorPreviewSelectedId === undefined ? {} : { simulatorPreviewSelectedId: scope.simulatorPreviewSelectedId }),
         // Phone navigation has its own route/scene selection and leaves the desktop page intact.
         ...((preserveDesktopVisibility ? previous?.mainTabId : scope.mainTabId) === undefined ? {} : {
             mainTabId: preserveDesktopVisibility ? previous?.mainTabId : scope.mainTabId,

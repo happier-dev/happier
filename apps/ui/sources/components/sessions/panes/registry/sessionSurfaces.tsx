@@ -90,7 +90,6 @@ function resolveSimulatorPreviewViewModel(params: Readonly<{
 function SessionSimulatorSurface(props: Readonly<{
     sessionId: string;
     scopeId?: string;
-    tabKey: string;
     machineId?: string | null;
     serverId?: string | null;
     simulatorViewerId?: string;
@@ -99,11 +98,10 @@ function SessionSimulatorSurface(props: Readonly<{
     nowMs?: () => number;
 }>) {
     const pane = useOptionalAppPaneContext(context => {
-        const state = props.scopeId ? context.state.scopes[props.scopeId]?.details.tabState[props.tabKey] : null;
+        const scope = props.scopeId ? context.state.scopes[props.scopeId] : null;
         return {
             dispatch: context.dispatch,
-            selectedSimulatorId: state && typeof state === 'object' && 'selectedSimulatorId' in state
-                ? readOptionalNullableString(state.selectedSimulatorId) : undefined,
+            selectedSimulatorId: scope?.simulatorPreviewSelectedId,
         };
     });
     // Mount below the tab's presentation owner so the runtime observes its own visibility.
@@ -124,14 +122,13 @@ function SessionSimulatorSurface(props: Readonly<{
     const actions = React.useMemo(() => ({
         ...(runtime?.actions ?? EMPTY_SIMULATOR_PREVIEW_ACTIONS),
         selectDevice: (selectedSimulatorId: string) => {
-            // The tab outlives the presented runtime; closing it must still release all live work.
+            // The scope retains the choice even when the tab X destroys the presented runtime.
             if (props.scopeId && pane?.dispatch) pane.dispatch({
-                type: 'patchDetailsTabState', scopeId: props.scopeId, tabKey: props.tabKey,
-                patch: { selectedSimulatorId },
+                type: 'setSimulatorPreviewSelection', scopeId: props.scopeId, simulatorId: selectedSimulatorId,
             });
             runtime?.actions.selectDevice(selectedSimulatorId);
         },
-    }), [runtime?.actions, pane?.dispatch, props.scopeId, props.tabKey]);
+    }), [runtime?.actions, pane?.dispatch, props.scopeId]);
     return <SessionSimulatorPreviewPane
         sessionId={props.sessionId}
         viewModel={resolveSimulatorPreviewViewModel({ resource: props.resource, runtime, nowMs: props.nowMs })}
@@ -157,7 +154,6 @@ export function renderSessionSurfaceTab(params: Readonly<{
     return <SessionSimulatorSurface
         sessionId={params.sessionId}
         scopeId={params.scopeId}
-        tabKey={params.tab.key}
         machineId={params.machineId}
         serverId={params.serverId}
         simulatorViewerId={params.simulatorViewerId}
