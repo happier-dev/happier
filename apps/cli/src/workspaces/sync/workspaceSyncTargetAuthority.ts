@@ -1109,7 +1109,8 @@ export function createWorkspaceSyncTargetAuthority(
   ): Promise<Omit<WorkspaceSyncTargetRoutingV1, 'phase'> | undefined> => {
     if (!context?.workspaceSyncTargetRouting) return undefined;
     const { phase: admittedPhase, ...routing } = WorkspaceSyncTargetRoutingV1Schema.parse(context.workspaceSyncTargetRouting);
-    // RPC admission owns the request binding, including derived relationship ids.
+    // RPC admission owns the request binding, including derived relationship ids and, for a
+    // Project Open, the prepare definition matching the signed Open's workspace action.
     if (admittedPhase !== phase || routing.accountServerId !== localServerId
       || routing.targetMachineId !== context.machineAdmission?.machineId
       || routing.targetManaged !== undefined && (routing.targetManaged.controller.machineId !== routing.targetMachineId

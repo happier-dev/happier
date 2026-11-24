@@ -707,6 +707,32 @@ describe('scm workspace integration', () => {
         }
     });
 
+    it('excludes relationship ignore patterns from a plain-folder filesystem selection', async () => {
+        const sourcePath = await mkdtemp(join(tmpdir(), 'happier-workspace-integration-fallback-ignore-'));
+        try {
+            await mkdir(join(sourcePath, 'secrets'), { recursive: true });
+            await writeFile(join(sourcePath, 'README.md'), 'hello\n', 'utf8');
+            await writeFile(join(sourcePath, 'secrets', 'key.txt'), 'do not sync\n', 'utf8');
+
+            const resolved = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
+                sourcePath,
+                workspaceTransfer: {
+                    strategy: 'transfer_snapshot',
+                    includeIgnoredMode: 'exclude',
+                    ignoredIncludeGlobs: [],
+                    extraIgnorePatterns: ['secrets/**'],
+                },
+                registry: createScmBackendRegistry([]),
+            });
+
+            expect(resolved.selectionSource).toBe('filesystem');
+            expect(resolved.entries.map((entry) => entry.relativePath)).toEqual(['README.md']);
+            expect(resolved.excludedPaths).toEqual(['secrets/key.txt']);
+        } finally {
+            await rm(sourcePath, { recursive: true, force: true });
+        }
+    });
+
     it('fails closed when the filesystem fallback source root is missing', async () => {
         const sourcePath = await mkdtemp(join(tmpdir(), 'happier-workspace-integration-fallback-missing-'));
         await rm(sourcePath, { recursive: true, force: true });

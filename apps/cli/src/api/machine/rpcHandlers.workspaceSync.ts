@@ -16,8 +16,7 @@ import type { ManagedWorkspaceReturnTarget } from '@/workspaces/sync/managedWork
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import type { WorkspaceSyncTargetAuthority } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { PrivateWorkspaceSyncTargetAdmission, PrivateWorkspaceSyncTargetExecutionResolution } from './machineRpcAuthorization';
+import { doesWorkspaceSyncTargetPrepareMatchAdmittedAction, type PrivateWorkspaceSyncTargetAdmission, type PrivateWorkspaceSyncTargetExecutionResolution } from './machineRpcAuthorization';
 import { ProjectWorkerDependencyQueryV1Schema, ProjectWorkerDependencyV1Schema,
   type ProjectWorkerDependencyQueryV1, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { WorkspaceSyncCommittedCopyTargetV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema,
@@ -173,18 +172,14 @@ export function resolvePrivateWorkspaceSyncTargetExecution(
   }
   if (routing.phase === 'prepare') {
     const request = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse(admission.request);
-    const action = input.action;
-    if (action.kind !== 'copy_once' && action.kind !== 'create_relationship') return { kind: 'private_unavailable' };
-    if (request.policyDigest !== action.contentPolicy.policyDigest) return { kind: 'private_unavailable' };
     const operation = request.owner.kind === 'copy_once' ? request.owner.operation : request.transientRelationship;
-    if (!operation || operation.alphaWorkspaceRefId !== input.sourceWorkspaceRefId
-      || operation.betaWorkspaceRefId !== input.targetWorkspaceRefId || request.endpointRole !== 'beta'
-      || !sameStrictJsonValue(operation.contentPolicy, action.contentPolicy)) return { kind: 'private_unavailable' };
+    if (!operation || !doesWorkspaceSyncTargetPrepareMatchAdmittedAction(request, input.action)
+      || operation.alphaWorkspaceRefId !== input.sourceWorkspaceRefId
+      || operation.betaWorkspaceRefId !== input.targetWorkspaceRefId || request.endpointRole !== 'beta') return { kind: 'private_unavailable' };
     if (request.owner.kind === 'relationship'
-      && (action.kind !== 'create_relationship' || request.owner.relationshipId !== deriveWorkspaceSyncRelationshipId(input.operationId)
-        || !('mode' in operation) || operation.mode !== action.mode)) return { kind: 'private_unavailable' };
-    if (request.owner.kind === 'copy_once' && (action.kind !== 'copy_once'
-      || request.owner.operation.operationId !== input.operationId)) return { kind: 'private_unavailable' };
+      && request.owner.relationshipId !== deriveWorkspaceSyncRelationshipId(input.operationId)) return { kind: 'private_unavailable' };
+    if (request.owner.kind === 'copy_once'
+      && request.owner.operation.operationId !== input.operationId) return { kind: 'private_unavailable' };
   }
   return { kind: 'matched', capture };
 }

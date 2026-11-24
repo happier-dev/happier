@@ -79,6 +79,8 @@ import {
   WorkspaceSyncHandoffSourcePhaseRequestV1Schema,
   HandoffTargetReplacementPreflightV1Schema,
   WorkspaceSyncTargetBootstrapPrepareV1Schema,
+  type WorkspaceSyncTargetBootstrapPrepareV1,
+  type HandoffWorkspaceActionV1,
   WorkspaceSyncTargetBootstrapReleaseV1Schema,
   WorkspaceSyncTargetConflictRecoverV1Schema,
   WorkspaceSyncTargetEntryObserveV1Schema,
@@ -348,6 +350,23 @@ export function doesWorkspaceSyncFinitePrepareRequestMatchRouting(
     input.data.workspace.machineId === source.sourceMachineId &&
     input.data.workspace.rootPath === source.sourceRootPath
   );
+}
+
+/**
+ * A TARGET bootstrap prepare carries exactly the definition its requester's admitted
+ * workspace action names: owner kind, content policy and, for a relationship, mode.
+ */
+export function doesWorkspaceSyncTargetPrepareMatchAdmittedAction(
+  request: WorkspaceSyncTargetBootstrapPrepareV1,
+  action: HandoffWorkspaceActionV1,
+): boolean {
+  if (action.kind !== 'copy_once' && action.kind !== 'create_relationship') return false;
+  const operation = request.owner.kind === 'copy_once' ? request.owner.operation : request.transientRelationship;
+  if (!operation || request.policyDigest !== action.contentPolicy.policyDigest
+    || !sameStrictJsonValue(operation.contentPolicy, action.contentPolicy)) return false;
+  return request.owner.kind === 'relationship'
+    ? action.kind === 'create_relationship' && 'mode' in operation && operation.mode === action.mode
+    : action.kind === 'copy_once';
 }
 
 /** The named Project SOURCE body retains its original chosen child and namespace. */

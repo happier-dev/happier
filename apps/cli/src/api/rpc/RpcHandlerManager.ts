@@ -54,13 +54,14 @@ import { isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContex
 import { isSocketRpcMachineReadServerOriginAuthorizationContext, SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
     WorkspaceSyncSeedRoutingV1Schema, isWorkspaceSyncSourceWriterTargetMethodV1, isWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
-import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncPrepareBetweenRequestV1Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isDeepStrictEqual } from 'node:util';
 import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { readReviewedMachineRpcChildFamilyV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/reviewedChildFamilyV1';
 import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting,
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
-    doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
+    doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting,
+    doesWorkspaceSyncTargetPrepareMatchAdmittedAction } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveExternalActionRootInvocationAuthority, isReviewedMachineRpcChild } from '@/api/externalActionExecutionAuthorization';
 import { doesWorkspaceSyncCopyRetirementRootMatchV1, WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
@@ -1137,6 +1138,8 @@ export class RpcHandlerManager {
                     }
                 }
                 const opened = OpenProjectInputV1Schema.safeParse(originalInput);
+                const targetPrepare = targetMethod === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE
+                    ? WorkspaceSyncTargetBootstrapPrepareV1Schema.safeParse(decryptedParams) : undefined;
                 const body = source ? undefined : OpenProjectInputV1Schema.safeParse(decryptedParams);
                 const matches = isExternalActionAuthorizationBoundToEnvelope(binding,
                     { actionId: 'projects.open', machineId: this.scopePrefix, envelope }) && opened.success
@@ -1144,6 +1147,9 @@ export class RpcHandlerManager {
                         ? doesWorkspaceSyncProjectSourceRequestMatchRouting(opened.data, authorization, source)
                             && opened.data.materialization.kind === 'sync'
                             && opened.data.materialization.targetPath === workspaceSyncSourceWriterTargetRouting.data.target.targetRootPath
+                            // The SOURCE writer names the definition; D's signed Open names the choice.
+                            && (!targetPrepare || targetPrepare.success && doesWorkspaceSyncTargetPrepareMatchAdmittedAction(
+                                targetPrepare.data, opened.data.materialization.workspaceAction))
                         : body?.success && isDeepStrictEqual(opened.data, body.data));
                 if (!matches || controller.signal.aborted) {
                     return await deny(controller.signal.aborted ? 'request_cancelled' : 'project_input_binding');

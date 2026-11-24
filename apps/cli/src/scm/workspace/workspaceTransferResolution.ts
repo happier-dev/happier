@@ -1,5 +1,6 @@
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { join, resolve } from 'node:path';
+import createGitIgnore from 'ignore';
 
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
@@ -324,11 +325,20 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
             root: input.sourcePath,
             readDirectory: async (directory) => await currentWorkspaceSource().readdir(directory),
         });
-        const entries = await selectWorkspaceTransferContentEntries({ entries: fallback.entries,
+        // A plain folder has no SCM owner to apply the relationship's custom
+        // ignores, so the selection owner applies them here (Git exclude syntax).
+        const extraIgnores = input.workspaceTransfer.extraIgnorePatterns ?? [];
+        const ignoreMatcher = extraIgnores.length > 0 ? createGitIgnore({ ignorecase: false }).add([...extraIgnores]) : null;
+        const excludedPaths = ignoreMatcher
+            ? fallback.entries.filter((entry) => ignoreMatcher.ignores(entry.relativePath)).map((entry) => entry.relativePath)
+            : [];
+        const entries = await selectWorkspaceTransferContentEntries({
+            entries: ignoreMatcher ? fallback.entries.filter((entry) => !ignoreMatcher.ignores(entry.relativePath)) : fallback.entries,
             sourceRoot: input.sourcePath, contentOnly: input.workspaceTransfer.contentOnly, registry });
         return {
             entries,
             selectionSource: 'filesystem',
+            ...(excludedPaths.length ? { excludedPaths } : {}),
             ...(fallback.unsupportedFilePaths.length ? { unsupportedFilePaths: fallback.unsupportedFilePaths } : {}),
             workspaceIntegrationMetadata: null,
             safeFilterPolicy: entries.length > 0

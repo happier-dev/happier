@@ -350,6 +350,25 @@ describe('bind-child replacement approval at the physical target owner', () => {
       target: { ...routing.target, phase: 'prepare' } });
     const prepareMethod = `${machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`;
     binding = { ...binding, routing: prepareRouting, method: prepareMethod };
+    // A SOURCE writer cannot widen the signed one-way Open into a two-way relationship at this TARGET.
+    // Named as the request binding at RPC admission derives it, so only the definition differs.
+    const forgedRelationshipId = deriveWorkspaceSyncRelationshipId(operationId);
+    const forged = await rpc.handleRequest({ ...request, method: prepareMethod,
+      workspaceSyncSourceWriterTargetRouting: prepareRouting,
+      params: { v: 1, bootstrapOperationId: forgedRelationshipId,
+        owner: { kind: 'relationship', relationshipId: forgedRelationshipId },
+        transientRelationship: { v: 1, relationshipId: forgedRelationshipId, controllerMachineId: fixture.sourceRef.machineId,
+          alphaWorkspaceRefId: fixture.sourceRef.id, betaWorkspaceRefId: fixture.targetRef.id, mode: 'keep_both_in_sync',
+          contentPolicy: fixture.prepareInput.action.contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1 },
+        targetWorkspaceRefId: fixture.targetRef.id, endpointRole: 'beta',
+        policyDigest: fixture.prepareInput.action.contentPolicy.policyDigest, createIfMissing: true,
+        targetBootstrap: 'materialize_from_source_workspace' } });
+    expect(forged).toMatchObject({ errorCode: 'RPC_FORBIDDEN',
+      failureCause: { phase: 'rpc.admission.project_input_binding' } });
+    await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    // Home admitted that call before the binding refused it; the honest prepare is counted alone.
+    prepareAdmissionReads = 0;
+    current = true;
     const prepared = await rpc.handleRequest({ ...request, method: prepareMethod,
       workspaceSyncSourceWriterTargetRouting: prepareRouting,
       params: { v: 1, bootstrapOperationId: operationId,
