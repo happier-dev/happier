@@ -151,12 +151,12 @@ export function createWidgetRefreshActionDepsV1(account: LazyActionAccountContex
             while (nodes.length) {
                 const node = nodes.pop()!;
                 if (isPluginDeclarativeDataNodeV1(node) && node.data.kind === 'resource') {
-                    const binding = resolveDeclarativeDataResourceBinding({ projection: runtime.projection, input: resolved.input,
+                    const admitted = resolveDeclarativeDataResourceBinding({ projection: runtime.projection, input: resolved.input,
                         machineId: runtime.machineId, serverId: account.serverId, accountLifetime: account.accountLifetime,
                         ...(parsedSession?.success ? { sessionId: parsedSession.data.sessionId } : {}), isCurrent: runtime.isCurrent,
                         requireReadAuthority: true }, node);
-                    if (!binding) return unavailable();
-                    resources.push({ binding, resource: node.data.resource });
+                    if (!admitted.ok) return unavailable(admitted.errorCode);
+                    resources.push(admitted);
                 }
                 if ('children' in node) nodes.push(...node.children);
             }

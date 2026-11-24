@@ -1699,6 +1699,27 @@ describe('PluginContextualResourceStoreProvider', () => {
         await run('demanded');
     });
 
+    it('names a missing Channels Resource declaration without dispatching a read', async () => {
+        installLiveResourceRpc();
+        const account = await createAccountLifetime({ accountId: 'fresh-account' });
+        const document = PluginDeclarativeDocumentV1Schema.parse({ version: 1, root: { kind: 'table', label: 'Channel connections',
+            data: { kind: 'resource', resource: { pluginId: 'happier.channels', localId: 'connections-v1' },
+                inputSchema: { type: 'object', additionalProperties: false },
+                outputSchema: { type: 'object', properties: { connections: { type: 'array', items: {
+                    type: 'object', properties: { connectionId: { type: 'string' } }, required: ['connectionId'],
+                } } }, required: ['connections'] } },
+            rows: ['connections'], columns: [{ label: 'Connection', field: { path: ['connectionId'], type: 'string' } }] } });
+        const runtime = { pluginUiProjection: widgetProjectionOf([], {}, {}), pluginBrowserProjection: null,
+            phase: 'current' as const, interactionEnabled: true, machineId: null, serverId: account.lifetime.scope.serverId,
+            platform: 'web' as const, accountLifetime: account.lifetime };
+        const screen = await renderScreen(<DeclarativeWidgetDocument document={document} input={{}} runtime={runtime}
+            accountLifetime={account.lifetime} isCurrent={account.lifetime.isCurrent} testID="channels-definition" />);
+        try {
+            expect(JSON.stringify(screen.tree.toJSON())).toContain('plugin_resource_not_found');
+            expect(machineResourceRpc.read).not.toHaveBeenCalled();
+        } finally { await act(async () => { screen.tree.unmount(); }); }
+    });
+
     it('renders declared typed Resource data and removes the previous viewer bytes on Account retirement', async () => {
         const firstWatch = installLiveResourceRpc();
         const a = await createAccountLifetime({ accountId: 'account-a' });
@@ -1722,16 +1743,16 @@ describe('PluginContextualResourceStoreProvider', () => {
         // node still denies an origin from another Home before opening a read.
         expect(resolveDeclarativeDataResourceBinding({ projection: foreign.pluginUiProjection, input: {},
             machineId: null, serverId: null, accountLifetime: a.lifetime, sessionId: 'session-1',
-            isCurrent: a.lifetime.isCurrent }, document.root)).toBeNull();
+            isCurrent: a.lifetime.isCurrent }, document.root)).toMatchObject({ ok: false, errorCode: 'plugin_resource_admission_unavailable' });
         expect(resolveDeclarativeDataResourceBinding({ projection: retained.pluginUiProjection, input: {},
             machineId: 'machine-1', serverId: a.lifetime.scope.serverId, accountLifetime: a.lifetime,
-            sessionId: 'session-1', isCurrent: a.lifetime.isCurrent, requireReadAuthority: true }, document.root)).toBeNull();
+            sessionId: 'session-1', isCurrent: a.lifetime.isCurrent, requireReadAuthority: true }, document.root)).toMatchObject({ ok: false, errorCode: 'plugin_resource_admission_unavailable' });
         const unselected = unionPluginUiProjections([{ machineId: 'machine-1', serverId: a.lifetime.scope.serverId,
             projection, phase: 'current', interactionEnabled: true }], new Map());
         // A descriptive union row cannot borrow the caller's ambient machine authority.
         expect(resolveDeclarativeDataResourceBinding({ projection: unselected.pluginUiProjection, input: {},
             machineId: 'machine-1', serverId: a.lifetime.scope.serverId, accountLifetime: a.lifetime,
-            sessionId: 'session-1', isCurrent: a.lifetime.isCurrent }, document.root)).toBeNull();
+            sessionId: 'session-1', isCurrent: a.lifetime.isCurrent }, document.root)).toMatchObject({ ok: false, errorCode: 'plugin_resource_admission_unavailable' });
         const renderA = (pluginUiProjection: typeof projection) => <DeclarativeWidgetDocument document={document} input={{}}
             runtime={{ ...runtime, pluginUiProjection }} accountLifetime={a.lifetime} sessionId="session-1"
             isCurrent={a.lifetime.isCurrent} testID="typed-a" />;

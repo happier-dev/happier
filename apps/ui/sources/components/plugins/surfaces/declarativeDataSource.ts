@@ -2,8 +2,8 @@ import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/j
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { freezePluginDeclarativeDataNodeV1, type PluginDeclarativeDataNodeV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDataV1';
-import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
-import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginUiResourceReference, PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginUiProjectionModel, PluginUiResourceProjection } from '@/sync/domains/plugins/ui/projection';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { PluginContextualResourceBinding } from './PluginContextualResourceStoreProvider';
 import { resolvePluginContextualResourceBinding } from './pluginResourceBinding';
@@ -20,26 +20,36 @@ export type DeclarativeDataResourceAdmission = Readonly<{
     isCurrent(): boolean;
 }>;
 
+type DeclarativeDataResourceBindingResult = Readonly<{ ok: true; binding: PluginContextualResourceBinding;
+    resource: PluginUiResourceReference; declaration: PluginUiResourceProjection }>
+    | Readonly<{ ok: false; errorCode: 'plugin_surface_retired' | 'plugin_resource_not_found' | 'plugin_resource_admission_unavailable'
+        | 'plugin_resource_context_unavailable' | 'declarative_data_content_type_invalid' | 'invalid_parameters' }>;
+
 /** The current declaration and plugin occurrence, never author metadata, choose transport. */
 export function resolveDeclarativeDataResourceBinding(input: DeclarativeDataResourceAdmission,
-    node: PluginDeclarativeDataNodeV1, mountInstanceKey?: string): PluginContextualResourceBinding | null {
-    if (node.data.kind !== 'resource' || !input.accountLifetime.isCurrent() || !input.isCurrent()) return null;
+    node: PluginDeclarativeDataNodeV1, mountInstanceKey?: string): DeclarativeDataResourceBindingResult {
+    if (!input.accountLifetime.isCurrent() || !input.isCurrent()) return { ok: false, errorCode: 'plugin_surface_retired' };
+    if (node.data.kind !== 'resource') return { ok: false, errorCode: 'invalid_parameters' };
+    if (!input.projection) return { ok: false, errorCode: 'plugin_resource_admission_unavailable' };
     const source = node.data;
-    const declarations = Object.values(input.projection?.resourcesById ?? {}).filter(row => row.pluginId === source.resource.pluginId
+    const declarations = Object.values(input.projection.resourcesById).filter(row => row.pluginId === source.resource.pluginId
         && row.id === source.resource.localId);
-    const declaration = declarations.length === 1 ? declarations[0] : null;
-    if (!declaration || declaration.pluginId !== source.resource.pluginId || declaration.id !== source.resource.localId
-        || declaration.contentType !== 'application/json' || !declaration.scope) return null;
+    if (declarations.length === 0) return { ok: false, errorCode: 'plugin_resource_not_found' };
+    const declaration = declarations.length === 1 ? declarations[0] : undefined;
+    if (!declaration) return { ok: false, errorCode: 'plugin_resource_admission_unavailable' };
+    if (declaration.contentType !== 'application/json') return { ok: false, errorCode: 'declarative_data_content_type_invalid' };
     try {
         if (!isValidPluginJsonSchemaValue(compilePluginJsonSchema(source.inputSchema), input.input)
-            || source.input !== undefined && !sameStrictJsonValue(source.input, input.input)) return null;
-    } catch { return null; }
+            || source.input !== undefined && !sameStrictJsonValue(source.input, input.input)) return { ok: false, errorCode: 'invalid_parameters' };
+    } catch { return { ok: false, errorCode: 'invalid_parameters' }; }
     const context = declaration.scope === 'global' ? { kind: 'global' as const }
         : declaration.scope === 'session' && input.sessionId ? { kind: 'session' as const, sessionId: input.sessionId }
         : declaration.scope === 'surface' && mountInstanceKey
             ? { kind: 'surface' as const, mountInstanceKey, launchInput: { ...input.input } } : null;
-    if (!context) return null;
-    return resolvePluginContextualResourceBinding(input, declaration, context);
+    if (!context) return { ok: false, errorCode: 'plugin_resource_context_unavailable' };
+    const binding = resolvePluginContextualResourceBinding(input, declaration, context);
+    return binding ? { ok: true, resource: source.resource, declaration, binding }
+        : { ok: false, errorCode: 'plugin_resource_admission_unavailable' };
 }
 
 export type DeclarativeDataSourceProjection = Readonly<{

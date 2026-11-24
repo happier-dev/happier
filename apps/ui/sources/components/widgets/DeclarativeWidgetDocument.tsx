@@ -7,7 +7,7 @@ import type { PluginDeclarativeDataNodeV1 } from '@happier-dev/protocol/plugins/
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { PluginContextualResourceState, PluginContextualResourceStoreProvider, type PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
+import { PluginContextualResourceState, PluginContextualResourceStoreProvider } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { projectDeclarativeDataResourceSnapshot, resolveDeclarativeDataResourceBinding,
     type DeclarativeDataSourceProjection } from '@/components/plugins/surfaces/declarativeDataSource';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -35,8 +35,8 @@ export type DeclarativeWidgetDocumentProps = Readonly<{
 }>;
 
 /** Exact declaration/realm admission; authored schemas never select transport authority. */
-export function resolveDeclarativeWidgetResourceBinding(props: DeclarativeWidgetDocumentProps, node: PluginDeclarativeDataNodeV1,
-    mountInstanceKey: string): PluginContextualResourceBinding | null {
+function resolveDeclarativeWidgetResourceBinding(props: DeclarativeWidgetDocumentProps, node: PluginDeclarativeDataNodeV1,
+    mountInstanceKey: string) {
     return resolveDeclarativeDataResourceBinding({ projection: props.runtime.pluginUiProjection, input: props.input,
         machineId: props.runtime.machineId, serverId: props.runtime.serverId, accountLifetime: props.accountLifetime,
         sessionId: props.sessionId, isCurrent: props.isCurrent }, node, mountInstanceKey);
@@ -145,12 +145,10 @@ function ProjectedResourceDataNode(props: Readonly<{
 function ResourceDataNode(props: DeclarativeWidgetDocumentProps & Readonly<{
     node: PluginDeclarativeDataNodeV1; context: DeclarativeNodeRenderContext; mountInstanceKey: string; reportKey: string;
 }>): React.ReactElement {
-    const binding = resolveDeclarativeWidgetResourceBinding(props, props.node, props.mountInstanceKey);
-    if (!binding || props.node.data.kind !== 'resource') return <UnavailableInstalledWidget
-        testID={`${props.testID}-data`} unresolved={{ state: 'unavailable', reasonCode: 'widget_data_source_unavailable' }} />;
-    const source = props.node.data.resource;
-    const declaration = Object.values(props.runtime.pluginUiProjection?.resourcesById ?? {})
-        .find(row => row.pluginId === source.pluginId && row.id === source.localId);
+    const admitted = resolveDeclarativeWidgetResourceBinding(props, props.node, props.mountInstanceKey);
+    if (!admitted.ok) return <UnavailableInstalledWidget
+        testID={`${props.testID}-data`} unresolved={{ state: 'unavailable', reasonCode: admitted.errorCode }} />;
+    const { binding, declaration, resource } = admitted;
     const origin = readPluginUiContributionOrigin(declaration);
     const readEnabled = origin ? origin.phase === 'current' && origin.interactionEnabled
         : props.runtime.phase === 'current' && props.runtime.interactionEnabled;
@@ -158,7 +156,7 @@ function ResourceDataNode(props: DeclarativeWidgetDocumentProps & Readonly<{
     // inputs and authored projection. A different read starts without its data.
     const dataIdentity = JSON.stringify([binding.accountLifetime.scope, binding.pluginId, binding.machineId,
         binding.serverId, binding.expectedCallerOccurrenceId, binding.context, props.node]);
-    return <PluginContextualResourceState binding={binding} resource={props.node.data.resource} isCurrent={props.isCurrent}
+    return <PluginContextualResourceState binding={binding} resource={resource} isCurrent={props.isCurrent}
         active={props.enabled !== false && readEnabled}>
         {(snapshot, controls) => <ProjectedResourceDataNode key={dataIdentity} readIdentity={dataIdentity} node={props.node} snapshot={snapshot}
             isCurrent={props.accountLifetime.isCurrent() && props.isCurrent()} refresh={controls.refresh}
