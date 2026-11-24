@@ -19,6 +19,7 @@ export type Copy = Readonly<{
     appCollector: (p: Name) => string;
     nextDeploy: string;
     waiting: string;
+    storageFull: string;
     receiving: (p: Readonly<{ time: string }>) => string;
   }>;
   state: Readonly<{ on: string; off: string }>;
@@ -171,6 +172,7 @@ const en: Copy = {
     appCollector: ({ name }) => `Uses your own collector · ${name}`,
     nextDeploy: 'Changes apply at the next deploy.',
     waiting: 'Waiting for first data',
+    storageFull: 'Collector storage full',
     receiving: ({ time }) => `Receiving · ${time}`,
   },
   state: { on: 'On', off: 'Off' },

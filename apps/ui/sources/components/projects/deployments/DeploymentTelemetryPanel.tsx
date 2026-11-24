@@ -285,6 +285,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const [collectorStatus, setCollectorStatus] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     lastReceivedAt?: number | null;
+    coverage?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['coverage'];
     capabilityLastSampleAt?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['capabilityLastSampleAt'];
     failure?: string;
   }> | null>(null);
@@ -294,7 +295,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
     reads.status(controller.signal).then(
       status => {
         if (!controller.signal.aborted) {
-          setCollectorStatus({ reads, lastReceivedAt: status.lastReceivedAt, capabilityLastSampleAt: status.capabilityLastSampleAt });
+          setCollectorStatus({ reads, ...status });
         }
       },
       (error: unknown) => {
@@ -369,6 +370,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const capabilitySample = tab === 'llmCalls' ? status?.capabilityLastSampleAt?.appLlmCost
     : tab === 'metrics' ? status?.capabilityLastSampleAt?.metrics : undefined;
   const collectorLabelText = telemetryApplied === false ? `${keptOn} ${t('deploymentTelemetry.recording.nextDeploy')}`
+    : status?.coverage?.reason === 'daemon_database_quota_exceeded' ? t('deploymentTelemetry.recording.storageFull')
     : capabilitySample !== undefined ? formatTelemetryCapabilityStatus(capabilitySample)
     : status?.lastReceivedAt === null ? t('deploymentTelemetry.recording.waiting')
     : typeof status?.lastReceivedAt === 'number' ? t('deploymentTelemetry.recording.receiving', {

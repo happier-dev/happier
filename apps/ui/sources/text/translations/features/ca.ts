@@ -268,6 +268,7 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
     keptOn: ({ machine }) => `Es guarda a ${machine}.`,
     appCollector: ({ name }) => `Utilitza el teu propi recol·lector · ${name}`,
     nextDeploy: 'Els canvis s’apliquen al proper desplegament.',
+    storageFull: 'Emmagatzematge del col·lector ple',
   },
   state: { on: 'Activat', off: 'Desactivat' },
   sheet: {

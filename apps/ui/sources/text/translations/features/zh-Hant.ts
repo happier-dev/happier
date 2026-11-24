@@ -268,6 +268,7 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
     keptOn: ({ machine }) => `保存在 ${machine}。`,
     appCollector: ({ name }) => `正在使用你自己的收集器 · ${name}`,
     nextDeploy: '變更會在下次部署時生效。',
+    storageFull: '收集器儲存空間已滿',
   },
   state: { on: '開', off: '關' },
   sheet: {

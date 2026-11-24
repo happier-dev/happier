@@ -268,6 +268,7 @@ const ru: Shared_deploymentTelemetryTranslations.Copy = {
     keptOn: ({ machine }) => `Хранится на ${machine}.`,
     appCollector: ({ name }) => `Используется ваш коллектор · ${name}`,
     nextDeploy: 'Изменения вступят в силу при следующем развёртывании.',
+    storageFull: 'Хранилище коллектора заполнено',
   },
   state: { on: 'Вкл.', off: 'Выкл.' },
   sheet: {

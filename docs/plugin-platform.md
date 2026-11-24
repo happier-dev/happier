@@ -52,6 +52,8 @@ loss notifications, and local HTTP partial success reports refused records.
 Authenticated collector requests wait for the same writer before reading their
 bodies and acknowledge only committed batches. Native allocation failure returns
 HTTP 507 with `collector storage full`; an actual store failure returns HTTP 503.
+The Environment’s Telemetry tab shows quota failure from the selected `capture.status`
+coverage and keeps previously retained evidence readable.
 A disconnected waiting exporter releases its turn without retaining the writer.
 An explicit Retry or successful scoped Clear clears the retained native failure. A later admitted batch
 persists the current coverage marker. Daemon storage owns quotas and row/byte
