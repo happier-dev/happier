@@ -6,16 +6,13 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import {
     getAppliedActiveServerId,
     getAppliedActiveServerSnapshot,
-    getColdActiveServerReadiness,
     isAppliedActiveServerRuntimeAvailable,
     retryActiveServerConnection,
     subscribeAppliedActiveServer,
     subscribeAppliedActiveServerRuntimeAvailability,
-    subscribeColdActiveServerRestore,
 } from '@/sync/runtime/orchestration/connectionManager';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -26,22 +23,14 @@ import { resolveServerScopedMachineInventoryKeys } from '@/sync/domains/machines
 import { resolveHomeConnectionSummary } from './resolveHomeConnectionSummary';
 import { resolveConnectionHealth } from './resolveConnectionHealth';
 
-function subscribeReportedHome(listener: () => void): () => void {
-    const unsubscribeApplied = subscribeAppliedActiveServer(listener);
-    const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(listener);
-    const unsubscribeColdRestore = subscribeColdActiveServerRestore(listener);
-    return () => { unsubscribeApplied(); unsubscribeAvailability(); unsubscribeColdRestore(); };
-}
-
-function readReportedAppliedHomeId(): string | null {
-    if (!isAppliedActiveServerRuntimeAvailable() && getColdActiveServerReadiness() !== null) return null;
-    return getAppliedActiveServerId() || null;
+function subscribeApplied(listener: () => void): () => void {
+    return subscribeAppliedActiveServer(() => listener());
 }
 
 /** The Home whose health the connection summary reports: the applied one, else the requested one. */
 export function useReportedHomeServerId(): string | null {
     const requestedServerId = useActiveServerSnapshot().serverId;
-    const appliedServerId = React.useSyncExternalStore(subscribeReportedHome, readReportedAppliedHomeId, readReportedAppliedHomeId);
+    const appliedServerId = React.useSyncExternalStore(subscribeApplied, getAppliedActiveServerId, getAppliedActiveServerId);
     return appliedServerId || requestedServerId || null;
 }
 
@@ -55,22 +44,15 @@ function readAppliedHomeUnavailable(): boolean {
     return readAppliedHomeSummaryKind() === 'unavailable';
 }
 
-/** Whether the page already says this Home can't be reached, read once from the same summary. */
+/** Whether the page already says this Home can't be reached: the applied Home, read once from the same summary. */
 export function readHomeShownUnavailable(serverId: string | null | undefined): boolean {
     if (!readAppliedHomeUnavailable()) return false;
-    const reportedId = readReportedAppliedHomeId() ?? getActiveServerSnapshot().serverId;
-    return !serverId || areServerProfileIdentifiersEquivalent(serverId, reportedId);
+    return !serverId || areServerProfileIdentifiersEquivalent(serverId, getAppliedActiveServerSnapshot().serverId);
 }
 
-/** The canonical Home connection summary, read without subscribing to Machine details. */
+/** The canonical connection summary of the applied Home, read without subscribing to its machines. */
 function readAppliedHomeSummaryKind() {
-    if (!isAppliedActiveServerRuntimeAvailable()) {
-        const readiness = getColdActiveServerReadiness();
-        if (readiness?.phase !== 'offline') return null;
-        const health = resolveConnectionHealth({ socketStatus: 'idle',
-            endpointStatus: readiness.phase, endpointReason: readiness.reason, machineGroups: [] });
-        return resolveHomeConnectionSummary({ healthKind: health.kind }).kind;
-    }
+    if (!isAppliedActiveServerRuntimeAvailable()) return null;
     const state = storage.getState();
     const serverId = getAppliedActiveServerSnapshot().serverId;
     const syncError = selectSyncErrorForServer(state.syncError, serverId);
@@ -90,9 +72,9 @@ function subscribeAppliedHomeSummary(listener: () => void): () => void {
     const unsubscribe = storage.subscribe(listener, {
         syncError: true, machineListStatusByServerId: true, socketStatus: true, endpointStatus: true, endpointReason: true,
     });
-    const unsubscribeHome = subscribeReportedHome(listener);
-    const unsubscribeSelection = subscribeActiveServer(listener);
-    return () => { unsubscribe(); unsubscribeHome(); unsubscribeSelection(); };
+    const unsubscribeApplied = subscribeAppliedActiveServer(listener);
+    const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(listener);
+    return () => { unsubscribe(); unsubscribeApplied(); unsubscribeAvailability(); };
 }
 
 /**
@@ -101,10 +83,9 @@ function subscribeAppliedHomeSummary(listener: () => void): () => void {
  * into a failure; it reads as loading and is read again once the Home answers or is declared unreachable.
  */
 export function useSettlingHomeServerId(): string | null {
-    const settling = React.useSyncExternalStore(subscribeAppliedHomeSummary, () => {
-        const kind = readAppliedHomeSummaryKind();
-        return kind === null || kind === 'reconnecting';
-    }, () => false);
+    // Until the connection manager has applied the Home, the connection health owner reads it as connecting too.
+    const settling = React.useSyncExternalStore(subscribeAppliedHomeSummary,
+        () => !isAppliedActiveServerRuntimeAvailable() || readAppliedHomeSummaryKind() === 'reconnecting', () => false);
     const reportedServerId = useReportedHomeServerId();
     return settling ? reportedServerId : null;
 }
