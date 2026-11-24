@@ -178,9 +178,13 @@ installSessionShellCommonModuleMocks({
             },
         }).module;
     },
-    text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({
-        translate: (key: string) => key,
-    }),
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        const translateWithParams = createTextModuleMock().t;
+        return createTextModuleMock({
+            translate: (key, params) => key === 'sessionDirectoryRecovery.title' ? translateWithParams(key, params) : key,
+        });
+    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         const modalMock = createModalModuleMock({ confirmResult: true });
