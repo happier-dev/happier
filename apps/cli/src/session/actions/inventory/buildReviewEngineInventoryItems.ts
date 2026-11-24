@@ -157,6 +157,8 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
         ...(description ? { description } : {}),
         enabled: !isBackendTargetDisabledByAccountSettings(accountSettings, { kind: 'backend', backendId: agent.id }),
         backendId: agent.id,
+        ...(agent.richDefinition?.definition.runnerAgents ? { runnerAgents: agent.richDefinition.definition.runnerAgents } : {}),
+        ...(agent.richDefinition?.definition.runnerSelection ? { runnerSelection: agent.richDefinition.definition.runnerSelection } : {}),
         ...profileFacts,
         capabilities: { structuredNarration: false, sessionTranscript },
       }];

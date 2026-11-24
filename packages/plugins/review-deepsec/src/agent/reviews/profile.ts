@@ -29,7 +29,6 @@ export function createDeepSecReviewExecutionProfile(kind: DeepSecReviewProfileKi
         mode: { type: 'string' as const, enum: [...DEEPSEC_REVIEW_MODES], title: 'Review scope' },
         profileId: { type: 'string' as const, enum: [DEEPSEC_REVIEW_PROFILE_ID, DEEPSEC_SECURITY_AUDIT_PROFILE_ID] },
         thinkingLevel: { type: 'string' as const, enum: [...DEEPSEC_THINKING_LEVELS], title: 'Reasoning effort' },
-        agentCli: { type: 'string' as const, enum: [...DEEPSEC_AGENT_CLIS], title: 'Local agent' },
         confirmedCostWarning: { type: 'boolean' as const, title: 'Accept DeepSec charges', description: 'Every DeepSec review uses paid model access. Accept the charges for this start only; never saved as a preference.' },
         preferredExecutablePath: { type: 'string' as const, title: 'Executable path' },
         executablePath: { type: 'string' as const },

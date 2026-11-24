@@ -26,6 +26,16 @@ composable parser as `AgentExecutionTargetV1Schema`. Plugin `readSession`
 returns its admitted metadata target separately from catalog presentation;
 an unknown or unavailable target stays absent.
 
+Review engines that drive another Agent declare `runnerAgents` on their Agent
+contribution in 0.3 development source. Each entry names an exact Agent target
+and the Provider protocols that engine can drive. The Review inventory projects
+that declaration, with `runnerSelection: 'perMember'` for panel engines. The
+launcher uses the runner's existing model and account picker, including Team,
+Provider, Connected Account and explicit Machine-login routes. Each engine
+reviewer carries its `runnerAgentTarget`, `modelSelection` and `connectedServices`
+in the ordinary mixed roster; repeated panel members retain independent choices.
+Credential materialization remains owned by the existing host credential owner.
+
 For unnamed Voice Session creation in 0.3 development source, the inventory's
 `defaultTargetKey` comes from the shared backend preference owner using the
 selected Machine and Account's Agent readiness. The inventory Action acquires

@@ -24,6 +24,8 @@ import {
 } from './agentUiGrammar.js';
 import { PluginSettingFieldIdV2Schema } from './settings.js';
 import { AgentProviderRequirementsV1Schema } from '../../providers/compatibility/v1.js';
+import { ProviderWireProtocolSchema } from '../../providers/capabilities/v1.js';
+import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
 import { PluginAgentAcpTransportSchema } from './agentAcpTransport.js';
 import { PluginAgentCliMetadataSchema } from './agentCliMetadata.js';
 import { MAX_PLUGIN_TRANSCRIPT_SOURCES_PER_CONTRIBUTION } from '../contributionLimits.js';
@@ -471,11 +473,21 @@ export const PluginAgentCatalogV2Schema = lazyZodSchema(() => z.strictObject({
   ), 'At least one Agent catalog declaration is required.')));
 export type PluginAgentCatalogV2 = z.infer<typeof PluginAgentCatalogV2Schema>;
 
+/** Child Agents an engine can drive; account and readiness decisions remain with those Agents' owners. */
+export const PluginAgentRunnerV1Schema = lazyZodSchema(() => z.strictObject({
+  agentTarget: AgentExecutionTargetV1Schema,
+  /** Empty means native/Connected Account access only, with no supported Provider route. */
+  providerProtocols: z.array(ProviderWireProtocolSchema),
+}));
+export const PluginAgentRunnerSelectionV1Schema = lazyZodSchema(() => z.enum(['single', 'perMember']));
+
 const PluginAgentDisplayV2Shape = {
   id: asProtocolZod(PluginContributionLocalIdSchema), title: PluginLocalizedStringV2Schema, description: z.optional(PluginLocalizedStringV2Schema),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
   connectedAccounts: z.optional(ConnectedAccountPurposeDeclarationsV1Schema),
   providerRequirements: z.optional(AgentProviderRequirementsV1Schema),
+  runnerAgents: z.optional(z.array(PluginAgentRunnerV1Schema)),
+  runnerSelection: z.optional(PluginAgentRunnerSelectionV1Schema),
   sessionModeDescriptor: z.optional(AgentSessionModeDescriptorSchema),
   requestCoverage: z.optional(AgentStateRequestCoverageOptionsSchema),
   accountSettings: z.optional(z.strictObject({

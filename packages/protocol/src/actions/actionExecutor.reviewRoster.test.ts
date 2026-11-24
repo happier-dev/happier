@@ -116,7 +116,7 @@ describe('Review roster leaves', () => {
     expect(persisted.read()).toBeNull();
   });
 
-  it('starts repeated engine selections with independent models in the already admitted round', async () => {
+  it('starts repeated engine selections with independent runners and models in the already admitted round', async () => {
     const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
     const records = createInMemoryReviewRecordPortV1();
     const deps = {
@@ -130,10 +130,14 @@ describe('Review roster leaves', () => {
     const executor = createActionExecutor(deps);
     const reviewRound = await records.start({ reviewId: 'existing-review', title: 'Independent models',
       subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: ['reviewer-1', 'reviewer-2'], startedAt: 1 });
+    const runnerAgentTargets = [
+      { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    ];
     for (const [index, modelId] of ['first-model', 'second-model'].entries()) {
       const data = ReviewStartInputSchema.parse({
         sessionId: 'source-session', reviewers: [{ kind: 'engine', engineId: 'codex', modelId,
-          options: { focus: modelId } }], instructions: 'Review independently.',
+          runnerAgentTarget: runnerAgentTargets[index], options: { focus: modelId } }], instructions: 'Review independently.',
         reviewRound, reviewReviewerId: `reviewer-${index + 1}`, reviewRoundSettlement: 'workflow',
       });
       expect(await dispatchReviewDispatch2({ actionId: 'review.start', data, parsed: { data }, deps,
@@ -143,6 +147,11 @@ describe('Review roster leaves', () => {
       })).toMatchObject({ ok: true, result: { reviewRound } });
     }
     expect(requests.map(request => request.modelId)).toEqual(['first-model', 'second-model']);
+    expect(requests.map(request => ReviewStartInputSchema.parse(request.intentInput).reviewers)).toEqual(
+      runnerAgentTargets.map((runnerAgentTarget, index) => [{ kind: 'engine', engineId: 'codex',
+        runnerAgentTarget, modelId: index === 0 ? 'first-model' : 'second-model',
+        options: { focus: index === 0 ? 'first-model' : 'second-model' } }]),
+    );
     expect(requests.map(request => request.intentInput)).toMatchObject([
       { reviewRound, reviewReviewerId: 'reviewer-1', reviewRoundSettlement: 'workflow', engines: { codex: { focus: 'first-model' } } },
       { reviewRound, reviewReviewerId: 'reviewer-2', reviewRoundSettlement: 'workflow', engines: { codex: { focus: 'second-model' } } },

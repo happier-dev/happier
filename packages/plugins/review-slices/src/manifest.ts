@@ -18,6 +18,11 @@ export const CLAWPATCH_PLUGIN = definePlugin({
       scope: { executables: [{ kind: 'managedDependency', id: 'review-executable' }] } },
   ], optional: [] },
   agents: { clawpatch: { declaration: { title: 'clawpatch', primary: 'executionRuns', runtime: { kind: 'custom' },
+    runnerAgents: [
+      { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, providerProtocols: ['openai-responses'] },
+      { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, providerProtocols: ['anthropic'] },
+    ],
+    runnerSelection: 'single',
     sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
     catalog: { vendorResume: { support: 'unsupported' } },
     capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {

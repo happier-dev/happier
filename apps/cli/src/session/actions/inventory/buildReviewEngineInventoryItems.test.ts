@@ -44,6 +44,26 @@ function runCapableDefinition(definition: Record<string, unknown>) {
 }
 
 describe('buildReviewEngineInventoryItems', () => {
+  it('projects declared runner targets and Provider protocols without replacing standard Agent readiness', async () => {
+    const runnerAgents = [{
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      providerProtocols: ['openai-responses'],
+    }];
+    const engine = projectManifestAgentContribution({
+      pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
+      definition: PluginAgentContributionV2Schema.parse({
+        id: 'panel', title: 'Panel', primary: 'executionRuns', runtime: { kind: 'custom' },
+        capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
+        runnerAgents, runnerSelection: 'perMember',
+      }),
+    });
+    const items = await buildReviewEngineInventoryItems({
+      registrySnapshot: { agentDefinitionsById: new Map([[engine.id, engine]]), executionRunProfiles: [] },
+      readReadiness: async () => ['notInstalled'],
+    });
+    expect(items[0]).toMatchObject({ runnerAgents, runnerSelection: 'perMember', readiness: 'notInstalled', available: false });
+  });
+
   it.each([false, true])('reads readiness only for the requested reviewer roster (empty %s)', async empty => {
     const agents = ['selected', 'unrelated'].map(id => projectManifestAgentContribution({
       pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },

@@ -284,6 +284,14 @@ export type IntentStartActionInputById = {
             reviewers: ({
                 kind: 'engine';
                 engineId: string;
+                runnerAgentTarget?: undefined | {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionId?: string | undefined;
+                };
                 includeSessionTranscript?: boolean | undefined;
                 options?: Record<string, JsonValue> | undefined;
                 modelId?: string | undefined;
@@ -694,6 +702,14 @@ export type IntentStartActionInputById = {
                 reviewers: ({
                     kind: 'engine';
                     engineId: string;
+                    runnerAgentTarget?: undefined | {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
                     includeSessionTranscript?: boolean | undefined;
                     options?: Record<string, JsonValue> | undefined;
                     modelId?: string | undefined;
@@ -1702,6 +1718,14 @@ export type IntentStartActionInputById = {
         reviewers: ({
             kind: 'engine';
             engineId: string;
+            runnerAgentTarget?: undefined | {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            };
             includeSessionTranscript?: boolean | undefined;
             options?: Record<string, JsonValue> | undefined;
             modelId?: string | undefined;
@@ -2112,6 +2136,14 @@ export type IntentStartActionInputById = {
             reviewers: ({
                 kind: 'engine';
                 engineId: string;
+                runnerAgentTarget?: undefined | {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionId?: string | undefined;
+                };
                 includeSessionTranscript?: boolean | undefined;
                 options?: Record<string, JsonValue> | undefined;
                 modelId?: string | undefined;

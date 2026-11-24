@@ -48,6 +48,11 @@ export const DEEPSEC_PLUGIN = definePlugin({
     deepsec: {
       declaration: {
         title: 'DeepSec',
+        runnerAgents: [
+          { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, providerProtocols: ['openai-responses'] },
+          { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, providerProtocols: ['anthropic'] },
+        ],
+        runnerSelection: 'single',
         providerRequirements: {
           acceptsProtocols: ['openai-responses'],
           required: { streaming: true, toolRoundTrips: true },

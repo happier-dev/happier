@@ -18,6 +18,11 @@ export const ROBOREV_PLUGIN = definePlugin({
   { id: 'roborev-process', capability: 'process', reason: 'Run and stop the native reviewer for one admitted review.',
     scope: { executables: [{ kind: 'managedDependency', id: 'review-executable' }], envKeys: ['ROBOREV_DATA_DIR', 'ROBOREV_TELEMETRY_ENABLED', 'NO_COLOR'] } }], optional: [] },
   agents: { roborev: { declaration: { title: 'roborev', runtime: { kind: 'custom' }, primary: 'executionRuns',
+    runnerAgents: [
+      { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, providerProtocols: ['openai-responses'] },
+      { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, providerProtocols: ['anthropic'] },
+    ],
+    runnerSelection: 'perMember',
     connectedAccounts: [], sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
     capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
       skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' },
