@@ -101,7 +101,9 @@ function NeededTag(): React.ReactElement {
  * names the value it follows; "Own value" hands the value to the typed editor beneath it, starting
  * from what the surface had, so the value is never shown twice.
  */
-function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFieldRow>): React.ReactElement | null {
+function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFieldRow> & Readonly<{
+    inheritedSource?: string | undefined;
+}>): React.ReactElement | null {
     const { theme } = useUnistyles();
     const follow = props.entry.follow;
     const valueLabel = follow?.values[0]?.label;
@@ -109,7 +111,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
         ? formatGroupReading({ kind: 'single', valueLabel }) : undefined;
     const [open, setOpen] = React.useState(false);
     const following = followsSurface(props.row);
-    const trigger = describeTrigger(props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading);
+    const trigger = describeTrigger(props.row, theme.colors.text.secondary, theme.colors.state.danger.foreground, groupReading, props.inheritedSource);
     const commands = useCurrentUiContextLocalCommands(follow && !props.disabled ? [{ key: 'open',
         title: [props.entry.field.prompt ?? props.entry.field.title, trigger.spoken].filter(Boolean).join(', '),
         invoke: value => setOpen(typeof value === 'boolean' ? value : !open) }] : [], { unbound: 'local' });
@@ -165,7 +167,7 @@ function WidgetBindingControl(props: React.ComponentProps<typeof WidgetSetupFiel
     />;
 }
 
-function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string, groupReading?: string): Readonly<{
+function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string, groupReading?: string, inheritedSource?: string): Readonly<{
     detail: string | null;
     spoken: string;
     field: Readonly<{ leading?: React.ReactNode; secondary?: string | null; quietValue?: boolean; invalid?: boolean }>;
@@ -198,8 +200,15 @@ function describeTrigger(row: WidgetSetupRow, secondary: string, danger: string,
                 spoken: `${t('widgetAdd.ownValue')} ${t('widgetAdd.invalidValue')}`,
                 field: { leading: <Icon name="warning" size={15} color={danger} />, invalid: true },
             };
+        case 'needed': {
+            const label = inheritedSource ?? t('widgetAdd.needed');
+            return {
+                detail: label,
+                spoken: label,
+                field: { leading: inheritedSource ? <Icon name="link" size={15} color={secondary} /> : undefined },
+            };
+        }
         case 'pinned':
-        case 'needed':
         case 'choices':
             // The value itself is the editor's beneath; the binding says only that it is this widget's own.
             return {
@@ -342,7 +351,8 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 <View ref={controlHost} collapsable={false} style={textPlaceholderStyle}>
                 <HappierInputField<JsonValue>
                     frame="none"
-                    leading={entry.follow ? <WidgetBindingControl {...props} /> : undefined}
+                    leading={entry.follow ? <WidgetBindingControl {...props}
+                        inheritedSource={inherited === undefined ? undefined : t('widgetFrame.followingGroup')} /> : undefined}
                     field={field}
                     value={value}
                     selection={selection as JsonValue | readonly JsonValue[] | undefined}

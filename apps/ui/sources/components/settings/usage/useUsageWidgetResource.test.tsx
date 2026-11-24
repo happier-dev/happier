@@ -210,12 +210,13 @@ describe('Usage widget shared Resource selection', () => {
             const values = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.charts.commandValues'));
             expect(values, 'real Daily chart publishes its structured value lens').toBeDefined();
             const selected = await invoke(values!.id, 'agent', { bucket: 0, mode: 'select' });
-            expect(selected).toMatchObject({ ok: true, result: { buckets: [{ rows: expect.arrayContaining([
+            expect(selected).toMatchObject({ ok: true, result: { value: { buckets: [{ rows: expect.arrayContaining([
                 expect.objectContaining({ label: codex, selectable: true }), expect.objectContaining({ label: claude, selectable: true }),
-            ]) }] } });
+            ]) }] } } });
             const result = selected?.ok ? selected.result : null;
-            if (!result || typeof result !== 'object' || Array.isArray(result) || !('buckets' in result) || !Array.isArray(result.buckets)) throw new Error('Missing Daily bucket values');
-            const bucket = result.buckets[0];
+            const value = result && typeof result === 'object' && !Array.isArray(result) && 'value' in result ? result.value : null;
+            if (!value || typeof value !== 'object' || Array.isArray(value) || !('buckets' in value) || !Array.isArray(value.buckets)) throw new Error('Missing Daily bucket values');
+            const bucket = value.buckets[0];
             if (!bucket || typeof bucket !== 'object' || Array.isArray(bucket) || !Array.isArray(bucket.rows)) throw new Error('Missing Daily bucket rows');
             const rows: readonly unknown[] = bucket.rows;
             const row = rows.find(candidate => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && 'label' in candidate && candidate.label === codex);

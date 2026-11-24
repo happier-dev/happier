@@ -2,6 +2,7 @@ import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usage
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { qualifyCollidingProjectTitlesV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
@@ -210,13 +211,16 @@ it('R140 folds unnamed Project choices like the ledger and selects their origina
     const authority = captureActiveServerAccountScopeLifetime();
     expect(authority).not.toBeNull();
     const named = ['named-project-a', 'named-project-b', 'other-project'];
+    const titleFacts = new Map(named.map((key, index) => [key, { title: index < 2 ? 'happier' : 'Other project' }] as const));
     const unnamed = Array.from({ length: 10 }, (_, index) => (index + 1).toString(16).repeat(64));
     const query = normalizeUsageQuery({ projects: [unnamed[0]!] });
     const fixture = usageQaAccountingFixture();
     const projects = [...named, ...unnamed];
     const slices = [{ ...resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!, accounting: { v: 1 as const,
-        totals: fixture.totals, breakdowns: { project: projects.map((key, index) => ({ key, ...fixture.totals,
-            ...(index < named.length ? { label: index < 2 ? 'happier' : 'Other project' } : {}) })) } } }];
+        totals: fixture.totals, breakdowns: { project: projects.map(key => {
+            const fact = titleFacts.get(key);
+            return { key, ...fixture.totals, ...(fact ? { label: fact.title } : {}) };
+        }) } } }];
     const work = allocateUsageOutcomes({ contributions: projects.map((projectKey, index) => ({ ...fixture.contributions![0]!,
         id: 'r140-' + index, projectKey, sessionId: 'r140-session', turnId: null })), evidence: [] });
     const ledger = summarizeUsageWork(work, { metric: 'tokens', costBasis: 'auto' }, new Set(named));
@@ -232,7 +236,11 @@ it('R140 folds unnamed Project choices like the ledger and selects their origina
     try {
         const unnamedOptions = hook.getCurrent().filter.options.filter(option => option.label === t('usage.board.work.unknownProject'));
         expect(unnamedOptions, 'The filter and ledger expose the same single unnamed group').toHaveLength(1);
-        expect(hook.getCurrent().filter.options.filter(option => option.label === 'happier')).toHaveLength(2);
+        const namedOptions = hook.getCurrent().filter.options.filter(option => titleFacts.has(option.id));
+        expect(namedOptions).toHaveLength(titleFacts.size);
+        expect(new Map(namedOptions.map(option => [option.id, option.label]))).toEqual(
+            qualifyCollidingProjectTitlesV1(titleFacts, { compact: true }),
+        );
         const group = unnamedOptions[0]!;
         expect(hook.getCurrent().filter.selected).toEqual([group.id]);
         await act(async () => { expect(hook.getCurrent().filter.select(named[0]!)).toBe(true); });

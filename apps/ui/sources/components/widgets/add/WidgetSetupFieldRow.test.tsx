@@ -47,6 +47,32 @@ const declared: ResolvedInputTypeV1 = {
 const review = { repositoryId: 'example/review-assistant' };
 
 describe('widget setup fields share the typed-field owners', () => {
+    it('names the source on an unset inherited field and keeps the binding choices', async () => {
+        const field = { path: 'note', title: 'Note', widget: 'text' as const };
+        const option = { value: 'Shared note', label: 'Shared note' };
+        const follow = { slot: 'note', label: 'This page', values: [option] };
+        const render = (state: Pick<React.ComponentProps<typeof WidgetSetupFieldRow>, 'entry' | 'row' | 'plainValue'>) =>
+            <WidgetSetupFieldRow {...state} options={[]} optionsStatus="ready" phone
+                onChange={() => {}} testID="setup.note" />;
+        const needed = { kind: 'needed' } as const;
+        const inherited = { kind: 'single', valueLabel: option.label } as const;
+        const screen = await renderScreen(render({ entry: { field, follow, inherited }, row: needed, plainValue: undefined }));
+        expect.soft(bindingText(screen, 'setup.note')).toEqual(['widgetFrame.followingGroup']);
+        expect.soft(screen.findByTestId('setup.note.trigger')?.props.accessibilityLabel).toBe('Note, widgetFrame.followingGroup');
+        expect(screen.findByTestId('setup.note.input')?.props.placeholder).toBe('Shared note (widgetFrame.followingGroup)');
+        await screen.pressByTestIdAsync('setup.note.trigger');
+        expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
+            { id: 'follow', title: 'This page' }, { id: 'own', title: 'widgetAdd.ownValue' },
+        ]);
+        await screen.update(render({ entry: { field, follow, inherited }, row: { kind: 'pinned', value: null, label: 'Personal note' }, plainValue: 'Personal note' }));
+        expect(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.ownValue']);
+        expect(screen.findByTestId('setup.note.input')?.props.value).toBe('Personal note');
+        await screen.update(render({ entry: { field, follow }, row: { kind: 'follows', label: follow.label, valueLabel: option.label }, plainValue: undefined }));
+        expect(bindingText(screen, 'setup.note')).toEqual(['This page', 'Shared note']);
+        await screen.update(render({ entry: { field, follow: { ...follow, values: [] } }, row: needed, plainValue: undefined }));
+        expect.soft(bindingText(screen, 'setup.note')).toEqual(['widgetAdd.needed']);
+    });
+
     it('keeps the resolved group value at the leading edge of the Edit inputs trigger and option', async () => {
         const value = { relative: '90days' };
         const ownValue = { relative: 'today' };

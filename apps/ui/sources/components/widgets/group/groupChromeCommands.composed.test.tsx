@@ -74,7 +74,12 @@ it('shares group input opening, the real setup draft and closing without applyin
     }
     const screen = await renderMountedCurrentUiContext(<CorePluginUiPresentationScope><Editor /></CorePluginUiPresentationScope>);
     await act(async () => { expect(await invoke('group.groupInputs.open')).toMatchObject({ ok: true }); });
-    const input = screen.root.findAllByType(WidgetSetupFieldRow).find(row => !row.props.disabled)!;
+    const findEditableField = () => screen.root.findAllByType(WidgetSetupFieldRow).find(row => !row.props.disabled);
+    await vi.waitFor(async () => {
+        await act(async () => {});
+        expect(findEditableField(), 'The group editor has mounted an editable setup field').toBeDefined();
+    });
+    const input = findEditableField()!;
     const path = input.props.entry.field.path;
     const title = `${t('widgetFrame.groupInputsTitle', { group: 'Spend group' })}: ${input.props.entry.field.prompt ?? input.props.entry.field.title}`;
     const field = commands().find(row => row.title === title)!;
