@@ -17,11 +17,9 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema,
-  ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -125,9 +123,7 @@ function heldScript(
 describe('Project setup review inside a Session', () => {
   it.each(['thisTime', 'skip', 'changed', 'retired', 'checkoutMismatch', 'sourceMismatch', 'effectFailed'] as const)('consumes the mounted Session %s choice through the real Action front door without Trust', async choice => {
     const home = createHomeGovernanceHarness();
-    const homeId = await home.addHome({ name: 'Setup Home', serverUrl: 'https://session-once.test', serverIdentityId: 'srv_session_once', accountId: 'account' });
-    const machine = createPlainMachineRowFixture({ id: 'devbox', accountId: 'account' });
-    home.answer(homeId, '/v1/machines/devbox', { body: { machine } });
+    await home.addHome({ name: 'Setup Home', serverUrl: 'https://session-once.test', serverIdentityId: 'srv_session_once', accountId: 'account' });
     let held: ActionOperationSnapshotV1;
     const decisions: unknown[] = [];
     const receipts: ActionOperationSnapshotV1[] = [];
@@ -137,51 +133,43 @@ describe('Project setup review inside a Session', () => {
     const alert = vi.spyOn(Modal, 'alert');
     let finishDecision: (() => void) | undefined;
     const decisionGate = choice === 'retired' ? new Promise<void>(resolve => { finishDecision = resolve; }) : Promise.resolve();
+    const boundary = await createExternalActionAccountHttpBoundary({
+      serverUrl: 'https://session-once.test', serverIdentityId: 'srv_session_once',
+      accountId: 'account', machineId: 'devbox', actionId: 'projects.prepare', tokenEpoch: 0,
+      requesterInvocation: 'optional',
+      failure: () => choice === 'effectFailed'
+        ? { errorCode: 'project_source_declaration_unavailable', error: 'project_source_declaration_unavailable' }
+        : null,
+      execute: async (input, { target: executionTarget }) => {
+        decisions.push(input);
+        expect(executionTarget).toMatchObject({ kind: 'machine', machineId: 'devbox' });
+        await decisionGate;
+        if (choice === 'effectFailed') return null;
+        // A resumed Run projects its target without the review-only Source attachment (LV16).
+        const target = held.domainRef;
+        if (target?.kind !== 'projectCommand') throw new Error('Expected retained Project target');
+        const operation = ActionOperationSnapshotV1Schema.parse({ ...held, revision: 2, domainRef: { ...target,
+          workspaceRefId: choice === 'checkoutMismatch' ? 'different-checkout' : target.workspaceRefId,
+          sourceWorkspace: choice === 'changed' ? target.sourceWorkspace : choice === 'sourceMismatch'
+            ? { ...target.sourceWorkspace!, rootPath: '/another-source' } : undefined,
+        }, setupReview: choice === 'changed' ? {
+          ...held.setupReview!, code: 'project_setup_effect_changed' as const, reviewedEffectDigest: 'current-effect',
+        } : undefined });
+        receipts.push(operation);
+        return { operation };
+      },
+    });
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://session-once.test',
       serverIdentityId: 'srv_session_once', accountId: 'account',
       credentials: { token: createAccountTokenForTests('account', { currentAccount: true }) }, request: async (url, init) => {
-        const path = new URL(String(url)).pathname;
+        const parsed = new URL(String(url));
+        const path = parsed.pathname;
         paths.push(path);
-        if (path === '/v1/machines') return Response.json([machine]);
+        const native = await boundary.handle(parsed, init);
+        if (native) return native;
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-        if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {
-          actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.prepare': ['ui'] } },
-        } } });
-        if (path === '/v1/actions/projects.prepare/execution-authorization') {
-          const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
-          const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
-          return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'test-home-authorization', binding: {
-            accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: 'srv_session_once',
-            machineId: 'devbox', installationId: machine.installationId, custodianAccountId: 'account', accountEncryptionMode: 'plain',
-            actionId: 'projects.prepare', requestId: envelope.requestId, target: envelope.target,
-            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-          } }));
-        }
-        if (path === '/v1/actions/projects.prepare') {
-          const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
-          const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
-          decisions.push(envelope.input);
-          expect(envelope.target).toMatchObject({ kind: 'machine', machineId: 'devbox' });
-          await decisionGate;
-          if (choice === 'effectFailed') return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({
-            v: 1, actionId: 'projects.prepare', requestId: envelope.requestId,
-            execution: { ok: false, errorCode: 'project_source_declaration_unavailable', error: 'project_source_declaration_unavailable' },
-          }));
-          // A resumed Run projects its target without the review-only Source attachment (LV16).
-          const target = held.domainRef;
-          if (target?.kind !== 'projectCommand') throw new Error('Expected retained Project target');
-          const operation = ActionOperationSnapshotV1Schema.parse({ ...held, revision: 2, domainRef: { ...target,
-            workspaceRefId: choice === 'checkoutMismatch' ? 'different-checkout' : target.workspaceRefId,
-            sourceWorkspace: choice === 'changed' ? target.sourceWorkspace : choice === 'sourceMismatch'
-              ? { ...target.sourceWorkspace!, rootPath: '/another-source' } : undefined,
-          }, setupReview: choice === 'changed' ? {
-            ...held.setupReview!, code: 'project_setup_effect_changed' as const, reviewedEffectDigest: 'current-effect',
-          } : undefined });
-          receipts.push(operation);
-          return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'projects.prepare',
-            requestId: envelope.requestId, execution: { ok: true, result: { operation } } }));
-        }
+        if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {} } });
         if (path.includes('project-trust')) throw new Error('One-time and Skip cannot read or write Trust');
         return home.request(url, init);
       } });

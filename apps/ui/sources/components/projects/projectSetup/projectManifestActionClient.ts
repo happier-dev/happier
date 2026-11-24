@@ -288,6 +288,7 @@ export function createProjectManifestActionClient(
     },
     prepare(
       request: Readonly<Omit<ProjectPrepareInputV1, 'workspace'>>,
+      confirmation?: Readonly<{ confirmed: true }>,
     ) {
       const actionInput = PROJECT_ACTION_INPUT_SCHEMAS_V1[
         'projects.prepare'
@@ -296,6 +297,7 @@ export function createProjectManifestActionClient(
         'projects.prepare',
         actionInput,
         PROJECT_ACTION_OUTPUT_SCHEMAS_V1['projects.prepare'],
+        confirmation,
       );
     },
   };

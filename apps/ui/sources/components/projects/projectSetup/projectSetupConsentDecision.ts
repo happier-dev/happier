@@ -103,7 +103,7 @@ export async function decideProjectSetupConsent(
     const result = await client.prepare({ phase: target.purpose === 'teardown' ? 'teardown' : 'setup',
       heldOperationId: retained.snapshot.operationId, expectedEffectDigest: input.reviewedEffectDigest,
       ...(input.decision === 'skip' ? { skipForInvocation: true } : { consentScope: input.decision }),
-    });
+    }, { confirmed: true });
     if (!('operation' in result) || result.operation.operationId !== retained.snapshot.operationId
       || !matchesRetainedCheckout(result.operation, retained.snapshot, input.scope, workspace)) {
       return { kind: 'unavailable', code: 'project_setup_review_unavailable' };

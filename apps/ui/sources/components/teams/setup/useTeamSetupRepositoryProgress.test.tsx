@@ -253,11 +253,8 @@ describe('selected Team batch progress', () => {
             teamProjectSourceFixture({ id: 'next', name: 'Next', nameWithOwner: 'team/next' })];
         const settled = setupOperation({ revision: 2, createdAt: 5, startedAt: 5, state: 'succeeded', settledAt: 6 });
         const approve = vi.fn((_input: unknown) => ({ operation: settled }));
-        homes.answer(homeProfileId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'projects.prepare': ['ui'] } },
-        } } } });
         await answerExternalActionAccountForHome(homes, homeProfileId, {
-            machineId: query.machineId, actionId: 'projects.prepare', tokenEpoch: 0, requesterInvocation: 'none',
+            machineId: query.machineId, actionId: 'projects.prepare', tokenEpoch: 0, requesterInvocation: 'optional',
             execute: approve,
         });
         const view = () => <ModalProvider><ItemList pageColumn="wide"><TeamSetupPageView
