@@ -29,6 +29,7 @@ it.each([
     [SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key, 'null'],
     [SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key, undefined],
     ['HAPPIER_SESSION_DISCUSSIONS_RATE_LIMIT_MAX', 300],
+    ['HAPPIER_SESSION_DISCUSSIONS_RATE_LIMIT_MAX', null],
     ['HAPPIER_SESSION_DISCUSSIONS_RATE_LIMIT_MAX', undefined],
 ])('shows the registry label for %s with value %s', async (key, value) => {
     await preloadTranslations('fr');
@@ -46,7 +47,7 @@ it.each([
     } finally { await screen.unmount(); }
 });
 
-it('uses the loaded Home registry to name a dynamic feature switch without invoking another Action', async () => {
+it.each([false, null, undefined])('uses the loaded Home registry to name a dynamic feature switch with value %s without invoking another Action', async value => {
     await harness.reset();
     const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://settings-review.test', accountId: 'reviewer' });
     await preloadTranslations('fr');
@@ -63,11 +64,13 @@ it('uses the loaded Home registry to name a dynamic feature switch without invok
     expect(getHomeSettingsSnapshot(scope)?.settings?.entries[0]?.key).toBe(key);
     await harness.requireUiApproval(serverId, 'home.settings.get');
     const actionId = 'home.settings.set';
-    const actionArgs = getActionSpec(actionId).inputSchema.parse({ expectedRevision: 1, values: { [key]: false } });
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ expectedRevision: 1, values: value === undefined ? {} : { [key]: value } });
     const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
         preview={null} status="open" serverId={serverId} testID="home-settings-review" />);
     try {
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(homeFeatureTitle('workflows')));
+        if (value === undefined) expect(screen.getTextContent()).not.toContain(homeFeatureTitle('workflows'));
+        else await vi.waitFor(() => expect(screen.getTextContent()).toContain(
+            value === null ? `${homeFeatureTitle('workflows')} ${t('homeSettings.row.notSet')}` : homeFeatureTitle('workflows')));
         expect(screen.getTextContent()).not.toContain(key);
         expect(harness.requestsFor('/v1/home/settings/get')).toHaveLength(1);
     } finally { await screen.unmount(); }

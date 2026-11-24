@@ -321,14 +321,15 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
                 label: declaration ? homeSettingTitle(declaration) : entry.homeSetting ? homeServerSettingTitle(entry.homeSetting.key) : entry.label,
                 depth: entry.depth,
                 value: entry.homeSetting?.cleared ? t('homeSettings.row.notSet')
-                    : entry.value === null ? null : entry.valueFormat === 'timestamp' ? formatApprovalTimestamp(entry.value)
-                    : governance && isGovernancePrincipal(entry.reference) ? t('common.unavailable') : entry.value,
+                    : entry.value === null ? null
+                    : governance && isGovernancePrincipal(entry.reference) ? t('common.unavailable')
+                    : literalApprovalValue({ ...entry, value: entry.value }, entry.label),
                 ...(entry.reference ? { source: { reference: entry.reference, serverId, exactRead: false } } : {}),
             };
         }) };
     }
     const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? row.title;
-    const value = row.valueFormat === 'clear' ? t('approvals.clearsField', { field: label })
+    const value = row.valueFormat === 'clear' ? literalApprovalValue(row, label)
         : governance && isGovernancePrincipal(row.reference)
         ? t('common.unavailable') : readGovernanceChoice(row, actionId) ?? literalApprovalValue(row);
     return { kind: 'value', key: row.path, label, value,
@@ -420,8 +421,9 @@ function foldApprovalFieldExtras(row: HappierApprovalFieldRow<ApprovalValueSourc
  * A declared confidential input is held by the original request and never shown: it reads as supplied under
  * its declared title, not as a missing or unavailable value.
  */
-function literalApprovalValue(row: ApprovalValueRow): string {
-    return row.valueFormat === 'unavailable' ? t('common.unavailable')
+function literalApprovalValue(row: Pick<ApprovalValueRow, 'value' | 'valueFormat' | 'selectedOptions'>, label = ''): string {
+    return row.valueFormat === 'clear' ? t('approvals.clearsField', { field: label })
+        : row.valueFormat === 'unavailable' ? t('common.unavailable')
         : row.valueFormat === 'confidential' ? t('approvals.confidentialSupplied')
         : row.valueFormat === 'timestamp' ? formatApprovalTimestamp(row.value)
         : row.valueFormat === 'boolean' ? t(row.value === 'true' ? 'common.yes' : 'common.no')

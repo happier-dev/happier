@@ -20,3 +20,20 @@ it('shows the declared document sort label instead of its enum token', async () 
     expect(screen.getTextContent()).not.toContain('updated_desc');
     await screen.unmount();
 });
+
+it('localizes declared choices and explicit clears inside a structured review', async () => {
+    await preloadTranslations('fr');
+    setPreferredLanguageFromSettings('fr');
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" presentation={{
+        rows: [{ kind: 'value', path: 'operation', title: 'Operation', value: '{}', entries: [
+            { label: 'Protocol', value: 'Readable protocol', depth: 0,
+                selectedOptions: [{ label: 'Readable protocol', labelKey: 'common.yes' }] },
+            { label: 'Placement', value: 'null', depth: 0, valueFormat: 'clear' },
+        ] }], unrepresentable: null,
+    }} />);
+    try {
+        expect(screen.getTextContent()).toContain(t('common.yes'));
+        expect(screen.getTextContent()).toContain(t('approvals.clearsField', { field: 'Placement' }));
+        expect(screen.getTextContent()).not.toContain('Readable protocol');
+    } finally { await screen.unmount(); }
+});

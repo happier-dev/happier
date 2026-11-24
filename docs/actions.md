@@ -1417,7 +1417,15 @@ in-process `approvalPresentation.clearInputPaths`; an omitted operand has no cle
 row, and a nullable schema alone does not declare a clear. The ordinary field row
 translates “Clears <field>”. These declarations do not change stored approvals or
 the serialized Action catalog. `technicalInputPaths` retains transport and revision
-operands under Technical details.
+operands under Technical details. The same declarations, field labels and choices
+apply inside structured operations; reference declarations receive the immediate
+parent alongside the complete input. `homeSettingMapInputPaths` declares maps of
+Home registry entries, including supplied null clears; the viewing Account's
+existing registry reader supplies each entry's label. A technical path can remain
+a string, or carry a variant condition such as
+`{ path: 'intent.groupId', when: { path: 'intent.kind', equals: 'group_create' } }`.
+The condition addresses one discriminant in the complete review input; other
+variants retain their existing reference reading.
 In unreleased 0.3 source, a member's Source clone with an unprepared destination
 returns `workspace_private_checkout_review_required` and the native owner's
 `destinationReview`. Open carries the prepared private path through this same

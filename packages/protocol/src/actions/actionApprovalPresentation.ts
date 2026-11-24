@@ -14,6 +14,7 @@ import type { JsonValue } from '../json/strictJsonValue.js';
 import { InputPathSchema } from '../inputs/inputPredicates.js';
 import { resolvePluginLocalizedStringV2Text } from '../plugins/contributions/publicTypes.js';
 import { getActionSpec, type ActionSpec, type ApprovalPresentationContext } from './actionSpecs.js';
+import type { ApprovalTechnicalInputPath } from './specs/definition.js';
 import { matchesConfidentialInputPath, resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { actionInputFieldAcceptsNull } from './actionInputSchemaPath.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
@@ -36,7 +37,6 @@ import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
 import { TeamUpdateInputV1Schema } from '../teams/team.js';
 import { TEAM_GROUP_UPDATE_ACTION_ID_V1, TEAM_POLICY_SET_ACTION_ID_V1, TEAM_SETUP_RUN_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
-import { HomeSettingsSetInputV1Schema } from '../home/governance/settings.js';
 import { HomeGovernancePolicySetInputV1Schema } from '../home/governance/policy.js';
 import { SERVER_CONFIG_REGISTRY_BASE } from '../serverConfig/registry.js';
 import { MACHINE_PRESET_ACTION_IDS_V1, MACHINE_PRESET_CREATE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
@@ -178,8 +178,9 @@ export type ApprovalStructuredValueEntry = Readonly<{
   reference?: ApprovalActionReference;
   /** A schema version or an empty value: present, but read only when asked for. */
   technical?: true;
-  /** An epoch-millisecond moment (`archivedAt`): the client reads it as a localized time. */
-  valueFormat?: 'timestamp';
+  /** Declared literal formats and epoch moments use the same reading as ordinary fields. */
+  valueFormat?: 'timestamp' | 'clear' | 'code';
+  selectedOptions?: readonly Pick<ActionInputOption, 'label' | 'labelKey'>[];
   /** A Home override uses the registry's name, including when the stored value is cleared. */
   homeSetting?: Readonly<{ key: string; cleared: boolean }>;
 }>;
@@ -639,6 +640,10 @@ type ApprovalStructuredReferences = Readonly<{
   path: string;
   fields: ReadonlyMap<string, ActionInputFieldHint | null>;
   input?: unknown;
+  parent?: unknown;
+  clearPaths?: readonly string[];
+  codePaths?: readonly string[];
+  homeSettingMapPaths?: readonly string[];
   referenceForField?: NonNullable<ActionSpec['approvalPresentation']>['referenceForField'];
   technicalPaths?: readonly string[];
 }>;
@@ -652,28 +657,47 @@ function appendApprovalStructuredEntries(
   widgetStructure = false,
   references?: ApprovalStructuredReferences,
 ): void {
+  const field = references?.fields.get(references.path);
+  label = field?.title ?? label;
   if (references?.technicalPaths?.includes(references.path)) {
     output.push({ label, value: formatApprovalEntryValue(key, value), depth, technical: true });
     return;
   }
-  const field = references?.fields.get(references.path);
-  const declaredReference = references?.referenceForField?.(references.path, value, references.input)
+  if (value === null && references?.clearPaths?.includes(references.path)) {
+    output.push({ label, value: 'null', depth, valueFormat: 'clear' });
+    return;
+  }
+  const declaredReference = references?.referenceForField?.(references.path, value, references.input, references.parent)
     ?? (field ? readApprovalSavedSecretReference('', undefined, value, field.inputType) : undefined);
   if (declaredReference) {
     output.push({ label, value: formatApprovalEntryValue(key, value), depth, reference: declaredReference });
     return;
   }
-  const principal = !widgetStructure ? readApprovalPrincipalReference(value) : undefined;
-  if (principal) {
-    output.push({ label, value: principal.id, depth, reference: principal });
+  const selectedOptions = field ? readApprovalSelectedOptions(field, [value]) : undefined;
+  if (selectedOptions) {
+    output.push({ label, value: selectedOptions.map(option => option.label).join(', '), depth, selectedOptions });
+    return;
+  }
+  if (references?.homeSettingMapPaths?.includes(references.path) && isRecord(value)) {
+    output.push({ label, value: null, depth });
+    output.push(...describeHomeSettingsApprovalEntries(value).map(entry => ({ ...entry, depth: entry.depth + depth + 1 })));
+    return;
+  }
+  if (references?.codePaths?.includes(references.path)) {
+    output.push({ label, value: formatApprovalEntryValue(key, value), depth, valueFormat: 'code' });
     return;
   }
   // A declared descendant must be visited even when its containing object or flat list could read as one line.
-  const containsReference = (Array.isArray(value) || isRecord(value))
+  const containsDeclaration = (Array.isArray(value) || isRecord(value))
     && (references?.fields.has(references.path) === true || hasDeclaredApprovalReadingBelow(value, references));
-  if (containsReference) {
+  if (containsDeclaration) {
     output.push({ label, value: null, depth });
     appendApprovalStructuredMembers(value, depth + 1, output, widgetStructure, references);
+    return;
+  }
+  const principal = !widgetStructure ? readApprovalPrincipalReference(value) : undefined;
+  if (principal) {
+    output.push({ label, value: principal.id, depth, reference: principal });
     return;
   }
   const encodedBytes = key === 'contentBase64' && typeof value === 'string'
@@ -766,18 +790,14 @@ function describeKindLedApprovalGroup(value: unknown): string | null {
   return words.join(' · ');
 }
 
-/**
- * Whether an Action's declared `referenceForField` names something inside this value. Only then must the value be
- * visited member by member; a value with nothing declared in it keeps its own one-line reading ("Directory  ~/repo").
- */
+/** Value-dependent reference declarations need a walk; exact paths use the existing declared-prefix map. */
 function hasDeclaredApprovalReadingBelow(value: unknown, references: ApprovalStructuredReferences | undefined): boolean {
-  if ((!references?.referenceForField && !references?.technicalPaths) || !(Array.isArray(value) || isRecord(value))) return false;
-  const { referenceForField: declare, path: parent, input, technicalPaths } = references;
+  if (!references?.referenceForField || !(Array.isArray(value) || isRecord(value))) return false;
   const members: [string, unknown][] = Array.isArray(value) ? value.map(item => ['[]', item]) : Object.entries(value);
   return members.some(([key, item]) => {
-    const path = `${parent}.${key}`;
-    return technicalPaths?.includes(path) || declare?.(path, item, input) !== undefined
-      || hasDeclaredApprovalReadingBelow(item, { ...references, path });
+    const path = `${references.path}.${key}`;
+    return references.fields.has(path) || references.referenceForField?.(path, item, references.input, value) !== undefined
+      || hasDeclaredApprovalReadingBelow(item, { ...references, path, parent: value });
   });
 }
 
@@ -787,16 +807,16 @@ function appendApprovalStructuredMembers(value: unknown, depth: number, output: 
     ? value.map((item, index) => [undefined, String(index + 1), item])
     : Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, humanizeApprovalKey(key), item]);
   for (const [key, label, item] of members) appendApprovalStructuredEntries(key, label, item, depth, output, widgetStructure,
-    references ? { ...references, path: `${references.path}.${key ?? '[]'}` } : undefined);
+    references ? { ...references, path: `${references.path}.${key ?? '[]'}`, parent: value } : undefined);
 }
 
 function describeHomeSettingsApprovalEntries(values: Record<string, unknown>): readonly ApprovalStructuredValueEntry[] {
   const entries: ApprovalStructuredValueEntry[] = [];
   for (const [key, setting] of Object.entries(values)) {
     const declaration = Object.hasOwn(SERVER_CONFIG_REGISTRY_BASE, key) ? SERVER_CONFIG_REGISTRY_BASE[key] : undefined;
-    // For a supplied plain value, preserve the server's runtime registry key
-    // so the reviewing Account can supply its label.
-    const homeSetting = (setting !== null && !declaration) || (declaration?.editable === 'home' && declaration.sensitivity === 'plain')
+    // The declared map uses the Home's runtime registry, including keys not in
+    // the base registry. Preserve clears so the viewing Account can name them.
+    const homeSetting = !declaration || (declaration.editable === 'home' && declaration.sensitivity === 'plain')
       ? { key, cleared: setting === null } : undefined;
     if (homeSetting?.cleared) {
       entries.push({ label: key, value: 'null', depth: 0, homeSetting });
@@ -842,9 +862,9 @@ function teamDefaultsForApprovalDetails(value: unknown): unknown {
 /** Readable entries for one structured JSON value; scalars and flat lists read fine as they are. */
 function describeApprovalStructuredValue(values: readonly unknown[], widgetStructure = false,
   references?: ApprovalStructuredReferences): readonly ApprovalStructuredValueEntry[] | undefined {
-  const containsReference = (Array.isArray(values[0]) || isRecord(values[0]))
+  const containsDeclaration = (Array.isArray(values[0]) || isRecord(values[0]))
     && (references?.fields.has(references.path) === true || hasDeclaredApprovalReadingBelow(values[0], references));
-  if (values.length !== 1 || isApprovalScalar(values[0]) && !containsReference) return undefined;
+  if (values.length !== 1 || isApprovalScalar(values[0]) && !containsDeclaration) return undefined;
   const output: ApprovalStructuredValueEntry[] = [];
   appendApprovalStructuredMembers(values[0], 0, output, widgetStructure, references);
   return output;
@@ -1031,6 +1051,18 @@ function describeUndeclaredContributedInput(value: unknown, path: readonly strin
     value: formatApprovalScalar(value), ...(/(^id|Ids?)$/.test(key) ? { technical: true as const } : {}) }];
 }
 
+function readApprovalSelectedOptions(field: ActionInputFieldHint, values: readonly unknown[]): readonly Pick<ActionInputOption, 'label' | 'labelKey'>[] | undefined {
+  if (field.widget === 'select' && values.length === 1) {
+    const option = field.options?.find(candidate => candidate.value === values[0]);
+    return option ? [option] : undefined;
+  }
+  if ((field.widget === 'multiselect' || field.widget === 'text_list') && field.options) {
+    return values.flatMap(value => value === undefined ? [] : Array.isArray(value) ? value : [value]).map(value =>
+      field.options?.find(candidate => candidate.value === value) ?? { label: String(value) });
+  }
+  return undefined;
+}
+
 export function describeApprovalActionFields(input: Readonly<{
   actionId: string;
   actionArgs: unknown;
@@ -1108,7 +1140,8 @@ export function describeApprovalActionFields(input: Readonly<{
   }
   const referenceFields = new Map<string, ActionInputFieldHint | null>();
   for (const field of resolved) {
-    if (!field.inputType || !('hostType' in field.inputType) || field.inputType.hostType !== 'savedSecretReference') continue;
+    const nested = resolved.some(parent => parent.widget === 'json' && field.path.startsWith(`${parent.path}.`));
+    if (!nested && (!field.inputType || !('hostType' in field.inputType) || field.inputType.hostType !== 'savedSecretReference')) continue;
     referenceFields.set(field.path, field);
     const segments = field.path.split('.');
     while (segments.length > 1) {
@@ -1117,7 +1150,7 @@ export function describeApprovalActionFields(input: Readonly<{
       if (!referenceFields.has(parent)) referenceFields.set(parent, null);
     }
   }
-  // Structured parents keep their context; their declared references are read in-place, once per member.
+  // Structured parents keep their context; all declared children are read in-place, once per member.
   const presented = resolved.filter(field => !referenceFields.get(field.path) || !resolved.some(parent =>
     parent.widget === 'json' && field.path.startsWith(`${parent.path}.`)));
   const paths = presented.map((field) => field.path);
@@ -1125,10 +1158,20 @@ export function describeApprovalActionFields(input: Readonly<{
   const isMachineCatalogAction = !settled && (MACHINE_PRESET_ACTION_IDS_V1.some(id => id === input.actionId)
     || MACHINE_POOL_ACTION_IDS_V1.some(id => id === input.actionId));
   const isTeamSetupReview = !settled && input.actionId === TEAM_SETUP_RUN_ACTION_ID_V1;
-  const referenceForField = isMachineCatalogAction ? readMachineCatalogApprovalReference
-    : isTeamSetupReview ? readTeamSetupApprovalReference : review?.referenceForField;
+  const fallbackReferenceForField = isMachineCatalogAction ? readMachineCatalogApprovalReference
+    : isTeamSetupReview ? readTeamSetupApprovalReference : undefined;
+  const declaredReferenceForField = review?.referenceForField;
+  const referenceForField: NonNullable<ActionSpec['approvalPresentation']>['referenceForField'] =
+    declaredReferenceForField && fallbackReferenceForField
+      ? (path, value, args, parent) => declaredReferenceForField(path, value, args, parent)
+        ?? fallbackReferenceForField(path, value, args)
+      : declaredReferenceForField ?? fallbackReferenceForField;
   const technicalPaths = [
-    ...(spec.approvalPresentation?.technicalInputPaths ?? []),
+    ...(spec.approvalPresentation?.technicalInputPaths ?? []).flatMap((entry: ApprovalTechnicalInputPath) => {
+      if (typeof entry === 'string') return [entry];
+      const discriminant = getApprovalFieldValues(presentationInput, entry.when.path);
+      return discriminant.length === 1 && discriminant[0] === entry.when.equals ? [entry.path] : [];
+    }),
     ...(isMachineCatalogAction ? ['controller.installationId', 'patch.controller.installationId',
       'memoryDemand.basis.operation.operationId', 'cursor', 'requestKey'] : []),
     ...(isTeamSetupReview ? [
@@ -1144,6 +1187,14 @@ export function describeApprovalActionFields(input: Readonly<{
     ...(spec.inputSchema === MachinePoolCreateActionInputV1Schema ? ['poolId'] : []),
   ];
   const codePaths = spec.approvalPresentation?.codeInputPaths ?? [];
+  for (const path of [...technicalPaths, ...codePaths, ...(review?.clearInputPaths ?? []), ...(review?.homeSettingMapInputPaths ?? [])]) {
+    const segments = path.split('.');
+    while (segments.length > 0) {
+      const prefix = segments.join('.');
+      if (!referenceFields.has(prefix)) referenceFields.set(prefix, null);
+      segments.pop();
+    }
+  }
   const structuredAnswerPath = STRUCTURED_ANSWER_FIELD_PATH_BY_ACTION_ID[input.actionId];
   // Home policy forms flatten populated documents. A whole-document reset has
   // no populated child field, so give the explicit null its own review row.
@@ -1179,18 +1230,13 @@ export function describeApprovalActionFields(input: Readonly<{
     }
     const literal = formatApprovalFieldValues(values, { preserveStructuredValues: field.widget === 'json' });
     // A chosen option reads by the label the form that set it shows.
-    const option = field.widget === 'select' && values.length === 1
-      ? field.options?.find((candidate) => candidate.value === values[0]) : undefined;
     const rulesAction = input.actionId === 'skills.rules.set' || input.actionId === 'mcp.rules.set';
     const reachPlace = rulesAction && field.path === 'change.write.place' || field.path === 'where.write.place';
     const place = reachPlace ? ReachPlaceV1Schema.safeParse(values[0]) : null;
-    const selectedOptions: readonly Pick<ActionInputOption, 'label' | 'labelKey'>[] | undefined = option ? [option]
-      : (field.widget === 'multiselect' || field.widget === 'text_list') && field.options
-        ? values.flatMap(value => value === undefined ? [] : Array.isArray(value) ? value : [value]).map(value =>
-          field.options?.find(candidate => candidate.value === value) ?? { label: String(value) }) : undefined;
+    const selectedOptions = readApprovalSelectedOptions(field, values);
     const choices = selectedOptions?.map(option => option.label).join(', ');
     const value = place?.success && place.data.t === 'allMachines' ? 'Everywhere'
-      : choices || (option && typeof option.label === 'string' ? option.label : literal);
+      : choices || literal;
     // Required context belongs to the captured invocation (or its explicit
     // review schema), never to an intentionally reduced observation preview.
     // These operands decide presence only; displayed values stay projected.
@@ -1232,7 +1278,7 @@ export function describeApprovalActionFields(input: Readonly<{
     const kindValue = !isMachineCatalogAction && field.widget === 'json' && !reference && !referenceFields.has(field.path) && !place?.success && values.length === 1
       ? readApprovalKindValue(values[0]) : null;
     // A typed reference already reads by its name; entries are for values nothing else can read.
-    let entries = spec.inputSchema === HomeSettingsSetInputV1Schema && field.path === 'values' && isRecord(values[0])
+    let entries = review?.homeSettingMapInputPaths?.includes(field.path) && isRecord(values[0])
       ? describeHomeSettingsApprovalEntries(values[0])
       : (rulesAction && field.path === 'change.rules' || field.path === 'where.rules') ? describeApprovalRuleEntries(values)
       : (rulesAction && field.path.startsWith('items.') || referenceFields.get(field.path)) && values.length > 1 ? values.map(value => ({
@@ -1244,10 +1290,10 @@ export function describeApprovalActionFields(input: Readonly<{
         input.actionId.startsWith('widgets.') && (['instance', 'group', 'fragment', 'definition'].includes(field.path)
           || ['surface', 'ref', 'to'].includes(field.path)
             && readWidgetActionSurfaceV1(input.actionArgs)?.owner.kind === 'pluginArea'),
-        referenceFields.has(field.path) || referenceForField ? {
-          path: field.path, fields: referenceFields, input: presentationInput, referenceForField,
-          ...(isTeamSetupReview || isMachineCatalogAction ? { technicalPaths } : {}),
-        } : undefined) : undefined;
+        {
+          path: field.path, fields: referenceFields, input: presentationInput, referenceForField, technicalPaths,
+          clearPaths: review?.clearInputPaths, codePaths, homeSettingMapPaths: review?.homeSettingMapInputPaths,
+        }) : undefined;
     if (input.actionId === 'mcp.servers.tools.set' && field.path === 'tools') {
       const settings: Readonly<Record<string, string>> = { off: 'Off', ask: 'Ask', allow: 'Allow', inherit: 'Use server default' };
       entries = values.flatMap(value => isRecord(value) ? Object.entries(value).map(([name, setting]) => ({
@@ -1291,13 +1337,6 @@ export function describeApprovalActionFields(input: Readonly<{
       || input.actionId === 'agents.acp.backends.upsert' && ['backend.id', 'backend.name'].includes(field.path)
       || (input.actionId.startsWith('widgets.fragment.') || input.actionId.startsWith('widgets.definition.'))
         && (field.path === 'artifactId' || field.path === 'newArtifactId'));
-    // `field.member` marks that direct member of a structured value (its target's own id, say).
-    const technicalMembers = technicalPaths.filter((path) => path.startsWith(`${field.path}.`))
-      .map((path) => humanizeApprovalKey(path.slice(field.path.length + 1)));
-    if (entries && technicalMembers.length > 0) {
-      entries = entries.map((entry) => entry.depth === 0 && entry.value !== null && technicalMembers.includes(entry.label)
-        ? { ...entry, technical: true as const } : entry);
-    }
     rows.push({
       // An intent read as its value ("Directory intent" → "Directory  /repo") is named by what it is.
       kind: 'value', path: field.path, title: kindValue !== null ? field.title.replace(/\s+intent$/i, '') : field.title,

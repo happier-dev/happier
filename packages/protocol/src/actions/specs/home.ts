@@ -368,6 +368,7 @@ function createHomeGovernanceActionSpecs() {
     approvalInputCustody: 'live_only',
     projectObservationInput: redactObservationInputPaths('secrets'),
     approvalPresentation: { summary: () => null,
+      homeSettingMapInputPaths: ['values'],
       inputSchema: lazyZodSchema(() => z.omit(HomeSettingsSetInputV1Schema, { secrets: true })),
       projectInput: redactObservationInputPaths('secrets'),
     },

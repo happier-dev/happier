@@ -199,6 +199,19 @@ const ExecutionRunCompletionDeclarationSchema = lazyZodSchema(() => z.strictObje
   ),
 }));
 
+/** Private technical paths may depend on one discriminant in the complete review input. */
+const ApprovalTechnicalInputPathSchema = lazyZodSchema(() => z.union([
+  z.string().check(z.minLength(1)),
+  z.readonly(z.object({
+    path: z.string().check(z.minLength(1)),
+    when: z.readonly(z.object({
+      path: z.string().check(z.minLength(1)),
+      equals: z.string(),
+    })),
+  })),
+]));
+export type ApprovalTechnicalInputPath = z.infer<typeof ApprovalTechnicalInputPathSchema>;
+
 export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   id: ActionIdSchema,
   title: z.string().check(z.minLength(1)),
@@ -311,11 +324,14 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     /**
      * Input paths that identify or correlate the request (command, view and session ids, fixed discriminators,
      * client plumbing) rather than say what it does. Approval reads them under Technical details; a path
-     * `field.member` marks that direct member of a structured value.
+     * `field.member` also marks a nested member. A conditioned path reads its discriminant
+     * from the complete review input; other variants retain their ordinary reading.
      */
-    technicalInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
+    technicalInputPaths: z.optional(z.readonly(z.array(ApprovalTechnicalInputPathSchema))),
     /** A supplied null on these paths explicitly clears the field; omitted values do not. In-process review metadata only. */
     clearInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
+    /** Maps keyed by Home settings registry keys. The viewing Account supplies labels; a supplied null explicitly clears that entry. */
+    homeSettingMapInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
     /** Input paths whose literal people compare character by character (a host key fingerprint): clients set it in the code face. */
     codeInputPaths: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))))),
     /** Private approval review can disclose operands that must stay out of shared Action observations. */
@@ -323,7 +339,7 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     /** Admits private review/history operands when they intentionally differ from executable input. */
     inputSchema: z.optional(ZodSchemaLike),
     /** Domain-declared reference identity; undefined delegates to the shared value reading. */
-    referenceForField: z.optional(z.custom<(path: string, value: unknown, input: unknown) => ApprovalActionReference | undefined>((value) => typeof value === 'function')),
+    referenceForField: z.optional(z.custom<(path: string, value: unknown, input: unknown, parent?: unknown) => ApprovalActionReference | undefined>((value) => typeof value === 'function')),
     /** Private review field labels may differ from the executable authoring form. */
     inputHints: z.optional(ActionInputHintsSchema),
     /** Private history may retain this declared review after replay; live-only custody still wins. */
