@@ -276,6 +276,8 @@ const zhHans: Shared_deploymentTelemetryTranslations.Copy = {
     collectorDescription: '接收并保存此环境所记录内容的机器。',
     collectorPublicDomain: '为收集器选择公开 HTTPS 域名',
     collectorPublicDomainEmpty: '此收集器没有公开 HTTPS 域名。',
+    wranglerTitle: '添加到 Wrangler 配置',
+    wranglerBody: '将这些目标名称添加到 Worker 的可观测性配置中，然后重新部署。',
     machine: '机器',
     noCollector:
       '还没有机器开启遥测角色。请在一台始终在线的机器的“角色”中开启它。',

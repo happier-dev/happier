@@ -276,6 +276,8 @@ const zhHant: Shared_deploymentTelemetryTranslations.Copy = {
     collectorDescription: '接收並保存此環境所記錄內容的機器。',
     collectorPublicDomain: '為收集器選擇公開的 HTTPS 網域',
     collectorPublicDomainEmpty: '此收集器沒有公開的 HTTPS 網域。',
+    wranglerTitle: '新增至 Wrangler 設定',
+    wranglerBody: '將這些目的地名稱新增至 Worker 的可觀測性設定，然後重新部署。',
     machine: '機器',
     noCollector:
       '還沒有機器開啟遙測角色。請在一台始終在線的機器的「角色」中開啟它。',

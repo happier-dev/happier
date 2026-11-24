@@ -277,6 +277,8 @@ const ca: Shared_deploymentTelemetryTranslations.Copy = {
       'La Màquina que rep i guarda el que registra aquest Entorn.',
     collectorPublicDomain: 'Tria un domini HTTPS públic per al recol·lector',
     collectorPublicDomainEmpty: 'Aquest recol·lector no té cap domini HTTPS públic.',
+    wranglerTitle: 'Afegeix-ho a la configuració de Wrangler',
+    wranglerBody: 'Afegeix aquests noms de destinació a la configuració d’observabilitat del Worker i torna’l a desplegar.',
     machine: 'Màquina',
     noCollector:
       'Encara cap Màquina té el rol de Telemetria activat. Activa’l en una Màquina que estigui sempre encesa, als seus Rols.',

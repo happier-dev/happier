@@ -276,6 +276,8 @@ const ja: Shared_deploymentTelemetryTranslations.Copy = {
     collectorDescription: 'この環境が記録するものを受け取り、保存するマシン。',
     collectorPublicDomain: 'コレクターの公開 HTTPS ドメインを選択',
     collectorPublicDomainEmpty: 'このコレクターには公開 HTTPS ドメインがありません。',
+    wranglerTitle: 'Wrangler の設定に追加',
+    wranglerBody: 'これらの宛先名を Worker のオブザーバビリティ設定に追加してから、再デプロイしてください。',
     machine: 'マシン',
     noCollector:
       'テレメトリの役割がオンのマシンはまだありません。常に起動しているマシンの「役割」でオンにしてください。',

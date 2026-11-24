@@ -272,6 +272,8 @@ const de: Shared_deploymentTelemetryTranslations.Copy = {
       'Die Maschine, die empfängt und speichert, was diese Umgebung aufzeichnet.',
     collectorPublicDomain: 'Öffentliche HTTPS-Domain für den Collector auswählen',
     collectorPublicDomainEmpty: 'Für diesen Collector ist keine öffentliche HTTPS-Domain verfügbar.',
+    wranglerTitle: 'Zur Wrangler-Konfiguration hinzufügen',
+    wranglerBody: 'Füge diese Zielnamen zur Observability-Konfiguration des Workers hinzu und stelle den Worker erneut bereit.',
     machine: 'Maschine',
     noCollector:
       'Noch keine Maschine hat die Telemetrie-Rolle aktiviert. Aktiviere sie für eine Maschine, die immer läuft, in deren Rollen.',

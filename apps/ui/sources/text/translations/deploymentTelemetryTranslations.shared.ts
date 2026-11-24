@@ -76,6 +76,8 @@ export type Copy = Readonly<{
     collectorDescription: string;
     collectorPublicDomain: string;
     collectorPublicDomainEmpty: string;
+    wranglerTitle: string;
+    wranglerBody: string;
     machine: string;
     rotate: string;
     rotateDescription: string;
@@ -196,6 +198,8 @@ const en: Copy = {
       'The Machine that receives and keeps what this Environment records.',
     collectorPublicDomain: 'Choose a public HTTPS Domain for the collector',
     collectorPublicDomainEmpty: 'There is no public HTTPS Domain for this collector.',
+    wranglerTitle: 'Add to your Wrangler config',
+    wranglerBody: 'Add these destination names to your Worker’s observability configuration, then deploy again.',
     machine: 'Machine',
     rotate: 'Rotate collector credential',
     rotateDescription: 'Replaces the current credential. Deploy again to send telemetry with the new credential.',

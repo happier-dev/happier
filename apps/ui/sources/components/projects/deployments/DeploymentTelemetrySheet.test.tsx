@@ -42,7 +42,7 @@ afterEach(standardCleanup);
 
 const { showDeploymentTelemetrySheet } =
   await import('./DeploymentTelemetrySheet');
-const { ModalProvider } = await import('@/modal');
+const { Modal, ModalProvider } = await import('@/modal');
 const { View } = await import('react-native');
 
 const lifetime = {
@@ -113,7 +113,7 @@ describe('Environment Telemetry tab', () => {
       }),
     });
     try {
-      expect(screen.findByTestId('project-deployments.telemetry.llm')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.includes('Last sample'))).toHaveLength(1);
+      expect(screen.findByTestId('project-deployments.telemetry.llm')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.toLowerCase().includes('last sample'))).toHaveLength(1);
       expect(screen.findByTestId('project-deployments.telemetry.exceptions')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.includes('Not receiving yet'))).toHaveLength(1);
       expect(screen.findByTestId('project-deployments.telemetry.metrics')?.findAll(node => typeof node.type === 'string' && typeof node.props.children === 'string' && node.props.children.includes('Not receiving yet'))).toHaveLength(0);
       await screen.pressByTestIdAsync('project-deployments.telemetry.cancel');
@@ -370,6 +370,29 @@ describe('Environment telemetry sheet', () => {
       expect(onSaved).toHaveBeenCalledWith(
         expect.objectContaining({ ok: true, state: 'redeploy_required' }),
       );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('shows the Cloudflare destination names the person needs in Wrangler after saving', async () => {
+    const result = { ok: true as const, environmentId: 'production', revision: 8,
+      state: 'wrangler_required' as const, destinations: [
+        { type: 'traces' as const, name: 'Production Trace Destination', slug: 'trace-api-slug' },
+        { type: 'logs' as const, name: 'Production Log Destination', slug: 'log-api-slug' },
+      ] };
+    const setTelemetry = vi.fn(async () => result);
+    const onSaved = vi.fn();
+    const screen = await open(setTelemetry, onSaved);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.telemetry.save');
+      expect(onSaved).toHaveBeenCalledExactlyOnceWith(result);
+      const message = vi.mocked(Modal.alert).mock.lastCall?.[1];
+      expect(message).toContain('Production Trace Destination');
+      expect(message).toContain('Production Log Destination');
+      expect(message).not.toContain('trace-api-slug');
+      expect(message).not.toContain('log-api-slug');
+      expect(setTelemetry).toHaveBeenCalledTimes(1);
     } finally {
       await screen.unmount();
     }

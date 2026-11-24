@@ -183,6 +183,12 @@ export function DeploymentTelemetrySheet(
       if (result.ok) {
         props.onClose();
         props.onSaved(result);
+        if ('state' in result && result.state === 'wrangler_required') {
+          const destinations = result.destinations.map(destination =>
+            `${t(`deploymentTelemetry.tabs.${destination.type}`)} · ${destination.name}`);
+          Modal.alert(t('deploymentTelemetry.sheet.wranglerTitle'),
+            [t('deploymentTelemetry.sheet.wranglerBody'), ...destinations].join('\n'));
+        }
         return;
       }
       if (result.error === 'telemetry_deletion_confirmation_required') {

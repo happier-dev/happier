@@ -277,6 +277,8 @@ const es: Shared_deploymentTelemetryTranslations.Copy = {
       'La Máquina que recibe y guarda lo que registra este Entorno.',
     collectorPublicDomain: 'Elige un dominio HTTPS público para el recopilador',
     collectorPublicDomainEmpty: 'Este recopilador no tiene ningún dominio HTTPS público.',
+    wranglerTitle: 'Añadir a la configuración de Wrangler',
+    wranglerBody: 'Añade estos nombres de destino a la configuración de observabilidad del Worker y vuelve a desplegarlo.',
     machine: 'Máquina',
     noCollector:
       'Ninguna Máquina tiene aún el rol de Telemetría activado. Actívalo en una Máquina que esté siempre encendida, en sus Roles.',
