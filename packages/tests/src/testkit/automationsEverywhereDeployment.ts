@@ -81,7 +81,8 @@ export async function prepareAutomationsEverywhereDeployment(params: Readonly<{
   const identity = MachineInstallationIdentityV1Schema.parse(JSON.parse(await readFile(join(machine.homeDir, 'installation-identity.json'), 'utf8')));
   const target = DeploymentActionOutputSchemasV1['deployments.targets.link'].parse(await invoke('deployments.targets.link', {
     serverId, environmentId: environment.environmentId, expectedRevision: environment.revision,
-    requestKey: randomUUID(), targetId: 'own-server', role: 'runtime',
+    // This fixture owns the enrolled Machine lifetime and keeps its current retention.
+    requestKey: randomUUID(), targetId: 'own-server', role: 'runtime', managedRetention: 'keep',
     machines: [{ machineId: machine.target.machineId, installationId: identity.installationId }],
   }));
   if (!target.ok) throw new Error(`Target setup: ${target.error}`);
