@@ -13,8 +13,9 @@ import { resolveAuthoritativePackagedRuntimeCustody } from '@/packagedRuntime/re
 import { resolvePublishedPinnedRunnerSnapshotById } from '@happier-dev/cli-common/pinnedRunnerSnapshot';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../projection/registry/sources/generatedBundledPluginManifests';
 import { readPluginManifest, readAdmittedGenerationNpmPackageName } from '../manifest/read';
+import { ingestCanonicalPluginManifest } from '../manifest/ingest';
 import { resolveInstalledPluginSource } from '../discovery/sources/resolve';
-import { ingestBundledPluginManifest, readBundledPluginManifest } from '../projection/registry/builtIn/manifestFile';
+import { readBundledPluginManifestInput } from '../projection/registry/builtIn/manifestFile';
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 import type { CanonicalPluginManifest } from '../manifest/types';
 import type { PluginStorePaths } from '../store/paths';
@@ -59,7 +60,10 @@ export async function readRetainedExternalDevelopmentSource(params: Readonly<{
 export function readRetainedFirstPartyDevelopmentManifest(params: Readonly<{ pluginId: string; runtimeRoot?: string }>): CanonicalPluginManifest {
     const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(candidate => candidate.pluginId === params.pluginId);
     if (!locator) throw new Error('Retained first-party development declaration is unavailable');
-    const ingestion = ingestBundledPluginManifest(locator, readBundledPluginManifest(locator, params.runtimeRoot));
+    const ingestion = ingestCanonicalPluginManifest(readBundledPluginManifestInput(locator, params.runtimeRoot), {
+        purpose: 'installedRead',
+        manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
+    });
     if (!ingestion.ok || ingestion.manifest.id !== params.pluginId) {
         throw new Error('Retained first-party development declaration does not match its admitted plugin');
     }
@@ -85,21 +89,6 @@ function resolveRunnerPathSourceRoot(runnerSnapshotIdentity: string): string | n
     const runtimeRoot = runnerSnapshotIdentity.slice('path:'.length);
     if (basename(runtimeRoot) !== 'cli' || basename(dirname(runtimeRoot)) !== 'apps') return null;
     return dirname(dirname(runtimeRoot));
-}
-
-async function attestFirstPartyDevelopmentRoot(params: Readonly<{
-    pluginId: string;
-    registeredRootId: string;
-    runnerSourceRoot: string | null;
-}>): Promise<string> {
-    const developmentRoot = await realpath(params.registeredRootId);
-    const runnerRoot = params.runnerSourceRoot ? await realpath(params.runnerSourceRoot) : null;
-    if (!runnerRoot
-        || await resolveRetainedFirstPartyDevelopmentRoot({ pluginId: params.pluginId, repoRoot: runnerRoot }) !== developmentRoot
-        || !isCanonicalAbsolutePathInsideRoot(runnerRoot, developmentRoot)) {
-        throw new Error('Retained first-party development source does not belong to the runner path');
-    }
-    return developmentRoot;
 }
 
 /** Only bundled development leaves execute from the runner's source publication. */
@@ -132,7 +121,7 @@ export function selectRunnerManagedDependencySourceCustody(
         : registeredCustody;
 }
 
-/** Preserve a source-path runner's admitted binding, or select its immutable packaged publication. */
+/** The runner's retained publication owns its first-party Agent declaration and version. */
 export async function attestFreshRunnerAgentBinding(params: Readonly<{
     binding: AgentSessionRunnerBindingV1;
     paths: PluginStorePaths;
@@ -143,25 +132,43 @@ export async function attestFreshRunnerAgentBinding(params: Readonly<{
     const snapshotId = params.runnerSnapshotIdentity.startsWith('snapshot:')
         ? params.runnerSnapshotIdentity.slice('snapshot:'.length)
         : '';
-    const developmentCustody = custody.kind === 'development' && isRunnerPinnedDevelopmentAgentSource(params.binding)
-        ? custody
-        : null;
+    const isBundledFirstPartyDevelopmentSource = isRunnerPinnedDevelopmentAgentSource(params.binding);
     const isPinnedBundledSource = custody.kind === 'bundled_first_party'
         && custody.packagedRuntime.kind === 'pinned_runner_snapshot';
-    if (!developmentCustody && !isPinnedBundledSource) {
+    if (!isBundledFirstPartyDevelopmentSource && !isPinnedBundledSource) {
         return params.binding;
     }
     if (!snapshotId || snapshotId.includes('/') || snapshotId.includes('\\')) {
-        if (developmentCustody) {
+        if (isBundledFirstPartyDevelopmentSource) {
             if (!params.runnerSnapshotIdentity.startsWith('path:')) return params.binding;
-            // The active registry or retained Session already selected this Agent
-            // and its factory. A source-path identity proves checkout custody.
-            await attestFirstPartyDevelopmentRoot({
+            const source = await attestRetainedPluginSource({
+                paths: params.paths,
                 pluginId: params.binding.pluginId,
-                registeredRootId: developmentCustody.registeredRootId,
-                runnerSourceRoot: resolveRunnerPathSourceRoot(params.runnerSnapshotIdentity),
+                custody,
+                manifestAuthority: 'bundled_first_party',
+                runnerSnapshotIdentity: params.runnerSnapshotIdentity,
             });
-            return params.binding;
+            if (!source.manifest.contributes.agents.some(
+                (agent) => agent.id === params.binding.localAgentId,
+            )) {
+                throw new Error('Runner Agent development source has no admitted Agent declaration');
+            }
+            if ('kind' in params.binding) {
+                return Object.freeze({ ...params.binding, pluginVersion: source.manifest.version });
+            }
+            // A development leaf runs the checkout's current source, exactly as the
+            // daemon resolved it. The manifest's published factory locates the packed
+            // `.happier-plugin-build` layout, which only a build refreshes; it names
+            // the declared factory here and never the module this runner loads.
+            const factory = readRetainedBundledAgentFactory(source.manifest, params.binding.localAgentId);
+            if (factory.locator.module !== params.binding.locator.module) {
+                throw new Error('Runner Agent development source factory differs from its admitted declaration');
+            }
+            return createAgentSessionRunnerFactoryBinding({
+                ...params.binding,
+                pluginVersion: source.manifest.version,
+                locator: factory.locator,
+            });
         }
         throw new Error('Runner Agent bundled source has no pinned snapshot identity');
     }
@@ -348,15 +355,22 @@ export async function attestRetainedPluginSource(params: Readonly<{
             custody: custody,
         })
         : null;
+    const developmentRoot = custody.kind === 'development'
+        ? await realpath(custody.registeredRootId)
+        : null;
     const runnerSourceRoot = custody.kind === 'development'
         ? resolveRunnerPathSourceRoot(params.runnerSnapshotIdentity ?? '')
         : null;
-    let developmentRoot: string | null = null;
-    if (custody.kind === 'development') {
-        if (params.manifestAuthority !== 'bundled_first_party') {
+    if (developmentRoot) {
+        const canonicalRunnerSourceRoot = runnerSourceRoot ? await realpath(runnerSourceRoot) : null;
+        const expectedPluginRoot = canonicalRunnerSourceRoot
+            ? await resolveRetainedFirstPartyDevelopmentRoot({ pluginId: params.pluginId, repoRoot: canonicalRunnerSourceRoot }) : null;
+        if (!canonicalRunnerSourceRoot
+            || params.manifestAuthority !== 'bundled_first_party'
+            || expectedPluginRoot !== developmentRoot
+            || !isCanonicalAbsolutePathInsideRoot(canonicalRunnerSourceRoot, developmentRoot)) {
             throw new Error('Retained first-party development source does not belong to the runner path');
         }
-        developmentRoot = await attestFirstPartyDevelopmentRoot({ pluginId: params.pluginId, registeredRootId: custody.registeredRootId, runnerSourceRoot });
     }
     if (generation) {
         await assertContainedRegularGenerationFile(
