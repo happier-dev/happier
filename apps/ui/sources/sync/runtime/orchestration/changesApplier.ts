@@ -54,6 +54,7 @@ export async function applyPlannedChangeActions(params: {
     isSessionMessagesDeferred?: (sessionId: string) => boolean;
     concurrencyLimit?: number;
     shouldContinue?: () => boolean;
+    hasAppliedMachineDaemonStatePush?: (machineId: string, cursor: number) => boolean;
     invalidate: {
         settings?: () => Promise<void>;
         profile?: () => Promise<void>;
@@ -207,9 +208,25 @@ export async function applyPlannedChangeActions(params: {
     if (planned.invalidate.settings) tasks.push(() => params.invalidate.settings?.() ?? Promise.resolve());
     if (planned.invalidate.profile) tasks.push(() => params.invalidate.profile?.() ?? Promise.resolve());
     if (planned.invalidate.machines) {
-        const machineIds = [...new Set(planned.changes.filter(change => isMachineProjectionChangeKindV1(change.kind))
-            .map(change => change.entityId).filter(Boolean))];
-        tasks.push(() => params.invalidate.machines?.(machineIds.length ? machineIds : undefined) ?? Promise.resolve());
+        const machineIds = new Set<string>();
+        let previousCursor = planned.afterCursor;
+        let contiguous = previousCursor !== undefined;
+        let hasNamedMachineChange = false;
+        for (const change of planned.changes) {
+            // The feed coalesces by entity. A gap can hide an earlier Machine
+            // mutation that the latest daemon-state push did not carry.
+            contiguous = contiguous && previousCursor !== undefined && change.cursor === previousCursor + 1;
+            previousCursor = change.cursor;
+            if (!isMachineProjectionChangeKindV1(change.kind) || !change.entityId) continue;
+            hasNamedMachineChange = true;
+            if (!(contiguous && change.kind === 'machine'
+                && params.hasAppliedMachineDaemonStatePush?.(change.entityId, change.cursor))) {
+                machineIds.add(change.entityId);
+            }
+        }
+        if (!hasNamedMachineChange || machineIds.size > 0) {
+            tasks.push(() => params.invalidate.machines?.(hasNamedMachineChange ? [...machineIds] : undefined) ?? Promise.resolve());
+        }
     }
     if (planned.invalidate.machinePools) {
         tasks.push(async () => {

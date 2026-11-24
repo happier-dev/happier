@@ -13757,6 +13757,8 @@ class Sync {
                             resolveSessionLiveConsumption(sessionId).isFullContentConsumer,
                         getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
                         isSessionMessagesDeferred: (sessionId) => this.hasDeferredNewerMessages(sessionId),
+                        hasAppliedMachineDaemonStatePush: (machineId, cursor) =>
+                            storage.getState().machineRecordsByServerId[plannedServerId]?.[machineId]?.daemonStatePushCursor === cursor,
                         publishAccountChanges: (replayedChanges, materialization) => {
                             if (!shouldContinue() || !isAppliedTransportCurrent()) return;
                             const changes = replayedChanges.filter(change =>

@@ -345,6 +345,8 @@ export interface Machine {
     metadataVersion: number;
     daemonState: any | null;  // Dynamic daemon state (runtime info)
     daemonStateVersion: number;
+    /** Account change covered by this opened socket publication. Never persisted. */
+    daemonStatePushCursor?: number;
     storageMode?: 'plain' | 'e2ee';
     /** Published owner envelope identity; shared callers may receive another opening envelope. */
     keyBasis?: import('@happier-dev/protocol/machines/machineContentKeyTransitionV1').MachineKeyBasisV1;

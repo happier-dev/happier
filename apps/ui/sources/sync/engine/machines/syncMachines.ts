@@ -309,6 +309,7 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
             : existingMachine?.managedMachineRef !== undefined ? { managedMachineRef: existingMachine.managedMachineRef } : {}),
         ...(machineUpdate.managedInputRuntime !== undefined ? { managedInputRuntime: machineUpdate.managedInputRuntime }
             : existingMachine?.managedInputRuntime !== undefined ? { managedInputRuntime: existingMachine.managedInputRuntime } : {}),
+        ...(existingMachine?.deploymentApp !== undefined ? { deploymentApp: existingMachine.deploymentApp } : {}),
         // IMPORTANT: socket UpdateContainer.seq is an account cursor, not the machine entity seq.
         seq: existingMachine?.seq ?? 0,
         createdAt: existingMachine?.createdAt ?? updateCreatedAt,
@@ -353,8 +354,13 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
             // Availability retains opened presentation; the inventory owner's
             // current-content check separately admits fresh execution.
             const retainedAdmission = canRetainOpenedMachineContent(updatedMachine, existingMachine);
-            updatedMachine.availability = hasCurrentMachineContent(updatedMachine) || retainedAdmission
-                ? { kind: 'available' } : undefined;
+            const hasCurrentContent = hasCurrentMachineContent(updatedMachine);
+            updatedMachine.availability = hasCurrentContent || retainedAdmission ? { kind: 'available' } : undefined;
+            if (hasCurrentContent && existingMachine && updatedMachine.daemonState !== null
+                && updatedMachine.daemonStateVersion === machineUpdate.daemonState?.version
+                && updatedMachine.daemonStateVersion > existingMachine.daemonStateVersion) {
+                updatedMachine.daemonStatePushCursor = params.updateSeq;
+            }
         }
     };
 

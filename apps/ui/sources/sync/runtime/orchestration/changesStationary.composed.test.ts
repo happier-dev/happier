@@ -1,6 +1,8 @@
+import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createConcurrentCacheNetworkHarness } from '@/dev/testkit/harness/concurrentCacheNetworkHarness';
 import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { subscribeHomeAccountChange } from './homeAccountChange';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -69,6 +71,76 @@ describe('stationary Account-change transport cost', () => {
             .map(({ url }) => url.searchParams.get('after'))).toContain(cursorBeforeFailure);
         expect(h.requests('/v1/machines/read-batch')).toHaveLength(1);
         expect(h.requests('/v1/artifacts')).toEqual([]);
+    });
+
+    it('does no Machine batch reads for applied daemon-state pushes and reads an uncovered Machine once', async () => {
+        const { sync } = await import('@/sync/sync');
+        const machineId = 'pushed-daemon-state';
+        const deploymentApp = { environmentId: 'environment', deploymentId: 'deployment', targetLinkId: 'link',
+            controller: { machineId: 'controller', installationId: 'controller-installation' } };
+        let row = { ...h.machine(h.homeA, machineId), deploymentApp };
+        let cursor = 0;
+        h.setMachines(h.homeA, [row]);
+        h.setResponder(async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v2/cursor') return Response.json({ cursor, changesFloor: 0 });
+            if (url.pathname === '/v2/changes') {
+                return Response.json({
+                    changes: Number(url.searchParams.get('after')) < cursor
+                        ? [{ cursor, kind: 'machine', entityId: machineId, changedAt: cursor }] : [],
+                    nextCursor: cursor,
+                });
+            }
+            if (url.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(
+                JSON.parse(String(init?.body)), id => id === machineId ? row : null);
+            return null;
+        });
+        await h.startFocused();
+        await sync.resumeSync('socket-reconnect');
+        const socket = h.network.socketBoundaries.find(boundary => boundary.serverUrl === h.homeA.serverUrl
+            && boundary.socket.onAny.mock.calls.length > 0);
+        expect(socket).toBeDefined();
+        const readMachine = () => h.storage.getState().machineRecordsByServerId[h.homeA.id]?.[machineId];
+        expect(readMachine()).toMatchObject({ storageMode: 'plain', daemonStateVersion: 1, deploymentApp });
+        h.httpRequests.length = 0;
+
+        const publish = async (deliverState: boolean) => {
+            cursor++;
+            const version = cursor + 1;
+            const state = { status: 'running', pid: version };
+            row = { ...row, daemonState: encodePlainMachineStoredContent(state), daemonStateVersion: version };
+            if (deliverState) {
+                socket!.trigger('update', { id: `state-${cursor}`, seq: cursor, createdAt: cursor,
+                    body: { t: 'update-machine', machineId,
+                        daemonState: { value: row.daemonState, version },
+                        keyBasis: { dataEncryptionKey: row.dataEncryptionKey, metadataVersion: row.metadataVersion, daemonStateVersion: version } } });
+                await vi.waitFor(() => expect(readMachine()).toMatchObject({ daemonStateVersion: version, daemonState: state }));
+            }
+            socket!.trigger('update', { id: `wake-${cursor}`, seq: cursor, createdAt: cursor,
+                body: { t: 'account-change', changeKinds: ['machine'], entityIds: [machineId] } });
+            await sync.resumeSync('changes-catch-up');
+            expect(readMachine()).toMatchObject({ daemonStateVersion: version, daemonState: state });
+        };
+
+        for (let i = 0; i < 3; i++) await publish(true);
+        expect.soft(h.requests('/v2/changes')).toHaveLength(3);
+        expect.soft(h.requests('/v1/machines/read-batch'), 'three complete pushes').toHaveLength(0);
+
+        // A newly opened Machine reader selects the current scoped row without a fetch.
+        expect(resolveServerScopedMachine(h.storage.getState(), h.homeA.id, machineId)).toMatchObject({
+            daemonStateVersion: 4, daemonState: { pid: 4 }, deploymentApp,
+        });
+
+        const priorBatches = h.requests('/v1/machines/read-batch').length;
+        await publish(false);
+        expect(h.requests('/v1/machines/read-batch').length - priorBatches).toBe(1);
+
+        // A collapsed Machine row can hide an earlier change to another field.
+        cursor++;
+        row = { ...row, deploymentApp: { ...deploymentApp, targetLinkId: 'new-link' } };
+        await publish(true);
+        expect(h.requests('/v1/machines/read-batch').length - priorBatches).toBe(2);
+        expect(readMachine()?.deploymentApp?.targetLinkId).toBe('new-link');
     });
 
     it('routes settings versions without inventory reads and retains exact Machine and unknown recovery reads', async () => {
