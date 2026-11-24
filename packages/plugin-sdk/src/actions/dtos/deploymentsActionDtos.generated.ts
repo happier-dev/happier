@@ -12315,10 +12315,20 @@ export type DeploymentsActionResultById = {
         };
         effectAttempted?: false | undefined;
     } | {
+        state: 'redeploy_required';
         ok: true;
         environmentId: string;
         revision: number;
-        state: 'redeploy_required';
+    } | {
+        state: 'wrangler_required';
+        destinations: {
+            name: string;
+            type: 'logs' | 'traces';
+            slug: string;
+        }[];
+        ok: true;
+        environmentId: string;
+        revision: number;
     };
     readonly "deployments.environments.controller.set": {
         error: 'quota_exceeded';
