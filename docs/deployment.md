@@ -1401,7 +1401,10 @@ First-target Environment creation and later own-server target linking offer
 `machines.managed.retention.update` to keep each managed allocation until
 explicit deletion. The existing reviewed-child admission presents the exact
 allocation revision and preserves `wakeOnAcceptedMessage`; preparing the offer
-does not change retention or Account defaults. `managedRetention: 'keep'`
+does not change retention or Account defaults. Home's saved enrollment
+inventory determines whether there is a managed allocation. A manually
+enrolled Machine has no allocation to change and links with the defaults
+without reaching a managed controller. `managedRetention: 'keep'`
 declines the offer and retains the current lifetime policy. An accepted
 until-delete change goes through the managed mutation owner, which returns
 `provider_unavailable` when that policy is unsupported. Finite-lifetime

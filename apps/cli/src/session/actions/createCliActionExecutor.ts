@@ -43,7 +43,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ManagedMachineActionIdV1Schema, isManagedRetainedControlInvocation } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveManagedControlControllerTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_LIST_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { actionStartTargetUnavailableV1, isAgentStartActionInvocationV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -141,7 +141,12 @@ export function createCliActionHost(params: CliActionExecutorParams):
     ? async request => {
       // A receiving daemon supplies transport, not a controller identity for an
       // Account-owned resource. Consume the retained controller selector here.
-      if (request.actionId === MANAGED_RETIRE_ACTION_ID_V1) return await accountManagedMachineAction(request);
+      // Home owns the enrolled allocation inventory, including the absence of
+      // an allocation for a manually enrolled Machine. Preparing retention
+      // reads that inventory even when this daemon has no managed controller.
+      if (request.actionId === MANAGED_LIST_ACTION_ID_V1 || request.actionId === MANAGED_RETIRE_ACTION_ID_V1) {
+        return await accountManagedMachineAction(request);
+      }
       if (isManagedRetainedControlInvocation(request.actionId, request.input)) {
         const controller = await resolveManagedControlControllerTarget({ actionId: request.actionId, rawInput: request.input,
           credentials: params.credentials?.token === params.token ? params.credentials : { token: params.token, encryption: null },

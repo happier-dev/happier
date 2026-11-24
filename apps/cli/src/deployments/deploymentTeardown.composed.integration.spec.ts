@@ -55,6 +55,8 @@ import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/appro
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, projectExternalActionExecutionResultV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
 import { createDaemonShutdownCancellationDomains } from '@/daemon/startup/shutdownCancellationDomains';
+import { createDaemonManagedMachineActionAdapter } from '@/daemon/startup/managedMachineActionAdapter';
+import { createEnrollmentJourneyProviderAuthority } from '@/machines/managed/enrollmentJourney.testkit';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -96,8 +98,9 @@ describe('deployment teardown through the canonical Action front door', () => {
 
         async function prepare(boundary?: DeploymentTeardownBoundary, resources: readonly DeploymentTeardownResourceV1[] = [],
             proofs: readonly DeploymentTeardownStepProofV1[] = [], options?: Readonly<{
-                runtime: OwnServerDeploymentRuntime; definition: DeploymentEnvironmentContentV1['definition'];
+                runtime?: OwnServerDeploymentRuntime; definition?: DeploymentEnvironmentContentV1['definition'];
                 productionReplay?: boolean;
+                managedMachineAction?: Parameters<typeof createS0DeploymentDaemonIngress>[0]['managedMachineAction'];
             }>) {
             await adoptServerProfileHomeConnectionDescriptor({
                 descriptor: { v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
@@ -127,7 +130,7 @@ describe('deployment teardown through the canonical Action front door', () => {
             if (!source.ok) throw new Error(source.error);
             const sample = createDeploymentEnvironmentV1();
             if (sample.content.t !== 'plain') throw new Error('Opened owner fixture required');
-            if (options) sample.content.v.definition = options.definition;
+            if (options?.definition) sample.content.v.definition = options.definition;
             let nativeEffects = 0;
             const createDeploymentActionDeps: NonNullable<Parameters<typeof createS0DeploymentDaemonIngress>[0]['createDeploymentActionDeps']> = requester => createDaemonDeploymentActionDeps({ credentials: requester?.credentials ?? credentials, serverId: home.serverId,
                 resolveRequesterIdentity,
@@ -136,8 +139,9 @@ describe('deployment teardown through the canonical Action front door', () => {
                 ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
                 ...(boundary ? { teardownBoundary: boundary } : {}),
                 runtime: options?.runtime ?? { async acquire() { nativeEffects++; throw new Error('No teardown role is advertised'); } } });
-            let ingress = await createS0DeploymentDaemonIngress({ home, createDeploymentActionDeps,
-                resolveDeploymentRequesterIdentity: resolveRequesterIdentity });
+            const ingressOptions = { home, createDeploymentActionDeps, resolveDeploymentRequesterIdentity: resolveRequesterIdentity,
+                managedMachineAction: options?.managedMachineAction };
+            let ingress = await createS0DeploymentDaemonIngress(ingressOptions);
             onTestFinished(() => ingress.close());
             const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
                 machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
@@ -226,7 +230,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 expectedRevision: environment.revision, requestKey: randomUUID(), role: 'runtime', targetId: 'own-server',
                 machines: [{ machineId: home.machineId, installationId: home.installationId }],
                 ...await prepared('deployment-target-link.v1', {}) });
-            expect(linked.ok).toBe(true);
+            expect(linked, JSON.stringify(linked)).toMatchObject({ ok: true });
             if (!linked.ok) throw new Error(linked.errorCode);
             const link = DeploymentTargetLinkResultV1Schema.parse(linked.result);
             if (!link.ok) throw new Error(link.error);
@@ -252,8 +256,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 retainedOperation: (operationId: string) => ingress.actionOperations.store.get(
                     { accountId: home.accountId, machineId: home.machineId }, operationId),
                 closeIngress: () => ingress.close(),
-                reload: async () => { await ingress.close(); ingress = await createS0DeploymentDaemonIngress({ home, createDeploymentActionDeps,
-                    resolveDeploymentRequesterIdentity: resolveRequesterIdentity }); } };
+                reload: async () => { await ingress.close(); ingress = await createS0DeploymentDaemonIngress(ingressOptions); } };
         }
 
         it.skipIf(process.platform === 'win32').each(['never-deployed', 'admitted-deployment'] as const)(
@@ -915,6 +918,23 @@ describe('deployment teardown through the canonical Action front door', () => {
                 await rm(root, { recursive: true, force: true });
             }
         }), 180_000);
+
+        it('publishes an own-server target with default retention on a manually enrolled Machine without a managed controller', async () => {
+            const resolveController = vi.fn(async () => null);
+            const managedMachineAction = createDaemonManagedMachineActionAdapter({
+                credentials: { token: home.token, encryption: home.encryption },
+                machineId: home.machineId, serverId: home.serverId, serverBaseUrl: home.baseUrl,
+                installationIdentity: { installationId: home.installationId, privateKey: home.keys.secretKey },
+                managedProviderOperationAuthority: createEnrollmentJourneyProviderAuthority(home.baseDir),
+                resolveCurrentMachineExecutionOriginContext: resolveController,
+                acquireRuntimeRegistryLease: unmounted('managed controller runtime'),
+            });
+            const { invoke, environment, link } = await prepare(undefined, [], [], { managedMachineAction });
+            expect(await invoke('deployments.environments.get', { serverId: home.serverId, environmentId: environment.environmentId }))
+                .toMatchObject({ ok: true, result: { environment: { runtimeTargetLinkId: link.targetLinkId },
+                    targetLinks: [{ id: link.targetLinkId, machines: [home.machineId] }] } });
+            expect(resolveController).not.toHaveBeenCalled();
+        });
 
         it('refuses an unadvertised native teardown before allocating a receipt or changing link custody', async () => {
             const { invoke, input, environment, link, nativeEffects } = await prepare();
