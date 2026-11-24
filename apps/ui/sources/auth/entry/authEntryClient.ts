@@ -29,9 +29,8 @@ type AuthEntryTransportInput = Readonly<{
      *
      * The credential is never ambient: it is resolved by the canonical
      * server-Account request authority, which also refuses to answer if the
-     * resolved Account is not the requested one. Omitting the scope — or being
-     * unable to resolve that authority — asks anonymously, which is the same
-     * answer the Home gives an unauthenticated visitor.
+     * resolved Account is not the requested one. Omit the scope for a public
+     * entry read. An unresolved exact Account request is unavailable.
      */
     accountScope?: ServerAccountScope;
     signal?: AbortSignal;
@@ -78,6 +77,7 @@ export async function fetchAuthEntry(
         try {
             return await runWithServerRequestAuthorityForServerAccountScope({
                 scope: input.accountScope,
+                ...(input.signal ? { signal: input.signal } : {}),
                 // An entry projection is always explicitly addressed. Falling back
                 // to the focused Home would ask a different Home about this Team.
                 activeRequest: async () => {

@@ -18,6 +18,7 @@ import { sync } from '@/sync/sync';
 import { HappyError } from '@/utils/errors/errors';
 import { setAccountIdentityShowOnProfile } from '@/sync/api/account/apiIdentity';
 import { storage } from '@/sync/domains/state/storageStore';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { authProviderRegistry, getAuthProvider, normalizeProviderId } from '@/auth/providers/registry';
 import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
@@ -130,10 +131,9 @@ function providerDescriptorsFrom(methods: AuthenticationMethodCapabilities['cata
 }
 
 /**
- * The last live catalog this client settled, for one Home. The catalog is read into the list's own state, which
- * ends when the page closes; without this, every return to Account restarted from nothing and redrew its
- * connections on arrival. Memory-only and one Home at a time: a new read for the Home replaces it, an
- * authoritative "no entry" clears it, and a failed read leaves it.
+ * Retain the last live catalog for its exact Home and Account, or for a public visit. The list's local state
+ * ends when the page closes. Reusing the settled catalog keeps connections visible on a return visit while
+ * its new read runs. The single retained answer is memory-only.
  */
 let lastSettledCatalog: Readonly<{ targetKey: string; catalog: ProviderCatalogState }> | null = null;
 
@@ -347,9 +347,11 @@ function ProviderIdentityItem(props: Readonly<{
 
 export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsProps) => {
     const activeServer = useActiveServerSnapshot();
+    const signedIn = props.credentials !== null;
+    const accountScope = useActiveServerAccountScope(signedIn ? activeServer.serverId : null);
     const featuresSnapshot = useServerFeaturesRuntimeSnapshot();
-    const targetKey = `${activeServer.serverId}\u0000${activeServer.serverUrl}`;
-    // A return visit starts from the Home's last settled live catalog; the read below refreshes it in place.
+    const targetKey = JSON.stringify([activeServer.serverId, activeServer.serverUrl, signedIn, accountScope?.accountId ?? null]);
+    // A return visit starts from the Account's last settled live catalog; the read below refreshes it in place.
     const [catalogSnapshot, setCatalogSnapshot] = React.useState<ProviderCatalogSnapshot>(() => {
         const settled = settledCatalogFor(targetKey);
         return settled
@@ -383,6 +385,8 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
         : 0;
 
     React.useEffect(() => {
+        // A signed-in visit waits for the applied Account scope instead of dispatching a public read.
+        if (signedIn && !accountScope) return;
         const abortController = new AbortController();
         const settle = (snapshot: ProviderCatalogSnapshot) => {
             lastSettledCatalog = { targetKey: snapshot.targetKey, catalog: snapshot.catalog };
@@ -410,7 +414,10 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
                 requestStatus: 'failed',
             }));
         };
-        void fetchHomeAuthEntry({ signal: abortController.signal })
+        void fetchHomeAuthEntry({
+            ...(accountScope ? { accountScope } : {}),
+            signal: abortController.signal,
+        })
             .then((result) => {
                 if (abortController.signal.aborted) return;
                 if (result.kind === 'unsupported') {
@@ -431,7 +438,7 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
             })
             .catch(() => fail(true));
         return () => abortController.abort();
-    }, [activeServer.generation, targetKey, retryAttempt]);
+    }, [accountScope, activeServer.generation, targetKey, retryAttempt, signedIn]);
 
     const rows = React.useMemo(() => {
         const byId = new Map<string, Readonly<{

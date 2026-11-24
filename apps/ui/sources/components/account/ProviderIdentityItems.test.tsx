@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen as renderTestkitScreen, standardCleanup } from '@/dev/testkit';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { installAccountCommonModuleMocks } from './accountTestHelpers';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { AuthEntryProjectionV1Schema, type AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
@@ -52,6 +56,9 @@ installAccountCommonModuleMocks({
     },
 });
 
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+
 vi.mock('expo-image', () => ({
     Image: 'Image',
 }));
@@ -80,18 +87,56 @@ function inlineActionProps(node: React.ReactNode) {
 
 const { Item } = await import('@/components/ui/lists/Item');
 await import('@/sync/syncEngine');
-const { ProviderIdentityItems } = await import('./ProviderIdentityItems');
+const { ProviderIdentityItems, resetProviderCatalogForTests } = await import('./ProviderIdentityItems');
 const { storage } = await import('@/sync/domains/state/storageStore');
-const { getActiveServerSnapshot, upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { resetServerFeaturesClientForTests, getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+const accountId = 'identity-test-account';
+const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
+
+function restoreHome(serverUrl: string, additionalRequestOrigins: readonly string[] = []) {
+    return restoreServerAccountForTest({
+        serverUrl,
+        credentials,
+        additionalRequestOrigins,
+        request: async (input, init) => {
+            const url = new URL(String(input));
+            const path = url.pathname;
+            if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: accountId }));
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/auth/entry') {
+                const result = await shared.readAuthEntryReply({ signal: init?.signal });
+                return result.status === 200
+                    ? Response.json(AuthEntryProjectionV1Schema.parse(result.body))
+                    : Response.json({}, { status: result.status });
+            }
+            if (path === '/v1/features' || path === '/v1/features/authenticated') {
+                return Response.json(FeaturesResponseSchema.parse(shared.featuresResponse.current));
+            }
+            if (path.startsWith('/v1/connect/external/')) {
+                shared.pendingConnectAtRequest = await TokenStorage.getPendingExternalConnect();
+                // Current connect route failures use the global server error projection.
+                if (shared.connectFailure) return Response.json({
+                    error: 'Internal Server Error',
+                    message: 'An unexpected error occurred',
+                    statusCode: 500,
+                }, { status: 500 });
+                return Response.json({ url: path.includes('/github/') ? 'javascript:alert(1)' : 'https://auth.example.test/connect' });
+            }
+            return createEmptyAccountBootstrapHttpResponse(path + url.search, init);
+        },
+    });
+}
 
 describe('ProviderIdentityItems', () => {
     const initialStorageState = storage.getState();
+    const connections: Awaited<ReturnType<typeof restoreHome>>[] = [];
 
     beforeEach(async () => {
         mountedScreen = undefined;
+        resetProviderCatalogForTests();
         shared.canOpenURL.mockClear();
         shared.openURL.mockClear();
         shared.routerPush.mockClear();
@@ -101,40 +146,14 @@ describe('ProviderIdentityItems', () => {
         shared.featuresResponse.current = createRootLayoutFeaturesResponse();
         shared.connectFailure = false;
         shared.pendingConnectAtRequest = null;
-        setRuntimeFetch(async (input, init) => {
-            const path = new URL(String(input)).pathname;
-            if (path === '/health') return Response.json({ status: 'ok' });
-            if (path === '/v1/auth/ping') return Response.json({});
-            if (path === '/v1/auth/entry') {
-                const result = await shared.readAuthEntryReply({ signal: init?.signal });
-                return result.status === 200
-                    ? Response.json(AuthEntryProjectionV1Schema.parse(result.body))
-                    : Response.json({}, { status: result.status });
-            }
-            if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse(shared.featuresResponse.current));
-            if (path.startsWith('/v1/connect/external/')) {
-                shared.pendingConnectAtRequest = await TokenStorage.getPendingExternalConnect();
-                // Current connect route failures use the global server error projection,
-                // not a provider-specific code manufactured by an internal catalog mock.
-                if (shared.connectFailure) return Response.json({
-                    error: 'Internal Server Error',
-                    message: 'An unexpected error occurred',
-                    statusCode: 500,
-                }, { status: 500 });
-                return Response.json({ url: path.includes('/github/') ? 'javascript:alert(1)' : 'https://auth.example.test/connect' });
-            }
-            throw new Error(`Unexpected identity test request: ${path}`);
-        });
-        await upsertAndActivateServer({ serverUrl: 'https://home-a.example.test', scope: 'tab' });
         resetServerFeaturesClientForTests();
-        storage.setState({ profile: profileDefaults });
+        connections.push(await restoreHome('https://home-a.example.test', ['https://home-b.example.test']));
     });
 
     afterEach(async () => {
         vi.useRealTimers();
         await standardCleanup();
-        await disconnectActiveServerConnection();
-        resetRuntimeFetch();
+        while (connections.length > 0) await connections.pop()?.dispose();
         resetServerFeaturesClientForTests();
         storage.setState(initialStorageState, true);
     });
@@ -150,7 +169,7 @@ describe('ProviderIdentityItems', () => {
                         profileUrl: null, showOnProfile: true,
                     }],
                 }}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -178,7 +197,7 @@ describe('ProviderIdentityItems', () => {
                         profileUrl: null, showOnProfile: true,
                     }],
                 }}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -215,7 +234,7 @@ describe('ProviderIdentityItems', () => {
                         publishProfileReason: null,
                     }],
                 }}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -254,22 +273,15 @@ describe('ProviderIdentityItems', () => {
         const element = (
             <ProviderIdentityItems
                 profile={profileDefaults}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />
         );
-        const screen = await renderScreen(element);
+        await renderScreen(element);
+        await vi.waitFor(() => expect(shared.readAuthEntryReply).toHaveBeenCalledTimes(1));
         await act(async () => {
-            await upsertAndActivateServer({ serverUrl: 'https://home-b.example.test', scope: 'tab' });
-            await screen.update(
-            <ProviderIdentityItems
-                profile={profileDefaults}
-                credentials={{ token: 't', secret: 's' }}
-                applyProfile={() => {}}
-                returnTo="/settings/account"
-            />,
-            );
+            connections.push(await restoreHome('https://home-b.example.test'));
         });
         await vi.waitFor(() => expect(itemProps().some((p) => p.title === 'Provider B')).toBe(true));
 
@@ -300,7 +312,7 @@ describe('ProviderIdentityItems', () => {
         await renderScreen(
             <ProviderIdentityItems
                 profile={profileDefaults}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -347,7 +359,7 @@ describe('ProviderIdentityItems', () => {
         await renderScreen(
             <ProviderIdentityItems
                 profile={profileDefaults}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -387,7 +399,7 @@ describe('ProviderIdentityItems', () => {
                         showOnProfile: false,
                     }],
                 }}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -423,7 +435,7 @@ describe('ProviderIdentityItems', () => {
         await renderScreen(
             <ProviderIdentityItems
                 profile={profileDefaults}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
@@ -475,7 +487,7 @@ describe('ProviderIdentityItems', () => {
         await renderScreen(
             <ProviderIdentityItems
                 profile={profileDefaults}
-                credentials={{ token: 't', secret: 's' }}
+                credentials={credentials}
                 applyProfile={() => {}}
                 returnTo="/settings/account"
             />,
