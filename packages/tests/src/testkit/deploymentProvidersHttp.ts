@@ -18,11 +18,16 @@ undici.fetch = (input, init) => {
   return nativeFetch(input, providerDispatcher && providerHosts.has(address.hostname) ? { ...init, dispatcher: providerDispatcher } : init);
 };
 
+type ManagedSupabaseRead = Readonly<{ branchRef: string; sql: string; parameters: readonly unknown[] }>;
+
 /** Constructed official REST vectors. Only provider HTTPS crosses this boundary;
  * Home HTTP, Action admission, credential custody and plugin execution stay real.
  * Contracts: Vercel REST v2/v9/v11/v13, Cloudflare v4 Workers, Neon API v2,
  * as characterized by the bundled providers' HTTP contract tests. */
-export async function startDeploymentProvidersHttp({ seedManagedProjects = false } = {}) {
+export async function startDeploymentProvidersHttp({ seedManagedProjects = false, readManagedSupabase }: {
+  seedManagedProjects?: boolean;
+  readManagedSupabase?: (statement: ManagedSupabaseRead) => Promise<readonly Record<string, unknown>[] | undefined>;
+} = {}) {
   const vercel = { teamId: 'team_journey', projectId: 'prj_journey', deploymentId: 'dpl_journey', name: 'journey-vercel' };
   const cloudflare = { accountId: 'a'.repeat(32), tokenId: 'b'.repeat(32), projectId: 'c'.repeat(32), deploymentId: 'journey-build', name: 'journey-worker',
     triggerUuid: 'journey-trigger', versionId: 'journey-version', zoneId: 'e'.repeat(32) };
@@ -44,7 +49,7 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
   let rejectNextCloudflareDeployment = false;
   const proxy = await startConnectedAccountTlsRecordingProxy({
     additionalDnsNames: [...providerHosts],
-    responseForRequest(request) {
+    async responseForRequest(request) {
       const url = new URL(request.path, `https://${request.connectTarget}`);
       const method = request.method;
       const path = url.pathname;
@@ -188,12 +193,16 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
           if (method === 'POST' && path === `/v1/projects/${branch.supabaseRef}/database/query/read-only`) {
             // The external fixture models the Management API query body.
             const body = JSON.parse(request.body) as { query: string; parameters?: unknown[] };
-            if (body.query === 'SELECT current_database() AS database') return ok([{ database: 'postgres' }]);
-            if (rejectNextManagedQuery === 'supabase') { rejectNextManagedQuery = undefined; return ok({ message: 'Fixture throttled' }, 429); }
-            if (body.query.includes('FROM pg_catalog.pg_namespace')) {
-              if (!Array.isArray(body.parameters)) throw new Error('Supabase catalog query omitted the positional parameter array');
-              return ok([{ nspname: 'public' }, { nspname: 'second' }]);
+            const selectsDatabase = body.query === 'SELECT current_database() AS database';
+            if (!selectsDatabase && rejectNextManagedQuery === 'supabase') {
+              rejectNextManagedQuery = undefined;
+              return ok({ message: 'Fixture throttled' }, 429);
             }
+            if (!Array.isArray(body.parameters)) throw new Error('Supabase query omitted the positional parameter array');
+            const rows = await readManagedSupabase?.({ branchRef: branch.supabaseRef, sql: body.query, parameters: body.parameters });
+            if (rows !== undefined) return ok(rows);
+            if (selectsDatabase) return ok([{ database: 'postgres' }]);
+            if (body.query.includes('FROM pg_catalog.pg_namespace')) return ok([{ nspname: 'public' }, { nspname: 'second' }]);
             if (body.query.includes('FROM pg_catalog.pg_class')) {
               return ok([{ relkind: 'r', size_bytes: '30', relname: 'dbw_managed_sentinel', estimated_rows: '1',
                 relation_bytes: '10', table_bytes: '20', index_bytes: '10' }]);

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { beforeAll, expect, it } from 'vitest';
 import nacl from 'tweetnacl';
@@ -62,7 +63,29 @@ beforeAll(async () => {
 // A failure before those positive controls is a setup blocker, not valid RED.
 it.each(providers)('F4 selects %s preview/production without a neighboring fallback', async provider => {
   const testDir = await mkdtemp(join(tmpdir(), `happier-dbw-${provider}-`));
-  const boundary = await startDeploymentProvidersHttp({ seedManagedProjects: true });
+  const readers = new Map<string, string>();
+  // Use the server's existing PostgreSQL driver at the fixture's wire boundary.
+  const { Client } = createRequire(new URL('../../../../apps/server/package.json', import.meta.url))('pg') as {
+    Client: new (options: { connectionString: string; types: { getTypeParser: () => (value: string) => string } }) => {
+      connect(): Promise<void>;
+      query(sql: string, parameters?: readonly unknown[]): Promise<{ rows: Record<string, string | null>[] }>;
+      end(): Promise<void>;
+    };
+  };
+  const providerBoundary = {
+    seedManagedProjects: true,
+    async readManagedSupabase({ branchRef, sql, parameters }: { branchRef: string; sql: string; parameters: readonly unknown[] }) {
+      const connectionString = readers.get(branchRef);
+      if (!connectionString) return undefined;
+      const client = new Client({ connectionString, types: { getTypeParser: () => value => value } });
+      try {
+        await client.connect();
+        await client.query('BEGIN READ ONLY');
+        return (await client.query(sql, parameters)).rows;
+      } finally { await client.end(); }
+    },
+  };
+  const boundary = await startDeploymentProvidersHttp(providerBoundary);
   let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchFixture>> | undefined;
   try {
     fixture = await startDatabaseWorkbenchFixture({ testDir, serverEnv: { ...boundary.env, NODE_ENV: process.env.NODE_ENV, HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
@@ -365,6 +388,28 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         expect(written).toMatchObject({ ok: false, errorCode: 'write_connection_setup_required' });
         expect(boundary.entries().slice(beforeWrite).some(entry => entry.method === 'POST'
           && (entry.path.includes('/database/query') || entry.path === '/sql'))).toBe(false);
+        if (provider === 'supabase') {
+          const reader = new URL(direct);
+          reader.username = `dbw_read_${branch.name}`;
+          reader.password = randomUUID();
+          try {
+            await fixture.postgres.sql(database, `CREATE ROLE ${reader.username} LOGIN PASSWORD '${reader.password}';
+              GRANT CONNECT ON DATABASE ${database} TO ${reader.username};
+              GRANT USAGE ON SCHEMA public TO ${reader.username};
+              GRANT SELECT ON TABLE ${table} TO ${reader.username};`);
+          } catch {
+            throw new Error('F4 could not configure the native catalogue reader');
+          }
+          readers.set(branch.supabaseRef, reader.href);
+          try {
+            const relations = () => semantic(DATABASE_RELATIONS_LIST_ACTION_ID_V1,
+              { operation: 'relations.list', target, schema: 'public', search: table, page: { rows: 10 } }, 'person');
+            expect(await relations()).toMatchObject({ ok: true, operation: 'relations.list',
+              relations: [{ relation: { schema: 'public', name: table }, kind: 'table' }] });
+            boundary.rejectNextManagedQuery(provider);
+            expect(await relations()).toMatchObject({ ok: false, status: 'failed', code: 'provider_http_429' });
+          } finally { readers.delete(branch.supabaseRef); }
+        }
       }
       boundary.rejectNextManagedQuery(provider);
       const failed = await read(sql);
