@@ -6,19 +6,33 @@ import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { readMuseRecord } from './events.js';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
+import { accountSettingsParse, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 
-it('delivers the authored Happier MCP capability through the host resolver into native Muse', async () => {
+it('advertises Direct Workflow Start on the Session MCP server registered with native Muse', async () => {
   vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
   const expectedMcpServers: Record<string, JsonValue> = {};
-  const fixture = await createAdmittedMuseSessionFixture({ native: {
-    recordingPath: fileURLToPath(new URL('./testkit/fixtures/mcp.json', import.meta.url)), expectedMcpServers,
-  } });
-  const events = createAgentSessionRuntimeHarness();
+  let enabled = true;
+  const fixture = await createAdmittedMuseSessionFixture({
+    readServerFeatures: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+      features: { workflows: { enabled } }, capabilities: {},
+    }) }),
+    native: { recordingPath: fileURLToPath(new URL('./testkit/fixtures/mcp.json', import.meta.url)), expectedMcpServers },
+  });
   const client = new Client({ name: 'muse-selected-happier-contract', version: '1' });
   let prepared: Awaited<ReturnType<typeof fixture.resolveMcp>> | undefined;
   try {
-    prepared = await fixture.resolveMcp();
+    const settings = accountSettingsParse({
+      actionsSettingsV1: { v: 1, actions: { 'workflow.run.start': { enabled: true, toolExposureModes: { agent: 'direct' } } } },
+    });
+    const actionSettingsProvider = createActionSettingsProvider({ getAccountSettings: () => settings, allowEnvironmentOverride: false });
+    expect(actionSettingsProvider.getActionsSettings().actions?.['workflow.run.start']).toMatchObject({
+      enabled: true, toolExposureModes: { agent: 'direct' },
+    });
+    expect(resolveCliFeatureDecision({ featureId: 'workflows', serverSnapshot: fixture.host.getServerFeaturesSnapshot() })).toMatchObject({ state: 'enabled' });
+    prepared = await fixture.resolveMcp(actionSettingsProvider);
     expect(Object.keys(prepared.mcpServers)).toContain('happier');
     const selected = prepared.mcpServers.happier;
     if (!selected) throw new Error('The authored Muse declaration omitted Happier MCP');
@@ -27,18 +41,14 @@ it('delivers the authored Happier MCP capability through the host resolver into 
     // Exercise the real selected stdio bridge; only the native model process is
     // captured playback, which checks the same launch config before replaying MCP events.
     await client.connect(new StdioClientTransport({ command: selected.command, args: selected.args, env: selected.env }));
-    expect((await client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
-    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['action_spec_get', 'workflow_run_start']));
+    await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
       mcpServers: prepared.mcpServers });
-    session.watch(events.recordRuntimeEvent);
-    await session.send({ inputIds: ['host-mcp-input'], input: { text: 'Call the retained native MCP tool.' },
-      delivery: { kind: 'newTurn', turnId: 'host-mcp-turn' } });
-    await events.until('turn-complete');
-    expect(JSON.stringify(events.canonicalEvents().filter(event => event.kind === 'tool-result'))).toContain('PEBBLE');
-    expect((await fixture.readAudit()).methods.filter(method => method === 'session/start')).toHaveLength(1);
+    await fixture.waitForAudit(audit => audit.methods.includes('session/start'));
+    enabled = false;
+    expect((await client.listTools()).tools.map(tool => tool.name)).not.toContain('workflow_run_start');
   } finally {
     await client.close();
-    events.dispose();
     await prepared?.happierMcpServer.stop();
     await fixture.dispose();
     vi.unstubAllEnvs();

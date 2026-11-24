@@ -719,7 +719,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
 
       await expect(handler.handleToolCall(`remove-${permissionMode}`, 'happier_action_execute', {
         actionId: 'session.board.item.remove',
-      })).resolves.toEqual({ decision: 'denied' });
+      })).resolves.toMatchObject({ decision: 'denied', rationale: expect.stringContaining(permissionMode) });
       expect(session.agentState.requests[`remove-${permissionMode}`]).toBeFalsy();
 
       await expect(handler.handleToolCall(`read-${permissionMode}`, 'happier_action_execute', {
@@ -728,6 +728,33 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       expect(session.agentState.requests[`read-${permissionMode}`]).toBeFalsy();
     },
   );
+
+  it('sends the read-only Action refusal with the exact offered native abort', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(
+      session as unknown as ConstructorParameters<typeof ProviderEnforcedPermissionHandler>[0],
+      { logPrefix: '[Test]' },
+    );
+    handler.setPermissionMode('read-only');
+    const acknowledge = vi.fn(async () => {});
+    const result = await handler.handleToolCall('workflow-create', 'mcp__happier__action_execute', {
+      actionId: 'workflow.definition.create',
+    }, {
+      nativeChoices: { requirementId: 'native-workflow', source: 'native_mcp', choices: [
+        { id: 'allow_once', label: 'Allow once', scope: 'once', decision: 'approved', response: { approved: true } },
+        { id: 'abort', label: 'Reject', scope: 'once', decision: 'abort', allowsFeedback: true, response: { approved: false } },
+      ] },
+      acknowledgeDecisionApplication: acknowledge,
+    });
+    expect(session.agentState.requests['workflow-create']).toBeUndefined();
+    expect(session.agentState.completedRequests['workflow-create']).toMatchObject({ status: 'denied', decision: 'abort' });
+    expect(result).toMatchObject({ decision: 'abort', nativeChoice: {
+      requirementId: 'native-workflow', choiceId: 'abort',
+      feedback: expect.stringMatching(/^permission_exceeds_ceiling: .*read-only/),
+    } });
+    expect(session.agentState.completedRequests['workflow-create'].reason).toBe(result.nativeChoice?.feedback);
+    expect(acknowledge).toHaveBeenCalledWith(result);
+  });
 
   it('auto-approves the policy-gated meta tool without publishing a native prompt', async () => {
     const session = new FakeSession();

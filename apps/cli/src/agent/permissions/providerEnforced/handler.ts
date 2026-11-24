@@ -274,7 +274,10 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       // configurable confirmation. The provider layer only applies the
       // effective permission-mode ceiling before delegating to that owner.
       return resolveNativePermissionImmediateDecision(
-        { decision: happierActionPermission.decision }, context?.nativeChoices, happierActionPermission);
+        happierActionPermission.decision === 'denied'
+          ? { decision: 'denied', rationale: `permission_exceeds_ceiling: This Action is unavailable in ${permissionMode} mode.` }
+          : { decision: 'approved' },
+        context?.nativeChoices, happierActionPermission);
     }
     if (mcpTool) {
       return resolveNativePermissionImmediateDecision(

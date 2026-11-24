@@ -106,7 +106,15 @@ export function resolveNativePermissionImmediateDecision<T extends PermissionRes
     if (!nativeChoices || !decision || decision.nativeChoice) return decision;
     if (decision.decision === 'denied' || decision.decision === 'abort') {
         const answer = resolveMediatedNativePermissionChoice(nativeChoices, decision.decision === 'abort' ? 'abort' : 'deny', 'request');
-        return answer ? resolveNativePermissionChoice(nativeChoices, answer)?.result ?? decision : decision;
+        const selected = answer ? resolveNativePermissionChoice(nativeChoices, answer) : null;
+        if (!selected) return decision;
+        if (decision.rationale === undefined) return selected.result;
+        return {
+            ...selected.result,
+            rationale: decision.rationale,
+            ...(selected.choice.allowsFeedback === true
+                ? { nativeChoice: { ...selected.answer, feedback: decision.rationale } } : {}),
+        };
     }
     if (!policyOwner) return null;
     const answer = resolveMediatedNativePermissionChoice(nativeChoices, 'allow',

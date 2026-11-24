@@ -168,6 +168,7 @@ export interface PendingRequest {
  */
 export interface PermissionResult {
     nativeChoice?: NativePermissionChoiceAnswerV1;
+    rationale?: string;
     mode?: SessionPermissionRespondRpcParamsV1['mode'];
     allowedTools?: readonly string[];
     updatedPermissions?: unknown;
@@ -3972,6 +3973,7 @@ export abstract class BasePermissionHandler {
         options?: Readonly<{
             owner?: PermissionRequestOwner | null;
             source?: string | null;
+            reason?: string;
             isCurrent?: () => boolean;
         }>,
     ): Promise<boolean> {
@@ -3987,6 +3989,7 @@ export abstract class BasePermissionHandler {
             status: decision === 'denied' || decision === 'abort' ? 'denied' : 'approved',
             decision,
             allowedTools,
+            ...(options?.reason !== undefined ? { reason: options.reason } : {}),
             ...(source ? { source } : {}),
             ...(owner ? { owner } : {}),
             ...(options?.isCurrent ? { isCurrent: options.isCurrent } : {}),
@@ -4025,6 +4028,7 @@ export abstract class BasePermissionHandler {
                     {
                         ...(params.options?.owner ? { owner: params.options.owner } : {}),
                         ...(params.options?.source ? { source: params.options.source } : {}),
+                        ...(candidate.rationale !== undefined ? { reason: candidate.rationale } : {}),
                         isCurrent: () => {
                             const current = params.resolve();
                             candidateIsCurrent = current !== null && isDeepStrictEqual(current, candidate);

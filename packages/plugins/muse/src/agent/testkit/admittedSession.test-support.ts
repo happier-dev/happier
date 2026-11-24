@@ -47,6 +47,7 @@ export const MUSE_SESSION_FIXTURE_MACHINE_ID = 'muse-fixture-machine';
 /** Real admitted host owners; only the native process and remote transport are test boundaries. */
 export async function createAdmittedMuseSessionFixture(options: Readonly<{
   native?: Parameters<typeof createMuseMspProcessFixture>[0];
+  readServerFeatures?: ApiSessionClientOptions['getServerFeaturesSnapshot'];
   cwd?: string;
   systemRecords?: boolean;
   /** Real credential/usage HTTP clients consume this Home response. */
@@ -240,6 +241,7 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
     const selectedFactoryLaunchCount = launched;
     host = new ApiSessionClient(token, { ...initialSession, metadataLayoutVersion: 1,
       ownerMetadata: tuple.ownerMetadataValue, ownerMetadataEnvelope: tuple.ownerMetadata }, {
+      ...(options.readServerFeatures ? { getServerFeaturesSnapshot: options.readServerFeatures } : {}),
       localMachineId: MUSE_SESSION_FIXTURE_MACHINE_ID,
       initialRegisteredSessionStateFieldMutations: [createInitialHostRuntimeActivityMutation({ sessionId,
         agentRuntimeApplicability: 'supported' })],
@@ -324,9 +326,10 @@ export async function createAdmittedMuseSessionFixture(options: Readonly<{
       admission: { untouchedHasMuse, untouchedLaunchCount, selectedFactoryLaunchCount },
       get launchCount() { return launched; },
       run<T>(operation: () => T): T { return runWithServerHttpBaseUrl(serverUrl, operation); },
-      async resolveMcp() {
+      async resolveMcp(actionsSettingsProvider?: Parameters<typeof resolveRunnerMcpServers>[0]['actionsSettingsProvider']) {
         return await runWithServerHttpBaseUrl(serverUrl, () => resolveRunnerMcpServers({ session: host!, credentials,
           accountCredentials: null, accountSettings: null, machineId: MUSE_SESSION_FIXTURE_MACHINE_ID, directory: cwd,
+          ...(actionsSettingsProvider ? { actionsSettingsProvider } : {}),
           pluginRuntimeRegistryLease: selectedRegistry.lease,
           includeHappierMcpServer: resolveAgentToolsDelivery(agentId, selectedRegistry.lease.registry.contributes) === 'native_mcp',
         }));
