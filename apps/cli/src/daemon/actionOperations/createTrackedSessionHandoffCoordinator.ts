@@ -493,7 +493,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
           const childAuthorization = await prepareExternalActionHandoffContinuationAuthorization({ authorization: custody.acceptedHandoffAuthorization,
             handoffId, actionId, input: request, machineId, sourceMachineId: signer.machineId,
             sourceInstallationId: signer.installationId, privateKey: signer.privateKey, serverHttpBaseUrl: boundary.serverHttpBaseUrl,
-            ...(credentials.encryption?.type === 'dataKey' ? { material: credentials.encryption } : {}), ...(signal ? { signal } : {}) });
+            ...(credentials.encryption ? { material: credentials.encryption } : {}), ...(signal ? { signal } : {}) });
           const authorization = childAuthorization && requester
             ? await requester.projectExternalActionAuthorization(childAuthorization,
                 childAuthorization.binding.serverIdentityId, signal) : childAuthorization;

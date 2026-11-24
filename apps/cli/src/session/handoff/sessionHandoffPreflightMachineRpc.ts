@@ -70,7 +70,8 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
         const child = await prepareExternalActionHandoffPreflightAuthorization({ authorization: root, input: request,
           machineId: input.machineId, sourceMachineId: signer.machineId, sourceInstallationId: signer.installationId,
           privateKey: signer.privateKey, serverHttpBaseUrl: boundary.serverHttpBaseUrl,
-          ...(input.credentials.encryption?.type === 'dataKey' ? { material: input.credentials.encryption } : {}),
+          // The requester's own Account material seals the child request.
+          ...(input.credentials.encryption ? { material: input.credentials.encryption } : {}),
           ...(signal ? { signal } : {}),
         });
         const authorization = child && requester && input.method !== RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET

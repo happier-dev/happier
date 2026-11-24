@@ -2944,7 +2944,8 @@ export async function prepareExternalActionHandoffContinuationAuthorization(inpu
   sourceInstallationId: string;
   privateKey: ExternalActionMachineRequestSigningKey;
   serverHttpBaseUrl: string;
-  material?: Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
+  /** The requester Account's own material, in either stored form. */
+  material?: AccountScopedCryptoMaterial;
   signal?: AbortSignal;
 }>): Promise<ExternalActionExecutionAuthorizationV1 | null> {
   return prepareExternalActionHandoffAuthorization({ ...input, phase: 'continuation' });
@@ -2973,13 +2974,16 @@ async function prepareExternalActionHandoffAuthorization(input: Omit<
     const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
     const handoffAdmission = { sessionId: admission.sessionId, sourceMachineId: admission.sourceMachineId,
       targetMachineId: admission.targetMachineId };
-    if (binding.accountEncryptionMode === 'e2ee' && !input.material) return null;
-    const envelope = binding.accountEncryptionMode === 'e2ee' && input.material
+    // The requester's stored recovery secret and data key name the same Account content key.
+    const material = input.material?.type === 'legacy'
+      ? { type: 'dataKey' as const, machineKey: resolveAccountContentSecretKey(input.material) } : input.material;
+    if (binding.accountEncryptionMode === 'e2ee' && !material) return null;
+    const envelope = binding.accountEncryptionMode === 'e2ee' && material
       ? { ...sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: binding.serverIdentityId,
           accountId: binding.accountId,
           ...('authentication' in binding ? { authentication: binding.authentication }
             : { credentialId: binding.credentialId }), actionId, requestId: binding.requestId, target },
-          input: input.input, material: input.material, randomBytes }), handoffAdmission }
+          input: input.input, material, randomBytes }), handoffAdmission }
       : { v: 1 as const, requestId: binding.requestId, target, input: input.input, handoffAdmission };
     const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: input.machineId,
       envelope,
