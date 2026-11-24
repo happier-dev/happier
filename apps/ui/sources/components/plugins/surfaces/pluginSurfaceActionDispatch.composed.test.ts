@@ -4370,6 +4370,44 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { await activation.composition.unload(); accountLifetime.retire(); }
     });
 
+    it('acquires a mounted daemon Action from its readiness-bound Machine when the cold mount projection settles without it', async () => {
+        // F5d cold editor Console: the mount resolver held the Action at dispatch; once the host settled during readiness
+        // the editor's mount projection no longer named it. The bound Machine's projection still does (occurrence :29).
+        const machineId = 'controller-machine';
+        const sourceId = 'acme.cold-source';
+        const provider = PluginProjectedActionV2Schema.parse({ ...resolveDaemonTargetAction({ pluginId: sourceId, localId: 'list' }),
+            surfaces: ['plugin'] });
+        const origin = clientActionExecutionOrigin(sourceId);
+        const executionOrigin = { ...origin, materializationRef: { ...origin.materializationRef, machineId } };
+        const published = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [sourceId]: { id: sourceId, displayName: 'Source', version: '1.2.3', enabled: true,
+                source: { kind: 'local', locator: '/plugins/source' }, occurrenceId: provider.occurrenceId,
+                executionOrigin, declaresContributionPoints: false } },
+            actionsById: { [`${sourceId}/list`]: { ...provider, executionOrigin } }, familiesById: {},
+        });
+        const requests: string[] = [];
+        const machine: PluginSurfaceContributedActionTransport = async (target, request) => {
+            requests.push(`${target}:${request.qualifiedActionId}:${request.expectedContributorOccurrenceId}`);
+            return { supported: true, result: { ok: true, result: { rows: ['cold'] } } };
+        };
+        daemonRpc.mockImplementation(async request => {
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection: published };
+            if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return answerActionSchemasRead(request);
+            const reply = await machine(request.machineId, request.payload);
+            return reply.supported ? reply.result : null;
+        });
+        let settled = false;
+        const binding = { machineId, serverId: 'server-client-action', execute: machine };
+        const outcome = await dispatchPluginSurfaceAction({
+            action: { pluginId: sourceId, localId: 'list' }, input: {}, invocationSurface: 'ui',
+            contributedAction: binding,
+            resolveContributedAction: identity => !settled && identity.pluginId === sourceId ? provider : null,
+            settleContributedAction: async () => { settled = true; return { ok: true, binding }; },
+        });
+        expect(outcome).toEqual({ ok: true, result: { rows: ['cold'] } });
+        expect(requests).toEqual([`${machineId}:${sourceId}/list:${provider.occurrenceId}`]);
+    });
+
     it.each(['link', 'unlink', 'attach', 'remove'] as const)(
         'dispatches the declared Session PR %s through a mounted Account caller with zero confirmation dialogs', async operation => {
         const { PLUGIN_MANIFEST: github, GITHUB_TRIAGE_ACTION_IDS_V1 } = await import('../../../../../../packages/plugins/scm-github/src/manifest');

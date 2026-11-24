@@ -2583,6 +2583,19 @@ async function executeContributedAction(
         if (stopped) return stopped;
         input = { ...input, contributedAction: readiness.binding };
         projectedAction = resolveProjectedContributedAction(input, identity);
+        // A cold mount can settle during readiness without naming this Action (a chosen
+        // editor's mount on a shared Machine). The readiness-bound Machine's projection
+        // owns it; acquire through the same owner the pre-admission step uses.
+        if (!projectedAction && readiness.binding) {
+            const acquired = await acquirePluginSurfaceContributedAction(input, identity, readiness.binding);
+            const stoppedAcquisition = preflightFailure(input);
+            if (stoppedAcquisition) return stoppedAcquisition;
+            if (acquired && 'ok' in acquired) return acquired;
+            if (acquired) {
+                input = acquired;
+                projectedAction = resolveProjectedContributedAction(input, identity);
+            }
+        }
         // Exact mounts keep their captured declaration. An Account startup
         // join leaves the caller unpinned through executable activation.
         if (!accountExecution && projectedAction && !resolvePluginUiExecutionDeclaration(declaredAction, { current: projectedAction })) {
