@@ -3,13 +3,15 @@ import { View } from 'react-native';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { describeApprovalActionFields, getApprovalFieldValues, resolveApprovalPresentationInput } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { buildApprovalPreviewSummary } from '@happier-dev/protocol/actions/actionExecutor';
+import { matchesConfidentialInputPath, readActionSecretInputPaths } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { MACHINE_PRESET_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_POOL_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/pools/actionsV1';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PrivateLabelStoredV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { TEAM_CREATE_ACTION_ID_V1, TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -186,7 +188,45 @@ it('has schema-valid review cases for every Preset and Pool Action', () => {
 const zeroDefectCases: readonly { actionId: string; cases: readonly unknown[] }[] = [
     ...machineCatalogCases,
     ...signInCases, { actionId: TEAM_SETUP_RUN_ACTION_ID_V1, cases: teamSetupCases }, ...teamCredentialCases, ...namedTargetCases,
+    { actionId: TEAM_CREATE_ACTION_ID_V1, cases: [{ v: 1, name: 'Design Team', requestKey: 'private-team-retry-key' }] },
 ];
+
+function inputLeaves(value: unknown, path: readonly string[] = []): { path: readonly string[]; value: unknown }[] {
+    if (Array.isArray(value)) return value.flatMap(item => inputLeaves(item, [...path, '[]']));
+    if (value !== null && typeof value === 'object') {
+        return Object.entries(value).flatMap(([key, item]) => inputLeaves(item, [...path, key]));
+    }
+    return [{ path, value }];
+}
+
+function expectPrivateOperandsOmitted(spec: ActionSpec, actionArgs: unknown): void {
+    const review = spec.approvalPresentation;
+    const declared = !review?.inputSchema && !review?.projectInput ? review?.inputHints?.fields : undefined;
+    const secrets = readActionSecretInputPaths(spec, actionArgs).map(path => path.split('.'));
+    const invocation = { actionId: spec.id, actionArgs };
+    const observed = resolveApprovalPresentationInput(invocation);
+    const leaves = inputLeaves(actionArgs);
+    const withheld = leaves.filter(({ path, value }) => {
+        if (value === null || value === undefined) return false;
+        const field = path.join('.');
+        return secrets.some(secret => matchesConfidentialInputPath([...secret, '**'], path))
+            || (declared !== undefined && !declared.some(hint => field === hint.path || field.startsWith(hint.path + '.')))
+            || (!review?.projectInput && !review?.inputSchema
+                && !getApprovalFieldValues(observed, field).some(value => value !== undefined));
+    });
+    const withheldPaths = new Set(withheld.map(({ path }) => path.join('.')));
+    if (withheldPaths.size === 0) return;
+    for (const status of ['open', 'rejected', 'executed'] as const) {
+        const rows = describeApprovalActionFields({ ...invocation, status }).rows;
+        expect(rows.filter(row => withheldPaths.has(row.path))).toEqual([]);
+        // A structured or technical row can carry an operand without giving it a row of its own.
+        const renderedOperands = JSON.stringify(rows);
+        for (const { path, value } of withheld) {
+            if (typeof value !== 'string' || !value || leaves.some(leaf => leaf.value === value && !withheldPaths.has(leaf.path.join('.')))) continue;
+            expect(renderedOperands, `${spec.id} ${status} ${path.join('.')}`).not.toContain(JSON.stringify(value));
+        }
+    }
+}
 
 it.each(zeroDefectCases)('keeps $actionId free of technical operands and untranslated sentences', async ({ actionId, cases }) => {
     await preloadTranslations('fr');
@@ -203,6 +243,7 @@ it.each(zeroDefectCases)('keeps $actionId free of technical operands and untrans
     const spec = getActionSpec(ActionIdSchema.parse(actionId));
     const scenarios = cases.map(input => {
         const actionArgs = spec.inputSchema.parse(input);
+        expectPrivateOperandsOmitted(spec, actionArgs);
         return { actionArgs, summary: buildApprovalPreviewSummary(spec, actionArgs) };
     });
     expect(scenarios.length).toBeGreaterThan(0);

@@ -1206,7 +1206,10 @@ export function describeApprovalActionFields(input: Readonly<{
   const schemaKeys = !spec.approvalPresentation?.projectInput && spec.projectObservationInput
     ? isRecord(observationInput) ? Object.keys(observationInput) : []
     : Object.keys(shape);
-  const keys = new Set((presentationSpec.inputHints?.fields.length ?? 0) === 0
+  // An explicitly empty list can keep every operand private. A declared safe
+  // schema or projection can still supply the full list of reviewed fields.
+  const inferReviewFields = !review?.inputHints || review.inputSchema !== undefined || review.projectInput !== undefined;
+  const keys = new Set(inferReviewFields && (presentationSpec.inputHints?.fields.length ?? 0) === 0
     ? [...schemaKeys, ...(isRecord(presentationInput) ? Object.keys(presentationInput) : [])]
     : []);
   for (const path of keys) {

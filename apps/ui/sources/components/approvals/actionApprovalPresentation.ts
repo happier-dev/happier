@@ -102,25 +102,36 @@ function readGovernanceSummaryFromInput(spec: ReturnType<typeof getActionSpec>, 
 export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown; status?: ApprovalRequest['status'];
     executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; execution?: ApprovalRequest['execution'] }>;
 
-/** Preserve carried copy for other families while presenting governance from its typed operands. */
+function readCarriedApprovalSummary(preview: unknown): string | null {
+    const { summary } = readRecord(preview);
+    return typeof summary === 'string' ? summary.trim() || null : null;
+}
+
+/** Typed governance can originate a summary. Other families still need the captured preview. */
 export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null,
     homeLayoutWidgets?: readonly string[]): string | null {
-    const stored = readRecord(preview);
-    const storedSummary = typeof stored.summary === 'string' ? stored.summary.trim() : '';
+    const storedSummary = readCarriedApprovalSummary(preview);
     const actionId = request ? ActionIdSchema.safeParse(request.actionId) : null;
-    if (!request || !actionId?.success) return storedSummary || null;
-    if (!storedSummary && request.actionArgs == null && !request.execution?.ok) return null;
-    // A widget library receipt carries the removed name, which its operands cannot recover.
-    if (storedSummary && WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId.data).success
-        && typeof stored.widgetLibraryName === 'string' && stored.widgetLibraryName.trim()) return storedSummary;
+    if (!request || !actionId?.success) return storedSummary;
+    const presentationInput = { ...request, preview, subject, homeLayoutWidgets };
+    if (!storedSummary) {
+        if (request.actionArgs == null && !request.execution?.ok) return null;
+        const presentation = presentActionApproval(presentationInput);
+        return presentation.governance ? presentation.summary : null;
+    }
+    // A library item's removed name comes from its owner at capture time.
+    const libraryName = readRecord(preview).widgetLibraryName;
+    if (WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId.data).success
+        && typeof libraryName === 'string' && libraryName.trim()) return storedSummary;
     const spec = getActionSpec(actionId.data);
-    const hasCapturedCopy = readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length > 0;
-    const canonicalCopy = storedSummary && !hasCapturedCopy && spec.approvalPresentation
+    const captured = readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length > 0;
+    const canonical = !captured && spec.approvalPresentation
         && (spec.inputSchema.safeParse(request.actionArgs).success || spec.approvalPresentation.inputSchema?.safeParse(request.actionArgs).success)
         ? spec.approvalPresentation.summary?.(request.actionArgs) : null;
-    const presentation = presentActionApproval({ ...request, preview, subject, homeLayoutWidgets,
-        authoredSummary: hasCapturedCopy ? null : canonicalCopy || storedSummary });
-    return storedSummary || presentation.governance ? presentation.summary : null;
+    // A generic Action description cannot replace copy supplied by the receiving owner.
+    const authoredSummary = canonical && canonical !== spec.description?.trim() && canonical !== spec.inputHints?.description?.trim()
+        ? canonical : storedSummary;
+    return presentActionApproval({ ...presentationInput, authoredSummary: captured ? null : authoredSummary }).summary;
 }
 
 /** Only the Account override Actions name an Account catalog Role. */

@@ -33,7 +33,10 @@ it.each([
     { name: 'a Session’s primary Team', actionId: contextAction, input: { sessionId, primaryTeamId: team.teamId },
         visible: () => team.name, hidden: team.teamId },
     { name: 'the cleared primary Team choice', actionId: contextAction, input: { sessionId, primaryTeamId: null },
-        visible: () => t('session.access.contextChangeSummary'), absent: () => t('session.access.private') },
+        visible: () => `${t('actionConfirmations.governance.status.pending', {
+            change: t('actionConfirmations.governance.change.sessionTeamClear'),
+        })} ${t('actionConfirmations.governance.sessionTeamGrantsStay')}`,
+        absent: () => t('session.access.private') },
     { name: 'a cleared Team description', actionId: 'teams.update',
         input: { v: 1, teamId: team.teamId, description: null }, visible: () => `Description ${t('common.none')}` },
     { name: 'a spawned Session’s primary Team', actionId: SESSION_SPAWN_NEW_ACTION_ID_V1,

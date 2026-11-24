@@ -134,6 +134,11 @@ const TEAM_ARCHIVE_INPUT_HINTS = {
 };
 const MEMBERSHIP_ID_FIELD = approvalField('membershipId', 'Membership ID', { required: true });
 const GROUP_ID_FIELD = approvalField('groupId', 'Group ID', { required: true });
+const TEAM_GROUP_CREATE_FIELDS = [
+  TEAM_ID_FIELD,
+  approvalField('name', 'Group name', { required: true }),
+  approvalField('description', 'Description', { widget: 'textarea' }),
+];
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
 const INVITATION_ID_FIELD = approvalField('invitationId', 'Invitation ID', { required: true });
 // Input grammar may name the bearer, but never offer a value/default/example.
@@ -1129,6 +1134,8 @@ function createTeamActionSpecs(): TeamActionSpecs {
     wireInputSchema: TeamGroupCreateInputV1Schema,
     outputSchema: TeamGroupV1Schema,
     approvalPresentation: {
+      inputHints: { fields: [...TEAM_GROUP_CREATE_FIELDS, approvalField('groupId', 'Group ID')] },
+      technicalInputPaths: ['groupId'],
       referenceForField: (field, value, input) => {
         const { groupId } = readRecord(input);
         if ((field !== 'name' && field !== 'description') || typeof groupId !== 'string') return undefined;
@@ -1136,11 +1143,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
         return stored.success ? { kind: 'privateLabel', id: groupId, field, stored: stored.data, owner: 'teamGroup' } : undefined;
       },
     },
-    inputHints: { fields: [
-      TEAM_ID_FIELD,
-      approvalField('name', 'Group name', { required: true }),
-      approvalField('description', 'Description', { widget: 'textarea' }),
-    ] },
+    inputHints: { fields: TEAM_GROUP_CREATE_FIELDS },
   }),
   homeDomainActionRow({
     id: 'teams.groups.update', approval: {result: 'required'},

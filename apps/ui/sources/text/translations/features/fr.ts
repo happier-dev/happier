@@ -2737,9 +2737,9 @@ const actionConfirmationTranslations = { fr: {
             status: {
                 pending: ({ change }) => `Le changement prévu consiste à ${change}.`,
                 completed: ({ change }) => `La demande visant à ${change} a été exécutée.`,
-                notApplied: ({ change }) => `Le changement n’a pas été effectué. La demande visait à ${change}. `,
-                failed: ({ change }) => `Elle n’a pas pu aboutir. La demande visait à ${change}. `,
-                unknown: ({ change }) => `Son résultat est inconnu. La demande visait à ${change}. `,
+                notApplied: ({ change }) => `Le changement n’a pas été effectué. La demande visait à ${change}.`,
+                failed: ({ change }) => `Elle n’a pas pu aboutir. La demande visait à ${change}.`,
+                unknown: ({ change }) => `Son résultat est inconnu. La demande visait à ${change}.`,
             },
             change: {
                 teamCreate: ({ name }) => `créer la Team « ${name} »`,

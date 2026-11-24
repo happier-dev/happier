@@ -110,11 +110,15 @@ export function homeDomainActionRow<
   // Authored fields describe the domain's safe approval reading. Schema
   // completion is input grammar, not a demand to disclose bearers, versions,
   // pagination or retry keys in that reading.
-  const reviewFields = spec.inputHints?.fields.filter(field => field.widget !== 'secret');
-  const approvalPresentation = spec.approvalPresentation ?? (reviewFields?.length ? {
-    summary: () => null,
-    inputHints: { ...spec.inputHints, fields: reviewFields },
-  } : undefined);
+  const review = spec.approvalPresentation;
+  const authoredHints = spec.inputHints;
+  const approvalPresentation = authoredHints?.fields.length && !review?.inputHints && !review?.inputSchema && !review?.projectInput
+    ? {
+      summary: () => null,
+      ...review,
+      inputHints: { ...authoredHints, fields: authoredHints.fields.filter(field => field.widget !== 'secret') },
+    }
+    : review;
   return {
     id: spec.id, approval: spec.approval,
     ...(spec.approvalPolicy ? { approvalPolicy: spec.approvalPolicy } : {}),

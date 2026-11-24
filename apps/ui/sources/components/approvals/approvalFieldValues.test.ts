@@ -7,7 +7,7 @@ import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/s
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
-it('does not repeat a retained installation title through its historical preview summary', () => {
+it.each(['open', 'rejected', 'executed'] as const)('does not repeat an installation title on a %s card', status => {
     const spec = getActionSpec('machines.managed.bootstrap.respond');
     const actionArgs = spec.approvalPresentation?.projectInput?.(spec.inputSchema.parse({
         serverId: 'profile', homeId: 'home', managedId: 'managed', operationId: 'operation', taskId: 'task',
@@ -15,7 +15,7 @@ it('does not repeat a retained installation title through its historical preview
             host: 'guest.example', keyType: 'ssh-ed25519', fingerprint: 'SHA256:guest', existingFingerprint: null },
     }));
     expect(readApprovalPreviewSummary({ summary: 'Answer the installation question for this machine.' },
-        { actionId: spec.id, actionArgs })).toBeNull();
+        { actionId: spec.id, actionArgs, status })).toBeNull();
 });
 
 it('reads a ceiling request as binary memory, available room and the consequence, keeping raw bytes technical', () => {
@@ -75,25 +75,25 @@ describe('acknowledged Action result facts', () => {
     });
 });
 
-it('reads the declared request effect instead of a stored generic Action description', () => {
+it.each(['open', 'rejected', 'executed'] as const)('reads the declared request effect on a %s card', status => {
     const anchor = 'delegation.workDepthLimit';
     const declaration = readBuiltInSettingDeclarationV1(anchor)!;
     const generic = { summary: 'Discover declared settings, read or change bound preferences' };
-    expect(readApprovalPreviewSummary(generic, { actionId: 'settings.set', actionArgs: { anchor, value: 3 } }))
+    expect(readApprovalPreviewSummary(generic, { actionId: 'settings.set', actionArgs: { anchor, value: 3 }, status }))
         .toBe(`Change “${declaration.title}” to 3.`);
     expect(readApprovalPreviewSummary({ summary: 'Requested effect' }, { actionId: 'session.title.set', actionArgs: {} }))
         .toBe('Requested effect');
-    expect(readApprovalPreviewSummary(undefined, { actionId: 'settings.set', actionArgs: { anchor, value: 3 } }))
+    expect(readApprovalPreviewSummary(undefined, { actionId: 'settings.set', actionArgs: { anchor, value: 3 }, status }))
         .toBeNull();
 });
 
-it('keeps captured widget names when rendering a stored removal preview', () => {
+it.each(['open', 'rejected', 'executed'] as const)('keeps captured widget names on a %s removal card', status => {
     const actionArgs = { ref: { surface: { serverId: 'home', accountId: 'account', owner: {
         kind: 'pluginArea', pluginId: 'examples.widget-areas', pageId: 'overview', area: 'pinned',
     } }, instanceId: 'removed-copy' } };
     expect(readApprovalPreviewSummary({ summary: 'Remove the widget from Plugin page · Pinned area.',
         widgetPresentation: { widgetName: 'Directory count', pageName: 'Widget areas', areaName: 'Pinned' } },
-        { actionId: 'widgets.item.remove', actionArgs })).toBe('Remove “Directory count” from Widget areas · Pinned.');
+        { actionId: 'widgets.item.remove', actionArgs, status })).toBe('Remove “Directory count” from Widget areas · Pinned.');
 });
 
 describe('projectApprovalStructuredAnswers', () => {
