@@ -337,7 +337,9 @@ describe('accepted Project Service declaration starter', () => {
         expect(result).toMatchObject({ ok: false, reasonCode: 'project_setup_consent_required', reviewedEffectDigest: expect.any(String) });
         expect(await h.starter.resolveStartTarget(h.request,
             { ...h.ingress, verifyMachineAdmissionCurrent: async () => current }, h.context))
-            .toEqual({ ok: false, reasonCode: 'machine_admission_changed' });
+            .toEqual({ ok: false, reasonCode: 'machine_admission_changed', failureCause: {
+                phase: 'service.launch.supervision', errorClass: 'Error', errorCode: 'machine_admission_changed', httpStatus: null,
+            } });
         expect(h.setupProcesses).toEqual([]);
     });
 
@@ -1748,6 +1750,7 @@ describe('accepted Project Service declaration starter', () => {
         }));
         assertActionOutputContract('localServices.launcher.start', result);
         expect(result).toMatchObject({ status: 'failed', reasonCode: 'plugin_managed_service_establishment_failed',
+            failureCause: { phase: 'managed_service.establishment', errorCode: expect.any(String) },
             establishmentFailure: { cause: 'port_in_use', port: address.port, sameProject: true, exitCode: 1,
                 lastStderrLine: `Error: listen EADDRINUSE: address already in use 127.0.0.1:${address.port}` } });
         expect(f.owner.listProjectServices().map(handle => handle.snapshot())).toEqual([

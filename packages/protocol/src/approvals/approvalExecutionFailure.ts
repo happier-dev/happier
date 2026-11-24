@@ -66,6 +66,12 @@ import { DeploymentFailureRecoveryV1Schema, projectDeploymentDomainFailureStorag
 import { DeploymentExecutionFailureDetailsV1Schema, DeploymentReviewConflictFailureDetailsV1Schema, DeploymentSourceAdmissionFailureV1Schema } from '../deployments/deploymentReceiptEventsV1.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, projectOpenProjectRefusalV1 } from '../projects/openProjectV1.js';
+import { LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 } from '../local/services/actionIdsV1.js';
+import {
+  DaemonLocalServiceLauncherStartRequestV1Schema,
+  DaemonLocalServiceLauncherStartResponseV1Schema,
+  LocalServiceEstablishmentFailureV1Schema,
+} from '../local/services/launcher/v1.js';
 import type {
   ApprovalExecutionV2,
   ApprovalRequest,
@@ -79,6 +85,7 @@ import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deployme
 export { ApprovalStaleReasonSchema, ApprovalStaleFailureDetailsSchema, type ApprovalStaleReason } from './approvalStaleReason.js';
 
 const ApprovalReplayOutcomeUnknownDetailsSchema = z.strictObject({ reasonCode: z.string().check(z.minLength(1)) });
+const LocalServiceStartFailureDetailsSchema = z.strictObject({ establishmentFailure: LocalServiceEstablishmentFailureV1Schema });
 
 function isSameApprovalHome(request: Readonly<{ executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId'> }>, left: string, right: string): boolean {
   const origin = request.executionOriginV1;
@@ -109,6 +116,14 @@ function parseStrictApprovalFailure(input: Readonly<{
       const schema = storedRead ? createStoredReadSchema(TeamCreateInputV1Schema) : TeamCreateInputV1Schema;
       if (!schema.safeParse(input.request.actionArgs).success) return null;
       return { ...input.failure, details: { error: input.failure.errorCode, details: refusal } };
+    }
+  }
+  if (input.request.actionId === LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1) {
+    const schema = storedRead ? createStoredReadSchema(LocalServiceStartFailureDetailsSchema) : LocalServiceStartFailureDetailsSchema;
+    const details = schema.safeParse(input.failure.details);
+    if (details.success) {
+      const args = storedRead ? createStoredReadSchema(DaemonLocalServiceLauncherStartRequestV1Schema) : DaemonLocalServiceLauncherStartRequestV1Schema;
+      return args.safeParse(input.request.actionArgs).success ? { ...input.failure, details: details.data } : null;
     }
   }
   const finiteCommand = (storedRead ? createStoredReadSchema(FiniteCommandFailureDetailsV1Schema)
@@ -530,6 +545,14 @@ function readDomainExecutionFailure(request: Pick<ApprovalRequest, 'actionId' | 
   if (request.actionId === 'projects.open') {
     const result = createStoredReadSchema(OpenProjectRefusalV1Schema).safeParse(request.execution?.result);
     return result.success ? projectOpenProjectRefusalV1(result.data) : null;
+  }
+  if (request.actionId === LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1) {
+    const result = createStoredReadSchema(DaemonLocalServiceLauncherStartResponseV1Schema).safeParse(request.execution?.result);
+    if (!result.success || result.data.status === 'succeeded' || !result.data.reasonCode) return null;
+    const { reasonCode, establishmentFailure, failureCause } = result.data;
+    return { ok: false, errorCode: reasonCode, error: reasonCode,
+      ...(failureCause === undefined ? {} : { failureCause }),
+      ...(establishmentFailure === undefined ? {} : { details: { establishmentFailure } }) };
   }
   if (isFilesystemActionId(request.actionId)) {
     const schema = getActionSpec(request.actionId).outputSchema;

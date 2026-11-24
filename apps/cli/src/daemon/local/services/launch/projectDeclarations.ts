@@ -194,7 +194,8 @@ const refusal = (error: unknown): Extract<LocalServiceLauncherStartResolution<Se
             ...(runtimeFailure.data.causeCode ? { causeCode: runtimeFailure.data.causeCode } : {}) } : isPluginError(error)
         && error.code === 'plugin_managed_service_establishment_failed'
         && details && 'establishmentFailure' in details ? details.establishmentFailure : undefined);
-    return { ok: false, reasonCode: codeOf(error), ...(error instanceof ServiceStartRefusal && error.review ? error.review : {}),
+    return { ok: false, reasonCode: codeOf(error), failureCause: projectActionFailureCauseV1(error, 'service.launch.supervision', { allowUnknownErrorCode: true }),
+        ...(error instanceof ServiceStartRefusal && error.review ? error.review : {}),
         ...(failure.success ? { establishmentFailure: failure.data } : {}),
         ...(prerequisite.success ? { prerequisite: prerequisite.data } : {}) };
 };
@@ -1006,6 +1007,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         } catch (error) { uncertain ||= isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError;
             if (isProjectNativeProcessUncertain(error) || error instanceof ProjectNativeToolchainUncertainError) throw error;
             const denied = refusal(error); return { status: 'denied', reasonCode: denied.reasonCode,
+            ...(denied.failureCause ? { failureCause: denied.failureCause } : {}),
             ...(denied.establishmentFailure ? { establishmentFailure: denied.establishmentFailure } : {}),
             ...(denied.prerequisite ? { prerequisite: denied.prerequisite } : {}),
             ...(denied.reviewedEffect !== undefined ? { reviewedEffect: denied.reviewedEffect } : {}),

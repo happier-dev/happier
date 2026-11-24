@@ -10,7 +10,7 @@ import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailure
 import type { LocalServiceLauncherFeed } from './feed';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { logger } from '@/ui/logger';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { type ActionFailureCauseV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createLocalServiceLauncherSnapshotReader } from './snapshotReader';
 
 export type LocalServiceLauncherStartTarget = (
@@ -22,12 +22,12 @@ export type LocalServiceLauncherStartTarget = (
 
 export type LocalServiceLauncherStartResolution<TDeclaration = unknown> = Readonly<
     | { ok: true; declaration: TDeclaration }
-    | { ok: false; reasonCode: string; prerequisite?: LocalServiceNativePrerequisiteV1; establishmentFailure?: LocalServiceEstablishmentFailureV1; reviewedEffect?: JsonValue; reviewedEffectDigest?: string }
+    | { ok: false; reasonCode: string; failureCause?: ActionFailureCauseV1; prerequisite?: LocalServiceNativePrerequisiteV1; establishmentFailure?: LocalServiceEstablishmentFailureV1; reviewedEffect?: JsonValue; reviewedEffectDigest?: string }
 >;
 
 export type LocalServiceLauncherStartExecutionOutcome = Readonly<
     | { status: 'succeeded'; currentTarget?: LocalServiceManagedServiceActionTargetV1; terminalView?: DaemonLocalServiceLauncherStartResponseV1['terminalView'] }
-    | { status: 'denied' | 'failed'; reasonCode: string; prerequisite?: LocalServiceNativePrerequisiteV1; establishmentFailure?: LocalServiceEstablishmentFailureV1; reviewedEffect?: JsonValue; reviewedEffectDigest?: string }
+    | { status: 'denied' | 'failed'; reasonCode: string; failureCause?: ActionFailureCauseV1; prerequisite?: LocalServiceNativePrerequisiteV1; establishmentFailure?: LocalServiceEstablishmentFailureV1; reviewedEffect?: JsonValue; reviewedEffectDigest?: string }
 >;
 
 export type CreateLocalServiceLauncherStartTargetInput<TDeclaration = unknown> = Readonly<{
@@ -76,6 +76,7 @@ function response(input: Readonly<{
     request: DaemonLocalServiceLauncherStartRequestV1;
     status: DaemonLocalServiceLauncherStartResponseV1['status'];
     reasonCode?: string;
+    failureCause?: ActionFailureCauseV1;
     prerequisite?: LocalServiceNativePrerequisiteV1;
     establishmentFailure?: LocalServiceEstablishmentFailureV1;
     reviewedEffect?: JsonValue;
@@ -90,6 +91,7 @@ function response(input: Readonly<{
         targetId: input.request.targetId,
         status: input.status,
         ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+        ...(input.failureCause ? { failureCause: input.failureCause } : {}),
         ...(input.prerequisite ? { prerequisite: input.prerequisite } : {}),
         ...(input.establishmentFailure ? { establishmentFailure: input.establishmentFailure } : {}),
         ...(input.reviewedEffect !== undefined ? { reviewedEffect: input.reviewedEffect } : {}),
@@ -227,6 +229,8 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
                 request,
                 status: 'denied',
                 reasonCode: resolution.reasonCode,
+                ...(resolution.failureCause ? { failureCause: resolution.failureCause } : {}),
+                ...(resolution.establishmentFailure ? { establishmentFailure: resolution.establishmentFailure } : {}),
                 ...(resolution.prerequisite ? { prerequisite: resolution.prerequisite } : {}),
                 ...(resolution.reviewedEffect !== undefined ? { reviewedEffect: resolution.reviewedEffect } : {}),
                 ...(resolution.reviewedEffectDigest ? { reviewedEffectDigest: resolution.reviewedEffectDigest } : {}),
@@ -279,7 +283,8 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
             outcome = await phase('managed_start', () => input.startManagedDeclaration!(resolution.declaration, request, ingress, actionContext, executeCanonicalAction));
         } catch (error) {
             logger.warnLocalFile('[local-service] Start failed', projectActionFailureCauseV1(error, 'local_service.start', { allowUnknownErrorCode: false }));
-            outcome = { status: 'failed', reasonCode: 'managed_start_failed' };
+            outcome = { status: 'failed', reasonCode: 'managed_start_failed',
+                failureCause: projectActionFailureCauseV1(error, 'local_service.start') };
         }
         if (outcome.status === 'succeeded') input.history?.record(request.targetId);
 
@@ -298,7 +303,8 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
             // starter is invoked, failure may retain cleanup custody; preserve
             // that distinction for Move and other callers observing Start.
             status: outcome.status === 'denied' ? 'failed' : outcome.status,
-            ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode }),
+            ...(outcome.status === 'succeeded' ? {} : { reasonCode: outcome.reasonCode,
+                ...(outcome.failureCause ? { failureCause: outcome.failureCause } : {}) }),
             ...(outcome.status !== 'succeeded' && outcome.prerequisite ? { prerequisite: outcome.prerequisite } : {}),
             ...(outcome.status !== 'succeeded' && outcome.establishmentFailure ? { establishmentFailure: outcome.establishmentFailure } : {}),
             ...(outcome.status === 'succeeded' && outcome.currentTarget ? { currentTarget: outcome.currentTarget } : {}),

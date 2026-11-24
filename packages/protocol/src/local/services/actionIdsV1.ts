@@ -13,6 +13,7 @@ export const MACHINE_SERVICE_FRONTDOOR_ACTION_IDS = [
 export const MACHINE_SERVICE_LOGS_READ_ACTION_ID = 'machines.services.logs.read' as const;
 export const MACHINE_SERVICE_CONTROL_ACTION_ID = 'machines.services.control' as const;
 export const MACHINE_SERVICE_ACTION_IDS = [...MACHINE_SERVICE_FRONTDOOR_ACTION_IDS, MACHINE_SERVICE_LOGS_READ_ACTION_ID, MACHINE_SERVICE_CONTROL_ACTION_ID, 'machines.services.exec'] as const;
+export const LOCAL_SERVICE_LAUNCHER_START_ACTION_ID_V1 = 'localServices.launcher.start' as const;
 
 export const LOCAL_SERVICE_ACTION_KINDS_BY_RUNTIME_ACTION = Object.freeze({
   'localServices.actions.copyUrl': 'copy_url',

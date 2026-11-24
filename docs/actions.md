@@ -5040,6 +5040,13 @@ declaration, destination, setup-consent and launch checks. Revocation after Star
 admission does not interrupt it; the next Start refuses, and explicit Stop remains
 available. These owner-test contracts do not certify a loaded service journey.
 
+In unreleased 0.3, refused declared-Service Starts retain the supervisor's
+content-free `failureCause` through the launcher response and approved Action
+replay. The Action failure carries it at the top level, alongside `errorCode`;
+`details.establishmentFailure` remains the structured process/bind diagnosis.
+Use matching development Protocol and daemon/client sources for the closed
+launcher response. Earlier responses without a cause remain readable.
+
 Service placement saves a separate next-start intent in that same workspace row;
 it never moves a running service. The placement read returns desired/default
 provenance separately from native custody on the source and its current linked

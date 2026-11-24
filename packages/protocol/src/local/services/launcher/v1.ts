@@ -12,7 +12,7 @@ import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { QualifiedProjectTrustProjectV1Schema } from '../../../workspaces/projectSetup/projectTrustRowV1.js';
 import { ProjectSetupReviewV1Schema } from '../../../actions/projectSetupConsentFailure.js';
 import { ActionSurfaceSchema } from '../../../actions/metadata.js';
-import { ActionExecuteFailureSchema } from '../../../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '../../../actions/actionExecutionResult.js';
 import { PluginDiagnosticDataV1Schema } from '../../../daemon/pluginContributionIntrospection.js';
 import { projectZodProtocolSchema } from '../../../plugins/actions/internalProtocolZodAdapter.js';
 
@@ -323,6 +323,7 @@ export const LocalServiceEstablishmentFailureV1Schema = lazyZodSchema(() => z.st
 export type LocalServiceEstablishmentFailureV1 = z.infer<typeof LocalServiceEstablishmentFailureV1Schema>;
 
 export const DaemonLocalServiceLauncherStartResponseV1Schema = lazyZodSchema(() => z.strictObject({
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     protocolVersion: z.literal(1),
     machineId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
     targetId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
