@@ -1762,8 +1762,10 @@ describe('opaque managed preset admission', () => {
             operationAcceptance: { operationId: 'warm-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
         const first = await createManagedMachineAcquisitionDriver(connection).execute('machines.managed.acquire', acquisition,
             { requestId: 'warm-create', acquisitionMode, context }).catch((error: unknown) => error);
-        if (freshness === 'unknown-image' || freshness === 'failed-image') {
-            expect(first).toMatchObject({ code: freshness === 'unknown-image' ? 'native_observation_unavailable' : 'prepared_artifact_not_owned',
+        // Since e509b08ffcb only an unknown inspection refuses; a confirmed
+        // failed image continues with the saved cold launch, like a lost image.
+        if (freshness === 'unknown-image') {
+            expect(first).toMatchObject({ code: 'native_observation_unavailable',
                 details: { kind: 'managedNative', nativeCause: { sdkError: 'NotFoundError' } } });
             expect(acquired).toEqual([]);
             expect(roles.filter(role => role === 'inspect-image')).toHaveLength(1);
@@ -1779,7 +1781,7 @@ describe('opaque managed preset admission', () => {
             launch: { ...normalizedLaunch, choices: physical }, binaryPath: content.prepared.cliBinaryPath,
             ...(freshness === 'cli-updated' ? { updateCli: true } : {}), deferredSetup: { scripts: setup.scripts } });
         else expect(retainedContent.v).not.toHaveProperty('preparationExecution');
-        expect(roles.filter(role => role === 'inspect-image')).toHaveLength(warm || freshness === 'deleted-image' ? 1 : 0);
+        expect(roles.filter(role => role === 'inspect-image')).toHaveLength(warm || freshness === 'deleted-image' || freshness === 'failed-image' ? 1 : 0);
         const readsBeforeRestart = reads.length;
         if (acquisitionMode === 'enrolled') {
             // Reopen the actual Home-retained carrier under a fresh custodian
@@ -3038,10 +3040,13 @@ describe('managed acquisition durable custody', () => {
                         requestId: 'creation', accountId: 'owner', serverId: homeId, target } }) });
             expect(work, JSON.stringify(observed)).toBeDefined();
             await work?.catch(() => undefined);
-            await expect(work).rejects.toMatchObject({ code: 'provider_unavailable' });
+            // Since e0ec6ca6945 a provider 401/403 (Hetzner quota is a 403) is the
+            // SDK's credential refusal; the vendor code stays in nativeCause.
+            const refusal = outcome === 'quota' ? 'credential_unavailable' : 'provider_unavailable';
+            await expect(work).rejects.toMatchObject({ code: refusal });
             expect(vendorWrites).toBe(1);
             const settled = await operations.handlers.getV2({ operationId: 'native-cause', waitForTerminal: true });
-            expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'provider_unavailable',
+            expect(settled).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: refusal,
                 details: { kind: 'managedNative', nativeCause } } } });
             if (settled.kind !== 'found' || !settled.operation.error) throw new Error('Missing terminal native failure');
             expect(JSON.stringify(settled)).not.toMatch(/private-provider-token|private request content|private reflected input|private-token/);
