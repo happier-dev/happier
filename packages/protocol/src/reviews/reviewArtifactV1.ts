@@ -257,14 +257,14 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       }
       return { reviewId: input.reviewId, roundOrdinal: ordinal };
     },
-    async settle(input: ReviewRoundSettlementV1): Promise<void> {
+    async settle(input: ReviewRoundSettlementV1): Promise<ReviewArtifactBodyV1['rounds'][number]> {
       input.signal?.throwIfAborted();
       const row = await transport.read(input.reviewId, { signal: input.signal });
       if (!row) refused('artifact_not_found');
       const current = openReviewArtifactV1(row);
       const round = current.rounds.find(item => item.ordinal === input.roundOrdinal);
       if (!round) refused('invalid-params');
-      if (round.state !== 'running') return;
+      if (round.state !== 'running') return round;
       const outcome = input.outcome !== 'cancelled' && input.outcome !== 'failed'
         ? projectReviewRoundOutcomeV1(round.reviewerIds, input.reviewerOutcomes ?? []) : input.outcome;
       const byReviewer = new Map((input.reviewerOutcomes ?? []).flatMap(reviewer =>
@@ -286,6 +286,7 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
       const reviewMetadata: ReviewMetadataWriteV1 = { currentRoundOrdinal: input.roundOrdinal, state: outcome, finishedAt: input.finishedAt };
       const result = await transport.update({ artifactId: input.reviewId, expectedRevision: row.revision, ...content(next), reviewMetadata, signal: input.signal });
       if (!result.ok) refused(result.errorCode);
+      return nextRound;
     },
   };
 }

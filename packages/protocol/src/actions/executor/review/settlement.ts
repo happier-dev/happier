@@ -41,8 +41,13 @@ export async function dispatchReviewSettlementAction(input: Readonly<{
   if (caller?.kind !== 'workflowRun') {
     return { ok: false, errorCode: 'invalid_parameters', error: 'workflow_run_required' };
   }
-  await records.settle({ ...parsed.reviewRound, outcome: 'completed',
+  const round = await records.settle({ ...parsed.reviewRound, outcome: 'completed',
     reviewerOutcomes: collectReviewRoundOutcomes(parsed), finishedAt: Date.now(),
     runs: [{ kind: 'workflow', runId: caller.runId }], signal: input.ctx.signal });
+  const outcomes = round.reviewerOutcomes;
+  if (round.state === 'failed' && outcomes?.length
+    && outcomes.every(outcome => outcome.reason?.errorCode === 'resource_forbidden')) {
+    return { ok: false, errorCode: 'resource_forbidden', error: 'resource_forbidden' };
+  }
   return { ok: true, result: parsed.reviewRound };
 }

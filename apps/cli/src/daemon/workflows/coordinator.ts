@@ -18,7 +18,7 @@ import { projectTargetActionApprovalInput } from '@happier-dev/protocol/actions/
 import { ActionDefinitionV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ActionCompletionRun, ActionCompletionOperation, ActionCompletionStateV1, ExecutionRunTerminalObservation } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, REVIEW_SETTLE_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { projectMachineSetupAcceptedAppBlockIds } from '@/machines/setup/acceptedAppRuns';
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
@@ -761,6 +761,11 @@ function persistedFailure(record: WorkflowCoordinatorInvocation, automationCause
         && automationCause.evidence.phase === 'before') {
         return new WorkflowLeafFailure('failed', code, true);
       }
+      }
+      if (code === 'resource_forbidden' && record.execution?.kind === 'action'
+        && record.execution.actionId === REVIEW_SETTLE_ROUND_ACTION_ID_V1) {
+        // The Review round is settled. A parent waiting on the child needs its terminal refusal.
+        return new WorkflowLeafFailure('failed', code, true);
       }
       // A persisted definitive leaf failure remains collectable after process
       // reconstruction. The authored parent policy decides whether that fact

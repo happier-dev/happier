@@ -132,7 +132,7 @@ type Fixtures = {
   session?: (id: string, input: Parameters<WorkflowStepExecutor>[0]['input']) => JsonValue | Promise<JsonValue>;
   reply?: (sessionId: string, stepId: string) => SessionMessageReplyOutcomeV1;
   discussionRead?: NonNullable<ActionExecutorDeps['discussionAction']>;
-  reviewFailed?: boolean;
+  reviewerFailureCode?: string;
   reviewPartial?: boolean;
   reviewLaunchFailure?: boolean;
   comments?: () => readonly ReviewCommentV1[];
@@ -534,11 +534,11 @@ function harness(fixtures: Fixtures = {}) {
         const run = await coordinator().run({ ...snapshot, runId: target.runId,
           ...(snapshot.origin?.kind === 'direct' && snapshot.origin.originSessionId
             ? { originSessionId: snapshot.origin.originSessionId } : {}) });
-        return { observation: 'terminal', matchedCondition: 'terminal',
-          run: { ...runSummary(target.runId), state: run.state }, result: run.finalOutput };
+        return { observation: 'terminal', matchedCondition: 'terminal', result: run.finalOutput,
+          run: { ...runSummary(target.runId), state: run.state, ...(run.reason ? { errorCode: run.reason } : {}) } };
       },
-      observeRun: async (run) => fixtures.reviewFailed && nativeRuns.get(run.runId)?.intent === 'review'
-        ? { kind: 'failed', code: 'native_review_failed' }
+      observeRun: async (run) => fixtures.reviewerFailureCode && nativeRuns.get(run.runId)?.intent === 'review'
+        ? { kind: 'failed', code: fixtures.reviewerFailureCode }
         : { kind: 'completed', result: nativeRuns.get(run.runId)?.intent === 'plan' ? nativeRuns.get(run.runId)!.value : {}, commentIds: [...(fixtures.panelCommentIds ?? fixtures.comments?.().map((comment) => comment.id) ?? [])],
           reviewedFingerprint: 'panel-fingerprint', materialization: fixtures.reviewPartial
             ? { kind: 'partial', errorCode: 'review_materialization_partial' } : { kind: 'complete' } },
@@ -1073,6 +1073,28 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.events).not.toContain('verify');
     expect(h.commentReads).toEqual([]);
   });
+  it('interrupts Review & converge with the reviewer refusal when every leg was denied', async () => {
+    const h = harness({ reviewCounts: { total: 0, needsDecision: 0 }, reviewerFailureCode: 'resource_forbidden' });
+    const reviewers = [{ kind: 'engine', engineId: engine }];
+    const snapshot = await accepted(builtin('review-and-converge'), { reviewers, then: 'fix',
+      steps: [{ kind: 'review', reviewers, instructions: 'Find defects' },
+        { kind: 'verify', reviewers, instructions: 'Verify persisted findings' }] });
+
+    const run = await h.runAccepted(snapshot);
+    const launchedReviewers = h.launches.filter(({ request }) => request.intent === 'review');
+    expect(launchedReviewers).toHaveLength(2);
+    const reviewRound = ReviewRoundBindingV1Schema.parse(
+      (launchedReviewers[0]?.request.intentInput as { reviewRound?: unknown }).reviewRound);
+    expect(h.readReviewMetadata(reviewRound.reviewId)?.state).toBe('failed');
+    expect((await h.readReview(reviewRound.reviewId))?.rounds[0]?.reviewerOutcomes).toMatchObject([
+      { reason: { errorCode: 'resource_forbidden' } }, { reason: { errorCode: 'resource_forbidden' } },
+    ]);
+    await expect(h.executeAction('review.get', { reviewId: reviewRound.reviewId }, { surface: 'ui', serverId: 'home' }))
+      .resolves.toMatchObject({ ok: true, result: { review: { state: 'failed', counts: { total: 0 } } } });
+    expect(run).toMatchObject({ state: 'interrupted', reason: 'resource_forbidden' });
+    expect(h.store.list().find(row => row.blockId === 'settle')).toMatchObject({ lifecycle: 'failed', reason: 'resource_forbidden' });
+    expect(h.store.list().some(row => row.blockId === 'fix')).toBe(false);
+  });
   it('finishes one authored Review pass with canonical counts even when unresolved findings exceed one page', async () => {
     const h = harness({ reviewCounts: { total: 51, needsDecision: 1 } });
     const reviewInput = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: engine }], instructions: 'Review once' });
@@ -1111,7 +1133,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
   });
   it.each([
     { state: 'completed', fixtures: {} },
-    { state: 'failed', fixtures: { reviewFailed: true } },
+    { state: 'failed', fixtures: { reviewerFailureCode: 'native_review_failed' } },
     { state: 'partial', fixtures: { reviewPartial: true } },
     { state: 'failed', fixtures: { reviewLaunchFailure: true } },
   ])('keeps empty authored Review findings distinct from $state execution coverage ($fixtures)', async ({ state, fixtures }) => {
@@ -1385,7 +1407,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.notifications).toHaveLength(1); expect(h.store.list().some((row) => row.lifecycle === 'waiting_for_review')).toBe(false);
   });
   it('retains a failed reviewer as check evidence rather than losing the round', async () => {
-    const h = harness({ checks: [{ verdict: 'continue' }], reviewFailed: true });
+    const h = harness({ checks: [{ verdict: 'continue' }], reviewerFailureCode: 'native_review_failed' });
     expect(await h.run(historicalReview(), { engines: [engine, otherEngine], maxRounds: 1 }))
       .toMatchObject({ state: 'succeeded', finalOutput: { kind: 'exhausted', rounds: 1 } });
     expect(String(h.launches.find(({ request }) => request.intent === 'agent')?.request.instructions)).toContain('native_review_failed');

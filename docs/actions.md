@@ -7129,6 +7129,11 @@ The daemon's input binder checks occurrence evidence, constants and defaults
 against those choices before launching leaves. Review & converge accepts only
 `fix` or `report` for its `apply` input.
 
+In 0.3 development, when every admitted reviewer returns `resource_forbidden`,
+Review & converge retains the failed Review and its coverage. The Workflow Run
+interrupts with that code before the optional Fix step. The child running the
+Review settles as failed so the parent can observe its terminal refusal.
+
 `reviews.comments.list` retains its paged default. Callers needing the complete
 read can request `allPages: true`: the shared Action executor drains the existing
 ReviewComment transport with the same scope, principal and cancellation signal.
