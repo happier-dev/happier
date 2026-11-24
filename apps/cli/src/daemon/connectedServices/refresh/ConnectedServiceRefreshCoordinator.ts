@@ -1,4 +1,5 @@
 import type { AgentPluginAccountSettingsSource } from '@/plugins/runtime/agentPluginSettings';
+import { isReadRecoverableNeedsReauth } from '@happier-dev/cli-common/connectedAccounts';
 import { ConnectedServiceIdSchema, readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -407,13 +408,10 @@ function isReconnectRequiredProfileStatus(status: unknown): boolean {
   return status === 'needs_reauth';
 }
 
-/**
- * A reconnect holds when a provider rejected the grant or the configuration changed. One no
- * provider classified (a runtime that could not read its own stored credential) is re-derived
- * by the next scheduled status read, so a credential that reads again needs no human reconnect.
- */
+/** A needs_reauth the next scheduled status read may not re-derive (`isReadRecoverableNeedsReauth`). */
 function holdsReconnectRequired(profile: Pick<QualifiedConnectedAccountProfileV4, 'status' | 'statusReason'>): boolean {
-  return isReconnectRequiredProfileStatus(profile.status) && profile.statusReason !== 'unknown';
+  return isReconnectRequiredProfileStatus(profile.status)
+    && !isReadRecoverableNeedsReauth({ status: profile.status, failureKind: profile.statusReason });
 }
 
 function readBoundedPluginDiagnosticCode(

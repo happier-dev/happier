@@ -20,6 +20,18 @@ import { createConnectedAccountCredentialRedaction } from './credentialRedaction
 
 type ConnectedServiceAccountEncryptionMode = 'plain' | 'e2ee' | 'unknown';
 type ConnectedAccountConfigurationSecrets = Parameters<typeof createConnectedAccountConfigurationOwner>[0]['secrets'];
+
+/**
+ * The one rule for leaving a stored needs_reauth without a reconnect. When no provider rejected
+ * the grant (the recorded failure kind stayed 'unknown', as when a runtime could not read its own
+ * stored credential), a successful status read or connection test of the same credential revision
+ * clears it. invalid_grant, invalid_client, provider_401/403 and a configuration-change reconnect
+ * (no failure kind) stay latched until reconnect.
+ */
+export function isReadRecoverableNeedsReauth(health: Readonly<{ status?: string | null; failureKind?: string | null }>): boolean {
+  return health.status === 'needs_reauth' && health.failureKind === 'unknown';
+}
+
 export type ConnectedAccountEstablishedRuntimeRegistry<TQuota extends ConnectedAccountRuntimeQuotaBase = ConnectedAccountRuntimeQuotaBase> = Readonly<{
   connectedAccountContributions?: Readonly<{ describe(ref: QualifiedConnectedAccountRef['service']): ConnectedAccountEstablishedContribution | null }>;
   resolveConnectedAccountRuntime?(ref: QualifiedConnectedAccountRef['service']): Promise<(ConnectedAccountEstablishedContribution & Readonly<{ runtime: object }>) | null>;
@@ -1065,12 +1077,10 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           },
           ...(input.signal ? { signal: input.signal } : {}),
         }), input.signal));
-        // A successful explicit test can clear the retained Muse unsupported-refresh marker
-        // for the tested credential revision.
+        // A successful explicit test clears a read-recoverable needs_reauth for the tested credential revision.
         if (input.operation.kind === 'testConnection' && params.publishCredentialHealth
-          && observedCredentialHealth?.status === 'needs_reauth'
-          && observedCredentialHealth.lastRefreshFailureKind === 'unknown'
-          && observedCredentialHealth.providerErrorCode === 'connected_account_refresh_unsupported'
+          && isReadRecoverableNeedsReauth({ status: observedCredentialHealth?.status,
+            failureKind: observedCredentialHealth?.lastRefreshFailureKind })
           && typeof result === 'object' && result !== null && 'status' in result && result.status === 'ok') {
           assertNotAborted(input.signal);
           await params.publishCredentialHealth({ patch: {
