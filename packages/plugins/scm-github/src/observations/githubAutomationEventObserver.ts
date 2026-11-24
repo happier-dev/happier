@@ -19,7 +19,6 @@ import {
   PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
   type PluginCollectionRow,
 } from '@happier-dev/plugin-sdk/collections';
-import { parseForgeLinkHeader } from '@happier-dev/triage-sources/runtime';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -29,6 +28,7 @@ import {
   type GithubAutomationEventLocalIdV1,
   type GithubAutomationEventRefV1,
 } from '../githubAutomationEvents.js';
+import { readValidatedGithubFollowUpPage } from '../triage/scan/link.js';
 import {
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_COLLECTION,
   GITHUB_AUTOMATION_EVENT_CHECKPOINT_FIELD,
@@ -227,14 +227,6 @@ function readGithubPollIntervalMs(headers: Readonly<Record<string, string>>): nu
   return Number.isSafeInteger(intervalMs) ? intervalMs : null;
 }
 
-function readSingleQueryValue(url: URL, key: string): string | null {
-  const values = url.searchParams.getAll(key);
-  if (values.length > 1) {
-    throw new GithubRepositoryEventsHistoryGapError(`GitHub repository Events URL repeats '${key}'`);
-  }
-  return values[0] ?? null;
-}
-
 function createRepositoryEventsUrl(repository: GithubRepositorySourceConfigV1): string {
   const url = new URL(
     `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/events`,
@@ -242,64 +234,6 @@ function createRepositoryEventsUrl(repository: GithubRepositorySourceConfigV1): 
   );
   url.searchParams.set('per_page', String(GITHUB_REPOSITORY_EVENTS_PAGE_SIZE));
   return url.toString();
-}
-
-/**
- * GitHub controls Link headers. Validate a next page before the exact
- * Connected Account client is allowed to send credentials to it.
- */
-function validateRepositoryEventsPageUrl(
-  value: string,
-  repository: GithubRepositorySourceConfigV1,
-): string {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL is invalid');
-  }
-  const expectedPath = `/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}/events`;
-  if (
-    url.protocol !== 'https:'
-    || url.origin !== GITHUB_API_ORIGIN
-    || url.username
-    || url.password
-    || url.hash
-    || url.pathname !== expectedPath
-  ) {
-    throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL changed its stream');
-  }
-  for (const key of url.searchParams.keys()) {
-    if (key !== 'per_page' && key !== 'page') {
-      throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL has an unsupported query');
-    }
-  }
-  if (readSingleQueryValue(url, 'per_page') !== String(GITHUB_REPOSITORY_EVENTS_PAGE_SIZE)) {
-    throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL changed its page size');
-  }
-  const page = readSingleQueryValue(url, 'page');
-  if (page !== null && !/^[1-9][0-9]*$/u.test(page)) {
-    throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events next-page URL has an invalid page');
-  }
-  return url.toString();
-}
-
-/**
- * The RFC 8288 grammar is a provider-published standard rather than a GitHub rule, so
- * it is parsed by the shared forge owner. What stays here is GitHub's own validation.
- */
-function parseNextPageUrl(
-  headers: Readonly<Record<string, string>>,
-  repository: GithubRepositorySourceConfigV1,
-): string | null {
-  const parsed = parseForgeLinkHeader(readTriageResponseHeaderV1(headers, 'link'));
-  if (parsed.kind === 'malformed') {
-    throw new GithubRepositoryEventsHistoryGapError(
-      'GitHub repository Events returned a malformed Link header',
-    );
-  }
-  const next = parsed.kind === 'parsed' ? parsed.links.next : undefined;
-  return next === undefined ? null : validateRepositoryEventsPageUrl(next, repository);
 }
 
 function materializationRequestKey(value: Readonly<{
@@ -400,9 +334,8 @@ async function pollRepositoryEvents(input: Readonly<{
     etag: input.cursor?.etag ?? null,
     getPage: async ({ url, ifNoneMatch }) => {
       input.context.signal.throwIfAborted();
-      const validatedUrl = validateRepositoryEventsPageUrl(url, input.source.repository);
       const response = await client.request({
-        url: validatedUrl,
+        url,
         ...(ifNoneMatch === null ? {} : { headers: { 'If-None-Match': ifNoneMatch } }),
       });
       input.context.signal.throwIfAborted();
@@ -420,10 +353,16 @@ async function pollRepositoryEvents(input: Readonly<{
       if (!Array.isArray(payload)) {
         throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events response is not an array');
       }
+      // GitHub can spell the same stream by its immutable repository ID in a Link.
+      const next = readValidatedGithubFollowUpPage(response.headers, url, input.source.repository.repositoryId);
+      const page = next.kind === 'next' ? new URL(next.url).searchParams.getAll('page') : [];
+      if (next.kind === 'invalid' || (next.kind === 'next' && (page.length !== 1 || !/^[1-9][0-9]*$/u.test(page[0]!)))) {
+        throw new GithubRepositoryEventsHistoryGapError('GitHub repository Events returned an invalid next page');
+      }
       return Object.freeze({
         kind: 'page' as const,
         etag: readTriageResponseHeaderV1(response.headers, 'etag'),
-        nextUrl: parseNextPageUrl(response.headers, input.source.repository),
+        nextUrl: next.kind === 'next' ? next.url : null,
         events: Object.freeze(payload.map((event) => readGithubRepositoryEventTimeline(event, input.source.repository))),
         pollIntervalMs: readGithubPollIntervalMs(response.headers),
       });

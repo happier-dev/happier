@@ -587,11 +587,15 @@ describe('GitHub Automation Event history-gap reset', () => {
         throw new Error(`unexpected Action ${actionId}`);
       }),
     };
-    const httpRequest = vi.fn(async () => jsonResponse([{
-      id: '100', created_at: '2026-11-13T22:00:00Z',
-      repo: { id: 77, name: 'acme/widgets' }, type: 'PullRequestEvent',
-      payload: { action: 'opened', number: 1, pull_request: { id: 1, number: 1, url: 'https://api.github.com/repos/acme/widgets/pulls/1', base: {}, head: {} } },
-    }]));
+    const withNext = (body: unknown, url: string) => ({ ...jsonResponse(body), headers: { link: `<${url}>; rel="next"` } });
+    const nextPage = 'https://api.github.com/repositories/77/events?per_page=100&page=2';
+    const httpRequest = vi.fn(async (request: { url: string }) => new URL(request.url).searchParams.has('page')
+      ? jsonResponse([])
+      : withNext([{
+        id: '100', created_at: '2026-11-13T22:00:00Z',
+        repo: { id: 77, name: 'acme/widgets' }, type: 'PullRequestEvent',
+        payload: { action: 'opened', number: 1, pull_request: { id: 1, number: 1, url: 'https://api.github.com/repos/acme/widgets/pulls/1', base: {}, head: {} } },
+      }], nextPage));
     const context = {
       plugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       contribution: {
@@ -619,7 +623,10 @@ describe('GitHub Automation Event history-gap reset', () => {
       triggerRevision: source.triggerRevision,
       sourceSelectorId: source.sourceSelectorId,
     }, context)).resolves.toEqual({ kind: 'baselined' });
-
+    expect(httpRequest.mock.calls.map(([request]) => request.url)).toEqual([
+      'https://api.github.com/repos/acme/widgets/events?per_page=100',
+      nextPage,
+    ]);
 
     // The provider consumes the persisted source ref through ordinary exact
     // materialization. It never substitutes a listed account or a caller
@@ -644,6 +651,14 @@ describe('GitHub Automation Event history-gap reset', () => {
       { transport: { kind: 'checkpointedPull' }, knownRevision: '7' },
       { transport: { kind: 'checkpointedPull' }, knownRevision: '7' },
     ]);
+
+    sourcePageCalls = 0;
+    httpRequest.mockClear().mockResolvedValueOnce(withNext([], 'https://api.github.com/repositories/78/events?per_page=100&page=2'));
+    await expect(resetGithubRepositoryEventHistoryGap({
+      automationId: source.automationId, triggerId: source.triggerId,
+      triggerRevision: source.triggerRevision, sourceSelectorId: source.sourceSelectorId,
+    }, context)).rejects.toMatchObject({ data: { failureCause: { phase: 'github.automation.baseline' } } });
+    expect(httpRequest).toHaveBeenCalledTimes(1);
 
     sourcePageCalls = 0;
     httpRequest.mockResolvedValueOnce(jsonResponse({ invalid: true }));

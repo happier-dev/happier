@@ -2024,8 +2024,7 @@ describe('opening a row into the source detail', () => {
             await act(async () => { await shell.updateSurface({ ...surfaceContext(),
                 machineConnectionPending: false, machineExecutionReady: true }); });
             await vi.waitFor(() => { expect(document.body.textContent).toBe('Replace the duplicated normalizer'); });
-            expect(dispatches).toHaveLength(readsBeforeMachine + 1);
-            expect(dispatches.at(-1)).toBe(0);
+            expect(dispatches).toHaveLength(readsBeforeMachine);
             expect(rowRenders - renderedBeforeMachine).toBe(0);
         } finally { clock.mockRestore(); }
     });
@@ -2539,7 +2538,7 @@ describe('opening a row into the source detail', () => {
         await openTheRow(shell);
         await vi.waitFor(() => expect(published?.commands?.some((command) => command.title === 'Select session Current investigation')).toBe(true));
     });
-    it('retains an Account read failure during Machine loading and recovers when it becomes available', async () => {
+    it('retains an Account read failure through Machine loading and re-admission', async () => {
         const hostTarget = { ready: false, pending: false };
         let reads = 0;
         const shell = await mountShell({ activeSurface: true, hostTarget, automaticDemandOnly: true,
@@ -2551,16 +2550,8 @@ describe('opening a row into the source detail', () => {
         expect(reads).toBe(previousReads);
         hostTarget.ready = true;
         await act(async () => { await shell.updateSurface(surfaceContext()); });
-        await vi.waitFor(async () => {
-            await expect(shell.getByRole('button', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
-        });
-        await expect(shell.queryByText('The list could not be read')).resolves.toBeUndefined();
-        // Restoring the host also restores its admitted source descriptors;
-        // both source admission and readiness can demand the shared window.
-        expect(reads).toBeGreaterThan(previousReads);
-        const recoveredReads = reads;
-        await act(async () => { await shell.updateSurface(surfaceContext()); });
-        expect(reads).toBe(recoveredReads);
+        await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
+        expect(reads).toBe(previousReads);
     });
 
     it('attempts the Account aggregate during Machine loading and keeps Account controls available after refusal', async () => {
@@ -3642,7 +3633,8 @@ describe('opening a row into the source detail', () => {
         expect(lastPageLocation).toBeNull();
         expect(currentHarness?.getEntryIds).toEqual([]);
         hostTarget.ready = true;
-        await act(async () => { await shell.updateSurface(surfaceContext()); });
+        await act(async () => { await shell.updateSurface({ ...surfaceContext(), requesterExecutionReady: false }); });
+        await act(async () => { await shell.updateSurface({ ...surfaceContext(), requesterExecutionReady: true }); });
         await expect(shell.getByText('These details are not loaded')).resolves.toBeDefined();
         await expect(shell.getByRole('group', { name: 'Details pane' })).resolves.toBeDefined();
         expect(lastPageLocation).toBeNull();

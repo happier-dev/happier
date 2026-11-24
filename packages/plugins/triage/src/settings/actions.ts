@@ -409,6 +409,20 @@ export const TriageActionsCatalogValueV1Schema = defineProtocolObject({
 
 const storedTriageActions = createProtocolStoredReadSchema(TriageActionsCatalogValueV1Schema);
 
+const stockReview = Object.freeze({
+    actionId: 'review',
+    label: 'Review',
+    enabled: true,
+    appliesTo: Object.freeze(['pullRequest'] as const),
+    profileId: null,
+    workspaceMode: 'pull_request',
+    target: Object.freeze({
+        kind: 'reviewStart',
+        promptInvocationId: null,
+        seededFallbackInstruction: 'Review this change.',
+    }),
+}) satisfies TriageActionV1;
+
 /**
  * The shipped seed.
  *
@@ -416,15 +430,10 @@ const storedTriageActions = createProtocolStoredReadSchema(TriageActionsCatalogV
  *
  *  - **Ask** — read the entry, change nothing, every subject.
  *  - **Fix** — repair it in the project the reader selected, every subject.
- *  - **Review** — an ordinary Agent action on a pull request, prepared in the
- *    source's exact review workspace before the reader's profile and prompt
- *    ask the Agent to review the change.
+ *  - **Review** — prepare the pull request's exact review workspace and open
+ *    the host's reviewer selection.
  *  - **Explain this PR in chat** — send an ordinary explanation request with the
  *    pull request attached, without preparing a review checkout.
- *
- * `reviewStart` remains configurable rather than seeded: Ask, Fix and the
- * ordinary agent Review and Explain are the shipped defaults, while a reader who wants the
- * formal engine-selection flow can add or retarget an action explicitly.
  */
 const TRIAGE_BUILT_IN_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
     Object.freeze({
@@ -450,20 +459,7 @@ const TRIAGE_BUILT_IN_ACTIONS_V1: readonly TriageActionV1[] = Object.freeze([
             delivery: 'compose',
         }),
     }),
-    Object.freeze({
-        actionId: 'review',
-        label: 'Review',
-        enabled: true,
-        appliesTo: Object.freeze(['pullRequest'] as const),
-        profileId: null,
-        workspaceMode: 'pull_request',
-        target: Object.freeze({
-            kind: 'agent',
-            promptInvocationId: null,
-            seededFallbackInstruction: 'Review this change.',
-            delivery: 'compose',
-        }),
-    }),
+    stockReview,
     Object.freeze({
         actionId: 'explain-pr',
         label: 'Explain this PR in chat',
@@ -1161,6 +1157,21 @@ function parseStoredTriageActionsV1(
         // Two rows claiming one id would make every later edit ambiguous.
         if (actionId === null || ids.has(actionId)) return unreadable;
         ids.add(actionId);
+        // Earlier writers persisted every builtin on a catalog edit. Advance
+        // the old stock shape, including its seed reference, before parsing it
+        // as a user-authored composition.
+        const { target } = stored;
+        if (actionId === stockReview.actionId && stored.label === stockReview.label
+            && stored.enabled === stockReview.enabled && stored.profileId === stockReview.profileId
+            && stored.workspaceMode === stockReview.workspaceMode && stored.savedDefaults === undefined
+            && stored.appliesTo.length === 1 && stored.appliesTo[0] === stockReview.appliesTo[0]
+            && target.kind === 'agent' && target.delivery === 'compose'
+            && target.promptInvocationId === null && target.promptArgsText === undefined
+            && (target.seededFallbackInstruction === undefined
+                || target.seededFallbackInstruction === stockReview.target.seededFallbackInstruction)) {
+            actions.push(stockReview);
+            continue;
+        }
         const parsed = readAction(actionId, {
             label: stored.label,
             enabled: stored.enabled,

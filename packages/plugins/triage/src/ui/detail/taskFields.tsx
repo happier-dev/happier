@@ -513,7 +513,12 @@ export function TriageCreateTaskFields(props: Readonly<{
           : !canChoose ? <EmptyState layout="line" title={text('plugins.triage.tasks.noCreateSource', 'Add a source that supports creating tasks in Sources.')} />
           : <>
             <Form.TextField presentation="field" label={text('plugins.triage.tasks.where.search', 'Search places')}
-              placeholder={text('plugins.triage.tasks.where.search', 'Search places')} value={placeQuery} onChange={setPlaceQuery} />
+              placeholder={text('plugins.triage.tasks.where.search', 'Search places')} value={placeQuery}
+              onChange={value => {
+                // A late Happier tasks default must not replace a place search already in progress.
+                if (where === undefined && value.trim() !== '') setWhere(null);
+                setPlaceQuery(value);
+              }} />
             {shownGroups.length === 0 ? <EmptyState layout="line" title={text('plugins.triage.tasks.where.noMatch', 'No place matches')} /> : null}
             {recentChoice === undefined || query.length > 0 ? null : <ItemGroup title={text('plugins.triage.tasks.where.recent', 'Recent')} surface="none">
               {placeRow(recentChoice, `recent-${recentChoice.value}`, text('plugins.triage.tasks.where.lastUsed', 'Last used'))}

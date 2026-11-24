@@ -24,12 +24,10 @@ export function useTriageListWindowViewDemand(
 ): void {
   const ownReadiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
   const readiness = readClientReadiness ?? ownReadiness;
-  const machineReadiness = usePluginHostReadiness();
   const previous = useRef<Readonly<{
     active: boolean;
     readOwner: object | null;
     readiness: PluginUiHostReadiness;
-    machineReadiness: PluginUiHostReadiness;
   }> | null>(null);
 
   useEffect(() => {
@@ -37,7 +35,7 @@ export function useTriageListWindowViewDemand(
     // shared window. Absence is not a new owner/admission observation.
     if (readOwner === null) return;
     const preceding = previous.current;
-    previous.current = Object.freeze({ active, readOwner, readiness, machineReadiness });
+    previous.current = Object.freeze({ active, readOwner, readiness });
 
     // Host facades/callbacks may change without replacing the shared window.
     // Only its actual owner, activity, or admission facts produce new demand.
@@ -47,17 +45,12 @@ export function useTriageListWindowViewDemand(
       readiness.revision > preceding.readiness.revision
       || preceding.readiness.pending || preceding.readiness.ready === false
     );
-    const machineBecameAvailable = preceding !== null && !machineReadiness.pending && machineReadiness.ready !== false && (
-      machineReadiness.revision > preceding.machineReadiness.revision
-      || preceding.machineReadiness.pending || preceding.machineReadiness.ready === false
-    );
     // A retained inactive surface must stay demand-silent. The host's active
     // fact gates both view demand and the shared owner's re-acquisition.
     // Readiness is supplied by the host, independently from public activity.
     // Hand the declared read's readiness edge to the same window/coalescing owner.
-    // Machine readiness only refreshes deferred sources; it never gates Account demand.
-    if (!active || readiness.pending || readiness.ready === false || (!mountOrScopeChanged && !regainedActivity && !reacquire && !machineBecameAvailable)) return;
+    if (!active || readiness.pending || readiness.ready === false || (!mountOrScopeChanged && !regainedActivity && !reacquire)) return;
 
-    void refresh(reacquire || machineBecameAvailable ? 'manual' : 'view');
-  }, [active, refresh, readOwner, readiness, machineReadiness]);
+    void refresh(reacquire ? 'manual' : 'view');
+  }, [active, refresh, readOwner, readiness]);
 }

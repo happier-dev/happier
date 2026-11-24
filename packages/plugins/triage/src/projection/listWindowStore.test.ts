@@ -663,6 +663,25 @@ function createHarness(options: Readonly<{
 }
 
 describe('the mounted PRs & Issues window store', () => {
+    it('opens the deferred source after the Machine is admitted without a new page-view demand', async () => {
+        const harness = createHarness();
+        harness.state.sourceAContributionAvailable = false;
+        const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });
+        try {
+            store.setSourceMachineReadiness({ pending: true, ready: false });
+            await store.refresh('view');
+            expect(store.getSnapshot().sourceAdmissionPending).toBe(true);
+            expect(store.getSnapshot().window?.rows.some(row => row.entryRef.source.pluginId === SOURCE_A.pluginId)).toBe(false);
+
+            harness.state.sourceAContributionAvailable = true;
+            store.setSourceMachineReadiness({ pending: false, ready: true });
+
+            await vi.waitFor(() => expect(store.getSnapshot().pending).toBe('idle'));
+            expect(store.getSnapshot().sourceAdmissionPending).toBeUndefined();
+            expect(store.getSnapshot().window?.rows.some(row => row.entryRef.source.pluginId === SOURCE_A.pluginId)).toBe(true);
+        } finally { store.dispose(); }
+    });
+
     it('publishes an exact observation into retained truth and only its keyed reader, preserving shape until the lens changes', async () => {
         const harness = createHarness();
         const store = createTriageListWindowStore({ readEntries: harness.readEntries, nowMs: () => harness.clock.nowMs });

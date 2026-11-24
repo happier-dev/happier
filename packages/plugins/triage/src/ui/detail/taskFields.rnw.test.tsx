@@ -166,7 +166,7 @@ it('keeps an uncertain creation at its named source and opens its observed locat
   expect(creates).toBe(1);
 });
 
-it('opens on Happier tasks by default and preserves an explicitly chosen connected external target', async () => {
+it.each([false, true])('applies the late Happier tasks default only while the chooser is untouched (searching: %s)', async (searching) => {
   const internal = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured;
   const external = createTriageSourceV1Fixture().configuredInstance;
   const own = targetedTaskSource(INTERNAL_TASK_SOURCE_V1, 'task', 'create', false, ['title', 'body'], [], [
@@ -211,12 +211,35 @@ it('opens on Happier tasks by default and preserves an explicitly chosen connect
   const fixture = mounted.at(-1)!;
   expect(document.querySelector('[data-testid="triage-task-draft-title"]')).toBeNull();
   expect(saved).toEqual([]);
+  if (searching) {
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search places"]')!;
+    await act(async () => {
+      search.focus();
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'Issue');
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(search.value).toBe('Issue');
+  }
   await act(async () => {
     setSourceSnapshot({ ...sourceSnapshot, unreadableSources: [], window: { ...sourceSnapshot.window!,
       lanes: [{ source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: internal.instance.sourceInstanceId,
         exhausted: true, health: { kind: 'walkFinished' } }],
     } });
   });
+  if (searching) {
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search places"]');
+    expect(search?.value).toBe('Issue');
+    expect(document.activeElement).toBe(search);
+    const externalPlace = document.querySelector<HTMLElement>('[role="button"][aria-label^="Issue"]');
+    expect(externalPlace).not.toBeNull();
+    await act(async () => { externalPlace!.click(); });
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      source: external.instance.source, sourceInstanceId: external.instance.sourceInstanceId, kindId: 'issue',
+    });
+    return;
+  }
   // Arriving at a task draft puts typing in its title, rather than the pane heading.
   expect(document.activeElement).toBe(document.querySelector('[data-testid="triage-task-draft-title"]'));
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });

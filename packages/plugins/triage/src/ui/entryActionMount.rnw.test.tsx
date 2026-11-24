@@ -1906,19 +1906,23 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.reviewEngineListRequests).toEqual([]);
     }, 60_000);
 
-    it('starts a resolved formal review directly and carries its admitted selected-PR preparation into the review chooser', async () => {
+    it.each(['resolved', 'unresolved'] as const)('carries the admitted selected-PR preparation into the review chooser from a %s launch', async placement => {
         const harness = createHarness({ formalReviewReady: true });
         harness.setActions([{
             actionId: 'formal-review',
             label: 'Formal review',
             enabled: true,
             appliesTo: ['pullRequest'],
-            profileId: 'profile-1',
+            profileId: placement === 'resolved' ? 'profile-1' : null,
             workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: 'review-prompt' },
         }]);
-        // A complete start: the Profile's Agent and one reachable checkout (no draft modal).
-        resolveDirectStart(harness, '/workspaces/example');
+        if (placement === 'resolved') {
+            resolveDirectStart(harness, '/workspaces/example');
+        } else {
+            harness.setRegistry({ items: [projectRow({ rootPath: '/workspaces/example' })], truncated: false });
+            harness.setDraftSettles(true);
+        }
         harness.setStartResults([(input: TriageStartEntrySessionInputV1) => {
             if (input.destination.kind !== 'new'
                 || input.destination.materialization.kind !== 'reviewWorkspace'
@@ -1953,6 +1957,7 @@ describe('the entry action controls on the mounted detail header', () => {
         await act(async () => { await shell.press(review); });
         await settle();
 
+        expect(newSessionSeeds).toEqual([]);
         await expect.poll(
             () => mountedActionControls.get(shell)?.presentation('Start review'),
             { timeout: 60_000 },
@@ -1995,7 +2000,7 @@ describe('the entry action controls on the mounted detail header', () => {
             },
         });
         expect(harness.reviewEngineListRequests).toEqual([]);
-        expect(draftsOpened).toBe(0);
+        expect(draftsOpened).toBe(placement === 'resolved' ? 0 : 1);
     }, 60_000);
 
     it('opens the prepared-review composer for a custom ordinary-agent action keyed only by workspaceMode', async () => {

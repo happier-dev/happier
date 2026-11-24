@@ -677,13 +677,9 @@ describe('an unresolved Start now', () => {
         expect(phase).toEqual({ kind: 'idle' });
     });
 
-    /** Owner ruling 16:50Z: no draft modal for any agent action; only bulk keeps its per-unit settlement. */
     it.each([
         ['Walk through', { ...START_REQUEST, comparisonDestination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' },
             linkedSessionIds: ['sleeping-session'] }, 'none'],
-        ['formal review', { ...PREPARED_REVIEW_START_REQUEST, action: { ...PREPARED_REVIEW_START_REQUEST.action, actionId: 'formal-review',
-            target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review the selected pull request.' } } },
-        'preparedReviewWorkspace'],
         ['issue orchestration', { ...SEND_START_REQUEST, orchestrationPrompt: 'Plan only the migration.' }, 'createWorktree'],
     ] as const)('opens the prefilled composer for an unresolved %s', async (_kind, request, checkoutIntent) => {
         const { fixture } = await mountProbe({ request: request as TriageEntrySessionStartRequestV1 });

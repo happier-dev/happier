@@ -65,6 +65,7 @@ import {
 import {
     projectTriageActionPlacementCandidatesV1,
     projectTriageNewSessionDestinationV1,
+    triageNewSessionDraftSeedV1,
     type TriageNewSessionPreferenceV1,
     type TriageReviewWorkspacePreparationV1,
 } from '../ui/header/newSessionDestination.js';
@@ -72,6 +73,7 @@ import {
     type TriageNewSessionSeedHostV1,
     type TriageNewSessionFailureV1,
 } from '../ui/header/newSessionSeedCommand.js';
+import { requestTriageNewSessionDraft } from '../ui/header/newSessionDraftCommand.js';
 import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
 import { buildTriageEntrySessionHandoffV1 } from './entrySessionHandoff.js';
@@ -974,24 +976,37 @@ export function createTriageEntrySessionStartController(
                         ? await readTriageAgentExecutionTargetV1(host, preferredAgentTargetKey)
                         : null);
                 if (retired.current) return;
-                const directSettlement: unknown = request.settlement
+                let settlement: unknown = request.settlement
                     ?? (agent?.status === 'resolved' && executionPlacement !== null && launchDirectory !== undefined ? {
                         executionTarget: executionPlacement.executionTarget,
                         agentTarget: agent.agentTarget,
                         directory: launchDirectory,
                     } : undefined);
 
-                // Compose is authoring, not Session creation, and so is every
-                // agent action whose start is not complete — send, formal
-                // review, Walk through and orchestration alike (owner rulings
-                // "Agent actions: one shared flow", 2026-11-07, and 16:50Z):
-                // hand the resolved profile, prompt, placement and entry
-                // attachment to the host's incumbent New Session composer and
-                // stop. That screen owns all subsequent edits and the eventual
-                // send; closing it creates no Session, link or Message and
-                // spends no creation key.
-                if (composes || directSettlement === undefined) {
-                    const placementCandidates = placement === null ? [] : projectTriageActionPlacementCandidatesV1(placement, checkout);
+                const placementCandidates = placement === null
+                    ? undefined
+                    : projectTriageActionPlacementCandidatesV1(placement, checkout);
+                if (action.target.kind === 'reviewStart' && settlement === undefined) {
+                    // The host supplies the chosen Session setup. This press still
+                    // owns the prepared checkout and the linked Review continuation.
+                    setPhase(CHOOSING);
+                    const draft = await requestTriageNewSessionDraft(host,
+                        triageNewSessionDraftSeedV1(preference, executionPlacement ?? undefined, {
+                            ...(action.profileId === null ? {} : { profileId: action.profileId }),
+                            checkoutIntent: checkout,
+                            ...(placementCandidates === undefined ? {} : { candidates: placementCandidates }),
+                        }), { signal: selectionLifetime.signal });
+                    if (retired.current) return;
+                    if (draft.status !== 'settled') {
+                        setPhase(draft.status === 'cancelled' ? IDLE : unavailable(
+                            draft.status === 'unsupported' ? 'newSessionUnsupported' : 'newSessionUnavailable',
+                            draft.status === 'unavailable' ? draft.failure : undefined));
+                        return;
+                    }
+                    settlement = draft.settlement;
+                } else if (composes || settlement === undefined) {
+                    // The host composer owns ordinary Agent authoring and delivery,
+                    // including a Start whose Agent or placement is unsettled.
                     setPhase(CHOOSING);
                     const seeded = await requestTriageNewSessionAuthoringV1(host, {
                         entries: [request], promptText, profileId: action.profileId,
@@ -1000,7 +1015,7 @@ export function createTriageEntrySessionStartController(
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
                         ...(request.teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId: request.teamModelFromSessionId }),
                         ...(permissionMode === undefined ? {} : { permissionMode }),
-                        checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates,
+                        checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates ?? [],
                         signal: selectionLifetime.signal,
                         isCurrent: () => !retired.current,
                     });
@@ -1014,12 +1029,7 @@ export function createTriageEntrySessionStartController(
                     return;
                 }
 
-                // A direct start is admitted by the same destination grammar as
-                // the host's own settlement.
-                const settlement = directSettlement;
-                const placementCandidates = placement === null
-                    ? undefined
-                    : projectTriageActionPlacementCandidatesV1(placement, checkout);
+                // Both resolved and host-selected starts use the same destination grammar.
                 const destination = projectTriageNewSessionDestinationV1({
                     workspaceMode: action.workspaceMode,
                     creationKey: mintCreationKey(),

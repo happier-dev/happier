@@ -383,8 +383,8 @@ export function TriageEntryActionControls(
     return () => onAgentEntry(null);
   }, [agentAvailable, agentHandle, onAgentEntry]);
 
-  // The manual Review start, lent the same way: the first Review action this row offers and could press now.
-  const reviewAction = target.kind === 'refused' ? null : offered.find((action) => readTriageActionIntentV1(action) === 'review'
+  // The skip card continues through the first available formal Review action.
+  const reviewAction = target.kind === 'refused' ? null : offered.find((action) => action.target.kind === 'reviewStart'
     && action.enabled && !isTriageActionBlockedV1(action, reviewPreparation)) ?? null;
   const reviewRequest = target.kind === 'refused' || reviewAction === null ? null
     : { action: reviewAction, entryRef: target.entryRef, sourceInstanceId: target.sourceInstanceId };

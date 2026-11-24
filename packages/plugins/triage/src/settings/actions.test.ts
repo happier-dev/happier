@@ -191,14 +191,8 @@ describe('the Triage action record', () => {
         expect(FIX.workspaceMode).toBe('repository');
         expect(REVIEW.workspaceMode).toBe('pull_request');
 
-        // Neither Review is inferred from its label: the arm is a member, and
-        // the two arms are two different user actions that ship side by side.
-        expect(REVIEW.target).toMatchObject({
-            kind: 'agent',
-            promptInvocationId: null,
-            seededFallbackInstruction: 'Review this change.',
-            delivery: 'compose',
-        });
+        expect(REVIEW.target).toMatchObject({ kind: 'reviewStart', promptInvocationId: null });
+        expect(REVIEW.target.seededFallbackInstruction?.trim()).toBeTruthy();
         expect(ASK.target).toEqual({ kind: 'agent', promptInvocationId: null, delivery: 'compose' });
         expect(FIX.target).toMatchObject({ seededFallbackInstruction: 'Fix this.' });
 
@@ -216,6 +210,15 @@ describe('the Triage action record', () => {
             'target',
             'workspaceMode',
         ]);
+    });
+
+    it('advances the previously materialized stock Review while retaining configured Agent compose', () => {
+        const previousStock = { ...REVIEW, target: { kind: 'agent', promptInvocationId: null, delivery: 'compose' } };
+        const configured = { ...previousStock, profileId: 'my-review-profile' };
+        const read = (review: unknown) => parseTriageActions({ v: 1, actions: [review] }).value.actions
+            .find(action => action.actionId === REVIEW.actionId);
+        expect(read(previousStock)).toEqual(REVIEW);
+        expect(read(configured)).toMatchObject(configured);
     });
 
     it('fails closed when a start-only action has no configured instruction source', () => {

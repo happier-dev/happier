@@ -39,6 +39,7 @@ import {
 } from './listWindow.js';
 import { retainTriageObservation, retainTriageProjectionArray, retainTriageProjectionValue } from './listWindowReconciliation.js';
 import { projectTriageEntrySearchText } from './entrySearch.js';
+import { INTERNAL_TASK_SOURCE_V1 } from '../internalTasks/identity.js';
 import type { InternalTaskListProjection } from '../internalTasks/listProjection.js';
 
 /**
@@ -584,6 +585,12 @@ export function createTriageListWindowStore(deps: Readonly<{
         appending = false;
     }
 
+    function hasUnavailableMachineSources(): boolean {
+        // Personal Tasks has a built-in Account row even when its descriptor
+        // is absent. Machine admission cannot restore that Account source.
+        return configuredSources.some(source => !source.available && !sameTriageSourceIdentity(source.source, INTERNAL_TASK_SOURCE_V1));
+    }
+
     function publish(): void {
         const unreadable = unreadableSources();
         const blocked = retainTriageProjectionValue(snapshot.refreshBlocked, refreshBlock() ?? undefined);
@@ -606,7 +613,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             pending,
             ...((sourceMachineReadiness?.pending === true
                 || (rosterReadWhileResolving && sourceMachineReadiness?.ready !== false))
-                && configuredSources.some(source => !source.available)
+                && hasUnavailableMachineSources()
                 ? { sourceAdmissionPending: true as const } : {}),
             ...(sourceMachineReadiness?.ready === false && !sourceMachineReadiness.pending
                 ? { sourceMachineUnavailable: true as const } : {}),
@@ -1310,6 +1317,13 @@ export function createTriageListWindowStore(deps: Readonly<{
         ...(deps.onUnexpectedError ? { onUnexpectedError: deps.onUnexpectedError } : {}),
     });
 
+    function scheduleMachineDeferredRoster(): void {
+        if (rosterReadWhileResolving && !sourceMachineReadiness?.pending && sourceMachineReadiness?.ready !== false
+            && hasUnavailableMachineSources()) {
+            scheduler.trigger();
+        }
+    }
+
     async function runCycle(): Promise<void> {
         if (!isCurrent()) return;
         let cycleWasAppend = appending && !pagingResetPending;
@@ -1336,7 +1350,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             // be visibly unsynchronized instead of falsely empty.
             const reusesRoster = sourceRefresh !== undefined && configuredSourceTaskScope === taskScope;
             if (!reusesRoster) {
-                const resolving = sourceMachineReadiness?.pending === true;
+                const resolving = sourceMachineReadiness?.pending === true || sourceMachineReadiness?.ready === false;
                 const enumeration = await enumerateConfiguredSources(censusLens);
                 if (!isCurrentRoster()) return;
                 rosterReadWhileResolving = resolving;
@@ -1352,6 +1366,9 @@ export function createTriageListWindowStore(deps: Readonly<{
                     activeCycleIsAppend = false;
                     activeCycleReplacesGeneration = true;
                 }
+                // An Account roster may settle after the Machine edge that
+                // would have woken its deferred sources.
+                scheduleMachineDeferredRoster();
             }
             const hadRosterError = error !== null;
             error = null;
@@ -1474,6 +1491,9 @@ export function createTriageListWindowStore(deps: Readonly<{
                 && sourceMachineReadiness?.ready === readiness.ready) return;
             sourceMachineReadiness = readiness;
             publish();
+            // The roster, not the surface's context publication, owns which
+            // reads were deferred by admission.
+            scheduleMachineDeferredRoster();
         },
         getRow(key) {
             return foldBaseline.entries.get(key)?.row ?? null;

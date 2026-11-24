@@ -3,6 +3,9 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, expect, it, vi } from 'vitest';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
     TriageSourceInstanceDraftV1Schema,
     type TriageScanInputV1,
@@ -37,8 +40,10 @@ async function configuredMount() {
         kind: 'complete', evidence: { kind: 'walkFinished' }, observations: [present('retained')],
     }) };
     const pages: TriageScanInputV1['page'][] = [];
+    const actions: unknown[] = [];
     const host: TriageListWindowHostV1 = {
-        async executeAction(_action, rawInput, options) {
+        async executeAction(action, rawInput, options) {
+            actions.push(action);
             fixture.setScan(async (_operation, input) => { pages.push(input.page); return state.scan(input); });
             return fixture.readEntries(TriageListEntriesInputV1Schema.parse(rawInput), options);
         },
@@ -60,7 +65,7 @@ async function configuredMount() {
     const scope = lifetime.forExecutionOrigin('daemon-a');
     const lease = acquireTriageListWindow(host, scope);
     const store = readTriageListWindowReadOwner(host, scope)!;
-    return { administer, clock, draft, pages, state, store,
+    return { actions, administer, clock, draft, pages, state, store,
         refresh: (trigger: TriageRefreshTriggerV1) => refreshTriageListWindow(trigger, host, scope),
         loadMore: () => loadMoreTriageListWindow(host, scope),
         dispose() { lease.release(); lifetime.retire(); dateNow.mockRestore(); },
@@ -149,6 +154,56 @@ it('coalesces populated mount and host reactivation demands with one queued manu
         await act(async () => { root.unmount(); });
         container.remove();
         fixture.dispose();
+    }
+});
+
+it('does not reread a settled mounted list when the host republishes Machine readiness', async () => {
+    const fixture = await configuredMount();
+    const demands: Promise<void>[] = [];
+    const refresh = (trigger: TriageRefreshTriggerV1) => {
+        const pending = fixture.refresh(trigger);
+        demands.push(pending);
+        return pending;
+    };
+    const ready = createSurfaceContextFixture({ machineExecutionReady: true, requesterExecutionReady: true });
+    let mount: PluginUiTestkit | undefined;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    try {
+        await act(async () => {
+            mount = await createPluginUiTestkit({
+                identity: { instanceId: 'triage-idle', mountNonce: 'initial' },
+                authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+                surfaceContext: ready,
+                surface: defineUiSurface(() => {
+                    useTriageListWindowViewDemand(true, refresh, undefined, fixture.store);
+                    return null;
+                }),
+                adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            });
+        });
+        await Promise.all(demands);
+        expect(fixture.store.getSnapshot().window?.rows.map(row => row.entryRef.entryId)).toEqual(['retained']);
+        const actionsBeforeIdle = fixture.actions.length;
+        expect(actionsBeforeIdle).toBeGreaterThan(0);
+        expect(vi.getTimerCount()).toBe(0);
+        const timeouts = vi.spyOn(globalThis, 'setTimeout');
+        const intervals = vi.spyOn(globalThis, 'setInterval');
+        await act(async () => {
+            await mount!.updateSurface({ ...ready, machineConnectionPending: true, machineExecutionReady: false });
+        });
+        await act(async () => {
+            await mount!.updateSurface(ready);
+            fixture.clock.nowMs += 90_000;
+            await vi.advanceTimersByTimeAsync(90_000);
+        });
+        await Promise.all(demands);
+        expect({ scheduledTimers: timeouts.mock.calls.length + intervals.mock.calls.length,
+            actions: fixture.actions.length - actionsBeforeIdle }).toEqual({ scheduledTimers: 0, actions: 0 });
+    } finally {
+        await act(async () => { await mount?.dispose(); });
+        fixture.dispose();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
     }
 });
 
