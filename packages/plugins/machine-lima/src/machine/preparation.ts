@@ -51,8 +51,10 @@ export function createLimaPreparationClient(executor: LimaExecutor, provider: Pi
     if (operation.launch.preparedBase) return { kind: 'refused', code: 'lima_preparation_requires_clean_base' };
     try {
       const acquired = await provider.acquire({ managedId: `prepare:${operation.operationId}`, launch: { ...operation.launch, mounts: [] } });
-      if (acquired.kind === 'rejected' && acquired.code === 'resource_mismatch') return { kind: 'refused', code: 'lima_preparation_exists' };
-      if (acquired.kind !== 'bound') return { kind: 'unknown', code: acquired.kind === 'unknown' ? acquired.recovery.reason : acquired.code,
+      if (acquired.kind === 'rejected') return { kind: 'refused',
+        code: acquired.code === 'resource_mismatch' ? 'lima_preparation_exists' : acquired.code,
+        ...(acquired.nativeCause ? { nativeCause: acquired.nativeCause } : {}) };
+      if (acquired.kind === 'unknown') return { kind: 'unknown', code: acquired.recovery.reason,
         nativeOperationRef: reference(operation) };
       const resource = acquired.resource.value;
       const command = async (argv: readonly string[], input?: string) => {

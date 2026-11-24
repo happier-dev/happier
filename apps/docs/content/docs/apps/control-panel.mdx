@@ -107,9 +107,9 @@ instance name. There is no separate native instance-name field. Recovery and
 cleanup keep the recorded storage and native identity, including after you edit
 the VM's CPU, memory or disk through Lima.
 
-New Lima machines default to 4 GiB of memory. Create requires at least 2 GiB
-because measured agent Session startup peaked at 1.80 GiB. If Create refuses the
-size, choose 4 GiB in the size controls.
+In 0.3 development, new Lima machines default to 4 GiB of memory and require at
+least 3 GiB for agent Sessions. If agent work stalls on an existing 2 GiB
+machine, stop it, resize it to at least 3 GiB, and start it again.
 
 New Ubuntu Lima guests install Bubblewrap during guest setup for Codex's native
 sandbox. Older guests and custom images need a working `bwrap` in the guest

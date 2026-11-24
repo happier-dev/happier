@@ -272,20 +272,20 @@ describe('public Lima native leaf', () => {
     { arch: 'aarch64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-arm64.img' },
   ];
 
-  it('explains why 1 GiB cannot be reviewed for Create and recommends 4 GiB', async () => {
+  it('refuses a 2 GiB guest in Create review and recommends 4 GiB', async () => {
     const { executor } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
     const options = MachineProvisionerOptionsResultV1Schema.parse(
-      await createLimaProvider(executor).options({ ...launch, memoryGiB: 1 }));
+      await createLimaProvider(executor).options({ ...launch, memoryGiB: 2 }));
     expect(projectMachineProvisionerSelectionV1({ options, launchSchema: LimaLaunchSchema.jsonSchema,
-      selection: { size: '2/1/20' } })).toMatchObject({
+      selection: { size: '2/2/20' } })).toMatchObject({
       kind: 'unavailable', code: 'agent_session_memory_too_small', unavailableReason: {
         code: 'agent_session_memory_too_small',
-        status: { params: { measuredPeakGiB: '1.80', minimumGiB: 2, recommendedGiB: 4 } },
+        status: { params: { minimumGiB: 3, recommendedGiB: 4 } },
       },
     });
   });
 
-  it.each([2, 4, 6])('keeps %s GiB as an explicit, reviewable size', async memoryGiB => {
+  it.each([3, 4, 6])('keeps %s GiB as an explicit, reviewable size', async memoryGiB => {
     const { executor } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
     const requested = { ...launch, memoryGiB };
     const options = await createLimaProvider(executor).options(requested);
@@ -293,9 +293,9 @@ describe('public Lima native leaf', () => {
       selection: { size: `2/${memoryGiB}/20` } })).toMatchObject({ kind: 'ready', launch: requested });
   });
 
-  it('rejects a retained 1 GiB recipe at acquisition before native allocation', async () => {
+  it('rejects a retained 2 GiB recipe at acquisition before native allocation', async () => {
     const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
-    const result = await createLimaProvider(executor).acquire({ managedId, launch: { ...launch, memoryGiB: 1 } });
+    const result = await createLimaProvider(executor).acquire({ managedId, launch: { ...launch, memoryGiB: 2 } });
     expect(MachineProvisionerAcquireResultV1Schema.parse(result)).toEqual({
       kind: 'rejected', code: 'agent_session_memory_too_small',
     });

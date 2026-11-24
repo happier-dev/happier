@@ -11,7 +11,7 @@ import { LimaLaunchSchema } from './machine/schemas.js';
 
 const root = mkdtempSync(join(tmpdir(), 'happier-lima-preparation-'));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
-const launch = { store: root, image: 'https://example.test/ubuntu.img', arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 2, diskGiB: 10, mounts: [] } as const;
+const launch = { store: root, image: 'https://example.test/ubuntu.img', arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 3, diskGiB: 10, mounts: [] } as const;
 const input = { operationId: 'prepare-one', input: {
   launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, choices: launch },
   cli: { identity: 'public-release:0.3.0', versionId: '0.3.0', binaryPath: '/opt/happier/cli/happier',
@@ -71,6 +71,19 @@ function boundary(options: { setupExit?: number; setupCancelled?: boolean; editE
 }
 
 describe.skipIf(process.platform === 'win32')('Lima Prepare through public Actions', () => {
+  it('returns the sizing refusal when preparing a 2 GiB base', async () => {
+    const native = boundary();
+    const kit = await native.kit();
+    try {
+      const request = { ...input, input: { ...input.input, launch: {
+        ...input.input.launch, choices: { ...launch, memoryGiB: 2 },
+      } } };
+      const result = await kit.invokeAction('prepare-build', request, { surface: 'plugin' });
+      expect(result).toEqual({ kind: 'refused', code: 'agent_session_memory_too_small' });
+      expect(native.instances.size).toBe(0);
+    } finally { await kit.dispose(); }
+  });
+
   it('builds a stopped base, recovers it in a fresh runtime, clones it without setup, and deletes only the base', async () => {
     const native = boundary();
     let kit = await native.kit();

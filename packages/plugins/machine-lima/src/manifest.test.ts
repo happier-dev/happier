@@ -160,7 +160,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     )) };
     const { handler, context } = await activatedAction('options', exec);
     const recipe = { store: info.limaHome, image, arch: 'x86_64', vmType: 'qemu',
-      cpus: 2, memoryGiB: 1, diskGiB: 10, mounts: [] };
+      cpus: 2, memoryGiB: 4, diskGiB: 10, mounts: [] };
     const options = MachineProvisionerOptionsResultV1Schema.parse(await handler(recipe, context));
     const resolvedImage = image.startsWith('template:') ? 'https://example.test/ubuntu.img' : image;
     expect(options.base).toMatchObject({ launch: { ...recipe, image: resolvedImage }, available: true, guestPlatform: 'linux' });
@@ -332,7 +332,7 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     } finally { await kit.dispose(); }
   });
 
-  it('opens an untouched configuration from the controller native defaults and preserves explicit edits', async () => {
+  it('combines controller defaults with the recommended memory and preserves explicit edits', async () => {
     const calls: string[][] = [];
     const image = 'https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img';
     const exec: Pick<ExecService, 'run'> = { run: async request => {
@@ -351,12 +351,14 @@ describe.skipIf(process.platform === 'win32')('activated public Lima actions', (
     try {
       const options = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {}, { surface: 'plugin' }));
       expect(options.base?.launch).toEqual({ store: '/srv/custom-lima', image, arch: 'x86_64', vmType: 'qemu',
-        cpus: 6, memoryGiB: 8, diskGiB: 40, mounts: [] });
+        cpus: 6, memoryGiB: 4, diskGiB: 40, mounts: [] });
       const projection = projectMachineProvisionerSelectionV1({ options, selection: { size: options.dimensions.size[0]?.id,
         image: options.dimensions.image[0]?.id }, launchSchema: LimaLaunchSchema.jsonSchema });
       expect(projection).toMatchObject({ kind: 'ready', launch: options.base?.launch });
       expect(calls.filter(args => args[0] === 'info')).toHaveLength(1);
-      const edited = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', { cpus: 3, store: '/srv/other-lima' }, { surface: 'plugin' }));
+      const edited = MachineProvisionerOptionsResultV1Schema.parse(await kit.invokeAction('options', {
+        cpus: 3, memoryGiB: 8, store: '/srv/other-lima',
+      }, { surface: 'plugin' }));
       expect(edited.base?.launch).toMatchObject({ cpus: 3, store: '/srv/other-lima', image, memoryGiB: 8 });
       expect(calls.every(args => args[0] === 'info' || args[0] === '--version')).toBe(true);
     } finally { await kit.dispose(); }

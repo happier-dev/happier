@@ -22,13 +22,12 @@ const gib = 1024 ** 3;
 const defaultMemoryGiB = 4;
 
 function agentSessionMemoryRefusal(memoryGiB: number | undefined) {
-  // MACH-LIFECYCLE-1118.md (memory-summary.json) measured 1.803 GiB at Session startup.
-  const measuredPeakGiB = 1.803;
-  const minimumGiB = Math.ceil(measuredPeakGiB);
+  // A 2 GiB guest without swap stalled while starting the member-native Agent inventory worker (L65).
+  const minimumGiB = 3;
   if (memoryGiB === undefined || memoryGiB >= minimumGiB) return undefined;
   const code = 'agent_session_memory_too_small';
   return { code, status: machinePresentationLabel(code, {
-    measuredPeakGiB: measuredPeakGiB.toFixed(2), minimumGiB, recommendedGiB: defaultMemoryGiB,
+    minimumGiB, recommendedGiB: defaultMemoryGiB,
   }) };
 }
 

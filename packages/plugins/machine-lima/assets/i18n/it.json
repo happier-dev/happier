@@ -8,5 +8,5 @@
   "machineLima.presentation.qemu_unavailable": "QEMU non disponibile",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU non disponibile",
   "machineLima.presentation.vz_driver_unavailable": "Virtualizzazione non disponibile",
-  "machineLima.presentation.agent_session_memory_too_small": "Memoria insufficiente per una sessione dell’agente. All’avvio il picco di utilizzo è stato di {measuredPeakGiB} GiB. Scegli almeno {minimumGiB} GiB. Consigliamo {recommendedGiB} GiB."
+  "machineLima.presentation.agent_session_memory_too_small": "Memoria insufficiente per una sessione dell’agente. Scegli almeno {minimumGiB} GiB. Consigliamo {recommendedGiB} GiB."
 }
