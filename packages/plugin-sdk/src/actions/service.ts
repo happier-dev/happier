@@ -1,5 +1,5 @@
 import type { PluginActionDeclaration } from '../definePlugin.js';
-import { pluginActionDeclarationIsReadOnlyForInput as canonicalPluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
+import { pluginActionDeclarationIsReadOnlyForInput as canonicalPluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/readOnly';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec as canonicalGetActionSpec, PLUGIN_ACTION_INPUT_SCHEMAS, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
@@ -321,5 +321,5 @@ export interface ActionsService {
   }>>;
 }
 
-export { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/invocation';
+export { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plugins/actions/failureAuthorPayload';
 export { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
