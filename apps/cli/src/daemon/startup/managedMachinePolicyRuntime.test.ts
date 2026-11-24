@@ -588,6 +588,9 @@ describe('daemon managed policy census transport', () => {
             .toEqual({ machines: [], targets: [] });
         expect(ManagedPolicyCensusInputV1Schema.parse(vi.mocked(axios.post).mock.calls.at(-1)?.[1]))
             .toMatchObject({ managedId: 'native-credentials', includeNativeCredentialBindings: true });
+        vi.mocked(axios.post).mockResolvedValue({ status: 409, data: { code: 'credential_unavailable' } });
+        await expect(readManagedMachinePolicyCensus({ ...input, nativeCredentialManagedId: 'native-credentials' }))
+            .rejects.toMatchObject({ code: 'credential_unavailable', status: 409 });
         vi.mocked(axios.post).mockResolvedValue({ status: 403, data: { machines: [], targets: [] } });
         await expect(readManagedMachinePolicyCensus(input)).rejects.toMatchObject({ code: 'admission_unavailable' });
     });

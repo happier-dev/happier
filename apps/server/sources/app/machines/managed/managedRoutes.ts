@@ -268,7 +268,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             if (!current.installationPublicKey || !verifyMachineInstallationProof({ payload: { version: 1, machineId: controller.machineId,
                 installationId: controller.installationId, accountId: request.userId, managedPolicyCensus: { homeId } }, proof,
                 publicKey: current.installationPublicKey })) throw new ManagedMachineError('permission_denied');
-            const accountAccess = selectedIds
+            const installedController = { controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId };
+            const nativeCredentials = request.body.includeNativeCredentialBindings;
+            const accountAccess = nativeCredentials ? undefined : selectedIds
                 ? await resolveSignedManagedAccountExecutorInTx(tx, current, { custodianAccountId: request.userId })
                     ? { controllerMachineId: null } : undefined
                 : { controllerMachineId: null, id: { in: targets.filter(target => !target.controller).map(target => target.managedId) } };
@@ -278,10 +280,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 ...(ids ? { id: { in: [...ids] } } : { archivedAt: null,
                     OR: [{ allocation: 'bound', creationState: 'active' },
                         { allocation: { in: ['bound', 'may-exist'] }, creationState: 'canceled', desired: 'delete', desiredWhen: 'now' }] }),
-                AND: [{ OR: [{ controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId },
+                // Account execution and guest Stop do not place native credential delivery.
+                ...(nativeCredentials ? installedController : { AND: [{ OR: [installedController,
                     ...(accountAccess ? [accountAccess] : []),
                     { controllerMachineId: null, enrolledMachineId: controller.machineId,
-                        retention: jsonPathEquals(['effect'], 'stop') }] }] } });
+                        retention: jsonPathEquals(['effect'], 'stop') }] }] }) } });
             // Reserve the Home, custody, controller, JSON filter and pagination binds.
             const rows = selectedIds
                 ? (await Promise.all(portableQueryChunks({ values: selectedIds, bindingsPerValue: 1, fixedBindings: 10 }).map(readRows))).flat()
@@ -292,7 +295,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                     && admitted.currentAdmission.request.purpose.kind === 'retention'
                     ? [{ managedId: row.id, requestId: readManagedCurrentRequestId(row) }] : [];
             });
-            const nativeCredentialPolicies = request.body.includeNativeCredentialBindings ? await Promise.all(rows.map(async row => {
+            const nativeCredentialPolicies = nativeCredentials ? await Promise.all(rows.map(async row => {
                 const native = await readQualifiedSessionTeamCredentialNativeDeliveriesForManagedMachineInTx(tx, {
                     accountId: request.userId, request: { managedId: row.id }, authentication: {
                         env: process.env, authority: readTeamOperationAuthenticationFromRequest(request).authenticationAuthority,

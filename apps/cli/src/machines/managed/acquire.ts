@@ -947,6 +947,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 && current.observation.power === 'running' && current.observation.nativeExpiry !== undefined);
         },
         async reconcileNativeCredentials(machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
+            if (!machine.controller) return;
             const contribution = machine.resource && resolveRetainedMachineProvisioner(
                 input.runtimeRegistry.contributes.machineProvisioners, machine.resource);
             if (!contribution?.definition.nativeCredentialDelivery) return;
@@ -963,16 +964,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const action = 'machines.managed.credentials.install' as const;
             const hydrator = createManagedPresetHydrator(input);
             const client = createManagedMachineControllerClient(input, options, action, hydrator);
-            client.assertConnection(admitted);
-            const context = await client.post('/v1/machines/managed/controller/context', {
-                homeId: admitted.homeId, managedId: admitted.id, expectedIntentRevision: admitted.intentRevision,
-                controller: input.controller, includeNativeCredentialBindings: true,
-            }, ManagedControllerContextOutputV1Schema);
-            const retained = await normalizeManagedPresetCarrier(context, hydrator, options.signal);
-            client.assertConnection(retained.machine);
-            const invocation = createManagedNativeInvocation({ input, options, client, machine: retained.machine, action,
-                nativePolicyAdmission: true }, () => retained.machine);
-            const result = await applyManagedNativeCredentialPolicy({ machine: retained.machine, bindings: policy.bindings,
+            const { machine: retained } = await normalizeManagedPresetCarrier({ machine: admitted }, hydrator, options.signal);
+            const invocation = createManagedNativeInvocation({ input, options, client, machine: retained, action,
+                nativePolicyAdmission: true }, () => retained);
+            const result = await applyManagedNativeCredentialPolicy({ machine: retained, bindings: policy.bindings,
                 desiredBindingKeys: policy.desiredBindingKeys, prepareSource: input.prepareTeamCredentialNativeSource,
                 invoke: invocation.invoke, signal: options.signal });
             if (result.kind !== 'confirmed') throw new ManagedMachineControllerError(result.code);

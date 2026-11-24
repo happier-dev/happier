@@ -2933,25 +2933,31 @@ describe('managed acquisition durable custody', () => {
         expect(native.effects()).toBe(0);
         expect(reads.some(url => url.endsWith('/machines.managed.credentials.install'))).toBe(false);
     });
-    it('dispatches supplied empty native credential bindings through the descriptor managed role', async () => {
+    it('applies an empty native credential policy from the signed census without a context read', async () => {
         const homeId = 'srv_native_credential_composer';
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
         const native = nativeFixture({ nativeCredentialDelivery: true, privateNative: true, credentialPurposes: [] });
-        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine: retained } });
+        const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/controller/policies')) return { status: 200, data: { machines: [retained], targets: [],
+                nativeCredentialPolicies: [{ managedId: retained.id, bindings: [], desiredBindingKeys: [] }] } };
+            return { status: 403, data: { code: 'permission_denied' } };
+        });
         const driverInput = { token: 'token', serverUrl: 'https://home.example', homeId, controller,
             runtimeRegistry: native.runtimeRegistry, ...accountInputs,
+            externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair().secretKey,
+            prepareTeamCredentialNativeSource: async () => { throw new Error('An empty policy has no source to open'); },
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
                 canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) };
-        const options = { requestId: 'native-policy', context: { operationOwnerUpdate: { update() {} } } };
-        const action = 'machines.managed.credentials.install' as const;
-        const client = createManagedMachineControllerClient(driverInput, options, action);
-        const invocation = createManagedNativeInvocation({ input: driverInput, options, client, machine: retained, action }, () => retained);
-        const result = await invocation.invoke('nativeCredentialApply', {
-            resource: retained.resource, baseline: { kind: 'allow-all' }, bindings: [], ownedBindings: [],
-        }, { managedNativeCredentials: { role: 'nativeCredentialApply', bindings: new Map() } });
-        expect(result).toEqual({ kind: 'confirmed' });
+        const driver = createManagedMachineAcquisitionDriver(driverInput);
+        await driver.reconcileNativeCredentials(retained, { requestId: 'native-policy' });
         expect(native.effects()).toBe(1);
+        expect(post.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/machines/managed/controller/policies']);
+
+        const { controller: _unassigned, ...portable } = retained;
+        await driver.reconcileNativeCredentials(portable, { requestId: 'no-controller' });
+        expect(native.effects()).toBe(1);
+        expect(post).toHaveBeenCalledTimes(1);
     });
     it.each(['quota', 'uniqueness', 'invalid-fields'] as const)('carries a native acquire refusal through real Action execution to operation Details without retrying (%s)', async outcome => {
         const homeId = 'srv_native_cause';

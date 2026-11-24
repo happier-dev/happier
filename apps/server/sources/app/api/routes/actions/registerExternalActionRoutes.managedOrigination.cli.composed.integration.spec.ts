@@ -8,6 +8,7 @@ import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/m
 import { resolveManagedWakeTargetInTx, assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
 import { resolveManagedGuestActivityAdmissionInTx } from '@/app/machines/managed/managedGuestActivity';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
+import { createManagedPolicyCensusProofV1, ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify, { type InjectOptions } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -2312,6 +2313,51 @@ describe('ordinary Account managed Action origination', () => {
             await db.managedMachine.update({ where: { id: row.id }, data: { admittedInput: { ...admittedInput,
                 machineSetup: { requestEnvelopeDigest: 'b'.repeat(64) } } } });
             expect((await mint()).statusCode).not.toBe(200);
+        } finally { await instance.close(); }
+    });
+
+    it('admits native credential reconciliation only for the retained installation at the signed policy census', async () => {
+        const selected = await fixture(true);
+        const instance = await app(async () => { throw new Error('Policy census must not dispatch native work'); });
+        const headers = { authorization: `Bearer ${selected.token}` };
+        const proof = createManagedPolicyCensusProofV1({ homeId, controller: selected.controller,
+            custodianAccountId: selected.account.id, privateKey: selected.keys.secretKey });
+        const census = (managedId: string, native = true) => instance.inject({ method: 'POST',
+            url: '/v1/machines/managed/controller/policies', headers, payload: { homeId, controller: selected.controller,
+                proof, managedId, ...(native ? { includeNativeCredentialBindings: true } : {}) } });
+        const create = (installed: boolean) => db.managedMachine.create({ data: {
+            homeId, custodianAccountId: selected.account.id, admittedActionRequestId: crypto.randomUUID(), admittedInput: {},
+            ...(installed ? { controllerMachineId: selected.controller.machineId,
+                controllerInstallationId: selected.controller.installationId } : {}),
+            launch: selected.input.selection.launch, allocation: 'bound', resource: {
+                contributionRef: selected.input.selection.launch.provider, schemaVersion: 1, value: { id: 'paid-sandbox' },
+            }, retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: false,
+        } });
+        try {
+            const installed = await create(true);
+            const admitted = await census(installed.id);
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(ManagedPolicyCensusOutputV1Schema.parse(admitted.json())).toMatchObject({
+                machines: [{ id: installed.id, controller: selected.controller }],
+                nativeCredentialPolicies: [{ managedId: installed.id, bindings: [], desiredBindingKeys: [] }],
+            });
+
+            const portable = await create(false);
+            const accountContext = { homeId, managedId: portable.id, expectedIntentRevision: 0 };
+            const context = (extra: Record<string, unknown> = {}) => instance.inject({ method: 'POST',
+                url: '/v1/machines/managed/controller/context', headers, payload: { ...accountContext, ...extra } });
+            const owner = await context();
+            expect(owner.statusCode, owner.body).toBe(200);
+            expect(ManagedControllerContextOutputV1Schema.parse(owner.json())).toMatchObject({ requestId: portable.admittedActionRequestId });
+            const duplicate = await context({ controller: selected.controller, includeNativeCredentialBindings: true });
+            expect(duplicate.statusCode, duplicate.body).toBe(403);
+            expect(duplicate.json()).toEqual({ code: 'permission_denied' });
+            const ordinary = await census(portable.id, false);
+            expect(ordinary.statusCode, ordinary.body).toBe(200);
+            expect(ManagedPolicyCensusOutputV1Schema.parse(ordinary.json()).machines).toMatchObject([{ id: portable.id }]);
+            const unassigned = await census(portable.id);
+            expect(unassigned.statusCode, unassigned.body).toBe(200);
+            expect(ManagedPolicyCensusOutputV1Schema.parse(unassigned.json())).toMatchObject({ machines: [], nativeCredentialPolicies: [] });
         } finally { await instance.close(); }
     });
 

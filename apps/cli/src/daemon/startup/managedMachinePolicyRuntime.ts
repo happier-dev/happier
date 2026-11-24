@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine } from '@/api/types';
 import { isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedErrorV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { canPrepareManagedRetentionPolicy, hasSubmittedManagedRetentionEffect } from '@/machines/managed/managedRetentionPolicy';
 import { logger } from '@/ui/logger';
@@ -36,7 +37,10 @@ export async function readManagedMachinePolicyCensus(input: Readonly<{
         { headers: { Authorization: `Bearer ${input.token}`, 'Content-Type': 'application/json' },
             validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}) });
     input.signal?.throwIfAborted();
-    if (response.status < 200 || response.status >= 300) throw new ManagedMachineControllerError('admission_unavailable');
+    if (response.status < 200 || response.status >= 300) {
+        const refusal = ManagedErrorV1Schema.safeParse(response.data);
+        throw new ManagedMachineControllerError(refusal.success ? refusal.data.code : 'admission_unavailable', response.status);
+    }
     const census = ManagedPolicyCensusOutputV1Schema.parse(response.data);
     if ([...census.machines, ...census.targets].some(item => item.homeId !== body.homeId
         || item.controller && (item.controller.machineId !== body.controller.machineId
