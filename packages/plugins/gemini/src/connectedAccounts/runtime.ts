@@ -7,6 +7,12 @@ import { GEMINI_API_KEY_ENV } from './service.js';
 const API_KEY_CREDENTIAL_KEY = 'apiKey';
 const SERVICE_ACCOUNT_CREDENTIAL_KEY = 'serviceAccountJson';
 const SERVICE_ACCOUNT_FILE_ID = 'google-service-account.json';
+/** Secret keys the service-account mode declares (`secretCredentialKeys` in the manifest). */
+export const SERVICE_ACCOUNT_PRIVATE_KEY_CREDENTIAL_KEY = 'serviceAccountPrivateKey';
+export const SERVICE_ACCOUNT_ESCAPED_PRIVATE_KEY_CREDENTIAL_KEY = 'serviceAccountPrivateKeyEscaped';
+export const GEMINI_SERVICE_ACCOUNT_SECRET_CREDENTIAL_KEYS = [
+  SERVICE_ACCOUNT_CREDENTIAL_KEY, SERVICE_ACCOUNT_PRIVATE_KEY_CREDENTIAL_KEY, SERVICE_ACCOUNT_ESCAPED_PRIVATE_KEY_CREDENTIAL_KEY,
+] as const;
 const GEMINI_API_ORIGIN = 'https://generativelanguage.googleapis.com';
 
 type ConnectedAccountCredentialReader =
@@ -17,6 +23,7 @@ type GeminiServiceAccount = Readonly<{
   client_id: string;
   client_email: string;
   project_id: string;
+  private_key: string;
 }> & Readonly<Record<string, unknown>>;
 
 function diagnostic(code: string, message: string) {
@@ -45,6 +52,7 @@ function parseServiceAccount(value: string): GeminiServiceAccount | null {
       client_id: parsed.client_id.trim(),
       client_email: parsed.client_email.trim(),
       project_id: parsed.project_id.trim(),
+      private_key: parsed.private_key,
     };
   } catch {
     return null;
@@ -157,6 +165,13 @@ const geminiConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
           await context.attemptCredentials.set(
             SERVICE_ACCOUNT_CREDENTIAL_KEY,
             JSON.stringify(serviceAccount),
+          );
+          // The private key as a Session prints it, parsed or as it appears in the JSON file,
+          // under keys the descriptor declares secret.
+          await context.attemptCredentials.set(SERVICE_ACCOUNT_PRIVATE_KEY_CREDENTIAL_KEY, serviceAccount.private_key);
+          await context.attemptCredentials.set(
+            SERVICE_ACCOUNT_ESCAPED_PRIVATE_KEY_CREDENTIAL_KEY,
+            JSON.stringify(serviceAccount.private_key).slice(1, -1),
           );
           return {
             status: 'connected',

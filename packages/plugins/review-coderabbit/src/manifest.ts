@@ -7,7 +7,7 @@ import { CODERABBIT_CLI_AUTH } from './agent/authStatus.js';
 import { createCodeRabbitExecutionRunFactory } from './agent/reviews/nativeRun.js';
 import { createCodeRabbitReviewExecutionProfile } from './agent/reviews/profile.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
-import { CODERABBIT_ACCOUNT_RUNTIME } from './connectedAccount.js';
+import { CODERABBIT_ACCOUNT_RUNTIME, CODERABBIT_NATIVE_AUTH_CONTENT_KEY } from './connectedAccount.js';
 import { CODERABBIT_ACCOUNT_PURPOSE, CODERABBIT_ACCOUNT_SERVICE_ID, CODERABBIT_STATE_SHARING } from './connectedAccountDeclarations.js';
 
 const createCodeRabbitRuntime: AgentRuntimeFactory = () => Object.freeze({
@@ -46,7 +46,7 @@ export const CODERABBIT_PLUGIN = definePlugin({
         title: 'CodeRabbit', capabilities: [],
         authentication: { defaultModeId: 'native-login', modes: [{
           id: 'native-login', kind: 'manual', title: 'Browser sign-in on this Machine',
-          outcomeReconciliation: 'none',
+          outcomeReconciliation: 'none', secretCredentialKeys: [CODERABBIT_NATIVE_AUTH_CONTENT_KEY],
           setup: { url: 'https://docs.coderabbit.ai/cli',
             checklist: ['CodeRabbit opens a browser on the selected Machine. Complete sign-in there; Happier keeps the login in a private managed home.'] },
           fields: [{ id: 'region', title: 'Region', schema: { type: 'string', enum: ['us', 'eu'] },

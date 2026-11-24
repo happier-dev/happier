@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync } from '@happier-dev/plugin-sdk/fs';
-import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import type { ConnectedAccountAuthenticationContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readCodeRabbitAuthStatus } from './agent/authStatus.js';
 import { CODERABBIT_SYSTEM_TOOL_ID } from './agent/reviews/systemTool.js';
 import { CODERABBIT_AUTH_FILE } from './connectedAccountDeclarations.js';
@@ -11,6 +11,40 @@ import { CODERABBIT_AUTH_FILE } from './connectedAccountDeclarations.js';
 export function codeRabbitHomeEnvironment(home: string): Readonly<Record<string, string>> {
   return { HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, '.config'),
     XDG_DATA_HOME: join(home, '.local/share'), XDG_CACHE_HOME: join(home, '.cache'), CODERABBIT_API_KEY: '' };
+}
+
+/** Canonical secret keys for the token fields a CodeRabbit login file may carry, by field name. */
+const CODERABBIT_TOKEN_FIELDS: Readonly<Record<string, 'accessToken' | 'refreshToken' | 'idToken' | 'apiKey' | 'token'>> = {
+  accessToken: 'accessToken', access_token: 'accessToken', refreshToken: 'refreshToken', refresh_token: 'refreshToken',
+  idToken: 'idToken', id_token: 'idToken', apiKey: 'apiKey', api_key: 'apiKey', token: 'token',
+};
+/** The whole login file as text, which the descriptor declares secret (`secretCredentialKeys`). */
+export const CODERABBIT_NATIVE_AUTH_CONTENT_KEY = 'nativeAuthContent';
+
+type CodeRabbitCredentialStore = ConnectedAccountAuthenticationContext['attemptCredentials'];
+/**
+ * Stores the vendor's login file unchanged (base64, what materialization writes back) and, for a
+ * Session transcript, its text plus any token field the file names, under the canonical keys. The
+ * file format is not documented: no field name is assumed present.
+ */
+export async function stageCodeRabbitNativeAuth(store: CodeRabbitCredentialStore, auth: Uint8Array, options?: Readonly<{ signal?: AbortSignal }>) {
+  const content = Buffer.from(auth);
+  await store.set('nativeAuth', content.toString('base64'), options);
+  const text = content.toString('utf8');
+  await store.set(CODERABBIT_NATIVE_AUTH_CONTENT_KEY, text, options);
+  let parsed: unknown = null;
+  try { parsed = JSON.parse(text); } catch { return; }
+  const found = new Map<string, string>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    for (const [field, entry] of Object.entries(value)) {
+      const key = Object.hasOwn(CODERABBIT_TOKEN_FIELDS, field) ? CODERABBIT_TOKEN_FIELDS[field] : undefined;
+      if (key && typeof entry === 'string' && entry && !found.has(key)) found.set(key, entry);
+      else visit(entry);
+    }
+  };
+  visit(parsed);
+  for (const [key, value] of found) await store.set(key, value, options);
 }
 
 const unavailable = () => ({ status: 'unavailable' as const, diagnostic: {
@@ -45,7 +79,7 @@ export const CODERABBIT_ACCOUNT_RUNTIME: ConnectedAccountRuntime = {
         try { auth = await readFile(join(directory.path, CODERABBIT_AUTH_FILE), { signal }); }
         catch { signal.throwIfAborted(); return unavailable(); }
         if (!auth.length) return unavailable();
-        await context.attemptCredentials.set('nativeAuth', auth.toString('base64'), { signal });
+        await stageCodeRabbitNativeAuth(context.attemptCredentials, auth, { signal });
         return { status: 'connected', credentialKind: 'oauth', displayName: 'CodeRabbit', scopes: [] };
       } finally { directory.cleanup(); }
     } },

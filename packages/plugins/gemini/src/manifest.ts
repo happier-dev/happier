@@ -9,7 +9,7 @@ import { geminiConnectedServiceStateSharingDescriptor } from './agent/connectedS
 import { createGeminiConnectedServiceRuntimeAuthAdapter } from './agent/connectedServices/runtimeAuthAdapter.js';
 import { resolveGeminiDaemonSpawnPrerequisites } from './agent/lifecycle/spawnHooks.js';
 import { createGeminiAgentRuntime } from './agent/runtime/factory.js';
-import { geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
+import { GEMINI_SERVICE_ACCOUNT_SECRET_CREDENTIAL_KEYS, geminiConnectedAccountRuntime } from './connectedAccounts/runtime.js';
 import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from './connectedAccounts/service.js';
 import { geminiPortableAuthentication } from './connectedAccounts/portableAuthentication.js';
 import { GEMINI_PROVIDER_BINDING_ADAPTER_V1, GEMINI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
@@ -77,6 +77,7 @@ export const GEMINI_PLUGIN = definePlugin({
             directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
             title: 'Google service account',
             outcomeReconciliation: 'none',
+            secretCredentialKeys: [...GEMINI_SERVICE_ACCOUNT_SECRET_CREDENTIAL_KEYS],
             fields: [{
               id: 'credentialsJson',
               title: 'Service-account JSON',

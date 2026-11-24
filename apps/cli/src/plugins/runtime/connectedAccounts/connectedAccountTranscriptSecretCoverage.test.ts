@@ -6,6 +6,8 @@ import { createConnectedAccountCredentialRedaction } from '@happier-dev/cli-comm
 import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { saveCredential as saveXaiCredential } from '../../../../../../packages/plugins/grok/src/connectedAccounts/portableRuntime';
+import { geminiConnectedAccountRuntime } from '../../../../../../packages/plugins/gemini/src/connectedAccounts/runtime';
+import { stageCodeRabbitNativeAuth } from '../../../../../../packages/plugins/review-coderabbit/src/connectedAccount';
 
 /**
  * Every bundled Connected Account that an Agent Session receives (environment or files) must
@@ -25,6 +27,29 @@ type StoredShape = Readonly<Record<string, string>>;
 async function storedShapes(): Promise<
   Readonly<Record<string, Readonly<Record<string, StoredShape>>>>
 > {
+  const recordingStore = (values: Record<string, string>) => ({
+    async get(key: string) { return values[key] ?? null; },
+    async set(key: string, value: string) { values[key] = value; },
+    async delete(key: string) { delete values[key]; },
+  });
+  // The service-account mode's own writer, from the JSON a person pastes.
+  const geminiServiceAccount = async () => {
+    const values: Record<string, string> = {};
+    const mode = geminiConnectedAccountRuntime.authentication.modes['service-account'];
+    if (mode?.kind !== 'manual') throw new Error('Expected the Gemini service-account mode');
+    await mode.complete({ fields: { credentialsJson: JSON.stringify({ type: 'service_account', project_id: 'project',
+      private_key_id: 'key-1', private_key: `-----BEGIN PRIVATE KEY-----\n${fake('gemini-private-key')}\n-----END PRIVATE KEY-----\n`,
+      client_email: 'agent@project.iam.gserviceaccount.com', client_id: '1' }) } },
+    { attemptCredentials: recordingStore(values) } as unknown as Parameters<typeof mode.complete>[1]);
+    return values;
+  };
+  // CodeRabbit's login staging over a login file holding a token field.
+  const codeRabbitLogin = async () => {
+    const values: Record<string, string> = {};
+    await stageCodeRabbitNativeAuth(recordingStore(values) as unknown as Parameters<typeof stageCodeRabbitNativeAuth>[0],
+      new TextEncoder().encode(JSON.stringify({ session: { accessToken: fake('coderabbit'), expiresAt: 4102444800 } })));
+    return values;
+  };
   const xai = async (credential: Parameters<typeof saveXaiCredential>[0]) => {
     const values: Record<string, string> = {};
     await saveXaiCredential(credential, {
@@ -100,16 +125,7 @@ async function storedShapes(): Promise<
     },
     'happier.agent.gemini/gemini-account': {
       'api-key': { apiKey: fake('gemini-key') },
-      'service-account': {
-        serviceAccountJson: JSON.stringify({
-          type: 'service_account',
-          project_id: 'project',
-          private_key_id: 'key-1',
-          private_key: fake('gemini-private-key'),
-          client_email: 'agent@project.iam.gserviceaccount.com',
-          client_id: '1',
-        }),
-      },
+      'service-account': await geminiServiceAccount(),
     },
     'happier.agent.cursor/cursor-account': {
       subscription: { ...oauthPair('cursor'), credentialKind: 'oauth' },
@@ -121,11 +137,7 @@ async function storedShapes(): Promise<
     },
     'happier.voice.openai/openai': { 'api-key': { token: fake('openai') } },
     'happier.review.coderabbit/coderabbit-account': {
-      'native-login': {
-        nativeAuth: Buffer.from(
-          JSON.stringify({ accessToken: fake('coderabbit') }),
-        ).toString('base64'),
-      },
+      'native-login': await codeRabbitLogin(),
     },
     'happier.agent.grok/xai': {
       device: await xai({
@@ -201,14 +213,13 @@ async function storedShapes(): Promise<
 }
 
 /**
- * Same leak class, not yet closed: an opaque vendor login file, and a structured key file whose
- * inner private key is not a stored credential value. Each entry must keep failing; fixing one
- * fails this list until it is removed.
+ * A delivered file whose secret is a field inside it: the field printed on its own is masked too,
+ * not only the whole file.
  */
-const OPEN_GAPS = new Set([
-  'happier.agent.gemini/gemini-account/service-account',
-  'happier.review.coderabbit/coderabbit-account/native-login',
-]);
+const INNER_SECRETS: Readonly<Record<string, string>> = {
+  'happier.agent.gemini/gemini-account/service-account': `-----BEGIN PRIVATE KEY-----\n${fake('gemini-private-key')}\n-----END PRIVATE KEY-----\n`,
+  'happier.review.coderabbit/coderabbit-account/native-login': fake('coderabbit'),
+};
 
 /** Every destination a bundled Agent requests from these services; one key or file per request. */
 const ENVIRONMENT_KEYS = [
@@ -456,10 +467,13 @@ describe('bundled Connected Account transcript secret coverage', () => {
         const leaked = [
           ...new Set(transcript.match(/fake-secret-[a-z0-9-]+/g) ?? []),
         ];
-        if (leaked.length > 0 !== OPEN_GAPS.has(row))
-          leaks.push(
-            `${row}: ${leaked.length ? `leaks ${leaked.join(', ')}` : 'open gap is closed; remove it'}`,
-          );
+        if (leaked.length > 0) leaks.push(`${row}: leaks ${leaked.join(', ')}`);
+        const inner = INNER_SECRETS[row];
+        if (inner) {
+          let printed = inner;
+          for (const secret of [...secrets].sort((left, right) => right.length - left.length)) printed = printed.split(secret).join('[redacted]');
+          if (printed.includes('fake-secret-')) leaks.push(`${row}: its inner secret printed alone is not masked`);
+        }
       }
     }
     expect(
