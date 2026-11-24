@@ -9299,11 +9299,11 @@ use the same path.
 A signed mounted Database read can retain one exact targeted Action selection.
 Home receives the ordinary DatabaseTarget projection. The selected source,
 occurrence, and private operands travel in the installation-sealed requester
-context. The signed request binds a commitment to that context. The daemon checks
-the commitment, exact DatabaseTarget and current mounted and contributor
-occurrences before handing the selection to the target Action. The admitted
-targeted-operation owner still validates the selection against its own handle
-before provider execution. The public encrypted V2 envelope is unchanged.
+context. The signed request commits to the private selection before the UI
+attaches the sealed context. The daemon checks the commitment, exact
+DatabaseTarget and mounted caller. The admitted targeted-operation owner
+validates contributor occurrence, custody and operands against the current
+handle before provider execution. V2 carries the commitment inside its encrypted body.
 
 Home layout and setup dismissals use one Account Artifact; shared Session instances use Board records and revisions; direct Companion instances remain viewer/device-local presentation preferences. The widget instance Action family delegates mutations to those owners. Personal Companion changes do not edit Board content. Viewer bindings consume only the viewer's own existing Connected Account purpose selection; there is no per-instance viewer override, Action or local selection setting. A widget declaration without correlation to an admitted existing purpose consumer fails closed; it does not guess another consumer or change a global binding. Pinned Connected Account references are allowed on personal surfaces only.
 

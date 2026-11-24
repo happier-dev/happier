@@ -88,19 +88,27 @@ export async function resolveAdmittedTargetedOperationInput(params: Readonly<{
         throw selectedActionInputUnavailable();
     }
     const carrier = parsedCarrier.data;
-    const carrierMatchesBinding = pluginUiTargetedContributionOperationKey(carrier.operation)
-        === pluginUiTargetedContributionOperationKey(params.binding.operation)
-        && pluginSourceCustodyV1Equal(
-            carrier.operation.contributor.sourceCustody,
-            params.binding.operation.contributor.sourceCustody,
-        );
-    if (!carrierMatchesBinding) {
-        // Supplying an outer selected-account fact to any other handle is a
-        // confused-deputy attempt, never a request to run it ordinarily.
-        if (params.expectedSelectedConnectedAccountRef !== undefined) {
-            throw selectedActionInputInvalid();
-        }
+    const selectedOperation = carrier.operation;
+    const operation = params.binding.operation;
+    // Distinguish a replacement of the selected operation from a different
+    // operation the target may invoke without the selected input.
+    const sameOperation = pluginUiTargetedContributionOperationKey({
+        ...selectedOperation,
+        contributor: { ...selectedOperation.contributor, occurrenceId: operation.contributor.occurrenceId },
+    }) === pluginUiTargetedContributionOperationKey(operation);
+    if (!sameOperation) {
+        // An explicit Account correspondence belongs to the selected handle.
+        if (params.expectedSelectedConnectedAccountRef !== undefined) throw selectedActionInputInvalid();
         return params.input;
+    }
+    if (
+        selectedOperation.contributor.occurrenceId !== operation.contributor.occurrenceId
+        || !pluginSourceCustodyV1Equal(selectedOperation.contributor.sourceCustody, operation.contributor.sourceCustody)
+    ) {
+        throw createPluginActionHandlerNotStartedError({
+            code: 'plugin_action_generation_retired',
+            message: 'Selected targeted operation source is no longer current',
+        });
     }
     // A failed validation/currentness read must leave the settlement usable.
     // The successful path claims it synchronously after the final await.

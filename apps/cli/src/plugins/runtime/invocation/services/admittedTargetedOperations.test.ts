@@ -469,13 +469,13 @@ describe('admitted targeted-operation execution', () => {
             actionExecutor: { execute: vi.fn() },
             invokeContributedAction,
         });
-        const admitted = createAdmittedTargetedOperationExecutionHandle({
+        const admit = (occurrenceId: string) => createAdmittedTargetedOperationExecutionHandle({
             action: operation.action,
             targetOccurrenceId: 'channels-occurrence-a',
             identity: {
                 target: { pluginId: 'happier.channels' },
                 point: operation.point,
-                contributor: operation.contributor,
+                contributor: { ...operation.contributor, occurrenceId },
                 role: operation.role,
             },
             selectedActionInput: {
@@ -485,6 +485,7 @@ describe('admitted targeted-operation execution', () => {
             targetProtocol: permissiveTargetProtocol(operation.role),
         });
 
+        const admitted = admit(operation.contributor.occurrenceId);
         await expect(service.executeAdmittedTargetedOperation(
             admitted,
             selectedActionInputCarrier.result.input,
@@ -547,6 +548,13 @@ describe('admitted targeted-operation execution', () => {
             selectedActionInputCarrier.result.input,
             { expectedSelectedConnectedAccountRef: account },
         )).rejects.toMatchObject({ code: 'plugin_selected_action_input_invalid' });
+        await expect(service.executeAdmittedTargetedOperation(
+            admit('provider-occurrence-b'),
+            selectedActionInputCarrier.result.input,
+        )).rejects.toMatchObject({
+            code: 'plugin_action_generation_retired',
+            actionHandlerInvocation: 'notStarted',
+        });
         expect(invokeContributedAction).toHaveBeenCalledOnce();
     });
 

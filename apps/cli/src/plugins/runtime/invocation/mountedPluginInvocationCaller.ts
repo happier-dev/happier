@@ -7,7 +7,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { normalizePluginSourceCustody, pluginSourceCustodyEqual } from '@/plugins/runtime/sourceAuthority';
 import { listComposerSurfaceDeclarations } from '@/plugins/projection/registry/composer';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
-import { pluginUiTargetedContributionOperationKey, type PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
+import type { PluginUiSelectedActionInputCarrierV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
 import { resolvePluginMachineExecutionOrigin } from '@/plugins/runtime/resolvePluginMachineExecutionOrigin';
 
 export function admitMountedSelectedActionInput(
@@ -23,35 +23,6 @@ export function admitMountedSelectedActionInput(
         return 'plugin_selected_action_input_unavailable';
     }
     return null;
-}
-
-export function refuseUnavailableMountedSelectedOperation(
-    carrier: PluginUiSelectedActionInputCarrierV1,
-    targetPluginId: string,
-    registry: Pick<ResolvedExecutablePluginRuntimeRegistry,
-      'readPluginOccurrenceId' | 'readPluginSourceCustody' | 'isPluginOccurrenceCurrent' | 'readAdmittedTargetedContributions'>,
-): 'plugin_action_generation_retired' | 'plugin_selected_action_input_unavailable' | null {
-    const selected = carrier.operation;
-    const source = selected.contributor;
-    const occurrence = registry.readPluginOccurrenceId?.(source.pluginId);
-    const custody = registry.readPluginSourceCustody?.(source.pluginId);
-    if (occurrence !== source.occurrenceId || !custody || !pluginSourceCustodyEqual(source.sourceCustody, custody)
-        || registry.isPluginOccurrenceCurrent?.(source.pluginId, occurrence) !== true) {
-        return 'plugin_action_generation_retired';
-    }
-    const snapshot = registry.readAdmittedTargetedContributions?.({ targetPluginId,
-        pointId: selected.point.pointId, protocol: selected.point.protocol });
-    const contribution = snapshot?.contributions.find(entry =>
-        entry.contributor.pluginId === source.pluginId && entry.contributor.contributionId === source.contributionId);
-    const operationKey = pluginUiTargetedContributionOperationKey(selected);
-    return contribution?.operations.some(operation => !operation.unavailable
-        && pluginUiTargetedContributionOperationKey({
-            point: selected.point,
-            action: operation.action,
-            role: operation.role,
-            contributor: { ...operation.contributor, sourceCustody: source.sourceCustody },
-        }) === operationKey)
-        ? null : 'plugin_selected_action_input_unavailable';
 }
 
 export type MountedAccountPluginExecutionSelectionResolver = (

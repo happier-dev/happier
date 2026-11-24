@@ -46,7 +46,7 @@ import type { ManagedMachinePolicyRequest } from '../startup/managedMachineActio
 import { computePluginUiSelectedActionInputDigestV1 } from '@happier-dev/protocol/plugins/ui/selectedActionInput';
 import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
-import { admitMountedSelectedActionInput, deriveMountedPluginInvocationCaller, refuseUnavailableMountedSelectedOperation, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
+import { admitMountedSelectedActionInput, deriveMountedPluginInvocationCaller, type MountedAccountPluginExecutionSelectionResolver } from '@/plugins/runtime/invocation/mountedPluginInvocationCaller';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { isManagedEnrollmentPolicyChildAccountCustody, isOriginalOwnAccountActionCustody,
@@ -908,8 +908,7 @@ async function executeExternalActionRequest(input: Readonly<{
     const outerAction = outer.success
       ? readResolvedActionContribution(registry.contributes, outer.data.action) : undefined;
     const refusal = admitMountedSelectedActionInput(selectedCarrier, mountedCaller,
-      outerAction?.definition.readOnly === true ? outerAction.pluginId : undefined, registry)
-      ?? refuseUnavailableMountedSelectedOperation(selectedCarrier, mountedCaller.caller.pluginId, registry);
+      outerAction?.definition.readOnly === true ? outerAction.pluginId : undefined, registry);
     if (refusal) return prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
       execution: { ok: false, errorCode: refusal, error: refusal } });
   }

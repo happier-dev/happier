@@ -233,7 +233,8 @@ export function createDatabaseInsightProducers(options: Readonly<{
                     code: 'database_insight_source_unavailable', reason: current.reason };
                 const result = DatabaseInsightSourceOperationSchemasV1.detailResult.parse(
                     await context.services.actions.executeAdmittedTargetedOperation(current.contribution.operations.detail,
-                        projectNativeJsonValueForTransport({ target: input.target, recordKey: input.recordKey }), { signal: context.signal }),
+                        projectNativeJsonValueForTransport({ target: input.target, recordKey: input.recordKey }),
+                        { signal: context.signal, expectedSelectedConnectedAccountRef: null }),
                 );
                 if (!result.ok) return result;
                 return { ok: true, brief: buildDatabaseFindingBriefV1({ sourceInput: input, finding: result.finding }) };

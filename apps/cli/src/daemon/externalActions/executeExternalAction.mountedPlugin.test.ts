@@ -1,7 +1,9 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectDeploymentReadAdmissionV1, projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, selectCurrentTargetedContribution, type TargetedContributionAdmittedEntry } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { requireAdmittedTargetedOperationExecutionBinding, resolveAdmittedTargetedOperationInput } from '@happier-dev/cli-common/plugins/registration';
 import { DatabaseInsightSourceContributionProtocolV1 as insightSource, DatabaseInsightSourceOperationSchemasV1 as insightSchemas,
   DATABASE_INSIGHT_SOURCES_POINT_REF_V1 } from '@happier-dev/database-protocol/v1';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
@@ -200,7 +202,8 @@ describe('external Action mounted plugin admission', () => {
     const caller = { kind: 'plugin' as const, pluginId: mountedPluginId, contributionLocalId: 'database-workbench',
       occurrenceId: mountedOccurrence, sourceCustody: mountedCustody };
     const outerAction = { pluginId: mountedPluginId, localId: 'insights/brief/build' };
-    const outerInput = { action: outerAction, input: { target: databaseTarget, recordKey: 'retained-record' } };
+    const outerInput = { action: outerAction, input: { target: databaseTarget, recordKey: 'retained-record',
+      sourceSelection: carrier.result.selection } };
     const selection = { carrier, input: outerInput };
     const publicInput = projectPrivateMountedDatabaseReadInputV1(outerInput)!;
     const envelope = { v: 1 as const, requestId: 'mounted-selection', target,
@@ -214,9 +217,32 @@ describe('external Action mounted plugin admission', () => {
     };
     const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(43));
     const authentication = { kind: 'account' as const, tokenEpoch: 0 };
-    const executor = { execute: vi.fn<ExternalActionExecutor['execute']>(async (_action, _input, context) => ({
-      ok: true as const, result: context?.mountedSelectedActionInput?.carrier.result.input ?? null,
-    })) };
+    // The executor boundary runs the same selection and opaque-handle validators
+    // as the target Action, backed by the published runtime's current declarations.
+    const executor = { execute: vi.fn<ExternalActionExecutor['execute']>(async (_action, _input, context) => {
+      const mountedSelection = context?.mountedSelectedActionInput;
+      if (!mountedSelection) throw new Error('Missing selected input at target Action');
+      const signal = new AbortController().signal;
+      const current = await selectCurrentTargetedContribution<TargetedContributionAdmittedEntry>({
+        service: fixture.controller.getTargetedContributionsOwner().bind({ pluginId: mountedPluginId, signal, isCurrent: () => true }),
+        point: { targetPluginId: mountedPluginId, id: point.pointId, protocol: point.protocol },
+        selection: outerInput.input.sourceSelection, operationRole: 'detail', signal,
+      });
+      if (current.kind !== 'selected') throw new Error('Missing admitted detail handle');
+      const seed = { plugin: { id: mountedPluginId }, occurrenceId: current.targetOccurrenceId, sourceCustody: mountedCustody,
+        selectedActionInputCarrier: mountedSelection.carrier, isMountedCallerCurrent: mountedSelection.isMountedCallerCurrent };
+      try {
+        const result = await resolveAdmittedTargetedOperationInput({
+          seed, assertCurrent: () => signal.throwIfAborted(), input: carrier.result.input,
+          binding: requireAdmittedTargetedOperationExecutionBinding(current.contribution.operations?.detail, seed),
+          expectedSelectedConnectedAccountRef: null, selectedActionInputClaimed: { current: false }, signal,
+        });
+        return { ok: true, result };
+      } catch (error) {
+        if (!isPluginError(error)) throw error;
+        return { ok: false, errorCode: error.code, error: error.code };
+      }
+    }) };
     const run = (received = carrier, request = envelope, signedRequest = envelope) => {
       const mountedBinding = signedRequest.pluginInvocation.mountedBinding;
       const executionAuthorization = sealExternalActionRequesterAccountContextV1({
@@ -285,7 +311,7 @@ describe('external Action mounted plugin admission', () => {
         materializationRef: enabled.resolveCurrentPluginMaterializationRef?.(mountedPluginId) ?? undefined } } };
     await expect(run(carrier, replay, replay)).resolves.toMatchObject({ kind: 'response',
       response: { execution: { ok: false, errorCode: 'plugin_action_generation_retired' } } });
-    expect(executor.execute).toHaveBeenCalledOnce();
+    expect(executor.execute).toHaveBeenCalledTimes(2);
   });
 
   it('does not admit a plugin-only root Action without a mounted claim', async () => {
