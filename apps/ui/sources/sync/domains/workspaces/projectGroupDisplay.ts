@@ -1,5 +1,5 @@
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { projectWorkspaceRefV1, resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isEarlierProjectBaselineRefV1, projectWorkspaceRefV1, resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { ProjectOrganizationRow } from './projectAccountRows';
 
@@ -33,19 +33,13 @@ export function readSessionListProjectDisplay(
     return item.projectKey ? projectDisplayByKey.get(projectGroupIdentityKey(item.projectKey)) : item.fallbackGroupDisplay;
 }
 
-/** The baseline election: the oldest admitted ref, then the lowest id. Reachability, order and activity never elect. */
-function isEarlierBaseline(candidate: WorkspaceRefV1, current: WorkspaceRefV1): boolean {
-    return candidate.createdAtMs < current.createdAtMs
-        || candidate.createdAtMs === current.createdAtMs && candidate.id.localeCompare(current.id) < 0;
-}
-
 /** One Project's baseline by the index's election, without building the whole index (Space marks). */
 export function readProjectBaselineRef(workspaceRefs: readonly WorkspaceRefV1[], project: QualifiedProjectKeyV1): WorkspaceRefV1 | null {
     const key = projectGroupIdentityKey(project);
     let baseline: WorkspaceRefV1 | null = null;
     for (const ref of workspaceRefs) {
         if (projectGroupIdentityKey(projectWorkspaceRefV1(ref)) !== key) continue;
-        if (!baseline || isEarlierBaseline(ref, baseline)) baseline = ref;
+        if (!baseline || isEarlierProjectBaselineRefV1(ref, baseline)) baseline = ref;
     }
     return baseline;
 }
@@ -61,7 +55,7 @@ export function buildProjectGroupDisplayIndex(
         const project = projectWorkspaceRefV1(ref);
         const key = projectGroupIdentityKey(project);
         const previous = result.get(key)?.baseline;
-        if (previous && !isEarlierBaseline(ref, previous)) continue;
+        if (previous && !isEarlierProjectBaselineRefV1(ref, previous)) continue;
         const title = ref.label ?? resolveWorkspacePathBasenameV1(ref.rootPath);
         result.set(key, { project, baseline: ref, title, hasCustomLabel: false });
     }

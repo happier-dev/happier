@@ -1,7 +1,7 @@
 import type { UsageAnalyticsBreakdownDimension, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import type { UsageQueryResultSlice } from './resolveUsagePageAggregation.js';
 import type { ProjectListGroupV1, ProjectListOrganizationV1 } from '../projects/projectListProjectionV1.js';
-import { resolveWorkspacePathBasenameV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { isEarlierProjectBaselineRefV1, resolveWorkspacePathBasenameV1 } from '../workspaces/workspaceRefResolutionV1.js';
 
 export type UsageScopeFilterField = 'sources' | 'agents' | 'machines' | 'projects';
 export const usageScopeFilterDimensions = {
@@ -40,13 +40,18 @@ export function projectUsageOptionFacts(groups: readonly ProjectListGroupV1[],
   const facts = new Map<string, UsageProjectOptionFact>(organizations.map(({ key, value }) =>
     [key.projectKey, { label: value.label, rootPath: value.nativeUsageRootPath }]));
   for (const group of groups) {
-    const ref = group.items[0];
-    if (!ref) continue;
+    let baseline: ProjectListGroupV1['items'][number] | undefined;
+    const machineIds = new Set<string>();
+    for (const ref of group.items) {
+      if (!baseline || isEarlierProjectBaselineRefV1(ref, baseline)) baseline = ref;
+      if (ref.machineId) machineIds.add(ref.machineId);
+    }
+    if (!baseline) continue;
     const key = group.projectKey.projectKey;
-    facts.set(key, { label: facts.get(key)?.label ?? (ref.label?.trim() || undefined),
-      checkoutPathLabel: resolveWorkspacePathBasenameV1(ref.rootPath) || ref.rootPath,
-      rootPath: ref.rootPath,
-      machineIds: [...new Set(group.items.flatMap(ref => ref.machineId ? [ref.machineId] : []))] });
+    facts.set(key, { label: facts.get(key)?.label ?? (baseline.label?.trim() || undefined),
+      checkoutPathLabel: resolveWorkspacePathBasenameV1(baseline.rootPath) || baseline.rootPath,
+      rootPath: baseline.rootPath,
+      machineIds: [...machineIds] });
   }
   return facts;
 }

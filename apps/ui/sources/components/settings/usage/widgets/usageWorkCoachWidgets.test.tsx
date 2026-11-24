@@ -914,6 +914,49 @@ describe('Work and Coach widget bodies', () => {
     // The Coach's own view lists freely: nothing is held there.
     expect(await heldRoom('large')).toBe(0);
   });
+  it('keeps the Project baseline name in Work and its option inventory as worktree order changes', async () => {
+    const { projectProjectListV1 } = await import('@happier-dev/protocol/workspaces');
+    const { projectUsageOptionFacts, readUsageProjectOptionTitles, readUsageScopeOptions } =
+      await import('@happier-dev/protocol/usage/usageFilterOptions');
+    const { useUsageProjectNames } = await import('./usageBodyKit');
+    const previous = storage.getState();
+    const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
+    const checkout = (id: string, projectKey: string, rootPath: string, createdAtMs: number) =>
+      ({ id, projectKey, rootPath, createdAtMs, serverId: scope.serverId, machineId: 'dev' });
+    const baseline = checkout('baseline', 'grouped', '/customer/repo', 1);
+    const first = checkout('first', 'grouped', '/worktrees/usage-outcome-06', 2);
+    const second = checkout('second', 'grouped', '/worktrees/usage-outcome-09', 3);
+    const single = checkout('untouched', 'single', '/work/solo', 1);
+    const twin = checkout('same-folder', 'twin', '/personal/repo', 1);
+    const unnamed = checkout('private', 'unnamed', `/work/${'f'.repeat(64)}`, 1);
+    const keys = ['grouped', 'single', 'twin', 'unnamed'];
+    const expected = ['repo · customer', 'solo', 'repo · personal', 'No project name'];
+    const inventory: typeof slice = { ...slice, accounting: { ...slice.accounting!,
+      scopeKeys: [{ dimension: 'project', keys }] } };
+    const hook = await renderBareHook(() => useUsageProjectNames(scope.serverId));
+    try {
+      for (const worktrees of [
+        [{ ...first, lastOpenedAtMs: 10 }, second, baseline],
+        [baseline, first, { ...second, lastOpenedAtMs: 11 }],
+      ]) {
+        const workspaceRefs = [...worktrees, single, twin, unnamed];
+        await act(async () => storage.setState({ profileScope: scope, projectAccountRows: { scope,
+          status: 'ready', coverage: 'complete', workspaceRefs, relationships: [], revisionsByPhysicalKey: {}, organizations: [] } }));
+        const { projectGroups } = projectProjectListV1({ ...scope, workspaceRefs });
+        const optionFacts = { projectFacts: projectUsageOptionFacts(projectGroups, []) };
+        const picker = readUsageProjectOptionTitles([inventory], [], undefined, optionFacts);
+        const optionsAction = readUsageScopeOptions([inventory], 'projects', [], undefined, optionFacts);
+
+        expect.soft(keys.map(id => hook.getCurrent().label(id))).toEqual(expected);
+        expect.soft(keys.map(id => picker.get(id))).toEqual([...expected.slice(0, 3), null]);
+        expect.soft(keys.map(id => optionsAction.get(id))).toEqual(expected);
+        expect([...hook.getCurrent().labels.keys()].sort()).toEqual(['grouped', 'single', 'twin']);
+      }
+    } finally {
+      await hook.unmount();
+      storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
+    }
+  });
   it('keeps managed Project names without inventing a Machine identity', async () => {
     const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
     const previous = storage.getState();

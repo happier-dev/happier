@@ -54,6 +54,7 @@ import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/wor
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefDisplayNames } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import { readProjectBaselineRef } from '@/sync/domains/workspaces/projectGroupDisplay';
 import { useUsageDisclosureCommand, useUsageRetryCommand } from './usageMountedControls';
 import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -182,24 +183,16 @@ export function useUsageProjectNames(serverId: string, fallbacks: readonly Usage
       for (const row of rows.organizations) {
         if (!organizationLabels.has(row.key.projectKey)) organizationLabels.set(row.key.projectKey, row.value.label);
       }
-      const refs = groups.flatMap(group => {
-        const ref = group.items[0];
-        const label = organizationLabels.get(group.projectKey.projectKey);
-        return ref ? [{ ...ref, ...(label ? { label } : {}) }] : [];
-      });
-      const displayNames = resolveWorkspaceRefDisplayNames(refs);
-      const namesByRef = new Map<string, string>();
-      refs.forEach((ref, index) => {
-        const key = JSON.stringify([ref.serverId, ref.id]);
-        if (!namesByRef.has(key)) namesByRef.set(key, displayNames[index]!);
-      });
-      const projectKeys = new Set(groups.map(group => group.projectKey.projectKey));
-      for (const group of groups) {
+      const baselines = groups.flatMap(group => {
         const key = group.projectKey.projectKey;
-        const ref = group.items[0];
-        if (ref) name(key, namesByRef.get(JSON.stringify([ref.serverId, ref.id])));
+        const baseline = readProjectBaselineRef(group.items, group.projectKey);
+        const label = organizationLabels.get(key);
         machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...group.items.flatMap(ref => ref.machineId === undefined ? [] : [ref.machineId])])]);
-      }
+        return baseline ? [{ key, ref: { ...baseline, ...(label ? { label } : {}) } }] : [];
+      });
+      const displayNames = resolveWorkspaceRefDisplayNames(baselines.map(({ ref }) => ref));
+      baselines.forEach(({ key }, index) => name(key, displayNames[index]));
+      const projectKeys = new Set(groups.map(group => group.projectKey.projectKey));
       // Native keys retain their producing CLI namespace, admitted by this
       // opened Account snapshot. It supplies names, never routing authority.
       for (const row of rows.organizations) {

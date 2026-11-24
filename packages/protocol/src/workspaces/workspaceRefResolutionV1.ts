@@ -30,6 +30,12 @@ export function resolveWorkspacePathBasenameV1(path: string): string | null {
   return terminalSegment.length > 0 ? terminalSegment : null;
 }
 
+/** The Project display baseline is the oldest accepted checkout, then the lowest id. */
+export function isEarlierProjectBaselineRefV1(candidate: WorkspaceRefV1, current: WorkspaceRefV1): boolean {
+  return candidate.createdAtMs < current.createdAtMs
+    || candidate.createdAtMs === current.createdAtMs && candidate.id.localeCompare(current.id) < 0;
+}
+
 /** Comparable target-platform spelling only; never expands a remote home on this machine. */
 export function normalizeWorkspaceRootPathV1(value: unknown, platform?: 'win32' | 'posix' | null): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
