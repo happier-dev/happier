@@ -1,4 +1,4 @@
-import { MachineSetupCombinedPlanResultV1Schema, MachineSetupRemoveInputV1Schema, type MachineSetupCombinedPlanResultV1, type MachineSetupPlanUnavailableTargetV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupCombinedPlanResultV1Schema, MachineSetupRemoveInputV1Schema, type MachineSetupCombinedPlanResultV1, type MachineSetupPlanInputV1, type MachineSetupPlanUnavailableTargetV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineSetupRecipeItemV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { machineSetupItemKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -11,7 +11,7 @@ import { prepareMachineSetupSourcesApplyInput, type MachineSetupPreparedApply, t
 
 type SoftwarePlanReadParams = Readonly<{
     executeAction: ReturnType<typeof createDefaultActionExecutor>['execute']; context: ActionExecutorContext; homeId: string; machineId: string;
-    targets: readonly Readonly<{ homeId: string; machineId: string }>[];
+    targets: readonly MachineSetupPlanInputV1[];
     selectedMachineId?: string; isCurrent: () => boolean;
 }>;
 

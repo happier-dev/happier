@@ -1,5 +1,5 @@
 import { isMachineSetupRecipeItemV1, type MachinePresetItemV1 } from '../machines/managed/machineSetupV1.js';
-import type { MachineSetupApplyInputV1, MachineSetupCombinedPlanResultV1, MachineSetupPlanResultV1 } from '../machines/managed/actionsV1.js';
+import type { MachineSetupApplyInputV1, MachineSetupCombinedPlanResultV1, MachineSetupPlanInputV1, MachineSetupPlanResultV1 } from '../machines/managed/actionsV1.js';
 import { DOCKER_ENGINE_RECIPE_REF_V1 } from '../machines/setup/machineRecipeReferenceV1.js';
 
 /**
@@ -40,6 +40,22 @@ export function readDeployHostRecipe(result: HostPlan, machineId: string) {
     return item && isMachineSetupRecipeItemV1(item) && item.selection.ref.pluginId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.pluginId
       && item.selection.ref.recipeId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.recipeId ? [{ item, status: row.status }] : [];
   })[0];
+}
+
+/** Observe Docker installed outside Machine Setup without proposing a change to saved setup. */
+export function buildDeployHostCheckTargetV1(
+  result: MachineSetupCombinedPlanResultV1,
+  target: Readonly<{ homeId: string; machineId: string }>,
+): MachineSetupPlanInputV1 | undefined {
+  const observed = result.targets.find(row => row.homeId === target.homeId && row.machineId === target.machineId);
+  if (!observed || !('plan' in observed) || readDeployHostRecipe(result, target.machineId)) return undefined;
+  // An empty daemonConfig preserves existing settings. Check mode only runs recipe checks.
+  const candidate = { ...DEPLOY_HOST_DOCKER_ITEM, selection: {
+    ...DEPLOY_HOST_DOCKER_ITEM.selection, inputs: { daemonConfig: {} },
+  } };
+  return { ...target, mode: 'check', sources: observed.plan.sources.map(source => source.kind === 'direct'
+    ? { ...source, setup: { ...source.setup, items: [...source.setup.items ?? [], candidate] } }
+    : source) };
 }
 
 export function readDeployHostReadiness(result: HostPlan, machineId: string): DeployHostReadiness {

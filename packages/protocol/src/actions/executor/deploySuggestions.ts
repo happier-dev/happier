@@ -2,8 +2,8 @@ import { z } from '../../zodRuntimePolicy.js';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '../../registries/registryActionsV1.js';
 import type { RegistryListPageV1 } from '../../registries/registryListV1.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '../../connect/configurationActionsV1.js';
-import { MachineSetupCombinedPlanResultV1Schema } from '../../machines/managed/actionsV1.js';
-import { readDeployHostReadiness } from '../../deployments/deployHostReadiness.js';
+import { MachineSetupCombinedPlanResultV1Schema, type MachineSetupPlanInputV1 } from '../../machines/managed/actionsV1.js';
+import { buildDeployHostCheckTargetV1, readDeployHostReadiness } from '../../deployments/deployHostReadiness.js';
 import { holdsConnectedAccountForService } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import type { DeploySuggestionCatalogV1 } from '../../deployments/suggestions/deploySuggestionsV1.js';
 import type { ActionId } from '../actionIds.js';
@@ -87,10 +87,14 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
         let readiness: DeploySuggestionCatalogV1['machines'][number]['readiness'] = 'unknown';
         const homeId = context.serverIdentityId ?? context.serverId;
         if (online && homeId) {
-            const raw = await read('machines.setup.plan', { homeId, machineId: machine.machineId,
-                targets: [{ homeId, machineId: machine.machineId }], selectedMachineId: machine.machineId }, 'machines');
-            if (raw !== null) {
-                const plan = MachineSetupCombinedPlanResultV1Schema.safeParse(raw);
+            const target = { homeId, machineId: machine.machineId };
+            const readPlan = async (planTarget: MachineSetupPlanInputV1) => MachineSetupCombinedPlanResultV1Schema.safeParse(
+                await read('machines.setup.plan', { ...target, targets: [planTarget], selectedMachineId: machine.machineId }, 'machines'),
+            );
+            const current = await readPlan(target);
+            if (current.success) {
+                const checkTarget = buildDeployHostCheckTargetV1(current.data, target);
+                const plan = checkTarget ? await readPlan(checkTarget) : current;
                 if (plan.success) readiness = readDeployHostReadiness(plan.data, machine.machineId);
             }
         }

@@ -8,12 +8,13 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
-import { DEPLOY_HOST_DOCKER_ITEM, readDeployHostRecipe, readDeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
+import { buildDeployHostCheckTargetV1, DEPLOY_HOST_DOCKER_ITEM, readDeployHostRecipe, readDeployHostReadiness, type DeployHostReadiness } from '@happier-dev/protocol/deployments/deployHostReadiness';
 
 const frontDoor = createFrontDoorActionExecute();
 const HOST_RECIPE_SECTIONS = Object.freeze(['familiesById.machineRecipes']);
 type HostCurrentState = Readonly<{ lifetime: ServerAccountScopeLifetime; machineId: string;
-  result: Awaited<ReturnType<typeof readMachineSetupSoftwareCurrentPlan>>; setup: MachineSetupV1 }>;
+  result: Awaited<ReturnType<typeof readMachineSetupSoftwareCurrentPlan>>; readiness: DeployHostReadiness;
+  setup: MachineSetupV1 }>;
 
 /**
  * Reads current readiness once per choice. Required recipe inputs settle inline before an explicit effects
@@ -29,24 +30,36 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
     const controller = new AbortController();
     const serverId = lifetime.scope.serverId;
     const homeId = getServerProfileById(serverId)?.serverIdentityId ?? serverId;
-    const settle = (plan: HostCurrentState['result']) => {
-      if (controller.signal.aborted || !lifetime.isCurrent()) return;
-      const target = plan.ok ? plan.plan.targets.find(target => target.homeId === homeId && target.machineId === machineId) : undefined;
-      const result: HostCurrentState['result'] = target && 'status' in target
-        ? { ok: false, errorCode: target.errorCode, error: target.errorCode, details: { reason: target.reason } }
+    const isCurrent = () => !controller.signal.aborted && lifetime.isCurrent();
+    const target = { homeId, machineId };
+    const readPlan = async (planTarget: Parameters<typeof readMachineSetupSoftwareCurrentPlan>[0]['targets'][number]) => {
+      const plan = await readMachineSetupSoftwareCurrentPlan({ executeAction: frontDoor,
+        context: { surface: 'ui', serverId, expectedAccountId: lifetime.scope.accountId, signal: controller.signal },
+        ...target, targets: [planTarget], selectedMachineId: machineId, isCurrent });
+      if (!plan.ok) return plan;
+      const row = plan.plan.targets.find(row => row.homeId === homeId && row.machineId === machineId);
+      if (!row) return { ok: false as const, errorCode: 'managed_response_invalid', error: 'managed_response_invalid' };
+      return 'status' in row
+        ? { ok: false as const, errorCode: row.errorCode, error: row.errorCode, details: { reason: row.reason } }
         : plan;
-      setState({ lifetime, machineId, result,
+    };
+    const settle = (result: HostCurrentState['result'], readiness: DeployHostReadiness = 'unknown') => {
+      if (!isCurrent()) return;
+      setState({ lifetime, machineId, result, readiness,
         setup: { items: [result.ok ? readDeployHostRecipe(result.plan, machineId)?.item ?? DEPLOY_HOST_DOCKER_ITEM : DEPLOY_HOST_DOCKER_ITEM] } });
     };
-    readMachineSetupSoftwareCurrentPlan({ executeAction: frontDoor, context: { surface: 'ui', serverId,
-      expectedAccountId: lifetime.scope.accountId, signal: controller.signal }, homeId, machineId,
-    targets: [{ homeId, machineId }], selectedMachineId: machineId,
-    isCurrent: () => !controller.signal.aborted && lifetime.isCurrent() })
-      .then(settle, () => settle({ ok: false, errorCode: 'managed_request_failed', error: 'managed_request_failed' }));
+    async function observe() {
+      const current = await readPlan(target);
+      const checkTarget = current.ok && buildDeployHostCheckTargetV1(current.plan, target);
+      const observed = checkTarget ? await readPlan(checkTarget) : current;
+      if (!observed.ok) settle(observed);
+      else settle(current, readDeployHostReadiness(observed.plan, machineId));
+    }
+    void observe().catch(() => settle({ ok: false, errorCode: 'managed_request_failed', error: 'managed_request_failed' }));
     return () => { controller.abort(); reviewController.current?.abort(); };
   }, [lifetime, machineId]);
   const current = state?.machineId === machineId && state.lifetime === lifetime ? state : null;
-  const currentReadiness = current?.result.ok ? readDeployHostReadiness(current.result.plan, current.machineId) : null;
+  const currentReadiness = current?.readiness ?? null;
   const activeReview = reviewState?.current === current ? reviewState : null;
   const prepared = activeReview?.prepared ?? (current?.result.ok === false ? current.result : null);
   const readiness = prepared && machineId ? readDeployHostReadiness(prepared, machineId) : currentReadiness;

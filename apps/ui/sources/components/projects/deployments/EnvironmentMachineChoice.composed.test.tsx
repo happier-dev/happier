@@ -109,7 +109,7 @@ it.each([
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });
 
-it('says a ready Machine is ready to host deploys in its Where card (journey-deploy whereM)', async () => {
+it.each(['saved recipe', 'externally installed'] as const)('says a ready Machine with Docker %s is ready to host deploys', async installed => {
   const serverId = await homes.addHome({ name: 'Host ready', serverUrl: 'https://deploy-host-ready-card.test',
     accountId: 'alice', serverIdentityId: `srv_${'3'.repeat(32)}`, currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -120,15 +120,23 @@ it('says a ready Machine is ready to host deploys in its Where card (journey-dep
   try {
     storage.getState().setEndpointConnectivity({ status: 'online', reason: null, attempt: 0,
       nextRetryAt: null, lastConnectedAt: Date.now(), lastDisconnectedAt: null, lastErrorMessage: null });
-    // The current setup Plan (a network boundary) reports the Docker recipe satisfied on this Machine.
+    // On #211 the current Plan was empty, while a check-only plan of Docker reported satisfied.
     await answerExternalActionAccountForHome(homes, serverId, { machineId: 'host', installationId: 'host-installation',
       actionId: 'machines.setup.plan', tokenEpoch: 0, requesterInvocation: 'none', execute: raw => {
         const input = ManagedMachineActionInputSchemasV1['machines.setup.plan'].parse(raw);
         if (!('targets' in input)) throw new Error('Expected the production combined Plan request');
         const target = input.targets[0]!;
+        const sources: NonNullable<typeof target.sources> = installed === 'saved recipe' ? [{ kind: 'direct', setup: { items: [DEPLOY_HOST_DOCKER_ITEM] } }]
+          : target.mode === 'check' ? target.sources ?? [] : [{ kind: 'direct', setup: {} }];
+        const hasDocker = sources.some(source => source.kind === 'direct' && source.setup.items?.some(item =>
+          item.kind === 'softwareRecipe' && item.selection.ref.recipeId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.recipeId));
+        if (installed === 'externally installed' && target.mode === 'check') {
+          const candidate = sources.find(source => source.kind === 'direct')?.setup.items?.[0];
+          expect(candidate?.kind === 'softwareRecipe' && candidate.selection.inputs).toEqual({ daemonConfig: {} });
+        }
         return { targets: [{ homeId: target.homeId, machineId: target.machineId, plan: {
-          desiredRevision: 0, sources: [{ kind: 'direct', setup: { items: [DEPLOY_HOST_DOCKER_ITEM] } }], exclusions: [],
-          support: [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }],
+          desiredRevision: 0, sources, exclusions: [],
+          support: hasDocker ? [{ sourceIndex: 0, itemIndex: 0, status: 'satisfied' }] : [],
         } }], review: { machineId: 'host', machines: [{ machineId: 'host', online: true }] } };
       } });
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
@@ -198,13 +206,13 @@ it.each(['unknown', 'unavailable', 'offline-target'] as const)('keeps unknown ho
       await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');
       expect(retainDraftAndOpenSetup).toHaveBeenCalledWith(machinePageHref({ door: 'rail',
         target: { machineId: 'host', serverId: serverIdentityId }, tab: { id: 'setup' } }));
-      expect(modes).toEqual([undefined]);
+      expect(modes).toEqual(outcome === 'unknown' ? [undefined, 'check'] : [undefined]);
       if (outcome === 'unavailable' || outcome === 'offline-target') {
         const reason = outcome === 'offline-target' ? t('errors.daemonUnavailableBody') : t('errors.machineNotAnswering');
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reason));
         expect(screen.getTextContent()).not.toContain('reconnect_machine');
       }
-      expect(homes.requestsFor('/v1/actions/machines.setup.plan').filter(request => request.serverId === serverId && request.method === 'POST')).toHaveLength(1);
+      expect(homes.requestsFor('/v1/actions/machines.setup.plan').filter(request => request.serverId === serverId && request.method === 'POST')).toHaveLength(outcome === 'unknown' ? 2 : 1);
     } finally { await screen.unmount(); }
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });
