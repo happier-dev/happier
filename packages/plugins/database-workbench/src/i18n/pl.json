@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "Wybierz adres URL połączenia z bazą {database} dla konta tylko do odczytu. Jeśli nie ma go na liście, najpierw zapisz go w sekcji „Zapisane sekrety”.",
   "plugins.database.readSetup.title": "Skonfiguruj dostęp tylko do odczytu",
   "plugins.database.readSetup.unknown": "Nie udało się zweryfikować wyniku konfiguracji.",
-  "plugins.database.connection.unverifiedServer": "Połączenie jest szyfrowane, ale tożsamość serwera nie została zweryfikowana.",
+  "plugins.database.connection.unverifiedServer": "Połączenie jest szyfrowane, ale dostawca nie może potwierdzić, że to Twój serwer bazy danych.",
   "plugins.database.access.agentsAsk": "Agenci mogą odczytywać dane i proszą o zgodę przed zapisem.",
   "plugins.database.access.agentsOff": "Agenci nie mogą korzystać z tej bazy danych.",
   "plugins.database.access.agentsRead": "Agenci mogą odczytywać dane z tej bazy.",

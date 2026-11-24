@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "{database} の読み取り専用ログインに使う接続 URL を選択してください。一覧にない場合は、先に「保存済みシークレット」に保存してください。",
   "plugins.database.readSetup.title": "読み取り専用アクセスを設定",
   "plugins.database.readSetup.unknown": "設定結果を確認できませんでした。",
-  "plugins.database.connection.unverifiedServer": "接続は暗号化されていますが、サーバーの身元は検証されていません。",
+  "plugins.database.connection.unverifiedServer": "接続は暗号化されていますが、プロバイダーはこれがあなたのデータベースサーバーであることを証明できません。",
   "plugins.database.access.agentsAsk": "エージェントは読み取れます。書き込む前には確認を求めます。",
   "plugins.database.access.agentsOff": "エージェントはこのデータベースを使えません。",
   "plugins.database.access.agentsRead": "エージェントはこのデータベースを読み取れます。",

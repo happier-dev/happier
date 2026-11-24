@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Nazwa połączenia",
   "plugins.database.connect.pending": "Oczekiwanie na zatwierdzenie.",
   "plugins.database.connect.test": "Sprawdź i połącz",
-  "plugins.database.connection.unverifiedServer": "Połączenie jest szyfrowane, ale tożsamość serwera nie została zweryfikowana.",
+  "plugins.database.connection.unverifiedServer": "Połączenie jest szyfrowane, ale dostawca nie może potwierdzić, że to Twój serwer bazy danych.",
   "plugins.database.insights.activity": "Aktywność",
   "plugins.database.insights.askInvestigation": "Poproś o zbadanie",
   "plugins.database.insights.briefUnavailable": "Nie udało się przygotować podsumowania ustalenia.",

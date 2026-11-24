@@ -388,6 +388,9 @@ const DIRECTORY_ROW_FILL_STYLE = { marginHorizontal: DIRECTORY_ROW_EDGES.fillIns
 /** A directory row's mark leads its column, so whatever its width it starts on the section title's edge. */
 const DIRECTORY_ROW_LEADING_STYLE = { alignItems: 'flex-start' } as const;
 const EMPTY_TRAILING_CELL_STYLE = { marginLeft: 0 } as const;
+/** A disabled row's half strength: the whole row, or only the marks and controls of a row that explains itself. */
+const DISABLED_OPACITY = 0.5;
+const DISABLED_PART_FADE = { opacity: DISABLED_OPACITY } as const;
 /** A catalog row's air above and below its text block (`HAPPIER_COLLECTION_LIST_METRICS.catalogRow`). */
 const CATALOG_ROW_PADDING_STYLE = { paddingVertical: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.paddingVertical } as const;
 // A compact row in a side pane starts on the pane's text edge, the inset its header title and section labels use.
@@ -1165,6 +1168,10 @@ function ItemRow(props: ItemProps & Readonly<{
     const columnDescribedRow = isCatalogRow && inCollectionColumn;
     const requestedDensity = densityInputs.resolved;
     const hasSubtitleContent = Boolean(subtitle || subtitleAccessory);
+    // A disabled row that explains itself keeps its explanation readable: its words step down one ink level, as a
+    // dimmed row's do, instead of fading with the row; its marks and controls still fade (Move review, 2026-11-24).
+    const explainsDisabled = Boolean(disabled) && hasSubtitleContent && !isCatalogRow;
+    const disabledPartFade = explainsDisabled ? DISABLED_PART_FADE : null;
     const sharedItemBehavior = resolveHappierItemBehavior({
         role: isRadioRole ? 'radio' : inferredInteractiveWebRole === 'option' ? 'option' : 'button',
         selected,
@@ -1226,9 +1233,10 @@ function ItemRow(props: ItemProps & Readonly<{
     const pageRowStyles = pageRowMetrics ? resolvePageRowStyles(pageRowMetrics) : null;
     const factRow = pageRowMetrics?.valueLeads === true && !destructive;
     const factKeyColumnPx = factRow ? pageRowMetrics?.factKeyColumnPx ?? null : null;
-    const titleColor = dimmed && !destructive ? styles.titleDimmed : factRow ? styles.titleFact : titleColorBase;
+    const dimmedInk = dimmed || explainsDisabled;
+    const titleColor = dimmedInk && !destructive ? styles.titleDimmed : factRow ? styles.titleFact : titleColorBase;
     // Subtitle and meta step down with the title, so a dimmed row keeps its title over its quiet line.
-    const subtitleInkStyle = dimmed ? styles.subtitleDimmed : null;
+    const subtitleInkStyle = dimmedInk ? styles.subtitleDimmed : null;
     const [isNarrowRow, setIsNarrowRow] = React.useState(false);
     const [rowWidthPx, setRowWidthPx] = React.useState<number | null>(null);
     const [accessoryWidthPx, setAccessoryWidthPx] = React.useState<number | null>(null);
@@ -1512,13 +1520,14 @@ function ItemRow(props: ItemProps & Readonly<{
         : undefined;
     const firstLineLeadingStyle = titleLineHeightPx === undefined ? null : { height: titleLineHeightPx };
     const firstLineTrailingStyle = titleLineHeightPx === undefined ? null : { minHeight: titleLineHeightPx };
-    const iconContainerStyle = isTight
+    const iconContainerBaseStyle = isTight
         ? [styles.iconContainer, styles.iconContainerTight, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
         : isCompact
             ? [styles.iconContainer, styles.iconContainerCompact, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
             : isCozy
                 ? [styles.iconContainer, styles.iconContainerCozy, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null]
             : [styles.iconContainer, menuIconBoxStyle, pageLeadingColumnStyle, catalogLeadingColumnStyle, leadingMarkFitStyle, iconBoxSizeOverride, firstLineLeadingStyle, directoryEdges ? DIRECTORY_ROW_LEADING_STYLE : null];
+    const iconContainerStyle = disabledPartFade ? [iconContainerBaseStyle, disabledPartFade] : iconContainerBaseStyle;
     const resolvedIconMarginRight = isMenuRow
         ? MENU_ROW_METRICS.iconMarginRightPx
         : catalogGeometry ? HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap
@@ -2017,7 +2026,7 @@ function ItemRow(props: ItemProps & Readonly<{
 
             </View>
             {/* Right Section */}
-            <View style={[styles.rightSection, stackContentAccessory ? [styles.rightSectionStacked, stackedLabelEdgeStyle] : pageRowStyles?.accessoryBleed,
+            <View style={[styles.rightSection, disabledPartFade, stackContentAccessory ? [styles.rightSectionStacked, stackedLabelEdgeStyle] : pageRowStyles?.accessoryBleed,
                 // An adaptive control that measured inline already fits beside the label's column (the
                 // narrow-row and half-row rules decided that), so the box is not held to half the
                 // content width as well: that second cap clipped a 240px field in a ~490px dialog row
@@ -2124,6 +2133,7 @@ function ItemRow(props: ItemProps & Readonly<{
         detailSizeStyle,
         detailFigures,
         detailStyle,
+        disabledPartFade,
         iconContainerStyle,
         isMenuRow,
         isPageRow,
@@ -2194,7 +2204,7 @@ function ItemRow(props: ItemProps & Readonly<{
     const bottomPaddingLeft = menuBottomText
         ? MENU_ROW_SHAPE.paddingHorizontal + MENU_ROW_METRICS.iconBoxSizePx + MENU_ROW_METRICS.iconMarginRightPx
         : listBottomTextStart ?? PAGE_LIST_METRICS.rowPaddingHorizontalPx + bottomTextInset;
-    const bottom = bottomElement ? <View style={{ paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, paddingLeft: bottomPaddingLeft, paddingBottom: PAGE_LIST_METRICS.rowPaddingVerticalPx }}>{bottomElement}</View> : null;
+    const bottom = bottomElement ? <View style={[{ paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx, paddingLeft: bottomPaddingLeft, paddingBottom: PAGE_LIST_METRICS.rowPaddingVerticalPx }, disabledPartFade]}>{bottomElement}</View> : null;
     // The row's own activation covers the row alone; its bottom content and divider follow it as siblings.
     const bottomBelowPressable = Boolean(bottom && bottomElementOutsidePressable && isInteractive);
     const content = React.useMemo(() => (
@@ -2251,7 +2261,7 @@ function ItemRow(props: ItemProps & Readonly<{
         });
 
         return [
-            { backgroundColor: paintColor(backgroundColor), opacity: disabled ? isCatalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : 0.5 : 1 },
+            { backgroundColor: paintColor(backgroundColor), opacity: disabled && !explainsDisabled ? isCatalogRow ? HAPPIER_COLLECTION_LIST_METRICS.dimmedOpacity : DISABLED_OPACITY : 1 },
             isWeb && (disabled || loading) ? ({ cursor: 'not-allowed' } as any) : null,
             roundedCornersStyle,
             isMenuRow ? MENU_ROW_HIGHLIGHT_SHAPE : null,
@@ -2263,6 +2273,7 @@ function ItemRow(props: ItemProps & Readonly<{
     }, [
         theme.colors.border.focus,
         disabled,
+        explainsDisabled,
         isCatalogRow,
         isMenuRow,
         directoryEdges,
@@ -2413,6 +2424,7 @@ function ItemRow(props: ItemProps & Readonly<{
                     {splitRightElementOutsidePressable ? <View
                         style={[
                             styles.rightSection,
+                            disabledPartFade,
                             // A stacked page operation sits above the row's bottom padding.
                             stackAccessory ? [styles.rightSectionStacked, containerPadding, styles.splitRightSectionStacked] : null,
                             // The same rule as the row's own right section: measured inline, not halved again.
@@ -2538,11 +2550,11 @@ function ItemRow(props: ItemProps & Readonly<{
             // unavailable), exactly as the pressable row draws it.
             style={showSelectedBackground
                 ? [
-                    { backgroundColor: paintColor(theme.colors.surface.selected), opacity: disabled ? 0.5 : 1 },
+                    { backgroundColor: paintColor(theme.colors.surface.selected), opacity: disabled && !explainsDisabled ? DISABLED_OPACITY : 1 },
                     getItemGroupRowCornerRadii({ hasBackground: true, position: rowPosition, radius: groupCornerRadius }),
                     pressableStyle,
                 ]
-                : [{ opacity: disabled ? 0.5 : 1 }, pressableStyle]}
+                : [{ opacity: disabled && !explainsDisabled ? DISABLED_OPACITY : 1 }, pressableStyle]}
         >
             {content}
         </View>

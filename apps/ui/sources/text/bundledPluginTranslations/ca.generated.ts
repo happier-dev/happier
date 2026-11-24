@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Nom de la connexió",
   "plugins.database.connect.pending": "En espera d’aprovació.",
   "plugins.database.connect.test": "Prova i connecta",
-  "plugins.database.connection.unverifiedServer": "La connexió està xifrada, però la identitat del servidor no s’ha verificat.",
+  "plugins.database.connection.unverifiedServer": "La connexió està xifrada, però el proveïdor no pot demostrar que aquest sigui el teu servidor de base de dades.",
   "plugins.database.insights.activity": "Activitat",
   "plugins.database.insights.askInvestigation": "Demana una investigació",
   "plugins.database.insights.briefUnavailable": "No s’ha pogut preparar el resum de la troballa.",

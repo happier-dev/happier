@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "連線名稱",
   "plugins.database.connect.pending": "正在等待核准。",
   "plugins.database.connect.test": "測試並連線",
-  "plugins.database.connection.unverifiedServer": "連線已加密，但伺服器身分未經驗證。",
+  "plugins.database.connection.unverifiedServer": "連線已加密，但服務提供者無法證明這是你的資料庫伺服器。",
   "plugins.database.insights.activity": "活動",
   "plugins.database.insights.askInvestigation": "要求調查",
   "plugins.database.insights.briefUnavailable": "無法準備發現摘要。",

@@ -551,7 +551,7 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
       for (const sql of statements) expect(document.body.textContent).toContain(sql);
-      expect(document.body.textContent).not.toContain('identity isn’t verified');
+      expect(document.body.textContent).not.toContain('can’t prove this is your database server');
       expect(configured).toBe(false);
       if (!apply) throw new Error('The reviewed SQL did not offer an Action Control');
       await act(async () => { apply?.publish({ kind: 'prepare', requestId: 'create-login' }); });
@@ -590,7 +590,7 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
-      expect(await fixture.getByText('The connection is encrypted, but the server’s identity isn’t verified.')).toBeTruthy();
+      expect(await fixture.getByText('The connection is encrypted, but the provider can’t prove this is your database server.')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 
@@ -819,7 +819,7 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       expect(await fixture.getByText('New row')).toBeTruthy();
       expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
-      const notice = 'The connection is encrypted, but the server’s identity isn’t verified.';
+      const notice = 'The connection is encrypted, but the provider can’t prove this is your database server.';
       if (showsNotice) expect(await fixture.getByText(notice)).toBeTruthy();
       else expect(await fixture.queryByText(notice)).toBeUndefined();
       expect(executeAction).not.toHaveBeenCalled();

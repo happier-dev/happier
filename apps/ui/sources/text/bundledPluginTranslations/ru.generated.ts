@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Имя подключения",
   "plugins.database.connect.pending": "Ожидает подтверждения.",
   "plugins.database.connect.test": "Проверить и подключить",
-  "plugins.database.connection.unverifiedServer": "Подключение зашифровано, но подлинность сервера не проверена.",
+  "plugins.database.connection.unverifiedServer": "Подключение зашифровано, но провайдер не может подтвердить, что это ваш сервер базы данных.",
   "plugins.database.insights.activity": "Активность",
   "plugins.database.insights.askInvestigation": "Запросить расследование",
   "plugins.database.insights.briefUnavailable": "Не удалось подготовить сводку по результату.",

@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Connection name",
   "plugins.database.connect.pending": "Waiting for approval.",
   "plugins.database.connect.test": "Test and connect",
-  "plugins.database.connection.unverifiedServer": "The connection is encrypted, but the server’s identity isn’t verified.",
+  "plugins.database.connection.unverifiedServer": "The connection is encrypted, but the provider can’t prove this is your database server.",
   "plugins.database.insights.activity": "Activity",
   "plugins.database.insights.askInvestigation": "Ask for investigation",
   "plugins.database.insights.briefUnavailable": "The finding brief could not be prepared.",

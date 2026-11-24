@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Nome da conexão",
   "plugins.database.connect.pending": "Aguardando aprovação.",
   "plugins.database.connect.test": "Testar e conectar",
-  "plugins.database.connection.unverifiedServer": "A ligação está encriptada, mas a identidade do servidor não foi verificada.",
+  "plugins.database.connection.unverifiedServer": "A ligação está encriptada, mas o fornecedor não consegue provar que este é o seu servidor de base de dados.",
   "plugins.database.insights.activity": "Atividade",
   "plugins.database.insights.askInvestigation": "Pedir uma investigação",
   "plugins.database.insights.briefUnavailable": "Não foi possível preparar o resumo da descoberta.",

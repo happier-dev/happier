@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "连接名称",
   "plugins.database.connect.pending": "正在等待批准。",
   "plugins.database.connect.test": "测试并连接",
-  "plugins.database.connection.unverifiedServer": "连接已加密，但服务器身份未经验证。",
+  "plugins.database.connection.unverifiedServer": "连接已加密，但服务提供商无法证明这是你的数据库服务器。",
   "plugins.database.insights.activity": "活动",
   "plugins.database.insights.askInvestigation": "请求调查",
   "plugins.database.insights.briefUnavailable": "无法准备发现摘要。",

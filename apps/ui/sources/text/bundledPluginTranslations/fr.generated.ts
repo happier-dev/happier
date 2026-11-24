@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Nom de la connexion",
   "plugins.database.connect.pending": "En attente d’approbation.",
   "plugins.database.connect.test": "Tester et connecter",
-  "plugins.database.connection.unverifiedServer": "La connexion est chiffrée, mais l’identité du serveur n’a pas été vérifiée.",
+  "plugins.database.connection.unverifiedServer": "La connexion est chiffrée, mais le fournisseur ne peut pas prouver qu’il s’agit bien de votre serveur de base de données.",
   "plugins.database.insights.activity": "Activité",
   "plugins.database.insights.askInvestigation": "Demander une enquête",
   "plugins.database.insights.briefUnavailable": "Le résumé du constat n’a pas pu être préparé.",

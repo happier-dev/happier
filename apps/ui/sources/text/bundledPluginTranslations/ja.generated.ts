@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "接続名",
   "plugins.database.connect.pending": "承認を待っています。",
   "plugins.database.connect.test": "テストして接続",
-  "plugins.database.connection.unverifiedServer": "接続は暗号化されていますが、サーバーの身元は検証されていません。",
+  "plugins.database.connection.unverifiedServer": "接続は暗号化されていますが、プロバイダーはこれがあなたのデータベースサーバーであることを証明できません。",
   "plugins.database.insights.activity": "アクティビティ",
   "plugins.database.insights.askInvestigation": "調査を依頼",
   "plugins.database.insights.briefUnavailable": "検出事項の要約を作成できませんでした。",

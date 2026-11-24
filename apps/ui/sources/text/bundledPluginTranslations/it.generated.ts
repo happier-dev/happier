@@ -1648,7 +1648,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.connect.name": "Nome della connessione",
   "plugins.database.connect.pending": "In attesa di approvazione.",
   "plugins.database.connect.test": "Verifica e connetti",
-  "plugins.database.connection.unverifiedServer": "La connessione è cifrata, ma l’identità del server non è stata verificata.",
+  "plugins.database.connection.unverifiedServer": "La connessione è cifrata, ma il provider non può dimostrare che questo sia il tuo server di database.",
   "plugins.database.insights.activity": "Attività",
   "plugins.database.insights.askInvestigation": "Richiedi un’indagine",
   "plugins.database.insights.briefUnavailable": "Non è stato possibile preparare il riepilogo del risultato.",
