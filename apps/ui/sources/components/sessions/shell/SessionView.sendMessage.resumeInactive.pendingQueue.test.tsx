@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -1797,7 +1798,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             }
             expect(labels).toEqual(['common.continue', 'approvals.technicalDetails', 'common.ok']);
             await act(async () => { buttons.find(button => button.text === 'approvals.technicalDetails')?.onPress?.(); });
-            expect(JSON.parse(String(modalMockState.current!.spies.alert.mock.calls.at(-1)?.[1])))
+            expect(readActionFailureDetails((modalMockState.current!.spies.alert.mock.calls.at(-1)?.[1])))
                 .toMatchObject({ code: 'SPAWN_FAILED', phase: 'session.open', reasonCode: 'codex_continuation_unreachable' });
             await act(async () => { buttons.find(button => button.text === 'common.continue')?.onPress?.(); });
             await vi.waitFor(() => expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
@@ -1951,7 +1952,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             const technical = alert?.[2]?.find(button => button.text === 'approvals.technicalDetails');
             expect(technical?.onPress).toBeTypeOf('function');
             await act(async () => { technical?.onPress?.(); });
-            expect(JSON.parse(String(modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1]))).toMatchObject({
+            expect(readActionFailureDetails((modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1]))).toMatchObject({
                 code: 'SPAWN_VALIDATION_FAILED', phase: 'session.open', reasonCode: 'no_eligible_member',
             });
         } finally { await screen.unmount(); }
@@ -1983,7 +1984,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             const technical = alert?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
             expect(technical?.onPress).toBeTypeOf('function');
             await act(async () => { technical?.onPress?.(); });
-            expect(JSON.parse(String(modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1]))).toMatchObject({
+            expect(readActionFailureDetails((modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1]))).toMatchObject({
                 code, phase: 'session.open',
             });
         } finally { await screen.unmount(); }
@@ -2007,7 +2008,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await screen.pressByTestIdAsync('session-directory-missing-details');
             const details = modalMockState.current?.spies.alert.mock.calls.at(-1);
             expect(details?.[0]).toBe('approvals.technicalDetails');
-            expect(JSON.parse(String(details?.[1]))).toMatchObject({ code: 'SESSION_DIRECTORY_MISSING', phase: 'session.open' });
+            expect(readActionFailureDetails((details?.[1]))).toMatchObject({ code: 'SESSION_DIRECTORY_MISSING', phase: 'session.open' });
             expect(resumeCalls()).toEqual([]);
         } finally { await screen.unmount(); }
     });

@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import * as React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { IModal } from '@/modal';
@@ -208,7 +209,7 @@ describe('Settings → Account logout redirect', () => {
         const buttons = alert.mock.calls[0]?.[2];
         buttons?.find(button => button.text === 'approvals.technicalDetails')?.onPress?.();
         const details = alert.mock.calls.at(-1)?.[1];
-        expect(JSON.parse(String(details))).toMatchObject({ code: 'account_erasure_transition_cleanup_pending', requestId: expect.any(String) });
+        expect(readActionFailureDetails((details))).toMatchObject({ code: 'account_erasure_transition_cleanup_pending', requestId: expect.any(String) });
     });
 
     it('retries acknowledged local cleanup without deleting the Account twice', async () => {

@@ -22,9 +22,15 @@ it('presents an issued unknown outcome as an unconfirmed operation rather than a
     expect(Modal.alert).toHaveBeenCalledWith(t('toolView.pending.unknownTitle'), t('toolView.pending.unknownDescription'), expect.any(Array));
     const buttons = vi.mocked(Modal.alert).mock.calls.at(0)?.[2];
     buttons?.[0]?.onPress?.();
-    expect(Modal.alert).toHaveBeenLastCalledWith(t('approvals.technicalDetails'), JSON.stringify({
-        code: RPC_ERROR_CODES.OUTCOME_UNKNOWN, phase: 'session.open', targetHome: 'home-1',
-    }, null, 2));
+    // DESIGN-ACCEPT-152 fix 3: Technical details read as labelled lines, never raw JSON.
+    const details = String(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]);
+    expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[0]).toBe(t('approvals.technicalDetails'));
+    expect(details.split('\n')).toEqual([
+        `${t('common.error')}: ${RPC_ERROR_CODES.OUTCOME_UNKNOWN}`,
+        `${t('approvals.failureTechnicalLabels.phase')}: session.open`,
+        `${t('common.home')}: home-1`,
+    ]);
+    expect(details).not.toMatch(/[{}"]/);
 });
 
 it('keeps a definite refusal as an error with its original reason', () => {

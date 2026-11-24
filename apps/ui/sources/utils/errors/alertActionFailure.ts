@@ -1,5 +1,5 @@
 import { Modal } from '@/modal';
-import { t } from '@/text';
+import { t, type TranslationKeyNoParams } from '@/text';
 import { ActionRefusalDiagnosticV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
@@ -27,12 +27,36 @@ export function readSafeFailureDetails(details: unknown): ActionFailureContext {
     return safe;
 }
 
+/** The names Technical details give the references they reveal; a key without one is shown as itself. */
+export const ACTION_FAILURE_DETAIL_LABELS = {
+    code: 'common.error',
+    phase: 'approvals.failureTechnicalLabels.phase',
+    causePhase: 'approvals.failureTechnicalLabels.causePhase',
+    causeCode: 'approvals.failureTechnicalLabels.causeCode',
+    errorClass: 'approvals.failureTechnicalLabels.errorClass',
+    effectAttempted: 'approvals.failureTechnicalLabels.effectAttempted',
+    httpStatus: 'approvals.failureTechnicalLabels.httpStatus',
+    requestId: 'approvals.failureTechnicalLabels.requestId',
+    reason: 'approvals.failureTechnicalLabels.reason',
+    step: 'approvals.failureTechnicalLabels.step',
+    signal: 'approvals.failureTechnicalLabels.signal',
+    requiredFact: 'approvals.failureTechnicalLabels.requiredFact',
+    remedy: 'approvals.failureTechnicalLabels.remedy',
+    targetHome: 'common.home',
+} as const satisfies Record<string, TranslationKeyNoParams>;
+
+/** Technical details as one labelled line per reference ("Error: outcome_unknown"), never a JSON dump. */
+export function formatActionFailureDetails(failure: Readonly<{ code: string; context?: ActionFailureContext }>): string {
+    const labels: Readonly<Record<string, TranslationKeyNoParams>> = ACTION_FAILURE_DETAIL_LABELS;
+    return Object.entries({ code: failure.code, ...failure.context })
+        .filter(([, value]) => value !== null && value !== undefined && value !== '')
+        .map(([key, value]) => `${labels[key] ? t(labels[key]) : key}: ${String(value)}`)
+        .join('\n');
+}
+
 /** The deliberate reveal shared by inline recovery and failure alerts. */
 export function showActionFailureDetails(failure: Readonly<{ code: string; context?: ActionFailureContext }>): void {
-    const details = failure.context && Object.keys(failure.context).length > 0
-        ? JSON.stringify({ code: failure.code, ...failure.context }, null, 2)
-        : failure.code;
-    Modal.alert(t('approvals.technicalDetails'), details);
+    Modal.alert(t('approvals.technicalDetails'), formatActionFailureDetails(failure));
 }
 
 /** Deliberate disclosure of a typed Action failure, never its private transport details. */

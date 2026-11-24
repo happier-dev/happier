@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
@@ -326,7 +327,7 @@ describe('SessionView composer surface focus', () => {
       const details = buttons?.find(button => button.text === 'approvals.technicalDetails');
       expect(details).toBeDefined();
       details?.onPress?.();
-      const revealed = JSON.parse(modalAlertSpy.mock.calls.at(-1)![1]);
+      const revealed = readActionFailureDetails(modalAlertSpy.mock.calls.at(-1)![1]);
       expect(revealed).toMatchObject({ code: 'runtime_action_disabled', phase: 'browser.context.annotation.start',
         errorClass: 'Error', causeCode: 'machine_socket_unavailable', reasonCode: 'browser_context_annotation_unavailable' });
       expect(revealed).not.toHaveProperty('path');
@@ -340,7 +341,7 @@ describe('SessionView composer surface focus', () => {
       const domainDetails = domainButtons.find(button => button.text === 'approvals.technicalDetails');
       expect(domainDetails).toBeDefined();
       domainDetails?.onPress?.();
-      const domainRevealed = JSON.parse(modalAlertSpy.mock.calls.at(-1)![1]);
+      const domainRevealed = readActionFailureDetails(modalAlertSpy.mock.calls.at(-1)![1]);
       expect(domainRevealed).toEqual({ code: 'browser_context_adapter_unavailable', lifecycleState: 'adapterUnavailable' });
       expect(JSON.stringify(domainRevealed)).not.toContain('private page text');
     } finally {

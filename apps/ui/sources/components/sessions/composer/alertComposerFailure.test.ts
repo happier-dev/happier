@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RestartSessionRunnerResultV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 
@@ -23,11 +24,7 @@ import {
 beforeEach(() => vi.clearAllMocks());
 
 function readDisclosure(text: string): Record<string, unknown> {
-    try {
-        return JSON.parse(text) as Record<string, unknown>;
-    } catch {
-        return { code: text };
-    }
+    return readActionFailureDetails(text);
 }
 
 /** The alert the person sees, and the Technical details it opens when they press it. */
@@ -85,7 +82,8 @@ describe('the composer failure presenter', () => {
         expect(alert.message).toBe(t('common.requestFailed'));
         expect(alert.offersTechnicalDetails).toBe(true);
         expect(alert.disclosedTitle).toBe(t('approvals.technicalDetails'));
-        expect(alert.disclosed).toEqual({ code: 'invalid_parameters', reasonCode: 'missing_machine_target', retryable: false });
+        // Technical details are text: a flag reads as its word.
+        expect(alert.disclosed).toEqual({ code: 'invalid_parameters', reasonCode: 'missing_machine_target', retryable: 'false' });
     });
 
     it('keeps the readable message of an untyped Send failure and offers no empty details', () => {

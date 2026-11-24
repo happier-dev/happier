@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPluginContributedActionController } from './pluginContributedActionController';
 
@@ -163,7 +164,7 @@ describe('openPluginContributedAction', () => {
         const technical = buttons?.find(button => button.text === t('approvals.technicalDetails'));
         expect(technical).toBeDefined();
         technical?.onPress?.();
-        expect(JSON.parse(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1] ?? '{}')).toEqual({
+        expect(readActionFailureDetails(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1])).toEqual({
             code: 'credential_scope_denied', requestId, effectAttempted: 'false', causePhase: 'execution_authorization', errorClass: 'Error',
         });
     });

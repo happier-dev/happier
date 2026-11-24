@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import 'fake-indexeddb/auto';
 import { webcrypto } from 'node:crypto';
 import * as React from 'react';
@@ -143,7 +144,7 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbo
             const request = ExternalActionRequestEnvelopeV1Schema.parse(homes.requestsFor('/v1/actions/browser.profile.select')[0]!.input);
             expect(alert.mock.calls.at(-1)?.[1]).not.toContain(request.requestId);
             await act(async () => { alert.mock.calls.at(-1)![2]!.find(button => button.text === t('approvals.technicalDetails'))!.onPress!(); });
-            expect(JSON.parse(String(alert.mock.calls.at(-1)?.[1]))).toMatchObject({ code: 'sandbox_unavailable',
+            expect(readActionFailureDetails((alert.mock.calls.at(-1)?.[1]))).toMatchObject({ code: 'sandbox_unavailable',
                 causePhase: 'browser.profile.select', causeCode: 'sandbox_unavailable', requestId: request.requestId });
             expect(alert.mock.calls.at(-1)?.[1]).not.toContain('/private/profile');
             expect(alert.mock.calls.at(-1)?.[1]).not.toContain('producer-only detail');

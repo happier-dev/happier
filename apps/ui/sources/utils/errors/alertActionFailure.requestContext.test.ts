@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 vi.mock('@/modal', async () => {
@@ -23,7 +24,7 @@ function revealDetails() {
     expect(technical).toBeDefined();
     technical?.onPress?.();
     const details = String(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]);
-    return details.startsWith('{') ? JSON.parse(details) : { code: details };
+    return readActionFailureDetails(details);
 }
 
 // Sanitized real refusal from UI-INT-REPLAY-1111B/browser-action-failure-desktop.json.
@@ -51,5 +52,6 @@ it('keeps Browser failure cause and safe details alongside the request ID withou
             errorCode: 'machine_socket_unavailable', httpStatus: null } });
     expect(revealDetails()).toEqual({ code: refusal.errorCode, requestId: refusal.requestId,
         reasonCode: 'browser_context_annotation_unavailable', phase: 'browser.context.annotation.start',
-        errorClass: 'Error', causeCode: 'machine_socket_unavailable', httpStatus: null });
+        // An absent value (here the HTTP status) is not listed.
+        errorClass: 'Error', causeCode: 'machine_socket_unavailable' });
 });

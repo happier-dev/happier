@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { act, createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
@@ -197,7 +198,7 @@ it.each(['updated', 'denied', 'cold'] as const)('settles an Account GitLab purpo
         const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
         expect(details).toBeDefined();
         details?.onPress?.();
-        expect(JSON.parse(vi.mocked(Modal.alert).mock.calls.at(-1)![1]!)).toEqual({
+        expect(readActionFailureDetails(vi.mocked(Modal.alert).mock.calls.at(-1)![1]!)).toEqual({
             code: 'connected_account_catalog_http_403', requestId: expect.any(String),
         });
     }

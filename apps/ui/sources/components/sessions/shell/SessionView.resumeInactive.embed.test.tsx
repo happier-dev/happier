@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // @vitest-environment-options { "url": "https://app.happier.dev/embed/session/s1" }
 
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -271,8 +272,8 @@ describe('inactive Session in the admitted frame realm', () => {
                 expect(technical?.onPress).toBeTypeOf('function');
                 await act(async () => { technical?.onPress?.(); });
                 const details = modalState.current?.spies.alert.mock.calls.at(-1)?.[1];
-                expect(JSON.parse(String(details))).toMatchObject({ code: refusalCode, phase: 'session.open' });
-                if (poolUnavailable) expect(JSON.parse(String(details))).toMatchObject({ reasonCode: 'no_eligible_member' });
+                expect(readActionFailureDetails((details))).toMatchObject({ code: refusalCode, phase: 'session.open' });
+                if (poolUnavailable) expect(readActionFailureDetails((details))).toMatchObject({ reasonCode: 'no_eligible_member' });
                 expect(resumeAndSendActions()).toHaveLength(1);
             } else expect(modalState.current?.spies.alert).not.toHaveBeenCalled();
             expect(readSessionOwnerMetadataView(storage.getState().sessions.s1)).toBeNull();

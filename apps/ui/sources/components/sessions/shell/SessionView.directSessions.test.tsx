@@ -1,3 +1,4 @@
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import 'fake-indexeddb/auto';
@@ -2515,7 +2516,7 @@ describe('SessionView (direct sessions)', () => {
     const details = buttons.find((button: import('@/modal/types').AlertButton) => button.text === t('approvals.technicalDetails'));
     expect(details).toBeTruthy();
     await act(async () => { details.onPress(); });
-    expect(JSON.parse(modalAlertSpy.mock.calls[1]?.[1])).toEqual({
+    expect(readActionFailureDetails(modalAlertSpy.mock.calls[1]?.[1])).toEqual({
       code: 'action_failed', phase: 'session.open', targetHome: 'srv_resume_original_home',
     });
     expect(storage.getState().sessions.s1.active).toBe(false);
