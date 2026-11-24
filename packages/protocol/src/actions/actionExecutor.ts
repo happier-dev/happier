@@ -93,10 +93,10 @@ import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './e
 import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
 export { projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1 } from './executor/approvalOrigins.js';
 import { materializeSessionCreationActionInput, buildSessionSpawnNewArgs, sameSessionCreationDirectoryApproval } from './executor/sessionSpawn.js';
-import { resolveInheritedApprovalProfileIdV1, resolveProfiledActionsSettingsV1 } from './approvalProfiles.js';
+import { resolveProfiledActionsSettingsV1 } from './approvalProfiles.js';
 import { parseActionSurfaceKey, isAgentCaller, normalizeActionCallerContext, sessionAttestedContextCallerFailure, createPermissionPolicyResult, causalPermissionAuthorityFailure, resolveAgentEffectivePermission, assertAgentPermission, resolveSessionMessageSendAdmission, resolveAgentExecutionRunPermission, bindAgentExistingExecutionRunAuthority } from './executor/callerContext.js';
 import type { SessionMessageSendAdmission } from './executor/callerContext.js';
-import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation, refuseExecutionRunStartOutsideCallerModelsV1 } from './executor/executionRuns.js';
+import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation, startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
 import type { ExecutionRunCallOptions } from './executor/executionRuns.js';
 import { normalizeId, readNullableString, readOptionalString } from './executor/inputReading.js';
 import { normalizeActionExecutorThrownError, completeActionResult, completeSessionHandoffActionResult, completeExecutionRunServiceActionResult, completeSpawnActionResult, settleActionOutput as projectTerminalActionOutput, invalidActionOutputFailure, isDeferredApprovalResult, carryActionFailureDiagnostic } from './executor/resultProjection.js';
@@ -610,7 +610,6 @@ import {
   admitActionAgentStartV1, isAgentStartActionV1, isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1, resolveProfileSkillSeedsAtAdmissionV1,
   resolveActionAgentStartContextV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1, projectAgentStartSelectionV1, readAdmittedAgentStartV1,
 } from './executor/agentStartAdmission.js';
-import { refuseAgentStartWhenNotReadyV1 } from './executor/agents/agentBackendReadiness.js';
 import {
   SessionCreationDirectoryApprovalV1Schema,
   type SessionCreationDirectoryApprovalV1,
@@ -787,32 +786,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
   };
 
-  const startExecutionRunWithSelection = async (
+  const startExecutionRunWithSelection = (
     sessionId: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[0],
     input: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[1],
     opts: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2],
     context: ActionExecutorContext,
-  ) => {
-    if (!deps.executionRunStart) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.start' };
-    const resolved = context.agentStartContext;
-    const machineId = opts?.targetMachineId ?? context.executionRunTargetMachineId;
-    const current = resolved && machineId && machineId !== resolved.baseline.machineId
-      ? { ...resolved, baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
-    // Every run start (execution.run.start, delegate, plan, voice, review) passes here: refuse a
-    // known executable/platform failure before any Run exists. Launch resolves auth.
-    const notReady = await refuseAgentStartWhenNotReadyV1(deps, {
-      machineId: machineId ?? opts?.exactMachineId ?? resolved?.baseline.machineId ?? normalizeId(context.defaultSessionMachineId),
-      backendTarget: input.backendTarget,
-    }, context);
-    if (notReady) return notReady;
-    const request = { ...input,
-      approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
-    const admitted = current
-      ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request;
-    const modelNotGranted = refuseExecutionRunStartOutsideCallerModelsV1(admitted, context);
-    if (modelNotGranted) return modelNotGranted;
-    return deps.executionRunStart(sessionId, admitted, opts);
-  };
+  ) => startExecutionRunWithSelectionV1(deps, sessionId, input, opts, context);
   const retireOpenSubjectApprovals = async (subject: Readonly<
     { kind: 'managedMachine'; homeId: string; managedId: string }
     | { kind: 'deploymentEnvironment'; serverId: string; environmentId: string }>,
