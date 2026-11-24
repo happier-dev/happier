@@ -177,24 +177,24 @@ const PluginSessionHookSemanticTargetFieldsV1 = {
   agent: BoundedPluginContributionIdentityV1Schema,
 } as const;
 
-/**
- * Canonical Action input. Machine routing is host authority and is present only
- * on the released daemon RPC carrier above.
- */
+/** Status may name a Machine explicitly. The executing host still owns Machine admission. */
 export const PluginSessionHookStatusActionInputV1Schema = lazyZodSchema(() => z.discriminatedUnion(
   'intent',
   [
     z.strictObject({
+      machineId: z.optional(BoundedIdSchema),
       intent: z.literal('passive_inventory'),
       agent: zMini.optional(BoundedPluginContributionIdentityV1Schema),
       cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(4_096))),
       limit: z._default(z.number().check(z.int(), z.minimum(1), z.maximum(PLUGIN_SESSION_HOOK_STATUS_INVENTORY_MAX_ROWS)), PLUGIN_SESSION_HOOK_STATUS_INVENTORY_DEFAULT_LIMIT),
     }),
     z.strictObject({
+      machineId: z.optional(BoundedIdSchema),
       ...PluginSessionHookSemanticTargetFieldsV1,
       intent: z.literal('install_preview'),
     }),
     z.strictObject({
+      machineId: z.optional(BoundedIdSchema),
       ...PluginSessionHookSemanticTargetFieldsV1,
       intent: z.literal('installation_recheck'),
       installationId: BoundedIdSchema,

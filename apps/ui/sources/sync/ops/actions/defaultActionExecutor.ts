@@ -2076,7 +2076,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     } } : {}),
     ...(accountContext ? createUiNotificationActionDeps({ account: accountContext }) : {}),
     pluginsDevLoopAction: executeMachineOwnedAction,
-    ...(opts?.pluginSessionHookManagementAction ? { pluginSessionHookManagementAction: opts.pluginSessionHookManagementAction } : {}),
+    pluginSessionHookManagementAction: opts?.pluginSessionHookManagementAction ?? (async ({ actionId, input, serverId, signal }) => {
+      if (actionId !== 'plugins.sessionHooks.status.get') {
+        return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+      }
+      const { machineId, ...request } = input;
+      if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      const { machinePluginSessionHookStatusGet } = await import('@/sync/ops/machinePluginSessionHooks');
+      return withAccountLifetime(signal, signal => machinePluginSessionHookStatusGet({
+        ...request, machineId, serverId, signal,
+      }));
+    }),
     ...(accountContext ? { npmRegistryProfileAction: createUiNpmRegistryProfileAction(accountContext, opts?.npmRegistryProfileDelivery) } : {}),
     ...(accountContext ? createPluginAccountAdministrationActionDeps(accountContext, opts?.pluginAccountAdministrationIsCurrent,
       opts?.pluginAccountAdministrationProjection) : {}),
