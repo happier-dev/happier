@@ -66,7 +66,7 @@ import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deploy
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import type { DeploymentPlatformLinkActions } from './DeploymentPlatformTargetSheet';
-import { providerDatabaseReferenceChoices } from './railwayDatabaseVariables';
+import { useProviderDatabaseReferenceChoices } from './railwayDatabaseVariables';
 const providerKeyOf = (fact: DeploymentTargetVariableMetadataV1) => fact.key;
 type ProviderSaveResult = NonNullable<Extract<DeploymentBindingsSetResultV1, { ok: true }>['providerVariables']>;
 
@@ -134,7 +134,7 @@ export const DeploymentVariablesPanel = React.memo(
       providerVariablesActive?: boolean;
       providerDatabase?: Readonly<{
         detail: DeploymentEnvironmentReadDetailV1;
-        declarations: Parameters<typeof providerDatabaseReferenceChoices>[1];
+        declarations: NonNullable<Parameters<typeof useProviderDatabaseReferenceChoices>[1]>;
         inspect: DeploymentPlatformLinkActions['inspectPlatformTarget'];
       }>;
       /** The Home/Account a new secret is saved under (Settings → Secrets); null while it is not current. */
@@ -162,10 +162,6 @@ export const DeploymentVariablesPanel = React.memo(
     const editor = draft.editor;
     const provider = useDeploymentProviderVariables({ lifetime: props.lifetime, active: props.providerVariablesActive, projectSourceId: props.projectSourceId,
       environmentId: props.environmentId, targetLinkId: props.providerTargetLinkId });
-    const { detail: providerDetail, declarations: targetDeclarations } = props.providerDatabase ?? {};
-    const providerDatabaseChoices = React.useMemo(() => props.lifetime && providerDetail && targetDeclarations
-      ? providerDatabaseReferenceChoices(providerDetail, targetDeclarations) : [], [props.lifetime, providerDetail, targetDeclarations]);
-    const databaseProviderName = providerDatabaseChoices[0]?.providerName;
     const providerByKey = React.useMemo(() => new Map(provider.value?.variables.map(row => [row.key, row]) ?? []), [provider.value]);
     // The provider column holds its place while the read is pending; a read that failed says so once, in its notice,
     // instead of a column of dashes.
@@ -219,6 +215,11 @@ export const DeploymentVariablesPanel = React.memo(
       setAdding('saved');
     }, [props.lifetime]);
     const [mode, setMode] = React.useState<PanelMode>(() => editor.bulkInput === null ? 'table' : 'bulk');
+    const [addMenuOpen, setAddMenuOpen] = React.useState(false);
+    const { detail: providerDetail, declarations: targetDeclarations } = props.providerDatabase ?? {};
+    const providerDatabaseChoices = useProviderDatabaseReferenceChoices(providerDetail, targetDeclarations, props.lifetime,
+      mode === 'table' && (addMenuOpen || adding === 'providerDatabase'));
+    const databaseProviderName = providerDatabaseChoices[0]?.providerName;
     // Saved Secrets own creation; the editor only takes their references into this draft, saved below.
     const saved = useEnvironmentSavedSecretBindings({
       scope: props.scope,
@@ -487,6 +488,8 @@ export const DeploymentVariablesPanel = React.memo(
         />
         {saveActions ?? (mode === 'table' ? (
           <AddMenu
+            open={addMenuOpen}
+            onOpenChange={setAddMenuOpen}
             disabled={adding !== null}
             secretsAvailable={props.scope !== null}
             savedAvailable={props.lifetime !== null}
@@ -990,7 +993,7 @@ function AddProviderDatabaseVariable(props: Readonly<{
   machineId: string;
   inspect: DeploymentPlatformLinkActions['inspectPlatformTarget'];
   lifetime: ServerAccountScopeLifetime;
-  choices: ReturnType<typeof providerDatabaseReferenceChoices>;
+  choices: ReturnType<typeof useProviderDatabaseReferenceChoices>;
   providerName: string;
   taken: readonly VariableRow[];
   requestReview: DeploymentReviewHandle['request'];
@@ -1176,6 +1179,8 @@ function AddReferenceVariable(
 /** "+ Add" (lab d2 `addvar`): a new secret, a plain variable, or a pasted .env. */
 function AddMenu(
   props: Readonly<{
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
     disabled: boolean;
     secretsAvailable: boolean;
     savedAvailable: boolean;
@@ -1185,7 +1190,6 @@ function AddMenu(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const [open, setOpen] = React.useState(false);
   const id = 'project-deployments.environment.variables.add';
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
@@ -1249,8 +1253,8 @@ function AddMenu(
   );
   return (
     <DropdownMenu
-      open={open}
-      onOpenChange={setOpen}
+      open={props.open}
+      onOpenChange={props.onOpenChange}
       items={items}
       matchTriggerWidth={false}
       placement="bottom"
@@ -1262,7 +1266,7 @@ function AddMenu(
           testID={id}
           title={t('projects.deployments.addVariable')}
           icon="plus"
-          expanded={open}
+          expanded={props.open}
           disabled={props.disabled}
           onPress={toggle}
         />

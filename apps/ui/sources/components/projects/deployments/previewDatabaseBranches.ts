@@ -2,6 +2,8 @@ import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { DeploymentTargetProviderIdentityV1 } from '@happier-dev/deployments/contracts/v1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { z } from 'zod/mini';
+import { DeploymentTargetDataInputV1Schema, DeploymentTargetRoleInputSchemasV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 
 type LinkedTarget = DeploymentEnvironmentReadDetailV1['targetLinks'][number];
@@ -22,16 +24,27 @@ export function previewBranchTargets(declarations: readonly Readonly<{ manifest:
   });
 }
 
+// Use the preparation contract's keys to project the saved link, excluding presentation-only facts.
+const savedDataTargetReadInput = z.object(DeploymentTargetDataInputV1Schema.shape);
+const savedDatabaseReferenceInput = z.object(DeploymentTargetRoleInputSchemasV1['connectionSecret.reference'].shape);
+
 /** The host admits this recorded link custody; the UI never substitutes the viewer or changes its purpose. */
-export function buildPreviewBranchReadInput(detail: DeploymentEnvironmentReadDetailV1, target: LinkedTarget) {
-  if (!target.content) return null;
-  const { credentialPrincipal, providerIdentity, providerEnvironment } = target.content;
-  if (!credentialPrincipal || credentialPrincipal.kind !== 'account' || credentialPrincipal.target.kind !== 'account'
-    || !providerIdentity || !providerEnvironment) return null;
-  return { v: 1, serverId: detail.environment.serverId, environmentId: detail.environment.id,
-    expectedRevision: detail.environment.revision, targetLinkId: target.targetLink.id,
-    expectedTargetLinkRevision: target.targetLink.revision, credentialPrincipal,
-    credentialRef: credentialPrincipal.target.account, providerIdentity, providerEnvironment };
+export function buildPreviewBranchReadInput(detail: DeploymentEnvironmentReadDetailV1, target: LinkedTarget, role?: 'connectionSecret.reference') {
+  const credentialPrincipal = target.content?.credentialPrincipal;
+  if (credentialPrincipal?.kind !== 'account' || credentialPrincipal.target.kind !== 'account') return null;
+  const schema = role === 'connectionSecret.reference' ? savedDatabaseReferenceInput : savedDataTargetReadInput;
+  const input = schema.safeParse({
+    ...target.content,
+    v: 1,
+    serverId: detail.environment.serverId,
+    environmentId: detail.environment.id,
+    expectedRevision: detail.environment.revision,
+    targetLinkId: target.targetLink.id,
+    expectedTargetLinkRevision: target.targetLink.revision,
+    credentialRef: credentialPrincipal.target.account,
+  });
+  if (!input.success || !input.data.providerIdentity) return null;
+  return { ...input.data, providerIdentity: input.data.providerIdentity };
 }
 
 type ManagedPreviewSelection = Extract<NonNullable<DeploymentEnvironmentReadDetailV1['content']['previewTemplate']>['data'][number], { kind: 'managed' }>;

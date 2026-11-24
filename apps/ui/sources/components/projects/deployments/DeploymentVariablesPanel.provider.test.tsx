@@ -4,6 +4,8 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -22,6 +24,8 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 // Test Renderer paints the real menu inline at the external DOM renderer boundary.
 vi.mock('@/utils/web/reactDomCjs', async () => (await import('@/dev/testkit/mocks/reactDomCjs')).createReactDomCjsRendererMock());
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
+vi.mock('@/components/ui/popover', async importOriginal => (await import('@/dev/testkit/mocks/popover'))
+  .createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
 
@@ -106,9 +110,9 @@ it.each([{ settlement: 'saved', choice: 'useOurs' }, { settlement: 'saved', choi
 });
 
 
-it('adds a scoped Railway database reference to the reviewed Variables draft', async () => {
-  const serverId = await homes.addHome({ name: 'Railway Variables', serverUrl: 'https://railway-variables.test',
-    serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+it.each(['hydrated', 'header-only'] as const)('adds a scoped Railway database reference from %s links to the reviewed Variables draft', async linkRead => {
+  const serverId = await homes.addHome({ name: 'Railway Variables', serverUrl: `https://railway-variables-${linkRead}.test`,
+    serverIdentityId: `srv_${(linkRead === 'hydrated' ? 'a' : 'c').repeat(32)}`, accountId: 'owner', currentAccount: true });
   const { plugin: railwayData } = await import('../../../../../../packages/plugins/deployment-railway/src/manifest');
   const { manifest: railwayRuntime } = await import('../../../../../../packages/plugins/deploy-railway/src/manifest');
   const runtimeTitle = 'Connected Railway';
@@ -132,10 +136,11 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
   const railwayEnvironmentId = 'staging-id';
   const adopted = (role: 'runtime' | 'data', linkId: string, localId: string, pluginId: string, serviceId: string, environmentId: string) => ({
     targetLink: createDeploymentTargetLinkHeaderV1({ id: linkId, environmentId: environment.id, role,
-      targetKind: role === 'runtime' ? 'railway' : 'railway-postgresql', machines: [], members: [],
+      targetKind: role === 'runtime' ? 'railway' : 'railway-postgresql', machines: [], members: [], contentArtifactId: `artifact-${linkId}`,
       source: { kind: 'plugin', contribution: { pluginId, localId } } }),
     content: { providerIdentity: { providerAccountId: projectId, providerResourceId: serviceId, providerEnvironment: environmentId },
       providerEnvironment: { kind: 'native' as const, selection: { projectId, environmentId, serviceId } },
+      preparedNative: { projectName: linkId },
       credentialPrincipal: { kind: 'account' as const, accountId: 'owner',
         purpose: { consumer: { pluginId, localId: role === 'runtime' ? 'service-link' : 'postgresql-link' }, purpose: 'cloud-api' },
         target: { kind: 'account' as const, account: connectedAccount } },
@@ -144,25 +149,49 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
   const app = adopted('runtime', 'railway-app', 'runtime', 'happier.deploy.railway', 'app-service', railwayEnvironmentId);
   const other = adopted('data', 'other-database', 'postgresql', railwayData.manifest.id, 'other-service', 'production-id');
   const selected = adopted('data', 'orders-database', 'postgresql', railwayData.manifest.id, 'orders-service', railwayEnvironmentId);
-  const detail = { ...base, environment: { ...environment, runtimeTargetLinkId: app.targetLink.id }, targetLinks: [app, other, selected],
+  const detached = { targetLink: createDeploymentTargetLinkHeaderV1({
+    ...selected.targetLink, id: 'detached-database', contentArtifactId: 'artifact-detached-database', state: 'detached', detachedAtMs: 1,
+  }) };
+  const databaseLinks = [other, selected];
+  if (linkRead === 'header-only') {
+    for (const { targetLink, content } of databaseLinks) {
+      await context.createArtifactDocument({ artifactId: targetLink.contentArtifactId,
+        header: { kind: 'deployment-target-link.v1', title: content.preparedNative.projectName }, body: JSON.stringify(content) });
+    }
+  }
+  const detail = { ...base, environment: { ...environment, runtimeTargetLinkId: app.targetLink.id },
+    targetLinks: [app, detached, ...databaseLinks.map(row => linkRead === 'hydrated' ? row : { targetLink: row.targetLink })],
     content: { ...base.content, bindings: [] }, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [], builtInUrls: [] };
   const observations: unknown[] = [];
+  const admissionFailures: string[] = [];
   const writes: unknown[] = [];
   const reference = '${{Orders.DATABASE_URL}}';
+  const referenceAction = railwayData.manifest.contributes.actions.find(action => action.id === 'postgresql-connection-reference')!;
+  const validReferenceInput = compilePluginJsonSchema(referenceAction.inputSchema);
   homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
     body: { ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
   await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.invoke', requesterInvocation: 'required',
     machineId: detail.environment.controllerMachineId, tokenEpoch: 0,
-    failure: output => typeof output === 'object' && output !== null && 'code' in output && output.code === 'target_mismatch'
-      ? { errorCode: 'target_mismatch', error: 'target_mismatch' } : null,
+    failure: output => typeof output === 'object' && output !== null && 'code' in output && typeof output.code === 'string'
+      ? { errorCode: output.code, error: output.code } : null,
     execute: raw => {
       const invocation = getActionSpec('action.invoke').inputSchema.parse(raw);
       observations.push(invocation);
       const input = invocation.input;
-      if (input && typeof input === 'object' && 'targetLinkId' in input && input.targetLinkId === other.targetLink.id) {
-        return { code: 'target_mismatch' };
+      if (!validReferenceInput(input)) {
+        admissionFailures.push('invalid_parameters');
+        return { code: 'invalid_parameters' };
       }
-      return { reference };
+      const stored = input && typeof input === 'object' && 'targetLinkId' in input
+        ? databaseLinks.find(row => row.targetLink.id === input.targetLinkId) : undefined;
+      if (!stored || !input || typeof input !== 'object' || !('preparedNative' in input)
+        || !sameStrictJsonValue(input.preparedNative, stored.content.preparedNative)) {
+        admissionFailures.push('deployment_access_denied');
+        return { code: 'deployment_access_denied' };
+      }
+      if (stored !== other) return { reference };
+      admissionFailures.push('target_mismatch');
+      return { code: 'target_mismatch' };
     } });
   await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.bindings.set',
     machineId: detail.environment.controllerMachineId, tokenEpoch: 0, execute: raw => {
@@ -178,6 +207,11 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
       projectSourceId={detail.environment.projectSourceId} providerTargetLinkId={app.targetLink.id} providerVariablesActive={false}
       scope={lifetime.scope} lifetime={lifetime} providerDatabase={{ detail, declarations, inspect: actions.inspectPlatformTarget }} />;
   }
+  const databaseArtifactIds = new Set([...databaseLinks, detached].map(row => row.targetLink.contentArtifactId));
+  const databaseReads = () => homes.requestsFor('/v1/artifacts/read').map(request => request.input)
+    .filter(input => input && typeof input === 'object' && 'artifactIds' in input
+      && Array.isArray(input.artifactIds) && input.artifactIds.some(id => databaseArtifactIds.has(id)));
+  const beforeReads = databaseReads().length;
   const screen = await renderScreen(<ListPresentationProvider value="page"><Page /></ListPresentationProvider>, {
     createNodeMock: element => element.type === 'div' ? document.createElement('div')
       : ({ offsetTop: 0, offsetHeight: 44, scrollTo() {}, getBoundingClientRect: () => new DOMRect(0, 0, 320, 44) }),
@@ -186,6 +220,7 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
     const add = 'project-deployments.environment.variables.add';
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     expect(observations).toEqual([]);
+    expect(databaseReads()).toHaveLength(beforeReads);
     await screen.pressByTestIdAsync(add);
     const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'providerDatabase'));
     await vi.waitFor(() => expect(menu()?.props.open).toBe(true));
@@ -195,10 +230,15 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
     const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
     const selector = () => screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${add}.railwayDatabase.source`)!;
     expect(selector().props.selectedId).toBeNull();
+    expect(selector().props.items.map(({ id }: { id: string }) => id)).toEqual(databaseLinks.map(row => row.targetLink.id));
+    expect(databaseReads().slice(beforeReads)).toEqual(
+      linkRead === 'header-only' ? [{ artifactIds: databaseLinks.map(row => row.targetLink.contentArtifactId) }] : [],
+    );
     expect(observations).toEqual([]);
     await act(async () => selector().props.onSelect(other.targetLink.id));
     await screen.pressByTestIdAsync(`${add}.save`);
     await vi.waitFor(() => expect(screen.findByTestId(`${add}.railwayDatabase.failed`)).not.toBeNull());
+    expect(admissionFailures).toEqual(['target_mismatch']);
     expect(writes).toEqual([]);
     await act(async () => selector().props.onSelect(selected.targetLink.id));
     await screen.pressByTestIdAsync(`${add}.save`);
@@ -207,6 +247,7 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
     expect(observations).toEqual([expect.objectContaining({ input: expect.objectContaining({ targetLinkId: other.targetLink.id }) }),
       expect.objectContaining({ action: { pluginId: railwayData.manifest.id, localId: 'postgresql-connection-reference' },
         input: expect.objectContaining({ targetLinkId: selected.targetLink.id, providerIdentity: selected.content.providerIdentity,
+          preparedNative: selected.content.preparedNative,
           runtimeProviderIdentity: app.content.providerIdentity, runtimeProviderEnvironment: app.content.providerEnvironment }) })]);
     await screen.pressByTestIdAsync('project-deployments.environment.variables.save');
     await vi.waitFor(() => expect(writes).toEqual([expect.objectContaining({ environmentId: detail.environment.id,
