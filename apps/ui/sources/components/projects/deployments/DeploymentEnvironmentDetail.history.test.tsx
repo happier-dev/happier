@@ -169,12 +169,12 @@ describe('Environment → History', () => {
       requestedAtMs: settled - 2, startedAtMs: settled - 1, settledAtMs: settled }) }];
     const { screen, controller, settle } = await renderHistory(() => ({ ok: true, items, nextCursor: null }));
     try {
-      expect(await settle('project-deployments.receipt.row.receipt-old')).not.toBeNull();
+      const row = await settle('project-deployments.receipt.row.receipt-old');
+      expect(row).not.toBeNull();
       const group = screen.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('project-deployments.environment.history.day.') && typeof node.props.title === 'string')[0]!;
       expect(group.props.title).toBe(t('sessionHistory.daysAgo', { count: 6 }));
-      const texts = screen.findAll(node => typeof node.props.children === 'string').map(node => node.props.children as string);
-      expect(texts).toContain(t('time.daysAgoShort', { count: 6 }));
+      expect(row?.findAll(node => node.props.children === group.props.title).length).toBeGreaterThan(0);
     } finally { vi.useRealTimers(); await screen.unmount(); controller.retire(); }
   });
 

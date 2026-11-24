@@ -14215,7 +14215,6 @@ settingsSession: {
                 folderEnvExcluded: "已關閉包含 .env 檔案",
                 folderSymlinkExcluded: "連結目標位於資料夾外或不受支援",
                 folderContents: ({ count, size }: { count: number; size: string }) => `${count} 個檔案 · ${size}`,
-                chooseFolder: "選擇資料夾",
                 awakeNote: '僅在這台機器處於喚醒狀態且 Docker Desktop 已開啟時執行。',
                 portLocal: ({ port }: { port: string }) => `連接埠 ${port}，僅限這台機器`,
                 risk: {
