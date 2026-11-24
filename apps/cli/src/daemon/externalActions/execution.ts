@@ -90,6 +90,7 @@ import { createMachineSharedProviderGatewayResolver } from "@/providers/lifecycl
 import type { QualifiedConnectedAccountV4Support } from "@/daemon/connectedServices/qualifiedConnectedAccountV4Support";
 import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCustody';
 import { deliverAdmittedExternalActionRoot } from '@/api/externalActionExecutionAuthorization';
+import { isAxiosError } from 'axios';
 
 type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
   'execute' | 'prepare' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay;
@@ -379,6 +380,9 @@ resolveServerFeaturesSnapshot?: () =>
                   installationId: installation.installationId, privateKey: installation.privateKey },
                 ...(context.signal ? { signal: context.signal } : {}) });
             } catch (error) {
+              // Home answers 404 when this requester cannot read the target Machine row.
+              if (isAxiosError(error) && error.response?.status === 404)
+                return actionStartTargetUnavailableV1(context, 'credentialed_factory', 'machine_check_failed');
               if (!isRpcError(error)) throw error;
               const failure = normalizeActionExecutorThrownError(error);
               return { ok: false, ...failure, error: failure.errorCode };

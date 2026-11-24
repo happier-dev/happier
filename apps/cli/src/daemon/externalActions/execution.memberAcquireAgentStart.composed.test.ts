@@ -123,6 +123,8 @@ type AcquireCase = Readonly<{
   agentStart?: false;
   /** The member's own Action policy for an Agent's acquire. */
   memberPolicy: 'ask' | 'allow';
+  /** The member no longer holds a grant on the owner's controller Machine. */
+  controllerGrant?: 'revoked';
 }>;
 
 // A Session agent's managed acquire with agentStart on the member's installed
@@ -250,6 +252,10 @@ async function runMemberAcquire(acquire: AcquireCase) {
       return { ...read, data: { ...read.data, session: { ...session, metadata: JSON.stringify(
         applyPermissionModeIntentSessionMetadata(JSON.parse(session.metadata), { permissionMode: 'default', updatedAt: 1 })) } } };
     }
+    // Without a grant, Home's exact Machine read answers as for any Machine the actor cannot see.
+    if (path === `/v1/machines/${OWNER_MACHINE_ID}` && acquire.controllerGrant === 'revoked')
+      throw Object.assign(new axios.AxiosError('Request failed with status code 404', 'ERR_BAD_REQUEST'),
+        { response: { status: 404, data: { error: 'Machine not found' } } });
     // The owner's controller Machine, which the member reaches through its Team grant.
     if (path === `/v1/machines/${OWNER_MACHINE_ID}`) {
       const read = await homeRead(String(args[0]).replace(path, '/v1/machines/machine'), ...args.slice(1));
@@ -539,4 +545,15 @@ it("today: an unstamped Session acquire on the owner's controller under the memb
   expect(run.approvals('owner')).toEqual([]);
   expect(await run.readApproval(ask?.id)).toMatchObject({ status: 'open', actionId: 'machines.managed.acquire',
     executionOriginV1: { accountId: 'requester', machineId: OWNER_MACHINE_ID } });
+}, 120_000);
+
+// A member whose grant on the owner's controller was revoked after Home signed
+// the root gets the typed target refusal, not an internal error, and nothing is delivered.
+it("a member's acquire on the owner's controller after the member's grant was revoked is refused as an unavailable target", async () => {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: true, memberPolicy: 'ask', controllerGrant: 'revoked' });
+  expect(run.outcome, JSON.stringify(run.outcome)).toMatchObject({ ok: true, result: { kind: 'action.execution',
+    outcome: { ok: false, errorCode: 'target_unavailable', details: { code: 'target_unavailable', reason: 'machine_check_failed' } } } });
+  expect(run.relayed).toEqual([]);
+  expect(run.approvals('requester')).toEqual([]);
+  expect(run.approvals('owner')).toEqual([]);
 }, 120_000);
