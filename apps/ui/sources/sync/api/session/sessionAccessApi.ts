@@ -154,6 +154,9 @@ async function materializeSessionGrant(params: Readonly<{
     const snapshot = await readSessionSnapshotForAuthority({
         authority: params.authority,
         sessionId: params.sessionId,
+        // The admitted grant migrates historical layouts below. This read must
+        // not start a competing display-maintenance write for the same tuple.
+        includeMetadataTupleMutationSnapshot: false,
         isCurrent: () => { checkEncryptionScope(); return true; },
     }).catch((error: unknown) => {
         if (error instanceof SessionSnapshotReadError && error.errorCode === 'stale_response') {

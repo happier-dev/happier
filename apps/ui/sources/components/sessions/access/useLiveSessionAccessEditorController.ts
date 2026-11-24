@@ -147,7 +147,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         // below stays the only access state owner, and a denial it proves is
         // applied by the ordinary failure path rather than guessed here.
         const unsubscribeAccountChange=subscribeHomeAccountChange((event)=>{
-            if (!areServerProfileIdentifiersEquivalent(event.serverId,input.scope.serverId)) return;
+            if (event.sessionAccessAffects === false || !areServerProfileIdentifiersEquivalent(event.serverId,input.scope.serverId)) return;
             // An absent entity page is a conservative wake and must be honored.
             // A named page refetches this private roster only when it actually
             // names this Session.

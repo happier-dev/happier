@@ -912,15 +912,13 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
 
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
         await vi.waitFor(() => expect(controller().model.grants).toHaveLength(1));
-        await vi.waitFor(() => expect(controller().model.encryption).toBeDefined());
+        await vi.waitFor(() => expect(controller().model.encryption?.error?.code)
+            .toBe('session_data_key_envelope_request_failed'));
 
         // The grant committed. Only the separate encryption obligation failed.
         expect(controller().model.grants).toHaveLength(1);
         expect(controller().model.grants[0]?.operation).toEqual({ kind: 'idle' });
         expect(controller().model.content.issue).toBeUndefined();
-        // The line names the key owner's own failure, so it stays distinguishable
-        // from a grant failure the row would have to own instead.
-        expect(controller().model.encryption?.error?.code).toBe('session_data_key_envelope_request_failed');
     });
 
     it('clears the typed search only after an add, never under a level change', async () => {

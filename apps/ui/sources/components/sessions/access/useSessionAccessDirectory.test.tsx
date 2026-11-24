@@ -1,21 +1,19 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { listTeamGroups } from '@/sync/ops/teams/teamGroupOperations';
 import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
-import { searchSessionAccessAccountPage } from '@/sync/api/session/sessionAccessApi';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 
 import type { SessionAccessCandidateRowModel, SessionAccessGrantOperationModel } from './sessionAccessEditorTypes';
 import { useSessionAccessDirectory, type SessionAccessDirectory } from './useSessionAccessDirectory';
 
-vi.mock('@/sync/api/session/sessionAccessApi', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/api/session/sessionAccessApi')>(),
-    searchSessionAccessAccountPage: vi.fn(),
-}));
 vi.mock('@/sync/ops/teams/teamActionClient', () => ({ runTeamAction: vi.fn() }));
 vi.mock('@/sync/ops/teams/teamGroupOperations', () => ({ listTeamGroups: vi.fn() }));
 vi.mock('@/hooks/teams/useTeamGroups', () => ({ useTeamGroups: vi.fn(() => ({
@@ -33,9 +31,10 @@ function Probe(props: Readonly<{
     onValue: (value: SessionAccessDirectory) => void;
     operations?: Readonly<Record<string, SessionAccessGrantOperationModel>>;
     teamId?: string;
+    serverId?: string;
 }>) {
     const value = useSessionAccessDirectory({
-        scope,
+        scope: props.serverId ? { ...scope, serverId: props.serverId } : scope,
         availability: 'available',
         contextTeams: [],
         operations: props.operations ?? NO_OPERATIONS,
@@ -47,16 +46,31 @@ function Probe(props: Readonly<{
     return null;
 }
 
-function accountRow(index: number) {
-    return {
-        kind: 'account' as const,
-        accountId: `account-${index}`,
-        name: null,
-        username: `candidate_${String(index).padStart(2, '0')}`,
-        firstName: null,
-        lastName: null,
-        avatarUrl: null,
-    };
+async function serveAccountSearch(total: number) {
+    const home = await upsertServerProfile({ serverUrl: 'https://session-access-directory.example.test' });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+        token: `e30.${Buffer.from(JSON.stringify({ sub: scope.accountId })).toString('base64url')}.signature`,
+    });
+    const searches: Array<{ query: string | null; cursor: string | null }> = [];
+    setRuntimeFetch(async (input) => {
+        const url = new URL(String(input));
+        if (url.origin !== home.serverUrl) return Response.json({ error: 'not_found' }, { status: 404 });
+        if (url.pathname === '/v1/auth/ping' || url.pathname === '/health') return Response.json({});
+        if (url.pathname !== '/v1/user/search') return Response.json({ error: 'not_found' }, { status: 404 });
+        const cursor = url.searchParams.get('cursor');
+        searches.push({ query: url.searchParams.get('query'), cursor });
+        const start = cursor === 'account-page-2' ? 10 : 0;
+        const users = Array.from({ length: Math.min(10, total - start) }, (_, offset) => {
+            const index = start + offset;
+            return {
+                id: `account-${index}`, username: `candidate_${String(index).padStart(2, '0')}`,
+                firstName: 'Candidate', lastName: null, avatar: null, bio: null,
+                status: 'none', publicKey: null,
+            };
+        });
+        return Response.json({ users, nextCursor: total > 10 && start === 0 ? 'account-page-2' : null });
+    });
+    return { serverId: home.id, searches };
 }
 
 function team(id: string) {
@@ -92,23 +106,22 @@ describe('useSessionAccessDirectory', () => {
         vi.clearAllMocks();
     });
 
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
     it('keeps the Account search cursor and reaches the eleventh matching Account', async () => {
         vi.mocked(runTeamAction).mockResolvedValue({ kind: 'succeeded', value: { items: [], nextCursor: null } } as never);
-        vi.mocked(searchSessionAccessAccountPage)
-            .mockResolvedValueOnce({ rows: Array.from({ length: 10 }, (_, index) => accountRow(index)), nextCursor: 'account-page-2' })
-            .mockResolvedValueOnce({ rows: [accountRow(10)], nextCursor: null });
+        const { serverId, searches } = await serveAccountSearch(11);
 
         let latest!: SessionAccessDirectory;
-        await renderScreen(<Probe onValue={(value) => { latest = value; }} />);
+        await renderScreen(<Probe serverId={serverId} onValue={(value) => { latest = value; }} />);
         const firstSource = latest.sections.find((section) => section.kind === 'account')!;
         await act(async () => { await firstSource.resolveCandidates!('candidate_', new AbortController().signal); });
 
         await vi.waitFor(() => expect(latest.sections.find((section) => section.kind === 'account'))
             .toMatchObject({ cursor: 'account-page-2', hasMore: true }));
         await act(async () => { latest.loadMore('account'); });
-        await vi.waitFor(() => expect(searchSessionAccessAccountPage).toHaveBeenLastCalledWith(expect.objectContaining({
-            query: 'candidate_', cursor: 'account-page-2',
-        })));
         await vi.waitFor(() => expect(latest.sections.find((section) => section.kind === 'account'))
             .toMatchObject({ loadingMore: false, hasMore: false }));
 
@@ -117,15 +130,18 @@ describe('useSessionAccessDirectory', () => {
         expect(rows.map((row) => row.principal.ref)).toContainEqual({ kind: 'account', accountId: 'account-10' });
         expect(rows).toHaveLength(11);
         expect(finalSource.hasMore).toBe(false);
+        expect(searches).toEqual([
+            { query: 'candidate_', cursor: null },
+            { query: 'candidate_', cursor: 'account-page-2' },
+        ]);
     });
 
     it('republishes a candidate row with the current add operation while the query is retained', async () => {
         vi.mocked(runTeamAction).mockResolvedValue({ kind: 'succeeded', value: { items: [], nextCursor: null } } as never);
-        vi.mocked(searchSessionAccessAccountPage)
-            .mockResolvedValue({ rows: [accountRow(0), accountRow(1)], nextCursor: null } as never);
+        const { serverId, searches } = await serveAccountSearch(2);
 
         let latest!: SessionAccessDirectory;
-        const screen = await renderScreen(<Probe onValue={(value) => { latest = value; }} />);
+        const screen = await renderScreen(<Probe serverId={serverId} onValue={(value) => { latest = value; }} />);
         const idleSource = latest.sections.find((section) => section.kind === 'account')!;
         let idleRows: readonly SessionAccessCandidateRowModel[] = [];
         await act(async () => {
@@ -136,14 +152,14 @@ describe('useSessionAccessDirectory', () => {
 
         // The owner dispatches the add keyed by subject before any grant row exists,
         // so the pending state can only reach the user through this candidate row.
-        await screen.update(<Probe onValue={(value) => { latest = value; }}
+        await screen.update(<Probe serverId={serverId} onValue={(value) => { latest = value; }}
             operations={{ 'account:account-0': { kind: 'saving' } }} />);
         const pendingSource = latest.sections.find((section) => section.kind === 'account')!;
         // The list only re-resolves a dynamic section when its resolver key changes,
         // and the operation is the only thing that changed since the settled page.
         expect(pendingSource.resolverKey).not.toBe(settledSource.resolverKey);
         const pendingRows = await pendingSource.resolveCandidates!('candidate_', new AbortController().signal);
-        expect(searchSessionAccessAccountPage).toHaveBeenCalledTimes(1);
+        expect(searches).toEqual([{ query: 'candidate_', cursor: null }]);
         expect(pendingRows[0]?.operation).toEqual({ kind: 'saving' });
         // An unaffected candidate keeps its identity so the list does not rebuild it.
         expect(pendingRows[1]).toBe(idleRows[1]);

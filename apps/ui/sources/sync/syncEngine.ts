@@ -8824,10 +8824,11 @@ class Sync {
               if (!isCurrent()) return;
               if (!embedScope) {
                   const refreshedServerId = this.getAppliedTransportTarget()?.serverId ?? '';
-                  // The initial cursor is a baseline. Session reads already wait for it.
+                  // Capturing the initial cursor establishes a baseline without changing Session access.
                   if (refreshedServerId) publishHomeAccountChange(refreshedServerId, undefined, {
                       usageQueryAffects: false,
                       sessionListQueryAffects: false,
+                      sessionAccessAffects: false,
                   });
               }
           })();

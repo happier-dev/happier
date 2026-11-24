@@ -99,6 +99,8 @@ export type HomeAccountChangeEvent = Readonly<{
     sessionRowRefreshIds?: readonly string[];
     /** With `'structural'`: the membership inputs those row writes can move. Absent stays conservative. */
     sessionListRowFacets?: SessionListRowMembershipFacets;
+    /** False when the producer establishes a cursor baseline without an access change. */
+    sessionAccessAffects?: false;
     /** Producer-selected readiness inputs; ordinary Session content is observed through admitted keys. */
     sessionReadinessChanges?: SessionReadinessChanges;
     /** Exact focused-page Profile/Artifact/source decision; content-free wakes omit it. */
@@ -166,6 +168,7 @@ type HomeAccountChangeDetails = Readonly<{
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     sessionListQueryAffects?: boolean | 'structural';
     sessionListRowFacets?: SessionListRowMembershipFacets | null;
+    sessionAccessAffects?: HomeAccountChangeEvent['sessionAccessAffects'];
     sessionReadinessChanges?: SessionReadinessChanges;
     profileCatalogAffects?: boolean;
     publicProfileAffects?: boolean;
@@ -586,6 +589,7 @@ export function publishHomeAccountChangeForRouting(
             ? { artifactKinds: Object.freeze([...details.artifactKinds]) } : {}),
         ...(details?.resourceSpaceMembershipSpaceIds !== undefined
             ? { resourceSpaceMembershipSpaceIds: Object.freeze([...details.resourceSpaceMembershipSpaceIds]) } : {}),
+        ...(details?.sessionAccessAffects === false ? { sessionAccessAffects: false as const } : {}),
         ...(details?.sessionSystemRecords !== undefined
             ? { sessionSystemRecords: Object.freeze([...details.sessionSystemRecords]) } : {}),
         ...(!coarse && sessionListQueryAffects !== undefined
