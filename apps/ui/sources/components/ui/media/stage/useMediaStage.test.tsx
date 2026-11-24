@@ -8,6 +8,8 @@ import { MediaStage } from './MediaStage';
 import { MediaPicture } from '../MediaPicture';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { ModalProvider } from '@/modal';
+import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
+import { ENTER_FROM_RECT_MS } from '@/components/ui/motion/rectFlight';
 
 const windowSize = vi.hoisted(() => ({ width: 1024, height: 900 }));
 vi.mock('react-native', async () => {
@@ -27,8 +29,39 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock().module;
 });
+vi.mock('@shopify/react-native-skia', async () => {
+    const { createSkiaModuleMock } = await import('@/dev/testkit/mocks/skia');
+    return createSkiaModuleMock().module;
+});
+// Bundled font acquisition is a native asset boundary; keep the annotation owner real.
+vi.mock('expo-asset', () => ({ Asset: { fromModule: () => ({ localUri: 'file:///inter.ttf' }) } }));
 
 describe('canonical media stage opener', () => {
+    it('closes once when origin measurement never replies and ignores the late opening reply', async () => {
+        vi.useFakeTimers();
+        setReducedMotionPreferenceOverride(false);
+        const measurements: Array<(x: number, y: number, width: number, height: number) => void> = [];
+        const originRef = { current: { measureInWindow: (callback: typeof measurements[number]) => measurements.push(callback) } as unknown as View };
+        const onClose = vi.fn();
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><MediaStage initialIndex={0} onClose={onClose}
+            items={[{ kind: 'image', title: 'hero.png', source: { enabled: true, source: { kind: 'uri', uri: 'blob:hero' } }, originRef }]} /></InjectedAuthProvider>);
+        try {
+            await act(async () => screen.findByTestId('media-stage-image')!.props.onLoad({ source: { width: 1284, height: 902 } }));
+            const close = screen.findByTestId('media-stage-close')!.props.onPress;
+            await act(async () => { close(); close(); });
+            await act(async () => vi.advanceTimersByTime(ENTER_FROM_RECT_MS));
+            expect(onClose).toHaveBeenCalledTimes(1);
+            await act(async () => { for (const reply of measurements) reply(12, 40, 120, 72); });
+            await act(async () => vi.runOnlyPendingTimers());
+            expect(onClose).toHaveBeenCalledTimes(1);
+            expect(measurements).toHaveLength(2);
+        } finally {
+            await screen.unmount();
+            setReducedMotionPreferenceOverride(null);
+            vi.useRealTimers();
+        }
+    });
+
     it('pages a phone gallery through its controls when the current item is a document', async () => {
         const { openMediaStage } = await import('./useMediaStage');
         windowSize.width = 390; windowSize.height = 844;

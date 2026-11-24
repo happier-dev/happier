@@ -248,9 +248,16 @@ export function useRectFlip(options: Readonly<{ reducedMotion?: boolean; initial
         backdropFrom.value = currentProgress;
         fades.value = reducedMotion || origin === null;
         const complete = closeOptions.onComplete;
-        const done = (finished?: boolean) => {
+        let completed = false;
+        const settle = () => {
+            if (completed) return;
+            completed = true;
+            complete?.();
+        };
+        const done = () => {
             'worklet';
-            if (finished && complete) runOnJS(complete)();
+            // A cancelled departure still retires its host; only opening requires a finished flight.
+            if (complete) runOnJS(settle)();
         };
         if (!reducedMotion && closeOptions.velocityY !== undefined) {
             const distance = to.value.imageRect.y - image.y;

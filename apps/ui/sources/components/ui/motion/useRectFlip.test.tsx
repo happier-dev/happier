@@ -8,7 +8,38 @@ import { interpolateRectFlip } from './rectFlipGeometry';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
+const animations = vi.hoisted(() => ({ callbacks: [] as Array<(finished?: boolean) => void> }));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const animate = (value: number, _config: unknown, callback?: (finished?: boolean) => void) => {
+        if (callback) animations.callbacks.push(callback);
+        return value;
+    };
+    return { ...createReanimatedModuleMock(), withTiming: animate, withSpring: animate };
+});
+
 describe('rectangle FLIP', () => {
+    it.each([undefined, 900])('settles an interrupted close once (velocity %s), including after a second open', async (velocityY) => {
+        let current: ReturnType<typeof flight.useRectFlip> | undefined;
+        function Harness() { current = flight.useRectFlip({ reducedMotion: false }); return null; }
+        const screen = await renderScreen(<Harness />);
+        const target = { x: 100, y: 100, width: 400, height: 200 };
+        try {
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const complete = vi.fn();
+                await act(async () => current!.openFrom(null, target));
+                current!.progress.value = 0.6678215536361898;
+                await act(async () => current!.closeTo(null, { velocityY, onComplete: complete }));
+                const callback = animations.callbacks.at(-1)!;
+                expect(complete).not.toHaveBeenCalled();
+                await act(async () => callback(false));
+                expect(complete).toHaveBeenCalledTimes(1);
+                await act(async () => callback(true));
+                expect(complete).toHaveBeenCalledTimes(1);
+            }
+        } finally { await screen.unmount(); }
+    });
+
     it('recovers the uncropped image rect from a centre-cover thumbnail', () => {
         expect(flight.coverRectFlipOrigin({ x: 10, y: 20, width: 100, height: 100 }, { width: 400, height: 200 }))
             .toEqual({ imageRect: { x: -40, y: 20, width: 200, height: 100 }, clipRect: { x: 10, y: 20, width: 100, height: 100 } });

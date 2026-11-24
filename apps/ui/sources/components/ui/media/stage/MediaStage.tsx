@@ -24,6 +24,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import {
   coverRectFlipOrigin,
+  ENTER_FROM_RECT_MS,
   useRectFlip,
   type WindowFlightRect,
 } from '@/components/ui/motion/rectFlight';
@@ -742,6 +743,9 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const immersiveValue = useSharedValue(0);
   const chromeValue = useSharedValue(0);
   const opened = React.useRef(false);
+  const closeRequested = React.useRef(false);
+  const cancelCloseMeasurement = React.useRef<(() => void) | null>(null);
+  React.useEffect(() => () => cancelCloseMeasurement.current?.(), []);
   // A paused video frame is marked as a picture in its video's place (platform lab `media`): the frame holds
   // the slot until Done, Cancel or its copy lands in a Session, then the video returns at that moment.
   const [heldFrame, setHeldFrame] = React.useState<Readonly<{ index: number; frame: MediaPlayerFrame; item: MediaStageItem }> | null>(null);
@@ -905,7 +909,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const handleSize = React.useCallback(
     (index: number, size: MediaPictureSize | null) => {
       sizes.current.set(index, size);
-      if (opened.current || index !== gallery.index) return;
+      if (closeRequested.current || opened.current || index !== gallery.index) return;
       opened.current = true;
       const target = size ? fitRect(size, viewport) : viewport;
       setFlightSize(size);
@@ -915,6 +919,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
         return;
       }
       void measureOrigin(item).then((origin) => {
+        if (closeRequested.current) return;
         flip.openFrom(
           origin ? coverRectFlipOrigin(origin, size) : null,
           target,
@@ -928,7 +933,8 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
 
   const close = React.useCallback(
     (velocityY?: number) => {
-      if (phase === 'closing') return;
+      if (closeRequested.current) return;
+      closeRequested.current = true;
       const size = sizes.current.get(gallery.index) ?? null;
       const frame =
         phase === 'open' ? (viewerRef.current?.visibleFrame() ?? null) : null;
@@ -947,7 +953,21 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
           },
         );
       if (!size || reducedMotion) run(null);
-      else void measureOrigin(item).then(run);
+      else {
+        let settled = false;
+        const finishMeasurement = (origin: Rect | null) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          cancelCloseMeasurement.current = null;
+          run(origin);
+        };
+        // A missing native layout callback must not hold Close beyond the owner's flight duration.
+        // A timely reply keeps the existing geometry and motion; expiry uses its no-origin departure.
+        const timer = setTimeout(() => finishMeasurement(null), ENTER_FROM_RECT_MS);
+        cancelCloseMeasurement.current = () => { settled = true; clearTimeout(timer); };
+        void measureOrigin(item).then(finishMeasurement);
+      }
     },
     [flip, gallery.index, item, phase, props.onClose, reducedMotion],
   );
