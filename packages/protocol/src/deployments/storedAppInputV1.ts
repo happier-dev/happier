@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '../actions/actionExecutionResul
 import { withActionFailureCauseDiagnostic } from '../actions/executor/actionFailureDiagnostic.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
+import { DeploymentDigestV1Schema, DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
 import { CanonicalHttpOriginSchema } from '../http/canonicalHttpOrigin.js';
 import { RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from '../registries/registryContentRefV1.js';
@@ -30,8 +30,9 @@ export async function parseDeploymentComposeSourceV1(document: string): Promise<
     return value as Record<string, unknown>;
 }
 
-/** Shared serialized leaves: feature-owned Environment records compose these same definitions. */
-export const DeploymentDigestV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)));
+export { DeploymentDigestV1Schema } from './deploymentIdentifiersV1.js';
+
+/** Shared serialized leaf: feature-owned Environment records compose the same definition. */
 export const DeploymentTextV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 /** Release preferences shared by private Environment records and reviewed update operands. */
 export const OwnServerEnvironmentReleasePolicyV1Schema = z.strictObject({

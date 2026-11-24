@@ -4,5 +4,6 @@ import { ActionOperationIdentifierV1Schema } from '../actions/operations/identif
 
 /** Environment/receipt ids fit their actual Action operation domain association. */
 export const DeploymentIdentifierV1Schema = ActionOperationIdentifierV1Schema;
+export const DeploymentDigestV1Schema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[0-9a-f]{64}$/u)));
 export const DeploymentRevisionV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER)));
 export const DeploymentTimestampV1Schema = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)));
