@@ -2,6 +2,7 @@ import { readMachineRegistration, updateMachineRegistration } from '@/daemon/mac
 import { SESSION_HOLDER_ADOPT_ENV_KEY } from '@/subprocess/supervision/sessionHolder';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { ChildProcess, spawn, spawnSync } from 'node:child_process';
 import { createTerminalLauncherFixture } from '@/testkit/process/terminalLauncher';
@@ -693,6 +694,11 @@ function createAgentActivityHeadline() {
             recordRevision: '1',
         }],
     } as const;
+}
+
+/** Session launch secrets register in their hosted Session scope, as a runner's Session runtime does. */
+function inHostedSession<T>(run: () => Promise<T>): Promise<T> {
+    return runAddedHostedSession({ environment: process.env, workingDirectory: process.cwd(), end: () => {} }, run);
 }
 
 describe('native Agent session host adapter', () => {
@@ -3175,7 +3181,7 @@ describe('native Agent session host adapter', () => {
         expect(open).toHaveBeenCalledOnce();
     });
 
-    it('claims and redacts host-private late Profile environment immediately before native open', async () => {
+    it('claims and redacts host-private late Profile environment immediately before native open', () => inHostedSession(async () => {
         const agentId = 'acme-native-late-profile';
         const contributions = createExternalContributionFixtures(agentId);
         const events: string[] = [];
@@ -3264,7 +3270,7 @@ describe('native Agent session host adapter', () => {
         )).toBe('value=profile-plaintext');
         expect(redactTranscriptSecrets({ text: 'value=profile-plaintext' }))
             .toEqual({ text: 'value=profile-plaintext' });
-    });
+    }));
 
     it('preserves missing Agent CLI diagnosis across native Session startup failure cleanup', async () => {
         const agentId = 'acme-native-missing-cli';
@@ -8173,7 +8179,7 @@ describe('native Agent session host adapter', () => {
         expect(open).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])('keeps the public managed Provider marker and CodeBuddy cleared settings through native sessions.open (replace model: %s)', async (replaceModel) => {
+    it.each([false, true])('keeps the public managed Provider marker and CodeBuddy cleared settings through native sessions.open (replace model: %s)', (replaceModel) => inHostedSession(async () => {
         const placeholder =
             'happier_runner_placeholder_AAAAAAAAAAAAAAAAAAAAAAAAAAA';
         const credential = 'runner-owned-secret';
@@ -8388,7 +8394,7 @@ describe('native Agent session host adapter', () => {
         }
         await created.operations.resetOrDisposeRuntime();
         expect(cleanup).toHaveBeenCalledTimes(replaceModel ? 2 : 1);
-    });
+    }));
 
     it.each(['early', 'late'] as const)('keeps an authoritative %s external Provider handoff without runner-managed custody', async (handoffPhase) => {
         const agentId = 'acme-runner-direct-provider-agent';
@@ -8527,7 +8533,7 @@ describe('native Agent session host adapter', () => {
         await created.operations.resetOrDisposeRuntime();
     });
 
-    it.each(['direct', 'brokered'] as const)('opens %s Team custody with late sensitive values and preserves Run custody', async (deliveryMode) => {
+    it.each(['direct', 'brokered'] as const)('opens %s Team custody with late sensitive values and preserves Run custody', (deliveryMode) => inHostedSession(async () => {
         const agentId = 'acme-direct-run-custody';
         const contributions = createExternalContributionFixtures(agentId);
         const nativeSession: AgentSessionRuntime = {
@@ -8593,7 +8599,7 @@ describe('native Agent session host adapter', () => {
         } finally {
             await created.operations.resetOrDisposeRuntime();
         }
-    });
+    }));
 
     it.each([
         {

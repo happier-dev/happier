@@ -41,6 +41,16 @@ export function registerTranscriptSecret(secret: string): () => void {
     };
 }
 
+/**
+ * Register a Session's own secret in its hosted Session scope only. A Session's launch secrets
+ * never enter the process set, where they would mask (and reveal) other Accounts' content in the
+ * same host; outside a hosted Session nothing is registered.
+ */
+export function registerSessionTranscriptSecret(secret: string): () => void {
+    if (!readHostedSessionScope()) return () => {};
+    return registerTranscriptSecret(secret);
+}
+
 function redactString(value: string, secrets: readonly string[]): string {
     let redacted = value;
     for (const secret of secrets) {

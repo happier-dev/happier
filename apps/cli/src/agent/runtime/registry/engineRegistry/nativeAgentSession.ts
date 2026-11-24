@@ -3,7 +3,7 @@ import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/prot
 import { createSessionHolderAdoptedTurnReader, hasSessionHolderAdoptToken } from '@/subprocess/supervision/sessionHolder';
 import { resolveSessionAgentPath, resolveSessionAgentSkills } from '@/subprocess/supervision/sessionTargetRelay';
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindToHostedSessionScope, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { resolveNativeAgentSessionGoals } from './nativeAgentSessionGoals';
@@ -4530,6 +4530,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
         HostSessionRuntimeConfig['agentSessionRealtimeVoiceAuthority'];
     pluginMcpRuntimeRegistry?: HostSessionRuntimeConfig['pluginMcpRuntimeRegistry'];
 }>): Promise<HostSessionRuntimePlan> {
+    // Late launch secrets register in the Session scope this plan was created in, also when a
+    // runtime recovery re-opens from a callback that lost it.
+    const beginLateLaunchSecretRedaction = bindToHostedSessionScope(beginSessionLaunchSecretRedaction);
     const identity = params.identity ?? params.lease;
     if (!identity) {
         throw new Error('Native Agent runtime identity is required');
@@ -5955,7 +5958,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             return value;
                         });
                     lateDiagnosticRedaction =
-                        beginSessionLaunchSecretRedaction({
+                        beginLateLaunchSecretRedaction({
                             agentId: identity.agentId,
                             providerBindingActive:
                                 providerBindingHandoff !== undefined,

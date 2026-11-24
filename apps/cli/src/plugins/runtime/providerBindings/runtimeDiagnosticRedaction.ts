@@ -2,7 +2,7 @@ import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/provide
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
 import type { SensitiveDiagnosticValuesLease } from '@happier-dev/protocol';
 
-import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { registerSessionTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 
 const INACTIVE_LEASE: SensitiveDiagnosticValuesLease = Object.freeze({ close: () => undefined });
@@ -40,7 +40,8 @@ function readProviderOwnedEnvironmentValues(params: Readonly<{
  * (Connected Account and Provider credentials, decided by the Agent's `authIsolation.ownedEnvKeys`)
  * and the values the launch owner carried to this process (`launchSecretValues`: the daemon launch
  * lease from the runner bootstrap, or the foreground admission's sensitive Profile environment).
- * They are redacted from diagnostics and from the transcript this process writes.
+ * They are redacted from diagnostics and from the transcript this process writes. Transcript
+ * registration stays in the caller's hosted Session scope, never the process set.
  */
 export function beginSessionLaunchSecretRedaction(params: Readonly<{
     agentId: string;
@@ -55,7 +56,7 @@ export function beginSessionLaunchSecretRedaction(params: Readonly<{
     ])].filter((value) => value.length > 0);
     if (values.length === 0) return INACTIVE_LEASE;
     const diagnostic = registerSensitiveDiagnosticValues(values);
-    const releaseTranscriptSecrets = values.map((value) => registerTranscriptSecret(value));
+    const releaseTranscriptSecrets = values.map((value) => registerSessionTranscriptSecret(value));
     let closed = false;
     return Object.freeze({
         close: () => {
