@@ -38,11 +38,14 @@ async function ownerHasDeparted(directory, pid, currentHost, allowLegacyPidOnly)
 }
 
 /** Reclaim only this writer's staging siblings, once at the next build. */
-export async function reclaimAbandonedBuildStaging(parent, currentHost, { prefix = '.tmp' } = {}) {
+export async function reclaimAbandonedBuildStaging(parent, currentHost, { prefix = '.tmp', reclaimRetiredEntry } = {}) {
   const names = new Set((await readdir(parent)).map(name => name.endsWith(OWNER_SUFFIX) ? name.slice(0, -OWNER_SUFFIX.length) : name));
   for (const name of names) {
     const match = STAGING_NAME.exec(name);
-    if (!match || match[1] !== prefix) continue;
+    if (!match || match[1] !== prefix) {
+      await reclaimRetiredEntry?.(name);
+      continue;
+    }
     const pid = Number(match[2]);
     if (!Number.isSafeInteger(pid) || pid <= 1) continue;
     const directory = join(parent, name);
@@ -66,10 +69,10 @@ export async function reclaimAbandonedBuildStaging(parent, currentHost, { prefix
 }
 
 /** Publish ownership before a build's temporary directory becomes visible. */
-export async function createOwnedBuildStaging(parent, { prefix = '.tmp' } = {}) {
+export async function createOwnedBuildStaging(parent, { prefix = '.tmp', reclaimRetiredEntry } = {}) {
   const host = readProcessHostIdentitySync();
   // A killed writer cannot run cleanup; its next sibling build reclaims it.
-  await reclaimAbandonedBuildStaging(parent, host, { prefix });
+  await reclaimAbandonedBuildStaging(parent, host, { prefix, reclaimRetiredEntry });
   const directory = join(parent, `${prefix}.${Date.now()}.${process.pid}.${Math.random().toString(16).slice(2)}`);
   const ownerFile = `${directory}${OWNER_SUFFIX}`;
   await writeFile(ownerFile, JSON.stringify({

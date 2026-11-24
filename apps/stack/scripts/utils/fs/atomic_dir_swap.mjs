@@ -46,6 +46,7 @@ export async function buildIntoTempThenReplace(
     preserveDestinationPath = false,
     pruneStale = true,
     retainUnstagedPaths = [],
+    reclaimRetiredEntry,
   } = {},
 ) {
   const outDir = String(targetDir ?? '').trim();
@@ -54,7 +55,7 @@ export async function buildIntoTempThenReplace(
 
   const parent = dirname(outDir);
   await mkdir(parent, { recursive: true });
-  const { directory: tmpDir, cleanup } = await createOwnedBuildStaging(parent);
+  const { directory: tmpDir, cleanup } = await createOwnedBuildStaging(parent, { reclaimRetiredEntry });
 
   try {
     await buildFn(tmpDir);

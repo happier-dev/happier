@@ -4043,6 +4043,90 @@ test('live publication refreshes declared output currentness when source changes
   assert.equal(buildCalls, 1, 'test-only input must not trigger a repeat build after current live publication');
 });
 
+test('source declaration consumers in separate checkouts share successful package output', async t => {
+  withPatchedProcessEnv(t, { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: null });
+  const hostState = mkdtempSync(join(tmpdir(), 'happier-workspace-host-store-'));
+  t.after(() => rmSync(hostState, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_STACK_CANONICAL_HOME_DIR: hostState };
+  const makeCheckout = name => {
+    const root = join(hostState, name);
+    mkdirSync(root);
+    writePnpmWorkspaceFixture(root, { private: true, workspaces: ['packages/*'] });
+    writeFileSync(join(root, 'pnpm-lock.yaml'), '# fixture\n');
+    for (const app of ['ui', 'cli', 'server']) {
+      mkdirSync(join(root, 'apps', app), { recursive: true });
+      writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+    }
+    const pkg = join(root, 'packages', 'shared');
+    mkdirSync(join(pkg, 'src'), { recursive: true });
+    writeFileSync(join(pkg, 'src', 'index.ts'), 'export const test: number = 1;\n');
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({
+      name: '@fixture/shared', types: './dist/index.d.ts', scripts: { build: 'fixture-build' },
+    }));
+    return { root, pkg };
+  };
+  const first = makeCheckout('first');
+  const second = makeCheckout('second');
+  const third = makeCheckout('third');
+  const builds = [];
+  const workspaceBuildBoundary = {
+    async prepareEnv(_, sourceEnv) { return sourceEnv; },
+    async runPackageBuild(dir, { env }) {
+      const input = await readFile(join(dir, 'src/index.ts'), 'utf8');
+      builds.push(input);
+      await writeFile(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), input);
+    },
+  };
+  const prepare = checkout => ensureWorkspacePackagesBuiltByName(checkout.root, ['@fixture/shared'], {
+    env, workspaceBuildBoundary, quiet: true, buildMode: 'source-dev',
+  });
+
+  await Promise.all([prepare(first), prepare(second)]);
+  assert.equal(builds.length, 1);
+  for (const checkout of [first, second]) {
+    assert.equal(readFileSync(join(checkout.pkg, 'dist/index.d.ts'), 'utf8'), 'export const test: number = 1;\n');
+  }
+  writeFileSync(join(second.pkg, 'src/index.ts'), 'export const test: string = "changed";\n');
+  await prepare(second);
+  assert.equal(builds.length, 2);
+  assert.match(readFileSync(join(second.pkg, 'dist/index.d.ts'), 'utf8'), /string/);
+  await prepare(third);
+  assert.equal(builds.length, 2);
+  assert.match(readFileSync(join(third.pkg, 'dist/index.d.ts'), 'utf8'), /number/);
+
+  const store = join(hostState, 'cache/workspace-package-output');
+  const entries = () => readdirSync(store, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^[a-f0-9]{64}$/.test(entry.name))
+    .map(entry => join(entry.parentPath, entry.name));
+  const retained = entries().find(entry => /number/.test(readFileSync(join(entry, 'index.d.ts'), 'utf8')));
+  const leased = entries().find(entry => /string/.test(readFileSync(join(entry, 'index.d.ts'), 'utf8')));
+  assert.ok(retained && leased);
+  const inactive = new Date(Date.now() - 49 * 60 * 60 * 1000);
+  const active = new Date(Date.now() - 47 * 60 * 60 * 1000);
+  utimesSync(retained, inactive, inactive);
+  utimesSync(leased, inactive, inactive);
+  await prepare(makeCheckout('reader'));
+  assert.equal(builds.length, 2, 'reading an old result reuses it');
+  assert.ok(statSync(retained).mtimeMs > inactive.getTime(), 'a cache hit renews retention');
+
+  const publish = async (checkout, declaration) => {
+    writeFileSync(join(checkout.pkg, 'src/index.ts'), declaration);
+    await prepare(checkout);
+  };
+  const priorEntries = new Set(entries());
+  await withWorkspaceBundleLock(async () => {
+    await publish(first, 'export const test = true;');
+    assert.ok(existsSync(leased), 'the sweep skips an expired entry with a live lease');
+  }, { lockPath: `${leased}.lock` });
+  const recent = entries().find(entry => !priorEntries.has(entry));
+  assert.ok(recent);
+  utimesSync(recent, active, active);
+  await publish(second, 'export const test = 0;');
+  assert.ok(existsSync(retained), 'a recently read entry survives publication');
+  assert.ok(existsSync(recent), 'an entry within the retention window survives');
+  assert.equal(existsSync(leased), false, 'publication retires an expired, unleased entry');
+});
+
 test('concurrent workspace package build waiters reuse the one published result', async (t) => {
   // These independent callers use a substituted compiler, not the runner's
   // charged native process. Preserve their real publication-lock wait.
