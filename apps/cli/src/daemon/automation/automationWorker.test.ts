@@ -1633,13 +1633,12 @@ describe('automationWorker', () => {
           settings: typeof DEFAULT_WORKER_SETTINGS;
         };
       }) => void;
-      mockGet
-        .mockImplementationOnce(() => new Promise((resolve) => {
-          resolveOlderAssignments = resolve;
-        }))
-        .mockImplementationOnce(() => new Promise((resolve) => {
-          resolveNewerAssignments = resolve;
-        }));
+      const assignmentReads = vi.fn()
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveOlderAssignments = resolve; }))
+        .mockImplementationOnce(() => new Promise((resolve) => { resolveNewerAssignments = resolve; }));
+      mockGet.mockImplementation((url: string) => url.endsWith('/v2/account/settings')
+        ? Promise.resolve({ status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } })
+        : assignmentReads(url));
       mockPost.mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -1658,11 +1657,11 @@ describe('automationWorker', () => {
       });
 
       await settleRequestDispatch();
-      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(assignmentReads).toHaveBeenCalledTimes(1);
       const joinedFirst = worker.refreshAssignments();
       const joinedSecond = worker.refreshAssignments();
       await settleRequestDispatch();
-      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(assignmentReads).toHaveBeenCalledTimes(1);
       worker.handleServerUpdate({
         id: 'u-run',
         seq: 1,
@@ -1682,11 +1681,11 @@ describe('automationWorker', () => {
       } as any);
       await vi.advanceTimersByTimeAsync(0);
       await settleRequestDispatch();
-      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(assignmentReads).toHaveBeenCalledTimes(1);
 
       resolveOlderAssignments({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } });
       await settleRequestDispatch();
-      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(assignmentReads).toHaveBeenCalledTimes(2);
 
       resolveNewerAssignments({
         data: {
@@ -1939,7 +1938,7 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      mockGet
+      const assignmentReads = vi.fn()
         .mockResolvedValueOnce({ data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } })
         .mockResolvedValueOnce({
           data: {
@@ -1952,6 +1951,9 @@ describe('automationWorker', () => {
             settings: DEFAULT_WORKER_SETTINGS,
           },
         });
+      mockGet.mockImplementation((url: string) => url.endsWith('/v2/account/settings')
+        ? Promise.resolve({ status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } })
+        : assignmentReads(url));
       mockPost.mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
 
       const { reloadConfiguration } = await import('@/configuration');
@@ -2005,7 +2007,7 @@ describe('automationWorker', () => {
 
       await vi.advanceTimersByTimeAsync(300);
 
-      expect(mockGet.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(assignmentReads.mock.calls.length).toBeGreaterThanOrEqual(2);
       expect(mockPost).toHaveBeenCalledTimes(1);
 
       worker.stop();
@@ -2025,6 +2027,9 @@ describe('automationWorker', () => {
     mockGet.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) {
         return { status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
+      }
+      if (url.endsWith('/v2/account/settings')) {
+        return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
       }
       if (holdReads) await new Promise<void>((resolve) => releaseAssignmentReads.push(resolve));
       return assignmentSnapshot;
