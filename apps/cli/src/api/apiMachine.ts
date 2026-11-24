@@ -2812,9 +2812,11 @@ export class ApiMachineClient {
             const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS[request.actionId].safeParse(request.input);
             if (!parsed.success) return ordinary(request);
             const runtime = await this.resolveProjectFiniteRuntime(ingress);
-            if (!runtime) throw Object.assign(new Error('project_setup_runtime_unavailable'), { code: 'project_setup_runtime_unavailable' });
+            // Placement refusals precede any effect and reach the caller as their typed code.
+            const refused = (code: string) => createActionExecuteFailureError({ ok: false, errorCode: code, error: code, effectAttempted: false });
+            if (!runtime) throw refused('project_setup_runtime_unavailable');
             const identity = runtime.requesterIdentity;
-            const isolationUnavailable = () => Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+            const isolationUnavailable = () => refused('agent_isolation_unavailable');
             if (!identity || identity.kind === 'unknown') throw isolationUnavailable();
             if (isHostRequesterUnrestrictedOwner(identity)) return ordinary(request);
             // A grantee's own Project work runs on the daemon exactly when the one placement owner

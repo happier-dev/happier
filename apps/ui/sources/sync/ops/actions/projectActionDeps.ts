@@ -5,7 +5,7 @@ import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executo
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
@@ -17,6 +17,26 @@ import { withActionAccountRequestSignal, type LazyActionAccountContext } from '.
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { rememberAdmittedProjectSetupConsent } from './projectSetupTrustConsent';
+
+/**
+ * The executor consumed the person's confirmation at admission. A Project Action carried to a Machine
+ * keeps that admitted review through the private requester projector, so the receiving executor admits
+ * it instead of asking again. `invocation: null` means no review was admitted and the incumbent carrier applies.
+ */
+export function readAdmittedProjectActionInvocation(input: Readonly<{
+    actionId: Parameters<typeof projectExternalActionRequesterInvocationV1>[0]['actionId'];
+    context: ActionExecutorContext;
+    account: LazyActionAccountContext;
+    target: Parameters<typeof projectExternalActionRequesterInvocationV1>[0]['target'];
+}>): Readonly<{ ok: true; invocation: ReturnType<typeof projectExternalActionRequesterInvocationV1> }> | Readonly<{ ok: false }> {
+    const { actionId, context } = input;
+    const needsInvocation = context.presentUserConfirmation?.inputDigest !== undefined
+        || context.presentUserApproval?.actionId === actionId || Boolean(readHostReviewedParentV1(context));
+    if (!needsInvocation) return { ok: true, invocation: null };
+    const invocation = projectExternalActionRequesterInvocationV1({ actionId,
+        context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' } }, account: input.account, target: input.target });
+    return invocation ? { ok: true, invocation } : { ok: false };
+}
 
 /** Delivery only: the incumbent executor already owns invocation authority, settings and approvals. */
 export function createUiProjectAction(account?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['projectAction']> {
@@ -78,13 +98,9 @@ export function createUiProjectAction(account?: LazyActionAccountContext): NonNu
                     }
                     const target = context.externalActionTarget?.kind === 'machine'
                         ? context.externalActionTarget : { kind: 'machine' as const, machineId };
-                    // The executor consumed the native confirmation at admission;
-                    // carry its admitted review through the same private requester projector.
-                    const needsInvocation = context.presentUserConfirmation?.inputDigest !== undefined
-                        || context.presentUserApproval?.actionId === actionId || Boolean(readHostReviewedParentV1(context));
-                    const invocation = needsInvocation ? projectExternalActionRequesterInvocationV1({ actionId,
-                        context: { ...context, actionCaller: context.actionCaller ?? { kind: 'host' } }, account, target }) : null;
-                    if (needsInvocation && !invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+                    const admitted = readAdmittedProjectActionInvocation({ actionId, context, account, target });
+                    if (!admitted.ok) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+                    const { invocation } = admitted;
                     const execution = await executeOriginalAccountMachineAction({ account, actionId, input: canonicalInput,
                         machineId, machineTarget: target, requestId: context.actionRequestId,
                         ...(invocation ? { invocation } : {}), ...(context.signal ? { signal: context.signal } : {}) });

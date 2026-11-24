@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { HostAgentIsolationLaunchSnapshot } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -63,6 +64,7 @@ async function withDefinitionAction(
       project?: 'own' | 'owner',
     ) => Promise<unknown>,
     manifest: (project?: 'own' | 'owner') => Promise<string>,
+    action: ReturnType<ApiMachineClient['createProjectDefinitionAction']>,
   ) => Promise<void>,
 ) {
   await withTempDir('guest-own-definition-', async (directory) => {
@@ -110,6 +112,7 @@ async function withDefinitionAction(
       signal: new AbortController().signal,
       transportRequestId: 'guest-own-definition',
     };
+    const action = client.createProjectDefinitionAction('home', ingress);
     await run(
       (actionId, project = 'own') => {
         const workspace = {
@@ -118,10 +121,7 @@ async function withDefinitionAction(
           rootPath: roots[project],
           workspaceId: project === 'own' ? 'guest-accepted' : 'owner-accepted',
         };
-        return client.createProjectDefinitionAction(
-          'home',
-          ingress,
-        )({
+        return action({
           actionId,
           context: {},
           input:
@@ -138,6 +138,7 @@ async function withDefinitionAction(
       },
       (project = 'own') =>
         readFile(join(roots[project], '.happier/project.json'), 'utf8'),
+      action,
     );
   });
 }
@@ -181,6 +182,30 @@ describe("Project definition placement for a guest's own Project", () => {
     },
   );
 
+  it("carries the typed refusal of another person's Project through the Action executor", async () => {
+    await withDefinitionAction(
+      { identity: guest, policy: off },
+      async (_call, manifest, projectDefinitionAction) => {
+        const executor = createActionExecutor({ projectDefinitionAction });
+        const workspace = {
+          serverId: 'home',
+          machineId: 'machine',
+          rootPath: '/owner-project',
+          workspaceId: 'owner-accepted',
+        };
+        const context = { surface: 'cli' as const, authority: 'present_user' as const, bypassApprovals: true };
+        expect(
+          await executor.execute('projects.inspect', { workspace, read: { kind: 'editor' } }, context),
+        ).toMatchObject({ ok: false, errorCode: 'project_workspace_unavailable' });
+        expect(
+          await executor.execute('projects.manifest.update',
+            { workspace, expectedBasis: { kind: 'absent' }, bytes: '{"version":1,"scripts":{}}' }, context),
+        ).toMatchObject({ ok: false, errorCode: 'project_workspace_unavailable' });
+        expect(await manifest('owner')).toBe('{"version":1}');
+      },
+    );
+  });
+
   it.each([
     ['isolation on', on],
     ['an unread isolation policy', undefined],
@@ -189,9 +214,16 @@ describe("Project definition placement for a guest's own Project", () => {
     async (_label, policy) => {
       await withDefinitionAction(
         { identity: guest, policy },
-        async (call, manifest) => {
+        async (call, manifest, projectDefinitionAction) => {
           await expect(call('projects.manifest.update')).rejects.toMatchObject({
             code: 'agent_isolation_unavailable',
+          });
+          // The typed refusal survives the Action executor's thrown-error mapping.
+          expect(await createActionExecutor({ projectDefinitionAction }).execute('projects.manifest.update', {
+            workspace: { serverId: 'home', machineId: 'machine', rootPath: '/guest-project', workspaceId: 'guest-accepted' },
+            expectedBasis: { kind: 'absent' }, bytes: '{"version":1,"scripts":{}}',
+          }, { surface: 'cli', authority: 'present_user', bypassApprovals: true })).toMatchObject({
+            ok: false, errorCode: 'agent_isolation_unavailable', effectAttempted: false,
           });
           expect(await manifest()).toBe('{"version":1}');
         },

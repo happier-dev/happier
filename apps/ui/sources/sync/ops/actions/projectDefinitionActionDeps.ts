@@ -7,6 +7,7 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { canUsePrivateProjectAccountAction, createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import { readAdmittedProjectActionInvocation } from './projectActionDeps';
 
 /** The admitted Action carries bytes to the existing daemon file owner; this adapter never writes files. */
 export function createUiProjectDefinitionAction(account?: LazyActionAccountContext): NonNullable<ActionExecutorDeps['projectDefinitionAction']> {
@@ -41,9 +42,14 @@ export function createUiProjectDefinitionAction(account?: LazyActionAccountConte
                 || !context.actionRequestId || !canUsePrivateProjectAccountAction(account, context)) {
                 return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
             }
+            // A person's confirmed write reaches another person's Machine with that one confirmation.
+            const target = { kind: 'machine' as const, machineId: request.workspace.machineId };
+            const admitted = readAdmittedProjectActionInvocation({ actionId, context, account, target });
+            if (!admitted.ok) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
             const execution = await executeOriginalAccountMachineAction({ account, actionId,
                 input: { ...request, workspace: { ...request.workspace, serverId: account.serverId } },
-                machineId: request.workspace.machineId, requestId: context.actionRequestId,
+                machineId: request.workspace.machineId, machineTarget: target, requestId: context.actionRequestId,
+                ...(admitted.invocation ? { invocation: admitted.invocation } : {}),
                 // Passive setup review needs requester custody on own targets too.
                 ...(actionId === PROJECT_DEFINITION_INSPECT_ACTION_ID ? {} : { foreignTargetOnly: true as const }),
                 ...(context.signal ? { signal: context.signal } : {}) });

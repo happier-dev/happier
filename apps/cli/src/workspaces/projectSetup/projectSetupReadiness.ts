@@ -11,7 +11,7 @@ import { readProjectEffectiveDefinition, type PendingProjectSharedSetupInput } f
 import { readAcceptedProjectSetupForProject, readPublishedProjectSetup, type PublishedProjectSetupRead } from './projectAcceptedSetup';
 import { compareProjectSharedSetupV1, reviewProjectSharedSetupChangeV1, type ProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
 import type { ProjectSetupReadV1 } from '@happier-dev/protocol/projects/projectSetupV1';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectManifestInspectionSnapshot } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
@@ -37,7 +37,10 @@ export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     context: ActionExecutorContext; read(root: string): Promise<T>;
     placement?: 'daemon';
 }>): Promise<T> {
-    const unavailable = (code = 'project_workspace_unavailable'): never => { throw Object.assign(new Error(code), { code }); };
+    // A typed refusal before any effect: the Action executor carries it as this code, never a generic failure.
+    const unavailable = (code = 'project_workspace_unavailable'): never => {
+        throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code, effectAttempted: false });
+    };
     const identity = input.runtime.requesterIdentity;
     const nativeRuntime = input.runtime.nativeOperationRuntime;
     if (identity?.kind !== 'isolated' || !nativeRuntime && input.placement !== 'daemon') return unavailable('agent_isolation_unavailable');

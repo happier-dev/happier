@@ -1,5 +1,6 @@
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readProjectAccountRows, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
@@ -33,7 +34,8 @@ export async function resolveProjectSetupAcceptedWorkspace(input: ProjectSetupAc
     allowUnassociated?: true;
     allowProjectless?: true;
 }>): Promise<ProjectSetupAcceptedWorkspace | null> {
-    const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    // The typed refusal reaches the Action caller as this code, never as a generic failure.
+    const fail = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     if (!await isServerProfileHomeIdentity(input.serverId, input.address.serverId)) return fail('server_scope_mismatch');
     const homeServerId = await resolveServerProfileHomeIdentityId(input.serverId) ?? input.serverId;
     let workspaceRefs: readonly WorkspaceRefV1[];
