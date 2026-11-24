@@ -557,6 +557,37 @@ describe('the Session Info page Automations section', () => {
     await vi.waitFor(() => expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true));
     expect(screen.findByTestId('subject-triggers-read')).toBeNull();
   });
+  it('shows an Account schedule held by a Run in the Session it writes to', async () => {
+    const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
+    const selection = materializeWorkflowStarterExample(example, {
+      session: { serverId: 'portable-home', sessionId: 'session-1', machineId: 'machine-a' },
+    });
+    if (selection.status !== 'ready') throw new Error('Session-bound example required');
+    const { createPlainArtifactHttpFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+    const definitionId = '11111111-1111-4111-8111-111111111111';
+    workflowHttp.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: definitionId, isDecrypted: true,
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+      rawHeader: { kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+        metadata: { title: 'Held daily summary' } },
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition: selection.example.definition }),
+    }, 'account-a'));
+    const timer = { id: 'timer', revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+      triggerDefinitionEnvelope: null, kind: 'schedule', nextRunAt: Date.now() - 1,
+      schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } } as const;
+    answer([WorkflowTriggerSetV1Schema.parse({ ...triggerSet([]), triggers: [timer] })]);
+    rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, scopeSessionId: null,
+      workflowDefinitionId: definitionId, scheduleHolds: [{ triggerId: timer.id, reason: 'open_occurrence',
+        runId: 'prior-run', runState: 'waiting_for_review' }],
+      executionRecipe: { ...row.executionRecipe, workflow: { t: 'plain', v: {
+        workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
+      } } },
+    }));
+    const screen = await renderScreen(<SessionInfoSetup sessionId="session-1" />);
+    await settle();
+    await vi.waitFor(() => expect(screen.findByTestId('scheduled-workflow:set-1:timer')).not.toBeNull());
+    expect(screen.getTextContent()).toContain('workflows.triggers.row.heldShort');
+    expect(screen.findByTestId('subject-triggers:set-1:timer')).toBeNull();
+  });
   it('turns one trigger on or off through workflow.trigger.update, never by pausing its Automation', async () => {
     // trig-1 is off at trigger level inside an enabled set; trig-2 shares the set.
     answer([triggerSet([lifecycleTrigger('trig-1', false), lifecycleTrigger('trig-2', true)])]);
