@@ -450,6 +450,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Fes servir el valor del compte', useBuiltin: 'Fes servir el valor de Happier', sectionDeploys: 'Desplegaments', resetBuiltin: 'Restableix els valors de Happier', resetAccount: 'Restableix els valors del compte', retention: 'Versions conservades per desfer',
         clearToInherit: 'Buida-ho per heretar el valor', projectTitle: 'Configuració dels desplegaments', alertChannels: 'Canals de notificacions', accountLink: 'Valors de desplegament del teu compte',
         triggersTitle: "Activadors", triggersDescription: "Cada entorn executa els seus propis activadors. Obre’n un per veure’ls o afegir-ne.",
+    askedAtSetup: "Es tria en configurar cada entorn",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "ca">;
 
@@ -492,6 +493,10 @@ const deploymentCopyTranslations = {
     repository: "No hi ha cap repositori local seleccionat. Tria un repositori a Inicia i prepara’l abans de desplegar.",
     unsupported: "Aquesta destinació no admet l’operació. Tria’n una de compatible o canvia la selecció.",
     retry: "S’ha rebutjat l’operació.Revisa el motiu, ajusta la selecció i torna-ho a provar.",
+    descriptionNoChoice: "Copia la definició del desplegament; no es desplega res fins que triïs desplegar.",
+    reviewOwnServer: "Opcions de desplegament i restauració",
+    reviewServiceExport: ({ name }) => `Accés privat: ${name}, a la xarxa de Happier`,
+    reviewRetained: ({ count }) => `Conserva ${count} ${count === 1 ? 'versió anterior' : 'versions anteriors'} per revertir`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "ca">;
 
@@ -656,6 +661,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Afegeix una comprovació',
     addCheckUnavailable:
       'Les comprovacions no es configuren aquí · obre la pàgina Serveis de la màquina',
+    databaseAccess: {
+      title: "Accés a la base de dades",
+      inherited: "Fa servir l’accés a la base de dades de l’entorn plantilla",
+      editors: "Qui pot editar files de la base de dades",
+      agents: "Accés dels agents",
+      openSettings: "Obre la configuració de l’entorn",
+      askManager: "Només un gestor de l’entorn pot canviar l’accés.",
+      backup: {
+        action: "Darrera còpia correcta",
+        empty: "Encara no hi ha cap còpia correcta.",
+        unavailable: "L’historial de còpies no està disponible.",
+      },
+      setup: {
+        ownBody: "Configura l’accés d’escriptura limitat de la base de dades. Els canvis queden en revisió.",
+        managedBody: "Tria el secret desat per a la connexió directa a la base de dades d’aquest destí. Els canvis queden en revisió.",
+        managedSelected: "Desa la connexió directa triada. Els canvis queden en revisió.",
+        chooseSecret: "Tria un secret desat",
+        changeSecret: "Canvia el secret desat",
+        createRole: "Configura l’accés d’escriptura",
+        bindConnection: "Desa la connexió d’escriptura",
+        manager: "Demana a un gestor de l’entorn que configuri l’escriptura a la base de dades.",
+        unavailable: "La configuració de l’escriptura a la base de dades no està disponible.",
+        writer: "Accés d’escriptura a la base de dades",
+        ready: "L’escriptura a la base de dades està configurada. Torna-la a aplicar quan vulguis.",
+      },
+      off: "Desactivat",
+      levels: {
+        none: "Cap",
+        read: "Lectura",
+        readWriteAsk: "Lectura i escriptura (pregunta abans)",
+        readWriteNoApproval: "Lectura i escriptura (sense aprovació)",
+      },
+    },
+    fleetIngressConnectors: "Connectors per màquina",
+    fleetIngressConnectorsBody: "Més connectors mantenen l’adreça disponible si un s’atura; cadascun fa servir una mica de memòria a la màquina. S’aplica al proper desplegament.",
+    privateSharingStop: "Deixa de compartir",
+    privateSharingStopConsequence: ({ service }) => `Si deixes de compartir, ${service} deixa de compartir-se al proper desplegament d’aquest entorn, i el que s’hi connecti perdrà la connexió.`,
+    privateSharingDetailTitle: ({ service }) => `Compartint ${service}`,
+    privateSharingDetailHappier: ({ service }) => `Les apps que veuen aquest entorn arriben a ${service} de manera privada a través de Happier. Queda fora d’internet.`,
+    privateSharingDetailNetwork: ({ service, network }) => `Les apps de ${network} arriben a ${service} a la seva adreça privada.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "ca">;
 
@@ -845,6 +890,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Del projecte',
     fromAccount: 'Del teu compte',
     fromBuiltin: 'Valor per defecte de Happier',
+    createCopy: "Crea la còpia",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "ca">;
 

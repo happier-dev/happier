@@ -447,6 +447,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Użyj ustawienia konta', useBuiltin: 'Użyj ustawienia Happier', sectionDeploys: 'Wdrożenia', resetBuiltin: 'Przywróć ustawienia Happier', resetAccount: 'Przywróć ustawienia konta', retention: 'Wersje zachowane do wycofania',
         clearToInherit: 'Wyczyść, aby odziedziczyć ustawienie', projectTitle: 'Ustawienia wdrożeń', alertChannels: 'Kanały powiadomień', accountLink: 'Domyślne ustawienia wdrożeń konta',
         triggersTitle: "Wyzwalacze", triggersDescription: "Każde środowisko ma własne wyzwalacze. Otwórz je, aby je zobaczyć lub dodać.",
+    askedAtSetup: "Wybierane przy konfigurowaniu każdego środowiska",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "pl">;
 
@@ -489,6 +490,10 @@ const deploymentCopyTranslations = {
     repository: "Nie wybrano lokalnej kopii repozytorium. Wybierz repozytorium w Start i przygotuj je przed wdrożeniem.",
     unsupported: "Ten cel nie obsługuje operacji. Wybierz obsługiwany cel lub zmień wybór.",
     retry: "Operacja została odrzucona.Sprawdź powód, zmień wybór i spróbuj ponownie.",
+    descriptionNoChoice: "Kopiuje definicję wdrożenia; nic się nie wdroży, dopóki nie zdecydujesz się wdrożyć.",
+    reviewOwnServer: "Ustawienia wdrażania i przywracania",
+    reviewServiceExport: ({ name }) => `Prywatne udostępnienie: ${name}, w sieci Happier`,
+    reviewRetained: ({ count }) => `Zachowuje poprzednie wersje do wycofania: ${count}`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "pl">;
 
@@ -649,6 +654,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Dodaj sprawdzenie',
     addCheckUnavailable:
       'Sprawdzeń nie można tu skonfigurować · otwórz stronę usług maszyny',
+    databaseAccess: {
+      title: "Dostęp do bazy danych",
+      inherited: "Używa dostępu do bazy danych środowiska szablonu",
+      editors: "Kto może edytować wiersze bazy danych",
+      agents: "Dostęp agentów",
+      openSettings: "Otwórz ustawienia środowiska",
+      askManager: "Tylko menedżer środowiska może zmienić dostęp.",
+      backup: {
+        action: "Ostatnia udana kopia",
+        empty: "Nie ma jeszcze udanej kopii.",
+        unavailable: "Historia kopii jest niedostępna.",
+      },
+      setup: {
+        ownBody: "Skonfiguruj ograniczone logowanie z zapisem do bazy danych. Zmiany pozostają w przeglądzie.",
+        managedBody: "Wybierz zapisany sekret dla bezpośredniego połączenia z bazą danych tego celu. Zmiany pozostają w przeglądzie.",
+        managedSelected: "Zapisz wybrane bezpośrednie połączenie. Zmiany pozostają w przeglądzie.",
+        chooseSecret: "Wybierz zapisany sekret",
+        changeSecret: "Zmień zapisany sekret",
+        createRole: "Skonfiguruj logowanie z zapisem",
+        bindConnection: "Zapisz połączenie z zapisem",
+        manager: "Poproś menedżera środowiska o skonfigurowanie zapisu do bazy danych.",
+        unavailable: "Konfiguracja zapisu do bazy danych jest niedostępna.",
+        writer: "Logowanie z zapisem do bazy danych",
+        ready: "Zapis do bazy danych jest skonfigurowany. Zastosuj ponownie, gdy będziesz gotowy.",
+      },
+      off: "Wyłączone",
+      levels: {
+        none: "Brak",
+        read: "Odczyt",
+        readWriteAsk: "Odczyt i zapis (najpierw pyta)",
+        readWriteNoApproval: "Odczyt i zapis (bez zatwierdzania)",
+      },
+    },
+    fleetIngressConnectors: "Konektory na maszynę",
+    fleetIngressConnectorsBody: "Więcej konektorów utrzymuje adres dostępny, gdy jeden się zatrzyma; każdy zużywa trochę pamięci na maszynie. Obowiązuje od następnego wdrożenia.",
+    privateSharingStop: "Przestań udostępniać",
+    privateSharingStopConsequence: ({ service }) => `Jeśli przestaniesz udostępniać, ${service} przestanie być udostępniany przy następnym wdrożeniu tego środowiska, a wszystko, co się z nim łączy, straci połączenie.`,
+    privateSharingDetailTitle: ({ service }) => `Udostępnianie ${service}`,
+    privateSharingDetailHappier: ({ service }) => `Aplikacje, które widzą to środowisko, łączą się z ${service} prywatnie przez Happier. Pozostaje poza internetem.`,
+    privateSharingDetailNetwork: ({ service, network }) => `Aplikacje w ${network} łączą się z ${service} pod jego prywatnym adresem.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "pl">;
 
@@ -837,6 +882,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Z projektu',
     fromAccount: 'Z twojego konta',
     fromBuiltin: 'Domyślne Happier',
+    createCopy: "Utwórz kopię",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "pl">;
 

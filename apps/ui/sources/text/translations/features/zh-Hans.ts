@@ -442,6 +442,7 @@ const deploymentDefaultsTranslations = {
         useAccount: '使用账号默认值', useBuiltin: '使用 Happier 默认值', sectionDeploys: '部署', resetBuiltin: '重置为 Happier 默认值', resetAccount: '重置为账号默认值', retention: '为回滚保留的版本数',
         clearToInherit: '清空以继承默认值', projectTitle: '部署设置', alertChannels: '通知渠道', accountLink: '你的账号部署默认设置',
         triggersTitle: "触发器", triggersDescription: "每个环境运行自己的触发器。打开一个环境即可查看或添加。",
+    askedAtSetup: "在设置每个环境时选择",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "zh-Hans">;
 
@@ -484,6 +485,10 @@ const deploymentCopyTranslations = {
     repository: "尚未选择仓库检出目录。在开始面板选择仓库并在部署前完成准备。",
     unsupported: "此目标不支持该操作。请选择支持的目标或更改选择。",
     retry: "操作被拒绝。请检查原因，调整选择后重试。",
+    descriptionNoChoice: "复制部署定义；在你选择部署之前不会部署任何内容。",
+    reviewOwnServer: "发布与恢复设置",
+    reviewServiceExport: ({ name }) => `私有共享：${name}，在 Happier 网络上`,
+    reviewRetained: ({ count }) => `保留 ${count} 个旧版本用于回滚`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "zh-Hans">;
 
@@ -641,6 +646,46 @@ const deploymentSettingsTranslations = {
     credentialSshPrivateKey: "SSH 私钥",
     addCheck: '添加检查',
     addCheckUnavailable: '无法在此设置检查 · 请打开机器的服务页面',
+    databaseAccess: {
+      title: "数据库访问",
+      inherited: "使用模板环境的数据库访问权限",
+      editors: "谁可以编辑数据库行",
+      agents: "智能体访问",
+      openSettings: "打开环境设置",
+      askManager: "只有环境管理员可以更改访问权限。",
+      backup: {
+        action: "上次成功的备份",
+        empty: "还没有成功的备份。",
+        unavailable: "备份历史不可用。",
+      },
+      setup: {
+        ownBody: "设置数据库的受限写入登录。你的更改将保持在审核中。",
+        managedBody: "为此目标的数据库直连选择已保存的密钥。你的更改将保持在审核中。",
+        managedSelected: "保存所选的直连。你的更改将保持在审核中。",
+        chooseSecret: "选择已保存的密钥",
+        changeSecret: "更换已保存的密钥",
+        createRole: "设置写入登录",
+        bindConnection: "保存写入连接",
+        manager: "请环境管理员设置数据库写入。",
+        unavailable: "数据库写入设置不可用。",
+        writer: "数据库写入登录",
+        ready: "数据库写入已设置。准备好后再次应用。",
+      },
+      off: "关闭",
+      levels: {
+        none: "无",
+        read: "读取",
+        readWriteAsk: "读写（先询问）",
+        readWriteNoApproval: "读写（无需批准）",
+      },
+    },
+    fleetIngressConnectors: "每台机器的连接器",
+    fleetIngressConnectorsBody: "更多连接器可在其中一个停止时保持地址可用；每个都会占用机器上的少量内存。下次部署时生效。",
+    privateSharingStop: "停止共享",
+    privateSharingStopConsequence: ({ service }) => `停止共享后，${service} 将在此环境下次部署时停止共享，连接到它的内容会断开连接。`,
+    privateSharingDetailTitle: ({ service }) => `正在共享 ${service}`,
+    privateSharingDetailHappier: ({ service }) => `能看到此环境的应用通过 Happier 私下访问 ${service}。它不会暴露到互联网。`,
+    privateSharingDetailNetwork: ({ service, network }) => `${network} 上的应用通过私有地址访问 ${service}。`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "zh-Hans">;
 
@@ -824,6 +869,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: '来自项目',
     fromAccount: '来自你的账户',
     fromBuiltin: 'Happier 默认值',
+    createCopy: "创建副本",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "zh-Hans">;
 

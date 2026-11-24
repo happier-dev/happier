@@ -450,6 +450,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Utiliser la valeur du compte', useBuiltin: 'Utiliser la valeur de Happier', sectionDeploys: 'Déploiements', resetBuiltin: 'Rétablir les valeurs de Happier', resetAccount: 'Rétablir les valeurs du compte', retention: 'Versions gardées pour revenir en arrière',
         clearToInherit: 'Effacer pour hériter de la valeur', projectTitle: 'Réglages des déploiements', alertChannels: 'Canaux de notification', accountLink: 'Valeurs de déploiement de ton compte',
         triggersTitle: "Déclencheurs", triggersDescription: "Chaque environnement a ses propres déclencheurs. Ouvrez-en un pour les voir ou en ajouter.",
+    askedAtSetup: "Choisi lors de la configuration de chaque environnement",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "fr">;
 
@@ -492,6 +493,10 @@ const deploymentCopyTranslations = {
     repository: "Aucun dépôt local n’est sélectionné. Choisissez un dépôt dans Démarrer et préparez-le avant le déploiement.",
     unsupported: "Cette cible ne prend pas en charge cette opération. Choisissez une autre cible ou sélection.",
     retry: "L’opération a été refusée.Vérifiez la raison, modifiez la sélection et réessayez.",
+    descriptionNoChoice: "Copie la définition du déploiement ; rien n’est déployé tant que vous ne lancez pas le déploiement.",
+    reviewOwnServer: "Réglages de déploiement progressif et de restauration",
+    reviewServiceExport: ({ name }) => `Partage privé : ${name}, sur le réseau Happier`,
+    reviewRetained: ({ count }) => `Garde ${count} ${count === 1 ? 'version précédente' : 'versions précédentes'} pour revenir en arrière`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "fr">;
 
@@ -657,6 +662,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Ajouter une vérification',
     addCheckUnavailable:
       'Les vérifications ne se configurent pas ici · ouvrez la page Services de la machine',
+    databaseAccess: {
+      title: "Accès à la base de données",
+      inherited: "Utilise l’accès à la base de données de l’environnement modèle",
+      editors: "Qui peut modifier les lignes de la base",
+      agents: "Accès des agents",
+      openSettings: "Ouvrir les réglages de l’environnement",
+      askManager: "Seul un gestionnaire de l’environnement peut modifier l’accès.",
+      backup: {
+        action: "Dernière sauvegarde réussie",
+        empty: "Aucune sauvegarde réussie pour l’instant.",
+        unavailable: "L’historique des sauvegardes n’est pas disponible.",
+      },
+      setup: {
+        ownBody: "Configurez l’identifiant d’écriture limité de la base. Vos modifications restent en revue.",
+        managedBody: "Choisissez le secret enregistré pour la connexion directe à la base de cette cible. Vos modifications restent en revue.",
+        managedSelected: "Enregistrez la connexion directe choisie. Vos modifications restent en revue.",
+        chooseSecret: "Choisir un secret enregistré",
+        changeSecret: "Changer de secret enregistré",
+        createRole: "Configurer l’identifiant d’écriture",
+        bindConnection: "Enregistrer la connexion d’écriture",
+        manager: "Demandez à un gestionnaire de l’environnement de configurer l’écriture en base.",
+        unavailable: "La configuration de l’écriture en base n’est pas disponible.",
+        writer: "Identifiant d’écriture de la base",
+        ready: "L’écriture en base est configurée. Appliquez à nouveau quand vous êtes prêt.",
+      },
+      off: "Désactivé",
+      levels: {
+        none: "Aucun",
+        read: "Lecture",
+        readWriteAsk: "Lecture et écriture (demande d’abord)",
+        readWriteNoApproval: "Lecture et écriture (sans approbation)",
+      },
+    },
+    fleetIngressConnectors: "Connecteurs par machine",
+    fleetIngressConnectorsBody: "Plus de connecteurs gardent l’adresse joignable si l’un s’arrête ; chacun utilise un peu de mémoire sur la machine. S’applique au prochain déploiement.",
+    privateSharingStop: "Arrêter le partage",
+    privateSharingStopConsequence: ({ service }) => `Si vous arrêtez le partage, ${service} n’est plus partagé au prochain déploiement de cet environnement, et tout ce qui s’y connecte perd alors la connexion.`,
+    privateSharingDetailTitle: ({ service }) => `Partage de ${service}`,
+    privateSharingDetailHappier: ({ service }) => `Les apps qui voient cet environnement accèdent à ${service} en privé via Happier. Il reste hors d’Internet.`,
+    privateSharingDetailNetwork: ({ service, network }) => `Les apps sur ${network} accèdent à ${service} via son adresse privée.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "fr">;
 
@@ -845,6 +890,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Du projet',
     fromAccount: 'De ton compte',
     fromBuiltin: 'Valeur par défaut de Happier',
+    createCopy: "Créer la copie",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "fr">;
 

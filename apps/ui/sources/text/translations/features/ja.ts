@@ -447,6 +447,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'アカウントの既定値を使う', useBuiltin: 'Happierの既定値を使う', sectionDeploys: 'デプロイ', resetBuiltin: 'Happierの既定値に戻す', resetAccount: 'アカウントの既定値に戻す', retention: 'ロールバック用に保持するリリース数',
         clearToInherit: '空にすると既定値を継承します', projectTitle: 'デプロイ設定', alertChannels: '通知チャンネル', accountLink: 'アカウントのデプロイ既定値',
         triggersTitle: "トリガー", triggersDescription: "トリガーは環境ごとに動きます。環境を開いて確認・追加できます。",
+    askedAtSetup: "各環境の設定時に選択します",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "ja">;
 
@@ -489,6 +490,10 @@ const deploymentCopyTranslations = {
     repository: "リポジトリのチェックアウトが未選択です。スタートでリポジトリを選び、デプロイ前に準備してください。",
     unsupported: "この対象は操作に対応していません。対応する対象を選ぶか選択を変更してください。",
     retry: "操作が拒否されました。理由を確認し、選択を調整して再試行してください。",
+    descriptionNoChoice: "デプロイ定義をコピーします。デプロイを選ぶまで何もデプロイされません。",
+    reviewOwnServer: "ロールアウトと復元の設定",
+    reviewServiceExport: ({ name }) => `プライベート共有: ${name}（Happier ネットワーク上）`,
+    reviewRetained: ({ count }) => `ロールバック用に以前のバージョンを ${count} 件保持`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "ja">;
 
@@ -649,6 +654,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'チェックを追加',
     addCheckUnavailable:
       'ここではチェックを設定できません · マシンのサービスページを開いてください',
+    databaseAccess: {
+      title: "データベースアクセス",
+      inherited: "テンプレート環境のデータベースアクセスを使用します",
+      editors: "データベースの行を編集できる人",
+      agents: "エージェントのアクセス",
+      openSettings: "環境の設定を開く",
+      askManager: "アクセスを変更できるのは環境マネージャーだけです。",
+      backup: {
+        action: "最後に成功したバックアップ",
+        empty: "成功したバックアップはまだありません。",
+        unavailable: "バックアップ履歴を利用できません。",
+      },
+      setup: {
+        ownBody: "データベースの制限付き書き込みログインを設定します。変更はレビュー中のままです。",
+        managedBody: "このターゲットのデータベース直接接続に使う保存済みシークレットを選びます。変更はレビュー中のままです。",
+        managedSelected: "選択した直接接続を保存します。変更はレビュー中のままです。",
+        chooseSecret: "保存済みシークレットを選択",
+        changeSecret: "保存済みシークレットを変更",
+        createRole: "書き込みログインを設定",
+        bindConnection: "書き込み接続を保存",
+        manager: "データベースへの書き込み設定を環境マネージャーに依頼してください。",
+        unavailable: "データベースへの書き込み設定は利用できません。",
+        writer: "データベース書き込みログイン",
+        ready: "データベースへの書き込みは設定済みです。準備ができたら再度適用してください。",
+      },
+      off: "オフ",
+      levels: {
+        none: "なし",
+        read: "読み取り",
+        readWriteAsk: "読み書き（先に確認）",
+        readWriteNoApproval: "読み書き（承認なし）",
+      },
+    },
+    fleetIngressConnectors: "マシンあたりのコネクタ数",
+    fleetIngressConnectorsBody: "コネクタを増やすと、1 つが停止してもアドレスに到達できます。各コネクタはマシンのメモリを少し使います。次回のデプロイから適用されます。",
+    privateSharingStop: "共有を停止",
+    privateSharingStopConsequence: ({ service }) => `共有を停止すると、この環境の次回のデプロイで ${service} は共有されなくなり、接続しているものは接続を失います。`,
+    privateSharingDetailTitle: ({ service }) => `${service} を共有中`,
+    privateSharingDetailHappier: ({ service }) => `この環境を参照できるアプリは、Happier を通じて ${service} に非公開で接続します。インターネットには公開されません。`,
+    privateSharingDetailNetwork: ({ service, network }) => `${network} 上のアプリは ${service} のプライベートアドレスで接続します。`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "ja">;
 
@@ -834,6 +879,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'プロジェクトから',
     fromAccount: 'アカウントから',
     fromBuiltin: 'Happier の既定',
+    createCopy: "コピーを作成",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "ja">;
 

@@ -450,6 +450,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Usar padrão da conta', useBuiltin: 'Usar padrão do Happier', sectionDeploys: 'Implementações', resetBuiltin: 'Repor os padrões do Happier', resetAccount: 'Repor os padrões da conta', retention: 'Versões mantidas para reverter',
         clearToInherit: 'Limpe para herdar o padrão', projectTitle: 'Configurações de implantação', alertChannels: 'Canais de notificação', accountLink: 'Padrões de implantação da sua conta',
         triggersTitle: "Gatilhos", triggersDescription: "Cada ambiente executa os próprios gatilhos. Abra um para vê-los ou adicioná-los.",
+    askedAtSetup: "Escolhido ao configurar cada ambiente",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "pt">;
 
@@ -492,6 +493,10 @@ const deploymentCopyTranslations = {
     repository: "Nenhum checkout de repositório foi selecionado. Escolha um repositório em Iniciar e prepare-o antes de implantar.",
     unsupported: "Este destino não suporta a operação. Escolha um destino compatível ou altere a seleção.",
     retry: "A operação foi recusada.Confira o motivo, ajuste a seleção e tente novamente.",
+    descriptionNoChoice: "Copia a definição de implantação; nada é implantado até você decidir implantar.",
+    reviewOwnServer: "Definições de implantação e restauro",
+    reviewServiceExport: ({ name }) => `Partilha privada: ${name}, na rede Happier`,
+    reviewRetained: ({ count }) => `Mantém ${count} ${count === 1 ? 'versão anterior' : 'versões anteriores'} para reverter`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "pt">;
 
@@ -657,6 +662,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Adicionar verificação',
     addCheckUnavailable:
       'As verificações não se configuram aqui · abra a página Serviços da máquina',
+    databaseAccess: {
+      title: "Acesso à base de dados",
+      inherited: "Usa o acesso à base de dados do ambiente modelo",
+      editors: "Quem pode editar linhas da base de dados",
+      agents: "Acesso de agentes",
+      openSettings: "Abrir definições do ambiente",
+      askManager: "Só um gestor do ambiente pode alterar o acesso.",
+      backup: {
+        action: "Última cópia de segurança bem-sucedida",
+        empty: "Ainda não há nenhuma cópia de segurança bem-sucedida.",
+        unavailable: "O histórico de cópias de segurança não está disponível.",
+      },
+      setup: {
+        ownBody: "Configure o acesso de escrita limitado da base de dados. As alterações ficam em revisão.",
+        managedBody: "Escolha o segredo guardado para a ligação direta à base de dados deste destino. As alterações ficam em revisão.",
+        managedSelected: "Guarde a ligação direta escolhida. As alterações ficam em revisão.",
+        chooseSecret: "Escolher um segredo guardado",
+        changeSecret: "Mudar o segredo guardado",
+        createRole: "Configurar acesso de escrita",
+        bindConnection: "Guardar ligação de escrita",
+        manager: "Peça a um gestor do ambiente para configurar a escrita na base de dados.",
+        unavailable: "A configuração da escrita na base de dados não está disponível.",
+        writer: "Acesso de escrita à base de dados",
+        ready: "A escrita na base de dados está configurada. Aplique de novo quando estiver pronto.",
+      },
+      off: "Desligado",
+      levels: {
+        none: "Nenhum",
+        read: "Leitura",
+        readWriteAsk: "Leitura e escrita (pergunta antes)",
+        readWriteNoApproval: "Leitura e escrita (sem aprovação)",
+      },
+    },
+    fleetIngressConnectors: "Conectores por máquina",
+    fleetIngressConnectorsBody: "Mais conectores mantêm o endereço acessível se um parar; cada um usa um pouco de memória na máquina. Aplica-se na próxima implantação.",
+    privateSharingStop: "Parar de partilhar",
+    privateSharingStopConsequence: ({ service }) => `Se parar de partilhar, ${service} deixa de ser partilhado na próxima implantação deste ambiente, e o que se ligar a ele perde a ligação.`,
+    privateSharingDetailTitle: ({ service }) => `A partilhar ${service}`,
+    privateSharingDetailHappier: ({ service }) => `As apps que veem este ambiente chegam a ${service} de forma privada através do Happier. Fica fora da internet.`,
+    privateSharingDetailNetwork: ({ service, network }) => `As apps em ${network} chegam a ${service} no seu endereço privado.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "pt">;
 
@@ -845,6 +890,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Do projeto',
     fromAccount: 'Da tua conta',
     fromBuiltin: 'Predefinição do Happier',
+    createCopy: "Criar cópia",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "pt">;
 

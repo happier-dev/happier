@@ -449,6 +449,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Использовать настройку аккаунта', useBuiltin: 'Использовать настройку Happier', sectionDeploys: 'Развёртывания', resetBuiltin: 'Сбросить к настройкам Happier', resetAccount: 'Сбросить к настройкам аккаунта', retention: 'Версии для отката',
         clearToInherit: 'Очистите, чтобы наследовать настройку', projectTitle: 'Настройки развёртывания', alertChannels: 'Каналы уведомлений', accountLink: 'Настройки развёртывания вашего аккаунта',
         triggersTitle: "Триггеры", triggersDescription: "У каждого окружения свои триггеры. Откройте окружение, чтобы посмотреть или добавить их.",
+    askedAtSetup: "Выбирается при настройке каждого окружения",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "ru">;
 
@@ -491,6 +492,10 @@ const deploymentCopyTranslations = {
     repository: "Локальная копия репозитория не выбрана. Выберите репозиторий в Старте и подготовьте его до развёртывания.",
     unsupported: "Эта цель не поддерживает операцию. Выберите другую цель или измените выбор.",
     retry: "Операция отклонена.Проверьте причину, измените выбор и повторите попытку.",
+    descriptionNoChoice: "Копирует определение развертывания; ничего не развертывается, пока вы не решите развернуть.",
+    reviewOwnServer: "Настройки развертывания и восстановления",
+    reviewServiceExport: ({ name }) => `Частный доступ: ${name}, в сети Happier`,
+    reviewRetained: ({ count }) => `Хранит предыдущих версий для отката: ${count}`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "ru">;
 
@@ -652,6 +657,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Добавить проверку',
     addCheckUnavailable:
       'Проверки нельзя настроить отсюда · откройте страницу служб машины',
+    databaseAccess: {
+      title: "Доступ к базе данных",
+      inherited: "Использует доступ к базе данных окружения-шаблона",
+      editors: "Кто может изменять строки базы данных",
+      agents: "Доступ агентов",
+      openSettings: "Открыть настройки окружения",
+      askManager: "Только менеджер окружения может изменить доступ.",
+      backup: {
+        action: "Последняя успешная копия",
+        empty: "Успешных копий пока нет.",
+        unavailable: "История копий недоступна.",
+      },
+      setup: {
+        ownBody: "Настройте ограниченный вход с правом записи в базу данных. Изменения остаются на проверке.",
+        managedBody: "Выберите сохраненный секрет для прямого подключения к базе данных этой цели. Изменения остаются на проверке.",
+        managedSelected: "Сохраните выбранное прямое подключение. Изменения остаются на проверке.",
+        chooseSecret: "Выбрать сохраненный секрет",
+        changeSecret: "Изменить сохраненный секрет",
+        createRole: "Настроить вход с записью",
+        bindConnection: "Сохранить подключение с записью",
+        manager: "Попросите менеджера окружения настроить запись в базу данных.",
+        unavailable: "Настройка записи в базу данных недоступна.",
+        writer: "Вход с правом записи в базу данных",
+        ready: "Запись в базу данных настроена. Примените снова, когда будете готовы.",
+      },
+      off: "Выкл.",
+      levels: {
+        none: "Нет",
+        read: "Чтение",
+        readWriteAsk: "Чтение и запись (сначала спрашивает)",
+        readWriteNoApproval: "Чтение и запись (без подтверждения)",
+      },
+    },
+    fleetIngressConnectors: "Коннекторов на машину",
+    fleetIngressConnectorsBody: "Больше коннекторов сохраняют адрес доступным, если один остановится; каждый использует немного памяти на машине. Применяется при следующем развертывании.",
+    privateSharingStop: "Прекратить доступ",
+    privateSharingStopConsequence: ({ service }) => `Если прекратить доступ, ${service} перестанет быть доступен со следующего развертывания этого окружения, и все, что к нему подключается, потеряет соединение.`,
+    privateSharingDetailTitle: ({ service }) => `Доступ к ${service}`,
+    privateSharingDetailHappier: ({ service }) => `Приложения, которые видят это окружение, подключаются к ${service} в частном порядке через Happier. Сервис остается вне интернета.`,
+    privateSharingDetailNetwork: ({ service, network }) => `Приложения в ${network} подключаются к ${service} по его частному адресу.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "ru">;
 
@@ -838,6 +883,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Из проекта',
     fromAccount: 'Из вашего аккаунта',
     fromBuiltin: 'По умолчанию в Happier',
+    createCopy: "Создать копию",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "ru">;
 

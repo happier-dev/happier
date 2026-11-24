@@ -449,6 +449,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Usar el valor de la cuenta', useBuiltin: 'Usar el valor de Happier', sectionDeploys: 'Despliegues', resetBuiltin: 'Restablecer los valores de Happier', resetAccount: 'Restablecer los valores de la cuenta', retention: 'Versiones conservadas para revertir',
         clearToInherit: 'Borra para heredar el valor', projectTitle: 'Configuración de despliegues', alertChannels: 'Canales de notificaciones', accountLink: 'Valores de despliegue de tu cuenta',
         triggersTitle: "Disparadores", triggersDescription: "Cada entorno ejecuta sus propios disparadores. Abre uno para verlos o añadirlos.",
+    askedAtSetup: "Se elige al configurar cada entorno",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "es">;
 
@@ -491,6 +492,10 @@ const deploymentCopyTranslations = {
     repository: "No hay un repositorio local seleccionado. Elige un repositorio en Inicio y prepáralo antes de desplegar.",
     unsupported: "Este destino no admite la operación. Elige uno compatible o cambia la selección.",
     retry: "La operación se rechazó.Revisa el motivo, ajusta la selección e inténtalo de nuevo.",
+    descriptionNoChoice: "Copia la definición del despliegue; no se despliega nada hasta que decidas desplegar.",
+    reviewOwnServer: "Ajustes de despliegue y restauración",
+    reviewServiceExport: ({ name }) => `Acceso privado: ${name}, en la red de Happier`,
+    reviewRetained: ({ count }) => `Conserva ${count} ${count === 1 ? 'versión anterior' : 'versiones anteriores'} para revertir`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "es">;
 
@@ -654,6 +659,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Añadir comprobación',
     addCheckUnavailable:
       'Las comprobaciones no se configuran aquí · abre la página de servicios de la máquina',
+    databaseAccess: {
+      title: "Acceso a la base de datos",
+      inherited: "Usa el acceso a la base de datos del entorno plantilla",
+      editors: "Quién puede editar filas de la base de datos",
+      agents: "Acceso de agentes",
+      openSettings: "Abrir ajustes del entorno",
+      askManager: "Solo un gestor del entorno puede cambiar el acceso.",
+      backup: {
+        action: "Última copia correcta",
+        empty: "Todavía no hay ninguna copia correcta.",
+        unavailable: "El historial de copias no está disponible.",
+      },
+      setup: {
+        ownBody: "Configura el acceso de escritura limitado de la base de datos. Tus cambios quedan en revisión.",
+        managedBody: "Elige el secreto guardado para la conexión directa a la base de datos de este destino. Tus cambios quedan en revisión.",
+        managedSelected: "Guarda la conexión directa elegida. Tus cambios quedan en revisión.",
+        chooseSecret: "Elegir un secreto guardado",
+        changeSecret: "Cambiar el secreto guardado",
+        createRole: "Configurar acceso de escritura",
+        bindConnection: "Guardar conexión de escritura",
+        manager: "Pide a un gestor del entorno que configure la escritura en la base de datos.",
+        unavailable: "La configuración de escritura en la base de datos no está disponible.",
+        writer: "Acceso de escritura a la base de datos",
+        ready: "La escritura en la base de datos está configurada. Aplica de nuevo cuando quieras.",
+      },
+      off: "Desactivado",
+      levels: {
+        none: "Ninguno",
+        read: "Lectura",
+        readWriteAsk: "Lectura y escritura (pregunta antes)",
+        readWriteNoApproval: "Lectura y escritura (sin aprobación)",
+      },
+    },
+    fleetIngressConnectors: "Conectores por máquina",
+    fleetIngressConnectorsBody: "Más conectores mantienen la dirección disponible si uno se detiene; cada uno usa algo de memoria en la máquina. Se aplica en el próximo despliegue.",
+    privateSharingStop: "Dejar de compartir",
+    privateSharingStopConsequence: ({ service }) => `Si dejas de compartir, ${service} deja de compartirse en el próximo despliegue de este entorno, y lo que se conecte a él perderá la conexión.`,
+    privateSharingDetailTitle: ({ service }) => `Compartiendo ${service}`,
+    privateSharingDetailHappier: ({ service }) => `Las apps que ven este entorno llegan a ${service} de forma privada a través de Happier. No queda expuesto a internet.`,
+    privateSharingDetailNetwork: ({ service, network }) => `Las apps en ${network} llegan a ${service} en su dirección privada.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "es">;
 
@@ -843,6 +888,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Del proyecto',
     fromAccount: 'De tu cuenta',
     fromBuiltin: 'Valor por defecto de Happier',
+    createCopy: "Crear copia",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "es">;
 

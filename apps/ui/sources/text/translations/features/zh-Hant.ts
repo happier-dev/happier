@@ -443,6 +443,7 @@ const deploymentDefaultsTranslations = {
         useAccount: '使用帳號預設值', useBuiltin: '使用 Happier 預設值', sectionDeploys: '部署', resetBuiltin: '重設為 Happier 預設值', resetAccount: '重設為帳號預設值', retention: '為復原保留的版本數',
         clearToInherit: '清空以繼承預設值', projectTitle: '部署設定', alertChannels: '通知管道', accountLink: '你的帳號部署預設設定',
         triggersTitle: "觸發器", triggersDescription: "每個環境執行自己的觸發器。開啟一個環境即可查看或新增。",
+    askedAtSetup: "在設定每個環境時選擇",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "zh-Hant">;
 
@@ -485,6 +486,10 @@ const deploymentCopyTranslations = {
     repository: "尚未選擇儲存庫簽出目錄。在開始面板選擇儲存庫並在部署前完成準備。",
     unsupported: "此目標不支援該操作。請選擇支援的目標或更改選擇。",
     retry: "操作遭拒。請檢查原因，調整選擇後重試。",
+    descriptionNoChoice: "複製部署定義；在你選擇部署之前不會部署任何內容。",
+    reviewOwnServer: "發布與還原設定",
+    reviewServiceExport: ({ name }) => `私人共享：${name}，在 Happier 網路上`,
+    reviewRetained: ({ count }) => `保留 ${count} 個舊版本以供回復`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "zh-Hant">;
 
@@ -642,6 +647,46 @@ const deploymentSettingsTranslations = {
     credentialSshPrivateKey: "SSH 私密金鑰",
     addCheck: '新增檢查',
     addCheckUnavailable: '無法在此設定檢查 · 請開啟機器的服務頁面',
+    databaseAccess: {
+      title: "資料庫存取",
+      inherited: "使用範本環境的資料庫存取權限",
+      editors: "誰可以編輯資料庫列",
+      agents: "代理存取",
+      openSettings: "開啟環境設定",
+      askManager: "只有環境管理員可以變更存取權限。",
+      backup: {
+        action: "上次成功的備份",
+        empty: "還沒有成功的備份。",
+        unavailable: "備份記錄無法使用。",
+      },
+      setup: {
+        ownBody: "設定資料庫的受限寫入登入。你的變更會保留在審核中。",
+        managedBody: "為此目標的資料庫直連選擇已儲存的密鑰。你的變更會保留在審核中。",
+        managedSelected: "儲存所選的直連。你的變更會保留在審核中。",
+        chooseSecret: "選擇已儲存的密鑰",
+        changeSecret: "更換已儲存的密鑰",
+        createRole: "設定寫入登入",
+        bindConnection: "儲存寫入連線",
+        manager: "請環境管理員設定資料庫寫入。",
+        unavailable: "資料庫寫入設定無法使用。",
+        writer: "資料庫寫入登入",
+        ready: "資料庫寫入已設定。準備好後再次套用。",
+      },
+      off: "關閉",
+      levels: {
+        none: "無",
+        read: "讀取",
+        readWriteAsk: "讀寫（先詢問）",
+        readWriteNoApproval: "讀寫（無需核准）",
+      },
+    },
+    fleetIngressConnectors: "每台機器的連接器",
+    fleetIngressConnectorsBody: "更多連接器可在其中一個停止時保持位址可用；每個都會占用機器上的少量記憶體。下次部署時生效。",
+    privateSharingStop: "停止共享",
+    privateSharingStopConsequence: ({ service }) => `停止共享後，${service} 會在此環境下次部署時停止共享，連到它的內容會中斷連線。`,
+    privateSharingDetailTitle: ({ service }) => `正在共享 ${service}`,
+    privateSharingDetailHappier: ({ service }) => `能看到此環境的應用程式透過 Happier 私下存取 ${service}。它不會暴露在網際網路上。`,
+    privateSharingDetailNetwork: ({ service, network }) => `${network} 上的應用程式透過私人位址存取 ${service}。`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "zh-Hant">;
 
@@ -825,6 +870,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: '來自專案',
     fromAccount: '來自你的帳戶',
     fromBuiltin: 'Happier 預設值',
+    createCopy: "建立副本",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "zh-Hant">;
 

@@ -446,6 +446,7 @@ const deploymentDefaultsTranslations = {
         useAccount: 'Kontovorgabe verwenden', useBuiltin: 'Happier-Vorgabe verwenden', sectionDeploys: 'Bereitstellungen', resetBuiltin: 'Auf Happier-Vorgaben zurücksetzen', resetAccount: 'Auf Kontovorgaben zurücksetzen', retention: 'Für Rollback aufbewahrte Versionen',
         clearToInherit: 'Leeren, um die Vorgabe zu übernehmen', projectTitle: 'Bereitstellungseinstellungen', alertChannels: 'Benachrichtigungskanäle', accountLink: 'Bereitstellungsvorgaben deines Kontos',
         triggersTitle: "Auslöser", triggersDescription: "Jede Umgebung hat ihre eigenen Auslöser. Öffne eine, um sie zu sehen oder hinzuzufügen.",
+    askedAtSetup: "Wird beim Einrichten jeder Umgebung gewählt",
     },
 } as const satisfies Pick<Record<deploymentDefaultsTranslations__SupportedLanguage, Shared_deploymentDefaultsTranslations.Copy>, "de">;
 
@@ -488,6 +489,10 @@ const deploymentCopyTranslations = {
     repository: "Es ist kein Repository-Checkout ausgewählt. Wähle in Start ein Repository und bereite es vor dem Deployment vor.",
     unsupported: "Dieses Ziel unterstützt die Aktion nicht. Wähle ein unterstütztes Ziel oder ändere die Auswahl.",
     retry: "Die Aktion wurde abgelehnt.Prüfe den Grund, ändere die Auswahl und versuche es erneut.",
+    descriptionNoChoice: "Kopiert die Deployment-Definition; es wird nichts bereitgestellt, bis du das Deployment startest.",
+    reviewOwnServer: "Rollout- und Wiederherstellungseinstellungen",
+    reviewServiceExport: ({ name }) => `Private Freigabe: ${name}, im Happier-Netzwerk`,
+    reviewRetained: ({ count }) => `Behält ${count} ${count === 1 ? 'frühere Version' : 'frühere Versionen'} für Rollbacks`,
   },
 } as const satisfies Pick<Record<deploymentCopyTranslations__SupportedLanguage, Shared_deploymentCopyTranslations.DeploymentCopyTranslations>, "de">;
 
@@ -652,6 +657,46 @@ const deploymentSettingsTranslations = {
     addCheck: 'Prüfung hinzufügen',
     addCheckUnavailable:
       'Prüfungen lassen sich hier nicht einrichten · Dienste-Seite der Maschine öffnen',
+    databaseAccess: {
+      title: "Datenbankzugriff",
+      inherited: "Verwendet den Datenbankzugriff der Vorlagenumgebung",
+      editors: "Wer Datenbankzeilen bearbeiten darf",
+      agents: "Agentenzugriff",
+      openSettings: "Umgebungseinstellungen öffnen",
+      askManager: "Nur ein Umgebungsmanager kann den Zugriff ändern.",
+      backup: {
+        action: "Letzte erfolgreiche Sicherung",
+        empty: "Noch keine erfolgreiche Sicherung.",
+        unavailable: "Der Sicherungsverlauf ist nicht verfügbar.",
+      },
+      setup: {
+        ownBody: "Richte die eingeschränkte Schreibanmeldung der Datenbank ein. Deine Änderungen bleiben in der Prüfung.",
+        managedBody: "Wähle das gespeicherte Geheimnis für die direkte Datenbankverbindung dieses Ziels. Deine Änderungen bleiben in der Prüfung.",
+        managedSelected: "Speichere die gewählte direkte Verbindung. Deine Änderungen bleiben in der Prüfung.",
+        chooseSecret: "Gespeichertes Geheimnis wählen",
+        changeSecret: "Gespeichertes Geheimnis ändern",
+        createRole: "Schreibanmeldung einrichten",
+        bindConnection: "Schreibverbindung speichern",
+        manager: "Bitte einen Umgebungsmanager, Datenbankschreibzugriffe einzurichten.",
+        unavailable: "Die Einrichtung von Datenbankschreibzugriffen ist nicht verfügbar.",
+        writer: "Schreibanmeldung der Datenbank",
+        ready: "Datenbankschreibzugriffe sind eingerichtet. Wende sie erneut an, wenn du so weit bist.",
+      },
+      off: "Aus",
+      levels: {
+        none: "Keiner",
+        read: "Lesen",
+        readWriteAsk: "Lesen und schreiben (fragt zuerst)",
+        readWriteNoApproval: "Lesen und schreiben (ohne Freigabe)",
+      },
+    },
+    fleetIngressConnectors: "Konnektoren pro Maschine",
+    fleetIngressConnectorsBody: "Mehr Konnektoren halten die Adresse erreichbar, wenn einer stoppt; jeder belegt etwas Speicher auf der Maschine. Gilt ab dem nächsten Deployment.",
+    privateSharingStop: "Freigabe beenden",
+    privateSharingStopConsequence: ({ service }) => `Wenn du die Freigabe beendest, wird ${service} ab dem nächsten Deployment dieser Umgebung nicht mehr geteilt, und alles, was darauf zugreift, verliert dann die Verbindung.`,
+    privateSharingDetailTitle: ({ service }) => `${service} freigeben`,
+    privateSharingDetailHappier: ({ service }) => `Apps, die diese Umgebung sehen, erreichen ${service} privat über Happier. Der Dienst bleibt vom Internet getrennt.`,
+    privateSharingDetailNetwork: ({ service, network }) => `Apps in ${network} erreichen ${service} über seine private Adresse.`,
   },
 } as const satisfies Pick<Record<deploymentSettingsTranslations__SupportedLanguage, Shared_deploymentSettingsTranslations.DeploymentSettingsTranslations>, "de">;
 
@@ -840,6 +885,7 @@ const deploymentCreationReviewTranslations = {
     fromProject: 'Aus dem Projekt',
     fromAccount: 'Aus deinem Konto',
     fromBuiltin: 'Happiers Standard',
+    createCopy: "Kopie erstellen",
   },
 } as const satisfies Pick<Record<deploymentCreationReviewTranslations__SupportedLanguage, Shared_deploymentCreationReviewTranslations.DeploymentCreationReviewCopy>, "de">;
 
