@@ -38,6 +38,7 @@ import {
     homeFeatureTitle,
 } from './homeFeatureLabels';
 import {
+    HOME_COMMON_FEATURE_IDS,
     HOME_OTHER_FEATURE_FAMILY,
     homeFeatureDependentsTurningOff,
     homeFeaturePendingRestartValue,
@@ -365,6 +366,23 @@ function stagedSwitch(draft: HomeSettingDraft, row: HomeFeatureSwitchRow): boole
     return staged?.kind === 'value' && typeof staged.value === 'boolean' ? staged.value : undefined;
 }
 
+/**
+ * The Common section while the Home and its settings are read: its title, and one row per Common feature in the
+ * rows' final box, so the section stands where it lands. What follows it (Advanced, the device link) arrives below.
+ */
+function FeaturesLoading() {
+    return (
+        <ItemGroup title={t('homeGovernance.features.common')}>
+            <ItemLoadStateRows
+                testID="home-features-loading"
+                state={LOADING}
+                rows={HOME_COMMON_FEATURE_IDS.length}
+                accessibilityLabel={t('homeGovernance.features.title')}
+            />
+        </ItemGroup>
+    );
+}
+
 const EMPTY_DRAFT: HomeSettingDraft = Object.freeze({});
 const NO_INVALID_KEYS: ReadonlySet<string> = new Set();
 
@@ -465,6 +483,16 @@ const FeaturesPage = React.memo(function FeaturesPage(props: Readonly<{ context:
         if (setting) router.setParams({ [SETTING_ANCHOR_QUERY_PARAM]: setting.anchor });
     }, [router, rows]);
 
+    // Known from the Home's answer, so it stands above the Common section before the settings arrive.
+    const readOnlyNote = readOnly ? (
+        <AttentionBanner
+            testID="home-features-admin-read-only"
+            tone="neutral"
+            title={t('homeGovernance.features.adminTitle')}
+            description={t('homeGovernance.features.adminBody')}
+        />
+    ) : null;
+
     if (!canView) {
         return (
             <ItemGroup>
@@ -485,24 +513,17 @@ const FeaturesPage = React.memo(function FeaturesPage(props: Readonly<{ context:
                 />
             );
         }
-        // The Common rows are reserved in their final shape, so nothing moves when they land.
         return (
-            <ItemGroup>
-                <ItemLoadStateRows testID="home-features-loading" state={LOADING} rows={6} accessibilityLabel={t('homeGovernance.features.title')} />
-            </ItemGroup>
+            <>
+                {readOnlyNote}
+                <FeaturesLoading />
+            </>
         );
     }
 
     return (
         <>
-            {readOnly ? (
-                <AttentionBanner
-                    testID="home-features-admin-read-only"
-                    tone="neutral"
-                    title={t('homeGovernance.features.adminTitle')}
-                    description={t('homeGovernance.features.adminBody')}
-                />
-            ) : null}
+            {readOnlyNote}
 
             <ItemGroup title={t('homeGovernance.features.common')}>
                 {rows.common.map((row) => (
@@ -592,6 +613,7 @@ export const HomeAdministrationFeaturesScreen = React.memo(function HomeAdminist
             serverId={props.serverId}
             title={t('homeGovernance.features.title')}
             description={t('homeGovernance.pages.features')}
+            renderLoading={FeaturesLoading}
         >
             {(context) => <FeaturesPage context={context} />}
         </HomeAdministrationSection>

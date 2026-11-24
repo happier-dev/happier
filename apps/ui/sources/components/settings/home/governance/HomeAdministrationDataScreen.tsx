@@ -375,6 +375,23 @@ const DryRunRow = React.memo(function DryRunRow(props: Readonly<{
     );
 });
 
+/**
+ * The deletion section while the Home and its settings are read: its title and purpose, then the rows every Home
+ * has in their final boxes (the deletion switch on one line, dry-run mode under its description, and the owner's
+ * dry run once the Home says who is reading). The retention domains and Backups arrive below them.
+ */
+function DataLoading(props: Readonly<{ dryRun?: boolean }>) {
+    return (
+        <ItemGroup title={t('homeGovernance.data.deletion')} description={t('homeGovernance.data.deletionDescription')}>
+            <ItemLoadStateRows testID="home-data-loading" state={LOADING} rows={1} lines={1} accessibilityLabel={t('homeGovernance.data.title')} />
+            <ItemLoadStateRows testID="home-data-loading-described" state={LOADING} rows={props.dryRun ? 2 : 1} />
+        </ItemGroup>
+    );
+}
+
+/** Before the Home answers, who is reading is not known yet: the rows every reader sees. */
+const renderDataLoading = () => <DataLoading />;
+
 const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdministrationContext }>) {
     const { context } = props;
     const { capabilities } = context.projection;
@@ -443,6 +460,17 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
     }, [context.scope]);
     const handleRunDryRun = React.useCallback(() => { void runDryRun(); }, [runDryRun]);
 
+    const readOnly = !isOwner;
+    // Known from the Home's answer, so it stands above the deletion section before the settings arrive.
+    const readOnlyNote = readOnly ? (
+        <AttentionBanner
+            testID="home-data-admin-read-only"
+            tone="neutral"
+            title={t('homeGovernance.data.adminTitle')}
+            description={t('homeGovernance.data.adminBody')}
+        />
+    ) : null;
+
     if (!canView) {
         return (
             <ItemGroup>
@@ -463,26 +491,18 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
                 />
             );
         }
-        // The retention rows are reserved in their final shape, so nothing moves when they land.
         return (
-            <ItemGroup>
-                <ItemLoadStateRows testID="home-data-loading" state={LOADING} rows={5} accessibilityLabel={t('homeGovernance.data.title')} />
-            </ItemGroup>
+            <>
+                {readOnlyNote}
+                <DataLoading dryRun={isOwner} />
+            </>
         );
     }
 
-    const readOnly = !isOwner;
     const results = lastDryRun(dryRun);
     return (
         <>
-            {readOnly ? (
-                <AttentionBanner
-                    testID="home-data-admin-read-only"
-                    tone="neutral"
-                    title={t('homeGovernance.data.adminTitle')}
-                    description={t('homeGovernance.data.adminBody')}
-                />
-            ) : null}
+            {readOnlyNote}
 
             <ItemGroup title={t('homeGovernance.data.deletion')} description={t('homeGovernance.data.deletionDescription')}>
                 <RetentionSwitchRow
@@ -549,6 +569,7 @@ export const HomeAdministrationDataScreen = React.memo(function HomeAdministrati
             serverId={props.serverId}
             title={t('homeGovernance.data.title')}
             description={t('homeGovernance.pages.data')}
+            renderLoading={renderDataLoading}
         >
             {(context) => <DataPage context={context} />}
         </HomeAdministrationSection>

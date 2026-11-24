@@ -72,6 +72,11 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
      * second argument of `children`.
      */
     childRendersHeader?: boolean;
+    /**
+     * The page's known sections, holding their rows while the Home is read, so the page keeps its shape when the
+     * Home answers (as `TeamSection` does). Without it the wait is one state under the header.
+     */
+    renderLoading?: () => React.ReactNode;
     /** `virtualized-list`: the child draws the page with a `VirtualizedItemList` and places the header in its list header. */
     presentation?: 'item-list' | 'virtualized-list';
     /** The page's own actions in its header once the Home has answered (Invite people on People and Teams). */
@@ -155,7 +160,7 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
 
     if (binding.kind === 'resolving') {
         return conditionPage(
-            <HomeAdministrationStateCard kind="loading" title={t('homeGovernance.loading')} testID="home-admin-resolving" />,
+            props.renderLoading?.() ?? <HomeAdministrationStateCard kind="loading" title={t('homeGovernance.loading')} testID="home-admin-resolving" />,
         );
     }
 
@@ -194,7 +199,7 @@ export const HomeAdministrationSection = React.memo(function HomeAdministrationS
 
     if (state.kind === 'unobserved' || state.kind === 'loading') {
         return conditionPage(
-            <HomeAdministrationStateCard kind="loading" title={t('homeGovernance.loading')} testID="home-admin-loading" />,
+            props.renderLoading?.() ?? <HomeAdministrationStateCard kind="loading" title={t('homeGovernance.loading')} testID="home-admin-loading" />,
         );
     }
 

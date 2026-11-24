@@ -8,6 +8,7 @@ import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayNam
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 
+import { readCurrentServerCredentialAccountScopeLifetime } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useHomeGovernanceSnapshot } from './useHomeGovernanceSnapshot';
 
@@ -59,7 +60,10 @@ export function useHomeAdministration(serverIdRaw: string): HomeAdministrationBi
     const homeName = useHomeDisplayLabel(profile);
 
     const { resolution, binding } = useServerCredentialAccountScopeBinding(serverId);
-    const scope: ServerAccountScope | null = resolution.kind === 'bound' ? resolution.scope : null;
+    // While a page that opens again re-resolves its credential, the Account this device still holds for the Home
+    // keeps its last answer on screen (as a Team page does), so a return visit never shows the wait.
+    const retainedOwner = resolution.kind === 'resolving' && serverId ? readCurrentServerCredentialAccountScopeLifetime(serverId) : null;
+    const scope: ServerAccountScope | null = resolution.kind === 'bound' ? resolution.scope : retainedOwner?.scope ?? null;
 
     // Subscribing is what declares this screen a live consumer of that exact
     // Home; the engine owns when it is fetched and the screen never refetches.
@@ -68,7 +72,14 @@ export function useHomeAdministration(serverIdRaw: string): HomeAdministrationBi
     return React.useMemo<HomeAdministrationBinding>(() => {
         switch (resolution.kind) {
             case 'resolving':
-                return RESOLVING;
+                if (!retainedOwner || !snapshot?.data) return RESOLVING;
+                return Object.freeze({
+                    kind: 'bound' as const,
+                    scope: retainedOwner.scope,
+                    lifetime: retainedOwner,
+                    homeName,
+                    state: resolveHomeGovernanceViewState(snapshot),
+                });
             case 'unavailable':
                 return Object.freeze({ kind: 'credential_unreadable' as const, serverId });
             case 'unknown_home':
@@ -84,5 +95,5 @@ export function useHomeAdministration(serverIdRaw: string): HomeAdministrationBi
                     state: resolveHomeGovernanceViewState(snapshot),
                 });
         }
-    }, [resolution, binding, homeName, snapshot, serverId]);
+    }, [resolution, binding, retainedOwner, homeName, snapshot, serverId]);
 }

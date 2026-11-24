@@ -345,6 +345,54 @@ describe('HomeAdministrationFeaturesScreen', () => {
         expect(row).not.toContain('Max artifact bytes');
     });
 
+    it('holds the Common section in place from the first frame while the Home and its settings are read', async () => {
+        const { HOME_COMMON_FEATURE_IDS } = await import('./homeFeatureRows');
+        const home = await addHome({ admin: true });
+        let answerGovernance!: () => void;
+        let answerSettings!: () => void;
+        const projection = homeGovernanceProjectionFixture();
+        harness.answer(home, GOVERNANCE_PATH, {
+            body: { ...projection, viewer: { ...projection.viewer, homeRole: 'admin' }, capabilities: { ...projection.capabilities, manageHomeSettings: false } },
+            respondAfter: new Promise<void>((resolve) => { answerGovernance = resolve; }),
+        });
+        harness.answer(home, SETTINGS_GET, { body: featuresProjection(), respondAfter: new Promise<void>((resolve) => { answerSettings = resolve; }) });
+        const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
+        resetHomeGovernanceEngineForTests();
+        const screen = await renderScreen(<HomeAdministrationFeaturesScreen serverId={home} />);
+        const reserved = () => collectRenderedTestIds(screen.tree.toJSON()).filter((id) => /^home-features-loading-skeleton:\d+$/.test(id));
+
+        // Before the Home answers: the page header, the Common section and one reserved row per Common feature.
+        await waitForHomeGovernance(() => expect(reserved()).toHaveLength(HOME_COMMON_FEATURE_IDS.length));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-admin-loading');
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('homeGovernance.features.common');
+
+        // The Home answered, its settings have not: the same section, now under the admin's read-only note.
+        await act(async () => { answerGovernance(); });
+        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-features-admin-read-only'));
+        expect(reserved()).toHaveLength(HOME_COMMON_FEATURE_IDS.length);
+        expect(JSON.stringify(screen.tree.toJSON())).toContain('homeGovernance.features.common');
+
+        await act(async () => { answerSettings(); });
+        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-feature:workflows'));
+        expect(reserved()).toEqual([]);
+    });
+
+    it('commits the last-known rows on the first frame of a return visit', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: featuresProjection() });
+        const screen = await renderFeatures(home);
+
+        await screen.update(<React.Fragment />);
+        const committed: string[][] = [];
+        await screen.update(
+            <React.Profiler id="features-return" onRender={() => committed.push(collectRenderedTestIds(screen.tree.toJSON()))}>
+                <HomeAdministrationFeaturesScreen serverId={home} />
+            </React.Profiler>,
+        );
+        expect(committed[0]).toContain('home-feature:workflows');
+        expect(committed.flat().filter((id) => /resolving|loading/.test(id))).toEqual([]);
+    });
+
     it('shows an admin every row read-only, with no switch', async () => {
         const home = await addHome({ admin: true });
         harness.answer(home, SETTINGS_GET, { body: featuresProjection() });

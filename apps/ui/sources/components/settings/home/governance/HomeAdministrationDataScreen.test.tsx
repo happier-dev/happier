@@ -233,6 +233,35 @@ describe('HomeAdministrationDataScreen', () => {
         expect(screen.findByTestId('home-retention:sessionSidechainMessages.mode:keep')).toBeNull();
     });
 
+    it('holds the deletion section in place from the first frame while the Home and its settings are read', async () => {
+        const home = await addHome();
+        let answerGovernance!: () => void;
+        let answerSettings!: () => void;
+        harness.answer(home, GOVERNANCE_PATH, {
+            body: homeGovernanceProjectionFixture(),
+            respondAfter: new Promise<void>((resolve) => { answerGovernance = resolve; }),
+        });
+        harness.answer(home, SETTINGS_GET, { body: dataProjection(), respondAfter: new Promise<void>((resolve) => { answerSettings = resolve; }) });
+        resetHomeGovernanceEngineForTests();
+        const screen = await renderScreen(<HomeAdministrationDataScreen serverId={home} />);
+        const reserved = () => collectRenderedTestIds(screen.tree.toJSON()).filter((id) => /^home-data-loading(-described)?-skeleton:\d+$/.test(id));
+        const text = () => JSON.stringify(screen.tree.toJSON());
+
+        // Before the Home answers: the section's title and purpose, and the two Home switches every Home has.
+        await waitForHomeGovernance(() => expect(reserved()).toHaveLength(2));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-admin-loading');
+        expect(text()).toContain('homeGovernance.data.deletionDescription');
+
+        // The owner's dry run joins them once the Home says who is reading.
+        await act(async () => { answerGovernance(); });
+        await waitForHomeGovernance(() => expect(reserved()).toHaveLength(3));
+        expect(text()).toContain('homeGovernance.data.deletionDescription');
+
+        await act(async () => { answerSettings(); });
+        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-retention:sessions'));
+        expect(reserved()).toEqual([]);
+    });
+
     it('shows an admin the rules read-only, with no control and no dry run', async () => {
         const home = await addHome({ admin: true });
         harness.answer(home, SETTINGS_GET, { body: dataProjection() });
