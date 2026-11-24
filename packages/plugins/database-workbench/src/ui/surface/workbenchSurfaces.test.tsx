@@ -399,9 +399,12 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(reads()).toMatchObject([{ input: { target: descriptor.target } }]);
       expect(await fixture.getByText('Agents can read and ask before writing.')).toBeTruthy();
-      await act(async () => control.press('None'));
+      await act(async () => fixture.press(await fixture.getByRole('button', { name: 'None' })));
+      expect(write).not.toHaveBeenCalled();
+      await act(async () => control.press('Save'));
       expect(await fixture.getByText('Agents can’t use this database.')).toBeTruthy();
       expect(write).toHaveBeenCalledTimes(1);
+      expect(reads()).toHaveLength(1);
     } finally {
       await fixture.dispose();
     }

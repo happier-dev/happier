@@ -22,6 +22,11 @@ export function createResource<T>(load: () => Promise<T>) {
         get: () => state,
         subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
         demand,
+        accept(data: T) {
+            if (disposed) return;
+            request = Promise.resolve();
+            publish({ status: 'ready', data });
+        },
         dispose() { if (disposed) return; disposed = true; request = undefined; publish({ status: 'loading' }); listeners.clear(); },
         invalidate() { if (disposed) return; request = undefined; if (listeners.size) void demand(); },
     };

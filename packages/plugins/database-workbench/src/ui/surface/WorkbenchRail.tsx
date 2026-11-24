@@ -7,6 +7,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import {
   Action,
+  Button,
   ErrorState,
   Icon,
   LoadingState,
@@ -106,9 +107,9 @@ const setAgentAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1)
 function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; level: DatabaseAgentAccessV1 }>) {
   const t = usePluginTranslation();
   const instance = useWorkbenchInstance();
-  const [accepted, setAccepted] = React.useState<DatabaseAgentAccessV1 | null>(null);
-  const [notice, setNotice] = React.useState<Readonly<{ text: string; error?: true; code?: string }> | null>(null);
-  const current = accepted ?? level;
+  const [draft, setDraft] = React.useState<DatabaseAgentAccessV1 | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; error?: true; code?: string; pending?: true }> | null>(null);
+  const selected = draft ?? level;
   const choices = {
     none: t('plugins.database.access.level.none', 'None'),
     read: t('plugins.database.access.level.read', 'Read'),
@@ -120,12 +121,15 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
     if (isPluginActionConfirmationDeclined(result)) return;
     if (result.status === 'success') {
       if (isPluginActionApprovalRequestCreated(result.result)) {
-        setNotice({ text: t('plugins.database.access.pending', 'Waiting for approval.') });
+        setNotice({ text: t('plugins.database.access.pending', 'Waiting for approval.'), pending: true });
         return;
       }
       const reply = DatabaseAccessSetResultV1Schema.safeParse(result.result);
       if (reply.success) {
-        setAccepted(reply.data.agentAccess);
+        const resource = instance.access(targetKey);
+        const current = resource.get().data;
+        if (current?.setBy === 'machine') resource.accept({ ...current, agentAccess: reply.data.agentAccess });
+        setDraft(previous => previous === selected ? null : previous);
         setNotice(null);
         return;
       }
@@ -134,15 +138,19 @@ function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; 
       : { text: t('plugins.database.access.changeFailed', 'The access change could not be confirmed.'), error: true });
   }
   return <Stack gap="small">
-    <Text tone="secondary" variant="meta" value={agentAccessLabel(t, current)} />
+    <Text tone="secondary" variant="meta" value={agentAccessLabel(t, level)} />
     <Row gap="small" wrap>
-      {(Object.keys(choices) as DatabaseAgentAccessV1[]).map(agentAccess => agentAccess === current ? null : (
-        <Action.Control key={agentAccess} action={setAgentAccess} title={choices[agentAccess]} variant="secondary"
-          controller={{ prepare: () => ({ input: projectNativeJsonValueForTransport({
-            target: instance.target(targetKey).target, agentAccess,
-          }) }), onSettled: settle }} />
+      {(Object.keys(choices) as DatabaseAgentAccessV1[]).map(agentAccess => (
+        <Button key={agentAccess} title={choices[agentAccess]} size="small"
+          variant={agentAccess === selected ? 'secondary' : 'plain'}
+          disabled={notice?.pending} onPress={() => setDraft(agentAccess)} />
       ))}
     </Row>
+    <Action.Control action={setAgentAccess} title={t('plugins.database.access.save', 'Save')}
+      disabled={selected === level || notice?.pending}
+      controller={{ prepare: () => ({ input: projectNativeJsonValueForTransport({
+        target: instance.target(targetKey).target, agentAccess: selected,
+      }) }), onSettled: settle }} />
     {notice?.error ? <ErrorState layout="line" title={notice.text} details={notice.code} />
       : notice ? <Text tone="secondary" variant="meta" value={notice.text} /> : null}
   </Stack>;
