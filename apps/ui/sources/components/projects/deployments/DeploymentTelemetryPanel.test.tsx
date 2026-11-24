@@ -52,6 +52,7 @@ const { createTelemetryCaptureReads } = await import('./telemetryCaptureReads');
 const { TelemetryCaptureFixtureProvider, createTelemetryCaptureFixtureTransport } =
   await import('@/dev/testkit/fixtures/telemetryCaptureFixtures');
 const { ModalProvider } = await import('@/modal');
+const { CoreCollectionScope } = await import('@/components/ui/lists/collection/CoreCollectionScope');
 // The app root's shared presentation theme, which the capture views draw with.
 const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
 
@@ -414,9 +415,13 @@ describe('Environment Telemetry tabs', () => {
     const selected = retained.items.find(item => item.id === 'call-b');
     expect(selected?.genAi).toEqual(genAi);
     if (!selected) throw new Error('Expected a retained App LLM call');
-    const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryRequestDetail
-      reads={reads} lifetime={lifetime} active request={selected} locale="en" onBack={() => {}} />
-      </AppPresentationPlatformProvider>);
+    const screen = await renderScreen(
+      <AppPresentationPlatformProvider>
+        <CoreCollectionScope>
+          <TelemetryRequestDetail reads={reads} lifetime={lifetime} active request={selected} locale="en" onBack={() => {}} />
+        </CoreCollectionScope>
+      </AppPresentationPlatformProvider>,
+    );
     try {
       await settle();
       expect(calls.map(request => request.input)).toEqual([
