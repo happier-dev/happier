@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { projectArtifactBoundaryReadRow } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
@@ -30,6 +30,8 @@ import { type DatabaseDescriptorV1 } from '@happier-dev/plugin-sdk/database';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+
+import { installHostResourceWatchSocket } from './resourceWatchSocket.testFixture';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -90,8 +92,16 @@ describe('deployment scoped read transport', () => {
         const metadata = [...details.map(detail => detail.environment), {
             ...details[0]!.environment, id: 'unreadable', contentArtifactId: 'missing-private-header', name: 'Never use metadata title',
         }];
-        homes.answer(serverId, root, { body: { ok: true, items: metadata, nextCursor: 'next', coverage: 'partial' } });
-        homes.answer(serverId, `${root}/first`, { body: { ok: true, environment: details[0]!.environment, targetLinks: [] } });
+        const environmentReadIds: string[][] = [];
+        homes.answer(serverId, root, { select: (_input, request) => {
+            const ids = new URL(request.url).searchParams.getAll('environmentIds');
+            environmentReadIds.push(ids);
+            return ids.length > 0
+                ? { body: { ok: true, items: metadata.filter(environment => ids.includes(environment.id)),
+                    nextCursor: null, coverage: 'complete' } }
+                : { body: { ok: true, items: metadata, nextCursor: 'next', coverage: 'partial' } };
+        } });
+        homes.answer(serverId, `${root}/first`, { status: 403 });
         await homes.addHome({ name: 'Focused foreign Home', serverUrl: 'https://foreign-subject-names.test', accountId: 'foreign-owner', active: true });
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
@@ -107,13 +117,15 @@ describe('deployment scoped read transport', () => {
                 .toEqual([{ artifactIds: metadata.map(environment => environment.contentArtifactId), projection: 'headers' }]);
             expect(reads.every(request => request.serverId === serverId)).toBe(true);
             const exactBefore = homes.requests.length;
+            const exactMetadataBefore = environmentReadIds.length;
             expect(await readAutomationSubjectPickerSelection({ lifetime,
-                subject: { kind, serverId, environmentId: 'first' } })).toEqual({
+                subject: { kind, serverId, environmentId: 'first' } })).toMatchObject({
                 label: 'Private staging', subject: { kind, serverId, environmentId: 'first' },
             });
             const exact = homes.requests.slice(exactBefore);
-            expect([...new Set(exact.filter(request => request.path.startsWith(root)).map(request => request.path.split('?')[0]))])
-                .toEqual([`${root}/first`]);
+            expect(exact.filter(request => request.path.startsWith(root)).map(request => request.path.split('?')[0]))
+                .toEqual([root]);
+            expect(environmentReadIds.slice(exactMetadataBefore)).toEqual([['first']]);
             expect(exact.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
                 .toEqual([{ artifactIds: [details[0]!.environment.contentArtifactId], projection: 'headers' }]);
         }
@@ -846,29 +858,26 @@ describe('deployment scoped read transport', () => {
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } } };
         } });
         const methods: string[] = [];
-        let deliver: (() => void) | undefined;
-        homes.answer(serverId, actionPath, { select: async (body, request) => {
+        homes.answer(serverId, actionPath, { select: body => {
             const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
             const continuation = envelope.resourceContinuation;
-            if (!continuation) throw new Error('Expected the existing Services Resource continuation');
+            if (continuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
+                throw new Error('Expected the existing Services Resource read');
+            }
             expect(envelope.input).toMatchObject({ environmentId: detail.environment.id });
             methods.push(continuation.method);
-            const reply = (result: unknown): HomeDomainAnswer => ({ body: { v: 1, actionId,
-                requestId: envelope.requestId, execution: { ok: true, result } } });
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) return reply(denied
+            const result = denied
                 ? { ok: false, code: 'deployment_access_denied', reason: 'unavailable' }
-                : { ok: true, resource: continuation.params.resource, contentType: 'application/json', ...content() });
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) return reply({ ok: true,
-                subscriptionId: continuation.params.subscriptionId, digest: content().digest });
-            if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
-            return new Promise<HomeDomainAnswer>(resolve => {
-                deliver = () => resolve(reply({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated',
-                    subscriptionId: continuation.params.subscriptionId, digest: content().digest } }));
-                const abort = () => resolve(reply({ ok: true, status: 'idle' }));
-                request.signal?.addEventListener('abort', abort, { once: true });
-                if (request.signal?.aborted) abort();
-            });
+                : { ok: true, resource: continuation.params.resource, contentType: 'application/json', ...content() };
+            return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } };
         } });
+        let invalidate: ((digest: string) => void) | undefined;
+        const disconnect = vi.fn();
+        const socket = installHostResourceWatchSocket({
+            actionId, digest: () => content().digest,
+            onOpen: watch => { invalidate = watch.invalidate; },
+            onDisconnect: disconnect,
+        });
         const transport = createDeploymentReadTransport(lifetime);
         homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: {
             ok: true, environment: detail.environment, targetLinks: [targetLink],
@@ -892,30 +901,36 @@ describe('deployment scoped read transport', () => {
             await act(async () => controller.invalidate(Array.from({ length: 100 }, (_, i) => ({ environmentId: `peer-${i}`, deploymentId: `receipt-${i}` }))));
             expect(homes.requests).toHaveLength(reads);
             expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(1);
-            await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
-            const firstDelivery = deliver;
-            state = 'up'; deliver?.();
+            await vi.waitFor(() => expect(invalidate).toBeTypeOf('function'));
+            state = 'up';
+            invalidate?.(content().digest);
             await vi.waitFor(() => expect(feed()?.members[0]?.services[0]).toMatchObject({ state: 'up', observedAt: 200, reason: null }));
             await vi.waitFor(() => expect(hook.getCurrent().result).toMatchObject({ status: 'ready', items: [{ services: [{ state: 'up', observedAt: 200 }] }] }));
             expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(2);
-            await vi.waitFor(() => expect(deliver).not.toBe(firstDelivery));
-            const mismatchDelivery = deliver;
-            installationId = 'replacement-installation'; deliver?.();
+            installationId = 'replacement-installation';
+            invalidate?.(content().digest);
             await vi.waitFor(() => expect(feed()).toMatchObject({ status: 'unavailable', members: [{
                 machineId: 'machine', installationId: 'installation', status: 'unavailable', services: [],
                 failure: { code: 'target_mismatch' },
             }] }));
             await vi.waitFor(() => expect(hook.getCurrent().result).toMatchObject({ status: 'unavailable', reason: 'target_mismatch' }));
             expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(3);
-            await vi.waitFor(() => expect(deliver).not.toBe(mismatchDelivery));
-            denied = true; deliver?.();
+            denied = true;
+            state = 'down';
+            invalidate?.(content().digest);
             await vi.waitFor(() => expect(feed()).toMatchObject({ status: 'unavailable', members: [{
                 failure: { code: 'deployment_access_denied' },
             }] }));
             await vi.waitFor(() => expect(hook.getCurrent().result).toEqual({ status: 'denied', reason: 'deployment_access_denied', items: [] }));
             expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(4);
-        } finally { await hook.unmount(); controller.retire(); await flushHookEffects(); }
-        await vi.waitFor(() => expect(methods).toContain(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE));
+            expect(socket).toHaveBeenCalledTimes(1);
+        } finally {
+            await hook.unmount();
+            controller.retire();
+            await flushHookEffects();
+            socket.mockRestore();
+        }
+        expect(disconnect).toHaveBeenCalledTimes(1);
         expect(homes.requests.some(request => request.path.includes('deployments.health'))).toBe(false);
     });
 
