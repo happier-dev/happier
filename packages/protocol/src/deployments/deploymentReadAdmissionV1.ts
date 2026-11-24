@@ -80,6 +80,16 @@ export type DeploymentReadAdmissionV1 = z.infer<typeof DeploymentReadAdmissionV1
 
 export type DeploymentTelemetryReadAdmissionV1 = Extract<DeploymentReadAdmissionV1, { telemetryCollector: unknown }>;
 
+/**
+ * One decision for Machine Use: an admission that reads or writes an Environment's database
+ * (a database Action on `databaseTarget`, the Environment listing, or a service size read). Home
+ * admits the person through the Environment owner, so the Machine carries it with Use.
+ */
+export function isEnvironmentDatabaseAdmissionV1(admission: DeploymentReadAdmissionV1 | undefined): boolean {
+  return admission !== undefined && ('databaseTarget' in admission || 'databaseEnvironment' in admission
+    || admission.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1);
+}
+
 /** The Home an admitted read names, which the receiving daemon matches to its own Home identity. */
 export function readDeploymentReadAdmissionHomeIdV1(admission: DeploymentReadAdmissionV1, input: unknown): string | null {
   if ('databaseTarget' in admission) return admission.databaseTarget.environment.serverId;

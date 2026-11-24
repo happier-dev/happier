@@ -310,7 +310,8 @@ export type CreatePluginSurfaceHostApiInput = Readonly<{
      * installed method during an environment refresh without replacing the
      * mount, its public adapter, or its cancellation lifetime.
      */
-    isMethodAvailable?: (method: PluginUiHostMethodV1) => boolean;
+    /** A request also passes its payload, so an owner can admit one exact call its method set withholds. */
+    isMethodAvailable?: (method: PluginUiHostMethodV1, payload?: unknown) => boolean;
     /** Host-private context for an existing provenance-tagged unavailable result. */
     resolveUnavailableError?: (error: PluginUiHostApiErrorPayloadV1, request: PluginUiHostApiRequestEnvelopeV1) => PluginUiHostApiErrorPayloadV1 | undefined;
     /** Positive host readiness observation; unrelated or settled refusals remain terminal. */
@@ -373,7 +374,7 @@ export function createPluginSurfaceHostApi(
         ));
     };
     const isMethodAvailable = input.isMethodAvailable
-        ? (method: PluginUiHostMethodV1) => method === 'presentActionFailure' || input.isMethodAvailable!(method)
+        ? (method: PluginUiHostMethodV1, payload?: unknown) => method === 'presentActionFailure' || input.isMethodAvailable!(method, payload)
         : undefined;
     let disposed = false;
     const connectionSettlement = createPluginConnectionSettlement();
@@ -436,7 +437,7 @@ export function createPluginSurfaceHostApi(
         // live set repeats currentness and unrelated method admissions;
         // negotiation getters still read that complete set independently.
         if (releasedMethod.success && ((releasedMethod.data !== 'context' && releasedMethod.data !== 'presentActionFailure' && handlers[releasedMethod.data] === undefined)
-            || (isMethodAvailable !== undefined && !isMethodAvailable(releasedMethod.data)))) {
+            || (isMethodAvailable !== undefined && !isMethodAvailable(releasedMethod.data, request.payload)))) {
             // Structural absence and transient narrowing are different facts.
             // Keep the method admitted while its connection is pending; a
             // settled outage still returns the existing unavailable envelope.

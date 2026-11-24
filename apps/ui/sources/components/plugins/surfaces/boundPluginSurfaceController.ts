@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { projectDeploymentReadAdmissionV1, isEnvironmentDatabaseAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { PopoverAnchor } from '@/components/ui/popover';
 
 import { useUiSurfaceOwnerLifetime } from '@/components/plugins/hostApi/useUiSurfaceOwnerLifetime';
@@ -1092,9 +1094,20 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         const target = facts.machineId ? facts : resolveDaemonBinding(facts);
         return !target?.machineId || canManageMachine(resolveServerScopedMachine(storage.getState(), target.serverId, target.machineId));
     };
-    const isMethodAvailable = (method: PluginUiHostMethodV1): boolean => {
+    // Home carries a database Action on an Environment database with Machine Use (P3 M7); the same
+    // projector decision admits that one exact call while other Actions keep the Manage affordance.
+    const isEnvironmentDatabaseCall = (method: PluginUiHostMethodV1, payload: unknown): boolean => {
+        if (method !== 'executeAction') return false;
+        const parsed = PluginUiExecuteActionRequestV1Schema.safeParse(payload);
+        if (!parsed.success) return false;
+        const action = typeof parsed.data.action === 'string'
+            ? { pluginId: input.facts.pluginId, localId: parsed.data.action } : parsed.data.action;
+        return isEnvironmentDatabaseAdmissionV1(projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1,
+            { action, input: parsed.data.input }));
+    };
+    const isMethodAvailable = (method: PluginUiHostMethodV1, payload?: unknown): boolean => {
         if ((method === 'executeAction' || method === 'admitAction'
-            || method === 'actionControl') && !canManageActions()) return false;
+            || method === 'actionControl') && !canManageActions() && !isEnvironmentDatabaseCall(method, payload)) return false;
         return method === 'context' || method === 'openSurface' || method === 'openConnectedAccounts'
             || (isInteractionCurrent() && (((canAdmitHostReads || hasAccountResources()) && (method === 'readResource' || method === 'watchResource'))
                 || !isDaemonOwnedPluginSurfaceMethod(method) || isDaemonInteractionEnabled(false)));

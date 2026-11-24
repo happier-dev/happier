@@ -174,6 +174,30 @@ it.each(['own', 'parent'] as const)('keeps a Can-use plugin view readable while 
     expect(controller.actionsReadOnly).toBe(false);
 });
 
+it('admits Can-use executeAction only for a database Action on an Environment database target', async () => {
+    // P3 M7: Home carries an Environment database Action with Machine Use; the mount consumes the same
+    // projector decision instead of withdrawing every Action for a chosen editor.
+    const previous = storage.getState();
+    onTestFinished(() => storage.setState(previous));
+    const shared = createMachineFixture({ id: FACTS.machineId, isShared: true,
+        access: { role: 'use', accessState: 'ready', resourceMode: 'plain', custodian: { accountId: 'owner', displayName: 'Owner' } } });
+    storage.setState({ machineListByServerId: { [FACTS.serverId]: [shared] }, machineListStatusByServerId: { [FACTS.serverId]: 'idle' } });
+    const controller = createBoundPluginSurfaceController({ facts: FACTS });
+    onTestFinished(() => controller.dispose());
+    const methodRefusal = { code: 'unavailable', diagnostics: ['host_api_method_unavailable:executeAction'] };
+    const environmentTarget = { kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'source',
+        environmentId: 'environment' }, deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'database', database: 'app' };
+    const database = (localId: string, input: unknown) => Promise.resolve(controller.hostApi.handleRequest(request('executeAction', {
+        action: { pluginId: 'happier.database', localId }, input })));
+    await expect(database('describe', { operation: 'describe', target: environmentTarget })).resolves.not.toMatchObject(methodRefusal);
+    await expect(database('targets/list', { scope: { kind: 'environment', environment: environmentTarget.environment } }))
+        .resolves.not.toMatchObject(methodRefusal);
+    await expect(database('describe', { operation: 'describe', target: { kind: 'manual', associationId: 'association' } }))
+        .resolves.toMatchObject(methodRefusal);
+    await expect(Promise.resolve(controller.hostApi.handleRequest(request('executeAction', { action: 'install', input: {} }))))
+        .resolves.toMatchObject(methodRefusal);
+});
+
 describe('mounted host Resource admission', () => {
     it('distinguishes complete current full-describe Resource sets from absent, partial and retired sources', async () => {
         const installed = { ...widgetInstalledPackage('acme.browser', 'Browser'), occurrenceId: FACTS.occurrenceId };

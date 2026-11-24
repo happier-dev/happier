@@ -224,6 +224,7 @@ import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/boa
 import { SessionSystemRecordAddressSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
 import { projectExternalActionPendingResetStartAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionDeploymentReadEnvelopeAdmissionV1, type DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { isEnvironmentDatabaseAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -484,8 +485,7 @@ function isEnvironmentDatabaseAction(input: ExternalActionExecutionMachineAdmiss
     } catch {
         return false;
     }
-    return admission !== undefined && ('databaseTarget' in admission || 'databaseEnvironment' in admission
-        || admission.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1);
+    return isEnvironmentDatabaseAdmissionV1(admission);
 }
 
 async function resolveExternalActionExecutionMachineAccessInTx(
