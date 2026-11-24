@@ -1654,11 +1654,18 @@ describe('the Session-start wire', () => {
         ).toBe(true);
     });
 
-    it.each(['created', 'carrier mismatch', 'agent signed out'] as const)('starts from the exact provider Action through native Session admission (%s)', async (outcome) => {
+    it.each(['created', 'carrier mismatch', 'agent signed out', 'team credential removed', 'update required'] as const)('starts from the exact provider Action through native Session admission (%s)', async (outcome) => {
         const mismatch = outcome === 'carrier mismatch';
         const failureCause = { phase: 'session.launch.authentication', errorClass: 'Error',
             errorCode: 'agent_signed_out', httpStatus: null } as const;
-        const spawnFailure = { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'pi' } as const;
+        const spawnFailure = outcome === 'team credential removed'
+            ? { type: 'error', code: 'session_team_credential_binding_rejected', retryable: false, reason: 'access_removed' } as const
+            : outcome === 'update required'
+                ? { type: 'error', code: 'update_required', retryable: false, details: {
+                    kind: 'update_required', component: 'daemon', operation: 'session.spawn_new', reason: 'creation protocol unavailable',
+                } } as const
+                : { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'pi' } as const;
+        const refused = outcome !== 'created' && !mismatch;
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
         const base = createTriageSelectedPrStartApprovalInput();
@@ -1707,8 +1714,10 @@ describe('the Session-start wire', () => {
         const context = await createContext(collections, invoker, async (actionId, actionInput) => {
             if (actionId === 'session.spawn_new') {
                 const spawn = PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput);
-                if (spawn.teamCredentialBindings === undefined || outcome === 'agent signed out') {
-                    throw new PluginError({ code: spawnFailure.code, details: spawnFailure, failureCause });
+                expect(spawn.teamCredentialBindings).toEqual(recipe.teamCredentialBindings);
+                if (refused) {
+                    throw new PluginError({ code: spawnFailure.code, details: spawnFailure,
+                        ...(outcome === 'agent signed out' ? { failureCause } : {}) });
                 }
                 return invoker.execute(actionId, spawn);
             }
@@ -1744,8 +1753,9 @@ describe('the Session-start wire', () => {
             },
         } } as unknown as PluginInvocationContext); // Host admission, Action RPC and Collection boundaries.
         expect(prepared).toBe(!mismatch);
-        if (outcome === 'agent signed out') {
-            expect(result).toMatchObject({ type: 'creationFailed', failureCode: spawnFailure.code, failureCause, spawnFailure });
+        if (refused) {
+            expect(result).toMatchObject({ type: 'creationFailed', failureCode: spawnFailure.code, spawnFailure,
+                ...(outcome === 'agent signed out' ? { failureCause } : {}) });
             expect(invoker.callsFor('session.open')).toHaveLength(0);
             return;
         }

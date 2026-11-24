@@ -458,18 +458,14 @@ export async function readGithubPullRequest(
   }
 
   if (response.status === 404) {
-    // Pull requests do not transfer; they close. The issue-only status contract is NOT
-    // generalized onto this endpoint.
+    // Repository metadata can remain readable when the credential cannot
+    // read pull requests. The repository lookup can establish that the path
+    // was reassigned, but cannot establish that the pull request is absent.
     const confirmation = await confirmRepositoryIdentity(
       repositories,
       route,
       localRef.collisionScope,
     );
-    if (confirmation === 'confirmed') {
-      return observed(Object.freeze({ kind: 'absent' as const, localRef }));
-    }
-    // A different repository now occupying this path is a stale locator, not a
-    // deleted pull request: the route no longer names this entry's repository.
     return observed(unresolved(
       localRef,
       confirmation === 'reassigned'

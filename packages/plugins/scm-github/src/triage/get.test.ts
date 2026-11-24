@@ -311,18 +311,17 @@ describe('GitHub triage get', () => {
     expect(observation.kind === 'unresolved' && observation.failure.class).toBe('unknown');
   });
 
-  it('concludes absent for a pull request only on 404 with a readable repository', async () => {
-    const { observation, transport } = await runGet({
+  it('keeps a masked pull request 404 unresolved even when its repository reads 200', async () => {
+    const { observation } = await runGet({
       localRef: PULL_REQUEST_REF,
       respond: (request) => (request.url.includes('/pulls/')
         ? { status: 404, body: { message: 'Not Found' } }
         : { status: 200, body: GITHUB_REPOSITORY_RESPONSE }),
     });
 
-    // The confirming repository read is a private proof step, not emitted metadata.
-    expect(transport.requests).toHaveLength(2);
-    expect(observation).toEqual({ kind: 'absent', localRef: PULL_REQUEST_REF });
-    expect(Object.keys(observation)).toEqual(['kind', 'localRef']);
+    const result = TriageGetResultV1Schema.parse(toTriageGetResult(observation, createTriageSourceV1Fixture().configuredInstance));
+    expect(result).toMatchObject({ kind: 'unresolved', localRef: PULL_REQUEST_REF,
+      failure: { code: 'github_not_found' } });
   });
 
   it('treats an issue 404 as unresolved even when the old repository reads 200', async () => {

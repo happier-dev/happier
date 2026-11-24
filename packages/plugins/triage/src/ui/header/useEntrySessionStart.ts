@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, useSurfaceContext } from '@happier-dev/plugin-ui';
-import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1 } from '../../sessions/entrySessionStartController.js';
+import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1, type TriageEntrySessionStartPhaseV1 } from '../../sessions/entrySessionStartController.js';
 import {
     readTriageEntrySessionStartTargetV1,
     type TriageEntrySessionStartChoiceInputV1, type TriageEntrySessionStartChoicesHostV1,
@@ -21,6 +21,22 @@ export function projectTriageEntrySessionSettlement(
     return isPluginActionConfirmationDeclined(settlement) ? { status: 'idle' } : settlement;
 }
 
+function createReviewStartScope(controller: ReturnType<typeof createTriageEntrySessionStartController>, retire: () => void) {
+    const value: { controller?: typeof controller; settlement?: TriageEntrySessionStartPhaseV1 } = { controller };
+    return {
+        value,
+        retainWhenIdle: true as const,
+        onIdle: () => {
+            const retained = value.controller?.dispose(settlement => {
+                delete value.controller;
+                value.settlement = settlement;
+            });
+            if (!retained) retire();
+        },
+        dispose: () => { value.controller?.dispose(); },
+    };
+}
+
 export function useTriageEntrySessionStart(
     options?: TriageEntrySessionStartOptionsV1 & Readonly<{ reviewKey?: string }>,
 ): TriageEntrySessionStartUiControllerV1 {
@@ -32,20 +48,17 @@ export function useTriageEntrySessionStart(
     const [shared, setShared] = React.useState<Readonly<{ local: typeof local; owner: typeof local }> | null>(null);
     React.useLayoutEffect(() => {
         const lease = scope === null || reviewKey === undefined ? null : scope.acquire(`triage.review-entry-start.v1:${reviewKey}`, () => ({
-            value: local,
-            retainWhenIdle: true,
-            onIdle: () => {
-                local.dispose(true);
-                if (!local.hasAdmittedReview()) lease?.retire?.();
-            },
-            dispose: () => local.dispose(),
+            ...createReviewStartScope(local, () => lease?.retire?.()),
         }));
         if (lease === null) {
             local.activate(host);
             return () => local.dispose();
         }
-        lease.value.activate(host);
-        setShared({ local, owner: lease.value });
+        const owner = lease.value.controller ?? local;
+        owner.activate(host, lease.value.settlement);
+        lease.value.controller = owner;
+        delete lease.value.settlement;
+        setShared({ local, owner });
         return lease.release;
     }, [scope, reviewKey, local, host]);
     const owner = shared?.local === local ? shared.owner : local;

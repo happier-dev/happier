@@ -11,25 +11,29 @@ export async function listGithubCreationPlaces(raw: unknown, context: GithubTria
   const input = TriageSourceCredentialInputsV1.listCreationPlaces.parse(raw);
   const resolved = resolveGithubTriageInstance(input.instance);
   if (!resolved.ok) return { kind: 'failed', failure: resolved.failure };
-  // The configured selection can identify an exact repository without relying on search.
+  // A unique configured short name can still resolve when directory search is unavailable.
   const selection = resolved.configuration.selection;
   const name = input.query?.trim().toLowerCase();
-  const nameMatches = input.scopeId === undefined && name && !name.includes('/') && selection.kind === 'selected'
+  const nameMatches = input.scopeId === undefined && input.cursor === undefined && name && !name.includes('/') && selection.kind === 'selected'
     ? selection.unitIds.filter(id => parseGithubRoutingToken(id)?.name === name) : [];
-  const route = parseGithubRoutingToken(input.scopeId ?? (nameMatches.length === 1 ? nameMatches[0] : input.query));
+  const inferred = nameMatches.length === 1;
+  const route = parseGithubRoutingToken(input.scopeId ?? (inferred ? nameMatches[0] : input.query));
   const scopeId = input.scopeId ?? (route === null ? null : buildGithubRepositoryKey(route));
-  if (route === null || scopeId === null || !githubSelectionIncludes(resolved.configuration, scopeId)) {
+  const selected = route !== null && scopeId !== null && githubSelectionIncludes(resolved.configuration, scopeId);
+  if (!selected || inferred) {
     if (input.scopeId !== undefined) return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'github_repository_not_included' } };
     const result = await readGithubTriageScopeDirectory({ v: 1,
       draft: { v: 1, binding: input.instance.binding, configuration: input.instance.configuration, localInstanceKey: input.instance.localInstanceKey },
       ...(input.query === undefined ? {} : { query: input.query }), ...(input.cursor === undefined ? {} : { cursor: input.cursor }) }, context);
-    if (result.kind === 'failed') return result;
-    const { units, selection: _selection, repositories, ...page } = result;
-    const facts = new Map(repositories?.map(repository => [repository.repositoryKey, repository]));
-    return TriageTaskCreationPlacesResultV1Schema.parse({ ...page,
-      places: units.map(unit => ({ id: unit.id, label: unit.label, kindId: 'issue', fields: { scopeId: unit.id },
-        ...(githubSelectionIncludes(resolved.configuration, unit.id) ? creationRefusal(facts.get(unit.id)) : { refusal: { reason: 'github_repository_not_included', message: 'Not part of this connection' } }),
-      })) });
+    if (result.kind !== 'failed') {
+      const { units, selection: _selection, repositories, ...page } = result;
+      const facts = new Map(repositories?.map(repository => [repository.repositoryKey, repository]));
+      return TriageTaskCreationPlacesResultV1Schema.parse({ ...page,
+        places: units.map(unit => ({ id: unit.id, label: unit.label, kindId: 'issue', fields: { scopeId: unit.id },
+          ...(githubSelectionIncludes(resolved.configuration, unit.id) ? creationRefusal(facts.get(unit.id)) : { refusal: { reason: 'github_repository_not_included', message: 'Not part of this connection' } }),
+        })) });
+    }
+    if (!selected) return result;
   }
   const opened = await openGithubTriageClient(input.instance, context);
   if (!opened.ok) return { kind: 'failed', failure: opened.failure };

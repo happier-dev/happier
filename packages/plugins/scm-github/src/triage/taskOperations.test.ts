@@ -155,6 +155,32 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
     } finally { await plugin.dispose(); }
   });
 
+  it.each([200, 404])('preserves the directory for an inferred repository (exact HTTP %s)', async exactStatus => {
+    const alternative = 'another-owner/example-app';
+    const transport = createStubGithubTransport({ respond: (request) => {
+      const url = new URL(request.url);
+      const repository = { ...GITHUB_REPOSITORY_RESPONSE, full_name: route, has_issues: true };
+      if (url.pathname === `/repos/${route}`) return { status: exactStatus, body: repository };
+      if (url.pathname !== '/search/repositories') return undefined;
+      if (url.searchParams.get('page') === '2') {
+        return { status: 200, body: { total_count: 2, items: [{ ...repository, full_name: alternative, id: repository.id + 1 }] } };
+      }
+      url.searchParams.set('page', '2');
+      return { status: 200, body: { total_count: 2, items: [repository] }, headers: { link: `<${url}>; rel="next"` } };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    try {
+      const read = { v: 1, instance, query: 'example-app' };
+      const first = await plugin.invokeAction('triage/list-github-creation-places', read);
+      expect(first).toMatchObject({ kind: 'page', status: 'partial', places: [{ id: route }], nextCursor: { v: 1 } });
+      const { nextCursor } = first as { nextCursor: { v: number; token: string } };
+      expect(await plugin.invokeAction('triage/list-github-creation-places', { ...read, cursor: nextCursor }))
+        .toMatchObject({ kind: 'page', places: [{ id: alternative, refusal: { reason: 'github_repository_not_included' } }] });
+    } finally { await plugin.dispose(); }
+  });
+
   it('does not replay a create whose response is lost or guess the created identity', async () => {
     const transport = createStubGithubTransport({ respond: (request) => {
       if (request.method === 'POST') throw new Error('response lost after dispatch');

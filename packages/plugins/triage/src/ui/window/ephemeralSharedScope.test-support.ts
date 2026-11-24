@@ -59,6 +59,11 @@ export function createTriageEphemeralSharedScopeOriginFixture(): Readonly<{
           let released = false;
           return Object.freeze({
             value: entry.value as T,
+            retire() {
+              if (values.get(key) !== entry) return;
+              values.delete(key);
+              entry!.dispose();
+            },
             release() {
               if (released) return;
               released = true;

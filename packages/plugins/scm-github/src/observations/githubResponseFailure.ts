@@ -31,11 +31,10 @@ import {
  *    repository this credential cannot see is indistinguishable from a deletion, and
  *    treating it as absence deletes a real row with its marks and Session links.
  *  - `GET /repos/{owner}/{repo}/pulls/{number}` publishes no such `410`/`301` contract.
- *    Pull requests do not transfer; they close. Its absence ladder therefore stays
- *    `404` plus a readable-repository confirmation, and the issue ladder is NOT
- *    generalized onto it.
- *  - A bare `404` on either endpoint is permission-masked and indistinguishable from
- *    "exists but you cannot see it".
+ *    Pull requests do not transfer. A pull request `404` can mask a missing
+ *    pull-request permission even when the repository metadata is readable.
+ *  - A `404` on either endpoint is indistinguishable from "exists but you
+ *    cannot see it".
  *  - `403` is NOT globally throttling. GitHub answers `403` with
  *    `x-accepted-github-permissions` when a permission is missing, and uses `403` for a
  *    secondary rate limit only with the documented limit message or an exhausted

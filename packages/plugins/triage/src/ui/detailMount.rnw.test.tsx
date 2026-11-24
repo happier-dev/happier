@@ -3972,7 +3972,8 @@ describe('opening a row into the source detail', () => {
         failed = false;
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
-        expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+        expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE,
+            sourceInstanceRowId: instanceRow().instanceTag, includeTaskFields: true }]);
     });
 
     it('reads a cold route through its admitted connection before list scans settle', async () => {
@@ -3984,7 +3985,8 @@ describe('opening a row into the source detail', () => {
         try {
             await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
             expect(currentHarness?.initialScanInstanceIds).toEqual([INSTANCE]);
-            expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+            expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE,
+                sourceInstanceRowId: instanceRow().instanceTag, includeTaskFields: true }]);
         } finally {
             await act(async () => { scan.resolve(); });
         }

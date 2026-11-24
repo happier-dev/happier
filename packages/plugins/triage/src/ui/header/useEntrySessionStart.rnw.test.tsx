@@ -531,6 +531,13 @@ it('shows the typed Review Session refusal after the approval route retires the 
     await settle();
     expect(startInputs).toHaveLength(2);
     expect(mintedKeys).toEqual(['minted-key-1', 'minted-key-2']);
+
+    probeVisible = false;
+    await act(async () => { await fixture.updateSurface(fixture.context.surface); });
+    probeVisible = true;
+    await act(async () => { await fixture.updateSurface(fixture.context.surface); });
+    await settle();
+    expect(phase).toEqual({ kind: 'idle' });
 });
 
 describe('single-entry compose checkout handoff', () => {

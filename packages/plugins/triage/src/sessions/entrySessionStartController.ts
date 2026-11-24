@@ -532,7 +532,16 @@ export function createTriageEntrySessionStartController(
     let authoringResult: 'seeded' | 'cancelled' | undefined;
     const listeners = new Set<() => void>();
     let snapshot: TriageEntrySessionStartControllerV1;
-    const notify = () => { snapshot = readSnapshot(); for (const listener of listeners) listener(); };
+    let deliverDetachedSettlement: ((phase: TriageEntrySessionStartPhaseV1) => void) | undefined;
+    const notify = () => {
+        snapshot = readSnapshot();
+        for (const listener of listeners) listener();
+        if (deliverDetachedSettlement !== undefined && !hasPendingReview()) {
+            const deliver = deliverDetachedSettlement;
+            deliverDetachedSettlement = undefined;
+            deliver(phase);
+        }
+    };
     const setPhase = (value: TriageEntrySessionStartPhaseV1) => { phase = value; notify(); };
     let review: TriagePendingPullRequestReviewV1 | null = null;
     const setReview = (value: TriagePendingPullRequestReviewV1 | null) => { review = value; notify(); };
@@ -546,6 +555,7 @@ export function createTriageEntrySessionStartController(
     // fact here: a Session the user navigates back to is reached through its
     // link, not through a remembered start.
     const custody = ({ current: null } as { current: TriageEntrySessionStartCustodyV1 | null });
+    const hasPendingReview = () => admittedReview && (inFlight.current || custody.current !== null || review !== null);
     // Absent options resolve to the one module-level default, so the ordinary
     // caller keeps a referentially stable `start`.
     const mintCreationKey = options?.mintCreationKey ?? mintRandomCreationKey;
@@ -1289,18 +1299,22 @@ export function createTriageEntrySessionStartController(
                 ...(recovery.reviewInstructions === undefined ? {} : { reviewInstructions: recovery.reviewInstructions }),
             };
         },
-        hasAdmittedReview: () => admittedReview,
-        activate: (nextHost: TriageStartHostV1 = host) => {
+        activate: (nextHost: TriageStartHostV1 = host, settlement?: TriageEntrySessionStartPhaseV1) => {
             host = nextHost;
             retired.current = false;
+            deliverDetachedSettlement = undefined;
             if (selectionLifetime.signal.aborted) selectionLifetime = new AbortController();
+            if (settlement !== undefined) setPhase(settlement);
         },
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        dispose: (retainAdmittedReview = false) => {
-            if (!retainAdmittedReview) admittedReview = false;
+        dispose: (onDetachedSettlement?: (phase: TriageEntrySessionStartPhaseV1) => void) => {
+            const retain = onDetachedSettlement !== undefined && hasPendingReview();
+            deliverDetachedSettlement = retain ? onDetachedSettlement : undefined;
+            if (!retain) admittedReview = false;
             retired.current = true;
             selectionLifetime.abort();
             listeners.clear();
+            return retain;
         },
         waitForSettled,
     });

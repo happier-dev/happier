@@ -3,9 +3,9 @@ import type {
     PluginActionInputById,
     PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
-import { ActionFailureCauseV1Schema, isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
 import { completeSessionInputLifecycleV1, runSessionInputDestinationV1, spawnSessionInputDestinationV1, projectSessionInputSpawnFailureV1,
-    SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, SPAWN_SESSION_ERROR_CODES, type SessionId } from '@happier-dev/plugin-sdk/sessions';
+    SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
 import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
@@ -234,23 +234,6 @@ export type TriageEntrySessionDepsV1 = Readonly<{
     signal?: AbortSignal;
 }>;
 
-async function spawnEntrySession(
-    deps: TriageEntrySessionDepsV1,
-    input: SessionSpawnInput,
-): Promise<PluginActionResultById['session.spawn_new']> {
-    try {
-        return await spawnSessionInputDestinationV1({ execute: deps.execute, spawn: input, signal: deps.signal });
-    } catch (error) {
-        // The Action bridge throws this native pre-admission refusal with its public settlement in details.
-        if (!isPluginError(error) || error.code !== SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) throw error;
-        const details = error.details;
-        const agentId = details !== null && typeof details === 'object' ? Reflect.get(details, 'agentId') : undefined;
-        if (typeof agentId !== 'string') throw error;
-        return { type: 'error', code: error.code, retryable: false, agentId,
-            ...(error.data.failureCause === undefined ? {} : { failureCause: error.data.failureCause }) };
-    }
-}
-
 /**
  * Link, then deliver, then open — unless the batch owner retained final open.
  *
@@ -290,7 +273,9 @@ async function completeEntrySessionDestination(
     const completed = await runSessionInputDestinationV1(destination.kind === 'existing'
         ? { kind: 'existing', session: { sessionId: destination.sessionId, ...(destination.serverId === undefined ? {} : { serverId: destination.serverId }) } }
         : { kind: 'new', spawn: destination.spawn }, {
-        spawn: async (spawn) => ({ ok: true, result: await spawnEntrySession(deps, spawn) }),
+        spawn: async (spawn) => ({
+            ok: true, result: await spawnSessionInputDestinationV1({ execute: deps.execute, spawn, signal: deps.signal }),
+        }),
         complete: (session, creation) => linkDeliverThenOpen(deps, {
             entryRef: input.entryRef, display: input.display, workspace: input.workspace,
             sessionId: session.sessionId, serverId: session.serverId,
@@ -314,6 +299,7 @@ async function completeEntrySessionDestination(
         ...('agentId' in result && result.agentId !== undefined ? { agentId: result.agentId } : {}),
         ...('incompatibleTarget' in result && result.incompatibleTarget !== undefined ? { incompatibleTarget: result.incompatibleTarget } : {}),
         ...('reason' in result ? { reason: result.reason } : {}),
+        ...('details' in result ? { details: result.details } : {}),
     };
     return { type: 'creationFailed', failureCode: result.code,
         ...failure, spawnFailure, creationKey: creationKey!, workspace: input.workspace };
