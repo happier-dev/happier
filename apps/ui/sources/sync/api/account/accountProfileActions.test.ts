@@ -5,6 +5,8 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -24,6 +26,8 @@ const { resetScopedHomeActionExecutorsForTests, scopedHomeActionExecutor } = awa
 const { setAccountName } = await import('./apiAccountName');
 const { setAccountUsername, releaseAccountUsername } = await import('./apiUsername');
 const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+const { readPresentationNotices, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+const { t } = await import('@/text');
 const { Modal } = await import('@/modal');
 const credentials = { token: createAccountTokenForTests('self', { currentAccount: true }) };
 let serverId: string;
@@ -43,9 +47,35 @@ beforeEach(async () => {
     storage.setState({ endpointStatus: 'online' });
     storage.getState().applyProfile({ ...profileDefaults, id: 'self', timestamp: 1, name: 'Before', username: 'before' });
 });
-afterEach(async () => { standardCleanup(); disposeScope?.(); disposeScope = undefined; await homes.reset(); });
+afterEach(async () => { retirePresentationNotice(); standardCleanup(); disposeScope?.(); disposeScope = undefined; await homes.reset(); });
 
 describe('self-profile UI Action admission and acknowledgements', () => {
+    it('shows a skipped Before check after the mounted profile save proceeds', async () => {
+        const features = createRootLayoutFeaturesResponse({ features: { automations: { enabled: true }, workflows: { enabled: true } } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: { v: 1, rows: [{
+            automationId: 'profile-check', triggerId: 'before-name', triggerRevision: 1,
+            workflowId: 'profile-check-workflow', workflowRevision: 1, ownerAccountId: 'self',
+            actionIds: ['account.name.set'], phase: 'before', mode: 'notify',
+        }] } });
+        const response = { name: 'After', firstName: 'After', lastName: null, timestamp: 2 };
+        homes.answer(serverId, 'POST /v1/account/profile', { body: response });
+        const mounted = await renderHook(() => useMountedActionExecution(serverId));
+        await waitForHomeGovernance(() => expect(mounted.getCurrent().ready).toBe(true));
+        await expect(setAccountName(credentials, 'After', mounted.getCurrent())).resolves.toEqual(response);
+        expect(homes.requestsFor('/v1/account/profile')).toHaveLength(1);
+        expect(homes.requestsFor(AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)).toHaveLength(1);
+        expect(storage.getState().profile.name).toBe('After');
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(Modal.alert).not.toHaveBeenCalled();
+        await waitForHomeGovernance(() => expect(readPresentationNotices().map(notice => notice.message)).toEqual([
+            t('workflows.triggers.checks.skippedNeedsMachine', { workflow: t('workflows.triggers.checks.aCheck') }),
+        ]));
+    });
+
     it('releases a username directly by default without a native confirmation or self-approval Artifact', async () => {
         const mounted = await renderHook(() => useMountedActionExecution(serverId));
         await waitForHomeGovernance(() => expect(mounted.getCurrent().ready).toBe(true));
