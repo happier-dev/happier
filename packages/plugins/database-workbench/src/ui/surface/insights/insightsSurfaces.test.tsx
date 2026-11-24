@@ -30,6 +30,7 @@ import {
 } from '@happier-dev/plugin-sdk/testing';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { PluginUiHostPresentationScope, type PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
+import type { HostDatabaseLastLook } from '@happier-dev/plugin-ui/hostApi';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { renderSurface as renderPage } from '../WorkbenchPage.js';
@@ -545,14 +546,32 @@ describe('Database Insights surfaces', () => {
     }
   });
 
-  it('opens a statement from the Insights rail tab as a details tab at that statement', async () => {
+  it('records only the shown rail statements and opens the selected details tab', async () => {
     const openSurface = vi.fn(async () => {});
+    const observe = vi.fn<HostDatabaseLastLook['observe']>(() => ({
+      comparison: { status: 'unavailable', reason: 'previous_sample_required' }, persistenceError: null,
+    }));
+    const presentationHost: PluginUiPresentationHost = {
+      renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+      databaseWorkbench: {
+        activityResource: () => { throw new Error('An Insights rail must not acquire Activity'); },
+        lastLook: () => ({ observe }),
+      },
+    };
+    const sample = statements();
+    if (sample.status !== 'available' || sample.group !== 'statements') throw new Error('Expected the ranked statements fixture');
+    const lowerRanked = Array.from({ length: 7 }, (_, index) => ({ ...sample.data[1]!,
+      key: `q-lower-${index + 1}`, shape: `select * from lower_ranked_${index + 1}` }));
+    sample.data.push(...lowerRanked);
+    const executeAction = daemon(() => sample);
     const rail = await createPluginUiTestkit({
       identity: { instanceId: 'rail', mountNonce: 'rail' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
-      surface: renderRail,
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={presentationHost}>{renderRail(context)}</PluginUiHostPresentationScope>,
       launchInput: projectNativeJsonValueForTransport({ scope }),
       surfaceContext: createSurfaceContextFixture({
+        accountScope: { serverId: scope.workspace.serverId, accountId: scope.accountId },
         mount: {
           kind: 'destination',
           destination: {
@@ -566,7 +585,7 @@ describe('Database Insights surfaces', () => {
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
         ...resourceHandlers(),
-        executeAction: daemon(statements),
+        executeAction,
         openSurface,
       },
     });
@@ -575,7 +594,12 @@ describe('Database Insights surfaces', () => {
       expect(await rail.queryByText(SLOW)).toBeTruthy();
       // Controls in order: the database picker, the ranked statements (costliest first), then Refresh.
       const controls = await rail.getAllByRole('button');
-      expect(controls).toHaveLength(4);
+      expect(controls).toHaveLength(10);
+      expect(observe.mock.calls.map(([, shownKeys]) => shownKeys)).toEqual([
+        ['q-slow', 'q-lines', ...lowerRanked.slice(0, -1).map(row => row.key)],
+      ]);
+      expect(executeAction.mock.calls.filter(([call]) => call.action === databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1)))
+        .toHaveLength(1);
       await act(async () => {
         await rail.press(controls[1]!);
       });

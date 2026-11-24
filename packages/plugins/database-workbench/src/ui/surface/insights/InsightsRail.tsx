@@ -57,7 +57,7 @@ export function InsightsRailList(
 ) {
   const translate = usePluginTranslation();
   const instance = useWorkbenchInstance();
-  const statements = useInsightsStatements(props.targetKey);
+  const statements = useInsightsStatements(props.targetKey, RAIL_STATEMENTS);
   const [opened, setOpened] = React.useState<string | null>(null);
   const open = React.useCallback(
     (view: StatementView) => {

@@ -34,7 +34,7 @@ type InsightsTab = 'statements' | 'tables' | 'activity' | 'sources';
 const NO_KEYS: readonly string[] = Object.freeze([]);
 
 /** Statements read once per open; the comparison is the host's device-local last look (R13). */
-export function useInsightsStatements(targetKey: string) {
+export function useInsightsStatements(targetKey: string, shownRows?: number) {
   const stats = useDatabaseInsights(targetKey, STATEMENTS_BY_TOTAL_TIME);
   const observation = stats.observation as
     | DatabaseStatsObservationV1
@@ -46,8 +46,8 @@ export function useInsightsStatements(targetKey: string) {
   const unavailable =
     observation?.status === 'unavailable' ? observation : null;
   const keys = React.useMemo(
-    () => available?.data.map((row) => row.key) ?? NO_KEYS,
-    [available],
+    () => available?.data.slice(0, shownRows).map((row) => row.key) ?? NO_KEYS,
+    [available, shownRows],
   );
   const look = useStatementsLastLook(
     targetKey,
