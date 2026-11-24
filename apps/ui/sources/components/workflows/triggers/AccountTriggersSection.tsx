@@ -52,6 +52,7 @@ import { useOpenTriggerAsWorkflow } from './useOpenTriggerAsWorkflow';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { formatTriggerSummary } from './formatTriggerSummary';
+import { readTriggerScheduleHold } from './scheduleHoldPresentation';
 
 /**
  * The Account's inline trigger sets through `workflow.trigger.list {scope:'account_inline'}`, the one
@@ -218,7 +219,8 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
                 onBack: () => setOpen({ ...open, history: false }),
                 content: <WorkflowTriggerRunHistory automationId={open.set.automationId} triggerId={openTrigger.id}
                     triggerName={formatTriggerSummary(openTrigger)} {...actionOptions} trigger={liveTrigger ?? openTrigger}
-                    nextRunAt={liveSet?.enabled && liveTrigger?.enabled && liveTrigger.kind === 'schedule' ? liveTrigger.nextRunAt : null} /> } } : {})}
+                    nextRunAt={liveSet?.enabled && liveTrigger?.enabled && liveTrigger.kind === 'schedule' ? liveTrigger.nextRunAt : null}
+                    hold={liveSet?.enabled && liveTrigger?.enabled ? readTriggerScheduleHold(liveSet, liveTrigger.id) : undefined} /> } } : {})}
             onWritten={refresh}
             {...(open.refusal !== undefined || open.set.legacy?.lockedReason === 'review_required' ? {} : { onToggleEnabled: { enabled: openEnabled, onPress: () => {
                 setOpen(null);
@@ -385,6 +387,7 @@ function AccountTriggerPopover(props: Readonly<{
             initial={form}
             submitRefusal={props.refusal ?? (form === null ? t('workflows.triggers.legacy.changeUnavailable') : undefined)}
             savedNextRunAt={savedTrigger?.kind === 'schedule' ? savedTrigger.nextRunAt : null}
+            savedScheduleHold={readTriggerScheduleHold(set, savedTrigger?.id)}
             initialEventSeed={props.initialEventSeed}
             initialEventEditSeed={props.initialEventEditSeed}
             initialActionTargets={actionTargets}

@@ -19,6 +19,9 @@ import { useAutomation } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { formatAutomationTriggerObservationWarning } from '@/components/automations/list/automationListFormatting';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { presentScheduleHold, type ScheduleHold } from './scheduleHoldPresentation';
 
 /** Mounted only for the expanded trigger; the shared Run window owns reads and pagination. */
 export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunHistory(props: Readonly<{
@@ -31,6 +34,8 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     nextRunAt?: number | null;
     /** The saved trigger: a spent one-time schedule heads its History with Completed, or Missed from its Run. */
     trigger?: OnceScheduleSource;
+    /** The server's reason this recurring schedule waits, from the same trigger set read. */
+    hold?: ScheduleHold;
 }>) {
     const read = useWorkflowRunWindow(`trigger:${props.triggerId}`, { accountLifetime: props.accountLifetime });
     const automation = useAutomation(props.automationId, { serverId: props.accountLifetime?.scope.serverId });
@@ -47,13 +52,25 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
     const empty = read.rows.length === 0 && read.status !== 'failed';
     // An empty History with a future occurrence says both in one sentence (07 S4), so the next run isn't said twice.
     const emptyWithNext = empty && read.status !== 'loading' && nextRunAt !== null && nextRunAt > nowMs;
+    // A due occurrence held by an earlier open run says why it waits, and opens that run where the server shared it.
+    const holdPresentation = presentScheduleHold(props.hold);
+    const held = holdPresentation !== null && (nextRunAt === null || nextRunAt <= nowMs) ? holdPresentation : null;
+    const router = useRouter();
+    const holdingRunId = held?.runId ?? null;
+    const openHoldingRun = useEventCallback(() => {
+        if (holdingRunId !== null) router.push(createWorkflowRunRoute({ kind: 'occurrence', automationId: props.automationId,
+            runId: holdingRunId }, serverId) as never);
+    });
     return <View testID={`session-work-trigger-history:${props.automationId}`}>
         {automation ? <AutomationHistoryGapRecoveryAction automation={automation} triggerId={props.triggerId}
             isCurrentRoute={isCurrentRoute} rereadAutomationStatus={sync.refreshAutomations} /> : null}
         {observationWarning ? <SurfaceFreshnessLine testID={`session-work-trigger-history:${props.automationId}-observation`}
             tone="warning" reason={observationWarning} /> : null}
-        {nextRunAt !== null && !emptyWithNext ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
-            accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
+        {held ? <Item testID={`session-work-trigger-history:${props.automationId}-held`} title={held.text} mode="info"
+            rightElement={held.runId !== null ? <ToolbarButton testID={`session-work-trigger-history:${props.automationId}-open-run`}
+                label={t('workflows.events.openRun')} onPress={openHoldingRun} /> : undefined} />
+            : nextRunAt !== null && !emptyWithNext ? <Item title={formatNextScheduledRun(nextRunAt, true, nowMs)} mode="info"
+                accessibilityLabel={formatNextScheduledRunAccessibilityLabel(nextRunAt, true, nowMs)} /> : null}
         {once === 'done' || once === 'missed' ? <Item testID={`session-work-trigger-history:${props.automationId}-once`} mode="info"
             title={formatOnceScheduleStateLabel(once)!} /> : null}
         {read.status === 'failed' ? <SurfaceFreshnessLine

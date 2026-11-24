@@ -19,6 +19,7 @@ import { HAPPIER_CLOCK_TIME_FORMAT } from '@happier-dev/plugin-ui/presentation';
 import { joinList } from '@/utils/text/joinList';
 import { resolveActionTitle } from '@/text/actionTitles';
 
+import type { ScheduleHoldPresentation } from './scheduleHoldPresentation';
 import { formatCalendarDate, formatClockTime, formatMonthName, parseCalendarSchedule, readOnceScheduleState, formatOnceScheduleStateLabel } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
@@ -29,9 +30,14 @@ function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     return { days: day(next) - day(now), minutes: Math.round((nextRunAt - nowMs) / MINUTE_MS) };
 }
 
-/** Scheduler-owned occurrence time, shared by habits and upcoming Work rows. */
-export function formatNextScheduledRun(nextRunAt: number | null, enabled = true, nowMs = Date.now()): string {
-    if (nextRunAt === null || nextRunAt <= nowMs) return t(enabled ? 'automations.list.nextRunPending' : 'automations.list.noNextRun');
+/**
+ * Scheduler-owned occurrence time, shared by habits and upcoming Work rows. A due occurrence held by an
+ * earlier open run says why it waits (`presentScheduleHold`) instead of "Pending".
+ */
+export function formatNextScheduledRun(nextRunAt: number | null, enabled = true, nowMs = Date.now(), hold?: ScheduleHoldPresentation | null): string {
+    if (nextRunAt === null || nextRunAt <= nowMs) {
+        return enabled && hold ? hold.text : t(enabled ? 'automations.list.nextRunPending' : 'automations.list.noNextRun');
+    }
     return t('workflows.triggers.row.nextRun', { time: formatNextScheduledRunTime(nextRunAt, enabled, nowMs) });
 }
 
@@ -40,10 +46,12 @@ export function formatNextScheduledRun(nextRunAt: number | null, enabled = true,
  * position already says "next": a due or unscheduled occurrence is the one word "Pending" (the
  * sentence form would crowd the title it qualifies), and a disabled one says it has none.
  */
-export function formatNextScheduledRunTime(nextRunAt: number | null, enabled = true, nowMs = Date.now()): string {
+export function formatNextScheduledRunTime(nextRunAt: number | null, enabled = true, nowMs = Date.now(), hold?: ScheduleHoldPresentation | null): string {
     // A retained occurrence is not a future promise once it is due. Only the scheduler can
     // publish its successor; elapsed-age wording would describe a different fact (a past Run).
-    if (nextRunAt === null || nextRunAt <= nowMs) return t(enabled ? 'workflows.triggers.row.nextPending' : 'automations.list.noNextRun');
+    if (nextRunAt === null || nextRunAt <= nowMs) {
+        return enabled && hold ? hold.short : t(enabled ? 'workflows.triggers.row.nextPending' : 'automations.list.noNextRun');
+    }
     const { days, minutes } = scheduledRunTimeUnits(nextRunAt, nowMs);
     return days > 0
         ? t('workflows.triggers.row.nextDays', { count: days })
@@ -79,8 +87,8 @@ export function formatTriggerLastOutcome(age: string, state?: string): string {
 }
 
 /** Exact scheduler time for spoken labels, alongside the compact visible occurrence. */
-export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | null, enabled = true, nowMs = Date.now()): string {
-    return nextRunAt === null || nextRunAt <= nowMs ? formatNextScheduledRun(null, enabled, nowMs)
+export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | null, enabled = true, nowMs = Date.now(), hold?: ScheduleHoldPresentation | null): string {
+    return nextRunAt === null || nextRunAt <= nowMs ? formatNextScheduledRun(null, enabled, nowMs, hold)
         : t('workflows.triggers.row.nextRun', { time: formatWithCachedDateTimeFormatter(nextRunAt, getPreferredLanguage(),
             { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT,
                 second: '2-digit', timeZoneName: 'short' }) });

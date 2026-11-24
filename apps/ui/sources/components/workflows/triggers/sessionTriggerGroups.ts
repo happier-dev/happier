@@ -7,6 +7,7 @@ import { t } from '@/text';
 
 import { formatTriggerSetSummary, formatNextScheduledRun, type ScheduledRunQualifierTime } from './formatTriggerSummary';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { presentScheduleHold, readSetScheduleHold } from './scheduleHoldPresentation';
 
 /**
  * The one reading of the source-lookup result. The lookup answers the same not-found for a deleted Workflow
@@ -37,6 +38,9 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
     const nextRuns = set.triggers.flatMap((trigger) => trigger.kind === 'schedule' && trigger.nextRunAt !== null ? [trigger.nextRunAt] : []);
     const next = nextRuns.length === 0 ? null : Math.min(...nextRuns);
     const prefix = [formatTriggerSetSummary(set.triggers), ...timezones].join(' · ');
+    // A due occurrence held by an earlier open run states that fact; it no longer counts down.
+    const hold = presentScheduleHold(readSetScheduleHold(set));
+    const heldNow = hold !== null && (next === null || next <= Date.now());
     const suffix = [
         placements === null ? null : `${t('workflows.triggers.editor.runsOn')}: ${placements.length === 1 ? '' : t('workflows.triggers.row.machines', { count: placements.length })}`,
         ...(placements ?? []).map((placement) => `${resolveMachineTitle?.(placement.machineId) ?? placement.machineId} · ${placement.directory}`),
@@ -48,9 +52,9 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
                 : set.legacy.lockedReason === 'decryption_failed' ? t('workflows.triggers.row.templateDecryptionFailed')
                     : prompt === null ? t('workflows.triggers.row.legacyUnavailable') : prompt || t('workflows.triggers.then.sendPrompt'),
         qualifier: [prefix,
-            formatNextScheduledRun(next, set.enabled && set.triggers.some((trigger) => trigger.enabled && trigger.kind === 'schedule')),
+            formatNextScheduledRun(next, set.enabled && set.triggers.some((trigger) => trigger.enabled && trigger.kind === 'schedule'), undefined, hold),
             suffix,
         ].filter(Boolean).join('\n'),
-        ...(next === null ? {} : { qualifierTime: { atMs: next, prefix, suffix } }),
+        ...(next === null || heldNow ? {} : { qualifierTime: { atMs: next, prefix, suffix } }),
     };
 }

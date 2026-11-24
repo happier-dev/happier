@@ -23,6 +23,7 @@ import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBl
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { t } from '@/text';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { presentScheduleHold, readTriggerScheduleHold } from './scheduleHoldPresentation';
 import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatNextScheduledRunTime, formatTriggerSummary, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
 import { resolveTriggerEventGroup } from './triggerEventGroups';
 import { describeTriggerTarget } from './sessionTriggerGroups';
@@ -167,6 +168,7 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, row.trigger.nextRunAt !== null);
     const title = describeTriggerTarget(row.set.target, props.resolveWorkflowTitle ?? (() => null));
     const enabled = row.set.enabled && row.trigger.enabled;
+    const hold = presentScheduleHold(readTriggerScheduleHold(row.set, row.trigger.id));
     const authoredLeaves = row.set.target?.kind === 'inline'
         ? new Map(walkWorkflowBlocks(row.set.target.definition.blocks).map(block => [block.id, block])) : null;
     const steps = row.set.destinations?.leaves.flatMap(leaf => {
@@ -176,8 +178,8 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
             : t('message.provenanceWorkflow'));
         return stepTitle === title.trim() ? [] : [t('sessionWork.scheduled.step', { ordinal: leaf.ordinal, title: stepTitle })];
     }) ?? [];
-    const label = [title, formatNextScheduledRun(row.trigger.nextRunAt, enabled, nowMs), ...steps, formatTriggerSummary(row.trigger),
-        formatNextScheduledRunAccessibilityLabel(row.trigger.nextRunAt, enabled, nowMs)].join('. ');
+    const label = [title, formatNextScheduledRun(row.trigger.nextRunAt, enabled, nowMs, hold), ...steps, formatTriggerSummary(row.trigger),
+        formatNextScheduledRunAccessibilityLabel(row.trigger.nextRunAt, enabled, nowMs, hold)].join('. ');
     // One occurrence row for both hosts. The next run is the trailing meta, in the column where Runs
     // show their state word; the quiet line says which step writes where and on what schedule.
     // In a Session's Triggers section the row writes into that Session, so it leads with the inbound glyph its
@@ -218,8 +220,8 @@ const ScheduledRow = React.memo(function ScheduledRow(props: Readonly<{
         // In a Session's section the next run is the title line's meta, as a Run's state word is (lab Writes here); the
         // session list keeps it in the trailing column its Session rows use.
         {...(props.sessionId !== undefined
-            ? { titleMeta: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs) }
-            : { detail: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs), detailTestID: `scheduled-workflow:${row.key}-next` })}
+            ? { titleMeta: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs, hold) }
+            : { detail: formatNextScheduledRunTime(row.trigger.nextRunAt, enabled, nowMs, hold), detailTestID: `scheduled-workflow:${row.key}-next` })}
         icon={<Icon name={props.sessionId !== undefined ? 'sign-in' : resolveTriggerEventGroup(row.trigger).glyph} />}
         {...listRow}
         accessibilityLabel={label} showChevron={false} onPress={() => props.onOpen(row)} />;

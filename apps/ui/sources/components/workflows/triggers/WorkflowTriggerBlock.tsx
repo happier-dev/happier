@@ -61,6 +61,7 @@ import {
   readNextScheduledRunRefreshAtMs,
   weekdayName,
 } from './formatTriggerSummary';
+import { presentScheduleHold, type ScheduleHold } from './scheduleHoldPresentation';
 import {
   buildTriggerDefinition,
   isSessionLifecycleWhen,
@@ -168,6 +169,8 @@ export function WorkflowTriggerBlock(
     history?: React.ReactNode;
     /** A saved, unedited schedule's next occurrence, as its owner computed it. */
     savedNextRunAt?: number | null;
+    /** Why that saved occurrence waits for an earlier run, from the same trigger set read. */
+    savedScheduleHold?: ScheduleHold;
     /** A saved before-trigger the Home scoped to its author's own Actions on a subject they can only view (R22). */
     viewOnlySubject?: boolean;
     machineId: string | null;
@@ -292,6 +295,7 @@ export function WorkflowTriggerBlock(
           when={when}
           onChange={props.onChangeWhen}
           savedNextRunAt={props.savedNextRunAt}
+          savedScheduleHold={props.savedScheduleHold}
           accountLifetime={props.accountLifetime}
         />
       ) : null}
@@ -687,6 +691,7 @@ function ScheduleTrackRows(
     when: ScheduleWhen;
     onChange: (next: TriggerWhenValue) => void;
     savedNextRunAt?: number | null;
+    savedScheduleHold?: ScheduleHold;
     accountLifetime?: ServerAccountScopeLifetime | null;
   }>,
 ) {
@@ -737,7 +742,8 @@ function ScheduleTrackRows(
   const next =
     nextRunAt !== null
       ? t('workflows.triggers.popover.nextOccurrence', {
-          time: formatNextScheduledRunTime(nextRunAt, true, nowMs),
+          time: formatNextScheduledRunTime(nextRunAt, true, nowMs,
+            props.savedNextRunAt !== undefined ? presentScheduleHold(props.savedScheduleHold) : null),
         })
       : proposed?.status === 'invalid_schedule'
         ? t('workflows.triggers.popover.invalidSchedule')

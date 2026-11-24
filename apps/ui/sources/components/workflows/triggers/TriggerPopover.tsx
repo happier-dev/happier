@@ -51,6 +51,7 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { WorkflowRunInputs } from '@/components/workflows/run/WorkflowRunComposer';
 import { type WorkflowRunInputFieldState } from '@/sync/domains/workflows/workflowAuthoring';
 
+import { presentScheduleHold, type ScheduleHold } from './scheduleHoldPresentation';
 import { formatNextScheduledRunTime, readNextScheduledRunRefreshAtMs, formatTriggerInterval, formatTriggerSummary, weekdayName } from './formatTriggerSummary';
 import {
     NOTIFY_ME_ACTION_ID,
@@ -122,6 +123,8 @@ type TriggerPopoverBaseProps = Readonly<{
     subtitle?: string;
     /** A saved occurrence from the scheduler. Hidden as soon as this schedule draft differs. */
     savedNextRunAt?: number | null;
+    /** Why that saved occurrence waits for an earlier run, from the same trigger set read. */
+    savedScheduleHold?: ScheduleHold;
     /** A retained Automation that cannot be edited remains visible with its owner's refusal. */
     submitRefusal?: string;
     /** A pushed host editor shares this shell and preserves the trigger draft underneath it. */
@@ -518,7 +521,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const subtitle = nextRunAt === null ? preview?.status === 'invalid_schedule' ? t('workflows.triggers.popover.invalidSchedule')
         : preview?.status === 'failed' ? preview.message
             : preview?.status === 'loading' ? t('common.loading') : props.subtitle : t('workflows.triggers.popover.nextOccurrence', {
-        time: formatNextScheduledRunTime(nextRunAt, enabled, nowMs),
+        time: formatNextScheduledRunTime(nextRunAt, enabled, nowMs, scheduleUnchanged ? presentScheduleHold(props.savedScheduleHold) : null),
     });
     const failureMessage = props.submitRefusal ?? (failure === null ? null : failure.code === 'legacy_conversion_unsupported'
         ? failure.message : `${t('workflows.triggers.section.saveFailed')} ${failure.message}`);

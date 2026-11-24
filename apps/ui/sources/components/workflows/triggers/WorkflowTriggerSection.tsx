@@ -39,6 +39,7 @@ import {
     formatTriggerSummary,
     readNextScheduledRunRefreshAtMs,
 } from './formatTriggerSummary';
+import { readTriggerScheduleHold } from './scheduleHoldPresentation';
 import { readScheduleWhen, readTriggerWhen, type TriggerWhenValue } from './sessionTriggerForm';
 import { FieldSelect } from './TriggerPopover';
 import type { TriggerPluginEventRows } from './TriggerPluginEventRows';
@@ -355,7 +356,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     accountLifetime={props.accountLifetime}
                     sessionId={lifetimeSessionId}
                     sessionContext={sessionContext}
-                    {...(savedSchedule ? { savedNextRunAt: props.set?.enabled ? readNextRunAt(row) : null } : {})}
+                    {...(savedSchedule ? { savedNextRunAt: props.set?.enabled ? readNextRunAt(row) : null,
+                        savedScheduleHold: readTriggerScheduleHold(props.set, row.kind === 'saved' ? row.triggerId : null) } : {})}
                     {...(isViewOnlySubjectTrigger(row.trigger, when, edited !== undefined) ? { viewOnlySubject: true } : {})}
                     {...(row.kind === 'saved' && props.set && row.trigger.kind === 'pluginEvent'
                         ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}
@@ -379,6 +381,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                         onToggleHistory: () => toggleHistory(row.key),
                         history: historyKey === row.key ? <WorkflowTriggerRunHistory automationId={props.set.automationId} triggerId={row.triggerId}
                             nextRunAt={props.set.enabled ? readNextRunAt(row) : null} accountLifetime={props.accountLifetime}
+                            hold={props.set.enabled ? readTriggerScheduleHold(props.set, row.triggerId) : undefined}
                             triggerName={formatTriggerSummary(row.trigger)} trigger={row.trigger} /> : undefined,
                     } : {})}
                 />
