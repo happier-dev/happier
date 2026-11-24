@@ -68,11 +68,12 @@ type CallerSessionFacts = Readonly<{
   readAppliedChildSelection?: () => Promise<ExecutionRunAppliedParentSelection>;
 }>;
 
-/** One caller-identity owner shared by Agent admission and Workflow ingress. */
+/** Resolves Session caller facts, including the approved Session selector for Artifact publication. */
 export async function resolveCliActionCallerSession(params: Readonly<{
   context: ActionExecutorContext;
   credentials?: StoredCredentials;
   boundSessionId?: string;
+  reviewedWorkspaceSessionId?: string;
   readBoundSession?: () => Promise<CallerSessionFacts>;
   callSessionRpcForTransport?: CliSessionActionTransport['callSessionRpcForTransport'];
   resolveTransportForSession: (sessionId: string, signal?: AbortSignal) => Promise<Extract<ResolveSessionTransportContextResult, { ok: true }> | Readonly<{ ok: false }>>;
@@ -89,10 +90,13 @@ export async function resolveCliActionCallerSession(params: Readonly<{
       metadata: session.metadata, machineId: session.machineId, candidatePath: session.directory ?? '',
     }).machinePath || null : session.directory };
   }
-  // A selector is not authenticated Session identity.
-  if (params.context.actionCaller?.kind !== 'session' && !isBoundSession) return null;
+  // A host may select a workspace through an approved publication from its own Session.
+  const usesReviewedWorkspace = params.context.actionCaller?.kind === 'host'
+    && sessionId === params.reviewedWorkspaceSessionId;
+  if (params.context.actionCaller?.kind !== 'session' && !isBoundSession && !usesReviewedWorkspace) return null;
   const transport = await params.resolveTransportForSession(sessionId, params.context.signal);
   if (!transport.ok || transport.sessionId !== sessionId || transport.rawSession.id !== sessionId || !params.credentials) return null;
+  if (usesReviewedWorkspace && transport.rawSession.effectiveAccess?.level !== 'owner') return null;
   const metadata = tryDecryptSessionOwnerMetadataView({ credentials: params.credentials,
     accountEncryptionMode: transport.accountEncryptionCurrentness.mode, rawSession: transport.rawSession });
   if (!metadata) return null;

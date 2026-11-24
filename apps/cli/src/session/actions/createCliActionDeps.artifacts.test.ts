@@ -1404,6 +1404,58 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     expect(http.post).not.toHaveBeenCalled();
   });
 
+  it('publishes the approved CLI Session file from its guest on an unbound daemon', async () => {
+    const sessionId = 'cmwuqymzz005xqomcdslyo69l';
+    const directory = join(root, 'controller-absent');
+    const guestDirectory = join(root, 'guest');
+    await mkdir(guestDirectory);
+    await writeFile(join(guestDirectory, 'README.md'), 'Guest README witness');
+    const metadata = { machineId: 'local-machine', path: directory,
+      sessionCreationCorrespondenceV1: buildSessionCreationCorrespondence({
+        identity: { callerCreationNamespace: 'artifact-test', creationKey: 'approved-in-place' },
+        recipe: {
+          execution: { machineId: 'local-machine', directory: { kind: 'managed' } },
+          organization: { folderId: null, tagIds: [] },
+          inPlaceWorkspace: { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'checkout',
+            managedId: 'guest', rootPath: directory, controller: { machineId: 'local-machine', installationId: 'installation' } },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        },
+      }),
+    };
+    const rawSession = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+      metadata: JSON.stringify(metadata), effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
+    http.get.mockImplementation(async (url: string) => ({ status: 200, data:
+      url.endsWith('/v1/account/encryption/currentness') ? createAccountEncryptionCurrentnessFixture({ mode: 'plain' })
+        : url.endsWith('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 }
+          : V2SessionByIdResponseSchema.parse({ session: rawSession }) }));
+    http.post.mockImplementation(async (_url: string, wire: unknown) => ({ status: 200,
+      data: { ...readCarrierMutation(wire), headerVersion: 1, bodyVersion: 1 } }));
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const host = createCliActionDeps({ token, credentials: { token, encryption: null },
+      sessionId: 'cli-global', mode: 'plain', ctx: null });
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, runtimeAccountId: 'owner',
+      actionCaller: { kind: 'host' as const }, defaultSessionId: sessionId, defaultSessionMachineId: 'local-machine' };
+    const publish = (effectContext: ActionExecutorContext) => host.artifactAction!({ actionId: 'artifact.publish_from_file',
+      input: { path: 'README.md', mime: 'text/markdown' }, context: effectContext });
+    await expect(publish(context)).resolves.toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
+    const replay = { ...context, approvedActionReplay: { artifactId: 'approval',
+      origin: { surface: 'cli' as const, caller: context.actionCaller, sessionId, accountId: 'owner' } } };
+    const guestPath = (path: string) => join(guestDirectory, relative(directory, path));
+    await runInHostedSessionScope({}, async () => {
+      bindHostedSessionId(sessionId);
+      bindHostedSessionWorkspaceSource({ ...localWorkspaceSource, kind: 'target', id: 'approved-managed-test',
+        lstat: path => localWorkspaceSource.lstat(guestPath(path)),
+        stat: path => localWorkspaceSource.stat(guestPath(path)),
+        open: (path, options) => localWorkspaceSource.open(guestPath(path), options),
+      });
+      await expect(publish(replay)).resolves.toMatchObject({ artifactId: expect.any(String) });
+    });
+    const written = readCarrierMutation(http.post.mock.calls[0]?.[1]);
+    expect(decodePlainArtifactStoredContent(String(written.body))).toEqual({ body: 'Guest README witness' });
+    await expect(publish(replay)).resolves.toMatchObject({ ok: false, errorCode: 'workspace_target_unavailable' });
+  });
+
   it('never falls back to the ambient Session for an explicit workspace publication source', async () => {
     await writeFile(join(root, 'workspace', 'result.txt'), 'Ambient Session bytes');
     const selectedRoot = join(root, 'selected-workspace');

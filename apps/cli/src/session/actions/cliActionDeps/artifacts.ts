@@ -31,7 +31,7 @@ export function createCliArtifactsActionDeps(
     error: 'machine_not_found';
   }>>;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
-    resolveWorkspacePublishCaller: (context: ActionExecutorContext) => Promise<import("../publishArtifactFromWorkspaceFile").ArtifactWorkspaceCaller | null>;
+    resolveWorkspacePublishCaller: (context: ActionExecutorContext, reviewedWorkspaceSessionId?: string) => Promise<import("../publishArtifactFromWorkspaceFile").ArtifactWorkspaceCaller | null>;
     roleAccountLifetimeToken: ReturnType<typeof getActiveAccountSettingsSnapshotLifetimeToken>;
     roleAccountScopeKey: ReturnType<typeof resolveAccountSettingsScopeKeyForToken>;
     roleArtifactStore: ReturnType<typeof createCredentialedAccountArtifactStore> | undefined;
@@ -92,7 +92,13 @@ export function createCliArtifactsActionDeps(
               return typeof artifact?.header.kind === 'string' ? artifact.header.kind : undefined;
             } });
         }, resolvePublishCaller: async (context, workspace) => {
-          if (!workspace) return await resolveWorkspacePublishCaller(context);
+          if (!workspace) {
+            const origin = context.approvedActionReplay?.origin;
+            const reviewedWorkspaceSessionId = args.actionId === 'artifact.publish_from_file'
+              && origin?.caller.kind === 'host' && origin.accountId === homeAccountId
+              ? origin.sessionId : undefined;
+            return await resolveWorkspacePublishCaller(context, reviewedWorkspaceSessionId);
+          }
           if (!(await requireLocalPromptActionMachine(workspace.machineId)).ok) return null;
           return { machineId: workspace.machineId, rootPath: workspace.rootPath, directory: workspace.rootPath };
         },

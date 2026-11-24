@@ -814,8 +814,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
     resolveServerRequestHeaders, resolveTransportForSession,
   });
 
-  const resolveWorkspacePublishCaller = async (context: ActionExecutorContext) => {
-    const caller = await resolveActionCallerSession(context);
+  const resolveWorkspacePublishCaller = async (context: ActionExecutorContext, reviewedWorkspaceSessionId?: string) => {
+    const caller = await resolveCliActionCallerSession({ ...callerSessionResolution(context), reviewedWorkspaceSessionId });
     if (!caller?.directory || !caller.machineId || !(await requireLocalPromptActionMachine(caller.machineId)).ok) return null;
     return { sessionId: caller.sessionId, machineId: caller.machineId, directory: caller.directory,
       requiresManagedTarget: requiresManagedSessionWorkspace(caller.metadata),
