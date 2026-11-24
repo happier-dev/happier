@@ -1,7 +1,6 @@
 import * as React from 'react';
-import { useWindowDimensions, View } from 'react-native';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import { AgentActionButton, Row, Stack } from '@happier-dev/plugin-ui/components';
+import { View } from 'react-native';
+import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -26,7 +25,8 @@ function describeCatalogOutcome(outcome: FailureAgentCatalogOutcome) {
 
 /**
  * A failure page's configured agent actions as the shared split control (owner ruling 2026-11-07, "Agent actions:
- * one shared flow"): each face launches its record in the record's own mode, the chevron offers the other launch.
+ * one shared flow"): the face launches the first record in its own mode; the chevron offers the other launch, then
+ * every other configured record.
  * Edit action… opens the one actions editor, Triage's page, on that record through the host's destination navigation,
  * the same open every Triage surface uses.
  */
@@ -36,7 +36,7 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   compact: boolean;
   /**
    * Whether the first record leads (filled, the default: a failure page's one next step) or the surrounding view's own
-   * primary does. Every record after the first stays secondary, so a page never shows two filled agent actions.
+   * primary does. Every record after the first is a row in its menu, so a page never shows two agent controls.
    */
   emphasis?: 'primary' | 'secondary';
   onLaunch: (mode: 'start' | 'review', actionId: string | undefined) => void;
@@ -46,8 +46,6 @@ export function InvestigationAgentActionButtons(props: Readonly<{
   onRetry?: () => void;
 }>): React.ReactElement | null {
   const openEditor = useOpenFailureActionEditor();
-  // A phone-width window recomposes a banner's actions (rowStackBelowWidthPx), whatever device class the page passed.
-  const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
   if (props.catalogOutcome) {
     // The line spans the controls' row, so its Retry stays on the sentence's line instead of wrapping under it.
     return <View style={UNAVAILABLE_LINE_STYLE}>
@@ -56,30 +54,41 @@ export function InvestigationAgentActionButtons(props: Readonly<{
         {...(props.onRetry ? { action: { label: t('common.retry'), onPress: props.onRetry } } : {})} />
     </View>;
   }
-  if (props.actions.length === 0) return null;
-  const buttons = props.actions.map((action, index) => (
-    <AgentActionButton
-      key={action.actionId ?? 'default'}
-      title={action.label}
-      {...(action.titleKey === undefined ? {} : { titleKey: action.titleKey })}
-      launchMode={action.launchMode}
-      {...(action.startable ? {} : { startUnavailableReason: t('ui.pluginUi.agentActionStartNeedsTask') })}
-      onLaunch={(mode) => { props.onLaunch(mode, action.actionId); }}
-      {...(openEditor === null ? {} : { onEdit: () => { openEditor(action.actionId); } })}
-      pending={props.pending}
-      compact={props.compact}
-      emphasis={index === 0 ? props.emphasis : 'secondary'}
-    />
-  ));
+  const [first, ...others] = props.actions;
+  if (!first) return null;
+  // One control per failure (R15-D7): the first record is the split; every other configured action is a row in its
+  // menu, launched in that record's own mode, so a card never stacks a split per action.
+  const otherGroups = others.length === 0 ? undefined : [{
+    id: 'other-agent-actions',
+    accessibilityLabel: t('common.more'),
+    items: others.map((action, index) => ({ id: `${OTHER_ACTION_PREFIX}${index}`, label: action.label })),
+  }];
   // Core draws the public presenter inside the core Happier UI scope, as every other core consumer does.
   return (
     <CorePluginUiPresentationScope>
-      {buttons.length === 1 ? buttons[0]
-        // A phone stacks the split controls at one width (wider controls move beneath) instead of wrapping them ragged.
-        : props.compact || narrowWindow ? <Stack gap="small" align="stretch">{buttons}</Stack>
-        : <Row gap="small" align="center" wrap>{buttons}</Row>}
+      <AgentActionButton
+        key={first.actionId ?? 'default'}
+        title={first.label}
+        {...(first.titleKey === undefined ? {} : { titleKey: first.titleKey })}
+        launchMode={first.launchMode}
+        {...(first.startable ? {} : { startUnavailableReason: t('ui.pluginUi.agentActionStartNeedsTask') })}
+        onLaunch={(mode) => { props.onLaunch(mode, first.actionId); }}
+        {...(openEditor === null ? {} : { onEdit: () => { openEditor(first.actionId); } })}
+        {...(otherGroups ? {
+          groups: otherGroups,
+          showGroupLabels: false,
+          onSelectDestination: (id: string) => {
+            const other = others[Number(id.slice(OTHER_ACTION_PREFIX.length))];
+            if (other) props.onLaunch(other.launchMode, other.actionId);
+          },
+        } : {})}
+        pending={props.pending}
+        compact={props.compact}
+        emphasis={props.emphasis}
+      />
     </CorePluginUiPresentationScope>
   );
 }
 
+const OTHER_ACTION_PREFIX = 'other-agent-action:';
 const UNAVAILABLE_LINE_STYLE = { alignSelf: 'stretch' } as const;
