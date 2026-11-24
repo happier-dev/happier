@@ -328,9 +328,8 @@ function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonVa
 
 /**
  * The terminal selected-PR review transition: one carrier-backed reread,
- * generic scope production, then the incumbent generic review fan-out. The
- * engine list and human choice deliberately happened on the mounted surface
- * before this function, so the reread remains immediately adjacent to start.
+ * generic scope production, then the incumbent generic Review owner. Authoring
+ * has already settled; selected-source verification remains adjacent to start.
  */
 export function createTriageStartPullRequestReviewActionHandler(): ActionHandler<
     TriageStartPullRequestReviewInputV1,
@@ -377,7 +376,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
         });
         if (!admission.success) return { v: 1, status: 'refused', reason: 'reviewRejected' };
         const verified = await verifyTriagePullRequestReviewWorkspace(input, context,
-            !composition && admission.data.outputs?.includes('walkthrough') === true);
+            admission.data.outputs?.includes('walkthrough') === true && (!composition || input.comparisonId === undefined));
         if (verified.status !== 'verified') {
             const { sourceResult: _sourceResult, ...refusal } = verified;
             return refusal;

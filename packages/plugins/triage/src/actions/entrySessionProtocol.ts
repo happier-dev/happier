@@ -551,10 +551,8 @@ export const TriagePreparePullRequestReviewResultV1Schema = defineProtocolUnion(
 export type TriagePreparePullRequestReviewResultV1 = ReturnType<typeof TriagePreparePullRequestReviewResultV1Schema.parse>;
 
 /**
- * The mounted review chooser's final request. The engine list is intentionally
- * not carried or reinterpreted here: its generic owner listed it before the
- * person selected, while this Action immediately rereads the selected source
- * and delegates the one fan-out to `review.start`.
+ * Explicit engine choices for configured callers. The mounted chooser instead
+ * relays the shared Review composition through the reviewInput arm below.
  */
 export const TRIAGE_PULL_REQUEST_REVIEW_CHOICE_MEMBERS_V1 = {
     engineIds: defineProtocolArray(reviewEngineId, { minItems: 1 }),
@@ -584,7 +582,8 @@ export const TriageStartPullRequestReviewInputV1Schema = defineProtocolUnion([de
     ...TriageSelectedPullRequestReviewInputMembersV1,
     /** The canonical review.start owner admits the complete editable composition. */
     reviewInput: defineProtocolJsonValue(),
-    comparisonId: triageIdentifier,
+    comparisonId: triageIdentifier.optional(),
+    comparisonSource: ScmComparisonSourceProtocolSchema.optional(),
 }, { policy: 'closed' })]);
 export type TriageStartPullRequestReviewInputV1 = ReturnType<
     typeof TriageStartPullRequestReviewInputV1Schema.parse

@@ -321,8 +321,13 @@ export function describeTriageEntrySessionPhaseV1(
         case 'selectionRequired':
         case 'placement_choice_required':
           return notice('warning', 'plugins.triage.surface.session.handoffSelection', 'This action needs another Session or workspace choice.');
-        case 'entryExecution':
-          return notice('warning', 'plugins.triage.surface.session.handoffUnavailable', 'This action did not settle in the selected Session.');
+        case 'entryExecution': {
+          const native = phase.result;
+          if (native.status === 'seeded' || native.status === 'cancelled') return null;
+          if (native.status === 'unavailable') return unavailableNotice(native.reason ?? 'dispatch', native.failure);
+          if (native.result !== undefined) return describeTriageEntrySessionPhaseV1({ kind: 'settled', result: native.result });
+          return notice('warning', 'plugins.triage.surface.session.handoffUnavailable', 'This action could not be completed.');
+        }
       }
     }
     case 'settled': {
@@ -333,125 +338,110 @@ export function describeTriageEntrySessionPhaseV1(
       // they are being told nothing was created.
       const settled = settledNotice(phase.result);
       if (phase.result.type !== 'opened') return settled;
-      switch (phase.delivery?.kind) {
-        case 'send':
-          // The canonical send verdict, told as itself. A refusal and an
-          // unknown outcome used to arrive here as success, because the send was
-          // awaited and its value discarded — telling somebody their work has
-          // started when it has not is the worst thing this surface can say.
-          switch (phase.delivery.status) {
-            case 'rejected':
-            case 'failed':
-            case 'cancelled':
-              return notice(
-                'warning',
-                'plugins.triage.surface.session.deliveryFailed',
-                'The session opened, but this action\u2019s prompt could not be placed in it.',
-              );
-            case 'outcomeUnknown':
-              return notice(
-                'warning',
-                'plugins.triage.surface.session.deliveryUnknown',
-                'The session opened, but Happier could not confirm whether this action\u2019s prompt was sent. Pressing again resends the same one rather than a second.',
-              );
-            case 'notRequested':
-            case 'none':
-            case 'accepted':
-            case 'alreadyAccepted':
-            case 'held':
-            case 'replied':
-              return settled;
-          }
+      // The native start result owns delivery for both imperative and host-controlled runs.
+      switch (phase.result.delivery) {
+        case 'rejected':
+        case 'failed':
+        case 'cancelled':
+          return notice('warning', 'plugins.triage.surface.session.deliveryFailed',
+            'The session opened, but this action\u2019s prompt could not be placed in it.');
+        case 'outcomeUnknown':
+          return notice('warning', 'plugins.triage.surface.session.deliveryUnknown',
+            'The session opened, but Happier could not confirm whether this action\u2019s prompt was sent. Pressing again resends the same one rather than a second.');
         default:
           return settled;
       }
     }
-    case 'unavailable':
-      switch (phase.reason) {
-        case 'handoffOutcomeUnknown':
-          return notice('warning', 'plugins.triage.surface.session.handoffOutcomeUnknown',
-            'Happier could not confirm this action’s outcome. Check the selected Session before trying again.');
-        case 'newSessionUnsupported':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.newSessionUnsupported',
-            'This screen cannot open the New Session surface, so nothing was started.',
-          );
-        case 'newSessionUnavailable':
-          if (phase.failure?.codes.includes('workspaceMismatch')) {
-            return notice(
-              'warning',
-              'plugins.triage.surface.session.workspaceMismatch',
-              'This project cannot prepare the source’s checkout. Choose a project on the source’s Machine with a matching repository.',
-            );
-          }
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.newSessionUnavailable',
-            'The New Session surface did not settle on something a session can be started from.',
-          );
-        case 'preparedWorkspaceUnsupported':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.preparationUnsupported',
-            'This source cannot prepare a review workspace, so actions that need one cannot start here.',
-          );
-        // The four reference refusals. Each says which catalog, and each says
-        // whether the fix is to repair the configuration or to try again —
-        // because nothing was created, and the reader is the one who decides.
-        case 'profileMissing':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.profileMissing',
-            'This action\u2019s launch profile no longer exists, so nothing was started. Pick another one in Configure actions.',
-          );
-        case 'profileUnavailable':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.profileUnavailable',
-            'Happier could not read your launch profiles, so nothing was started. Try again in a moment.',
-          );
-        case 'promptMissing':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.promptMissing',
-            'This action\u2019s prompt no longer exists in your Prompt Library, so nothing was started. Pick another one in Configure actions.',
-          );
-        case 'promptInvalid':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.promptInvalid',
-            'This action\u2019s prompt resolved to no content, so nothing was started. Edit the prompt before trying again.',
-          );
-        case 'instructionMissing':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.instructionMissing',
-            'This action needs an instruction before it can start work. Choose a Prompt Library entry in Configure actions.',
-          );
-        case 'promptUnavailable':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.promptUnavailable',
-            'Happier could not read this action\u2019s prompt, so nothing was started. Try again in a moment.',
-          );
-        case 'dispatch':
-          return notice(
-            'danger',
-            'plugins.triage.surface.session.dispatchFailed',
-            'Nothing was started: this screen could not reach the session it asked for.',
-          );
-        // The request left and its answer did not come back, so "nothing was
-        // started" is not something this screen knows. It is the same fact the
-        // orchestrator's own unknown creation reports, and the same sentence,
-        // because the reader's next move is identical: press again, and the
-        // retained identity resumes the one request rather than making a second.
-        case 'startOutcomeUnknown':
-          return notice(
-            'warning',
-            'plugins.triage.surface.session.creationUnknown',
-            'Happier could not confirm whether this session was created. Pressing again resumes the same one rather than starting a second.',
-          );
+    case 'unavailable': return unavailableNotice(phase.reason, phase.failure);
+  }
+}
+
+function unavailableNotice(reason: string, failure?: Extract<TriageEntrySessionStartPhaseV1, { kind: 'unavailable' }>['failure']): TriageEntrySessionNoticeV1 {
+  switch (reason) {
+    case 'handoffOutcomeUnknown':
+      return notice('warning', 'plugins.triage.surface.session.handoffOutcomeUnknown',
+        'Happier could not confirm this action’s outcome. Check your Sessions for any work already started.');
+    case 'newSessionUnsupported':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.newSessionUnsupported',
+        'This screen cannot open the New Session surface, so nothing was started.',
+      );
+    case 'newSessionUnavailable':
+      if (failure?.codes.includes('workspaceMismatch')) {
+        return notice(
+          'warning',
+          'plugins.triage.surface.session.workspaceMismatch',
+          'This project cannot prepare the source’s checkout. Choose a project on the source’s Machine with a matching repository.',
+        );
       }
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.newSessionUnavailable',
+        'The New Session surface did not settle on something a session can be started from.',
+      );
+    case 'preparedWorkspaceUnsupported':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.preparationUnsupported',
+        'This source cannot prepare a review workspace, so actions that need one cannot start here.',
+      );
+    // The four reference refusals. Each says which catalog, and each says
+    // whether the fix is to repair the configuration or to try again —
+    // because nothing was created, and the reader is the one who decides.
+    case 'profileMissing':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.profileMissing',
+        'This action\u2019s launch profile no longer exists, so nothing was started. Pick another one in Configure actions.',
+      );
+    case 'profileUnavailable':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.profileUnavailable',
+        'Happier could not read your launch profiles, so nothing was started. Try again in a moment.',
+      );
+    case 'promptMissing':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.promptMissing',
+        'This action\u2019s prompt no longer exists in your Prompt Library, so nothing was started. Pick another one in Configure actions.',
+      );
+    case 'promptInvalid':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.promptInvalid',
+        'This action\u2019s prompt resolved to no content, so nothing was started. Edit the prompt before trying again.',
+      );
+    case 'instructionMissing':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.instructionMissing',
+        'This action needs an instruction before it can start work. Choose a Prompt Library entry in Configure actions.',
+      );
+    case 'promptUnavailable':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.promptUnavailable',
+        'Happier could not read this action\u2019s prompt, so nothing was started. Try again in a moment.',
+      );
+    case 'dispatch':
+      return notice(
+        'danger',
+        'plugins.triage.surface.session.dispatchFailed',
+        'Nothing was started: this screen could not reach the session it asked for.',
+      );
+    // The request left and its answer did not come back, so "nothing was
+    // started" is not something this screen knows. It is the same fact the
+    // orchestrator's own unknown creation reports, and the same sentence,
+    // because the reader's next move is identical: press again, and the
+    // retained identity resumes the one request rather than making a second.
+    case 'startOutcomeUnknown':
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.creationUnknown',
+        'Happier could not confirm whether this session was created. Pressing again resumes the same one rather than starting a second.',
+      );
+    default: return notice('warning', 'plugins.triage.surface.session.handoffUnavailable', 'This action could not be completed.');
   }
 }

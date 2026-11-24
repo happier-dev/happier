@@ -945,6 +945,35 @@ describe('the Session-start Action a mounted header can actually press', () => {
 });
 
 describe('the registered formal Review transition', () => {
+    it.each([false, true])('admits the selected-PR composition without a prepared comparison (walkthrough=%s)', async walkthrough => {
+        const reviews: unknown[] = [];
+        const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async input => {
+            reviews.push(input);
+            return TESTKIT_REVIEW_WORKFLOW_RECEIPT;
+        } });
+        const reviewers = [{ kind: 'person', principal: { kind: 'account', accountId: 'requested-person' }, required: true }];
+        const reviewInput = { reviewers, instructions: 'Ask this person to review the selected PR',
+            ...(walkthrough ? { outputs: ['walkthrough'], narrator: { engineId: 'engine-a' } } : {}) };
+        const request = {
+            v: 1, sessionId: 'session-a', review: formalReviewInput().review, reviewInput,
+            comparisonSource: REVIEW_COMPARISON_SOURCE,
+        };
+        const result = await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
+            TriageStartPullRequestReviewInputV1Schema.parse(request));
+        expect(TriageStartPullRequestReviewResultV1Schema.parse(result)).toMatchObject({ status: 'accepted' });
+        expect(h.verifyInputs).toHaveLength(1);
+        expect(h.captureInputs).toHaveLength(walkthrough ? 1 : 0);
+        expect(reviews).toEqual([expect.objectContaining({ reviewers,
+            sessionId: 'session-a', scope: 'changes', cwd: formalReviewInput().review.repositoryPath,
+            scmPullRequestReviewScope: expect.objectContaining({ observed: TESTKIT_OBSERVED_REVISION }),
+            ...(walkthrough ? { comparisonId: REVIEW_COMPARISON.id } : {}),
+        })]);
+        if (!walkthrough) {
+            expect(reviews[0]).not.toHaveProperty('narrator');
+            expect(ReviewStartInputSchema.parse(reviews[0]).comparisonId).toBeUndefined();
+        }
+    });
+
     it('prepares distinct occurrence PR targets through one saved source, Account and workspace selection', async () => {
         const h = await createTriagePullRequestReviewActionTestkit();
         const savedBytes = JSON.stringify(h.savedInput);
