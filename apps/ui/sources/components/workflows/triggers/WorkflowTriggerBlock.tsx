@@ -55,6 +55,7 @@ import {
   DEPLOY_OUTCOME_FIELD,
   readDeployOutcomeSelection,
   formatNextScheduledRunTime,
+  formatSessionLifecycleScope,
   formatTriggerInterval,
   formatTriggerSummary,
   readActionTriggerSummaryFacts,
@@ -992,10 +993,10 @@ function SessionEventTrackRows(
     return { id: option.sessionId, title: option.label, icon: row.icon, subtitle: row.subtitle };
   });
   const selectedTitle = when.subject === undefined
-    ? t('workflows.triggers.card.subjectKinds.session.any')
+    ? formatSessionLifecycleScope(undefined).title
     : chosen?.key === chosenKey ? chosen.title
       : sessionItems.find(item => item.id === sourceSessionId)?.title
-        ?? stored?.title ?? t(`workflows.triggers.card.subjectKinds.${when.subject.kind}.this`);
+        ?? stored?.title ?? formatSessionLifecycleScope(when.subject).title;
   const selectedId = browse === null
     ? when.subject ? `scope-${when.subject.kind}` : any
     : sourceSessionId ?? chosenKey;

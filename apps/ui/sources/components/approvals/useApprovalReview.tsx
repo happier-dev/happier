@@ -636,7 +636,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // delivery or accepted operation has its own row keeps the section.
   const settledRows = Boolean(deliveryReceipt) || (parsed.kind === 'built_in'
     && (readBrowserOpenAcceptance(parsed.request) !== null || readApprovalAcceptedOperationId(parsed.request) !== null));
-  const statusInHeader = (open || parsed.request.status !== 'open') && !requestNotice && !showActionRow && !previewShown
+  // Every settled page names its status under the title, Executed and Not run as Canceled and Declined do (NF-24);
+  // a notice (why it failed, why it cannot run) keeps its own row in the Request section beneath.
+  const statusInHeader = (open || parsed.request.status !== 'open') && !showActionRow && !previewShown
     && !statusFollowsFacts && !settledRows;
   if (statusInHeader) headerFacts.unshift({ key: 'status', text: statusLabel, testID: 'approvals.status' });
   const requestGroup = (
@@ -663,7 +665,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       <Item
         testID="approvals.status"
         title={t('approvals.fieldStatus')}
-        detail={statusLabel}
+        // Said once: the header carries it when it can.
+        detail={statusInHeader ? undefined : statusLabel}
         // One failure statement: why it failed (or, for an unknown outcome, what to do) is the Status row's own line,
         // before where its result went. A before check's refusal says its reason in the checks block, once
         // (lab wait-v-arefused); the page title already names what failed, so no "Couldn't finish" row repeats it.
@@ -781,7 +784,8 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const sections = (
     <>
         {automaticChecks && readApprovalAutomaticChecksShown(automaticChecks) ? (
-          <ItemGroup>
+          // The checks panel is its own block: no sheet around it (NF-32).
+          <ItemGroup surface="none">
             <SectionContentRow testID="approvals.automatic-checks-row">
               <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionValue} serverId={approvalServerId ?? null}
                 canAllow={canAllow} automaticCheckSkips={automaticCheckSkips}
@@ -903,7 +907,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     open,
     /** The request group says something beyond its status: a failure, why it cannot run, or an unreachable Home. */
     requestNotice,
-    requestGroup: statusInHeader ? null : requestGroup, statusFollowsFacts, sections, decision, decisionBar, capabilityDecisions, compactViewport,
+    requestGroup: statusInHeader && !requestNotice ? null : requestGroup, statusFollowsFacts, sections, decision, decisionBar, capabilityDecisions, compactViewport,
     workspaceSyncReview, requesterContext, requesterConfirmationSection, confidential,
     /** "Next time in this Session", placed right above the decision by each host. */
     sessionConsent,

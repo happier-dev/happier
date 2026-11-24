@@ -181,6 +181,8 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const cachedSourceProfile = useUser(props.sourceProfile === undefined && summary?.sourceSavedBy?.kind === 'person' ? summary.sourceSavedBy.accountId : '');
     const editedBy = resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId: scope?.accountId,
         viewerOwnSave: props.inTriggerHistory === true ? 'you' : 'omit',
+        // History compares revisions (an edit); any other Run row names who set it up.
+        wording: props.inTriggerHistory === true ? 'edited' : 'setUp',
         profile: props.sourceProfile === undefined ? cachedSourceProfile : props.sourceProfile });
     const heldInvocationId = summary?.heldStep?.invocationId;
     const requestRef = React.useMemo<CollectionRequestRef | null>(() => heldInvocationId ? {

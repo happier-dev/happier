@@ -20899,6 +20899,9 @@ const de = translated(workflowValueReferenceTranslations.de, {
         editedByYou: 'Von dir bearbeitet',
         editedByPerson: 'Von einer anderen Person bearbeitet',
         editedByAgent: 'Von einem Agenten bearbeitet',
+        setUpBy: ({ name }) => `Eingerichtet von ${name}`,
+        setUpByPerson: 'Von einer anderen Person eingerichtet',
+        setUpByAgent: 'Von einem Agenten eingerichtet',
         completedWithFailures: ({ completed, failed }) =>
             `Abgeschlossen, mit Fehlern. ${completed} abgeschlossen; ${failed} ${failed === 1 ? 'konnte' : 'konnten'} nicht beendet werden.`,
         approvalWanted: ({ block }) => `${block} möchte einen Befehl ausführen.`,

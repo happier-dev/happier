@@ -21280,6 +21280,9 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         editedByYou: '由你編輯',
         editedByPerson: '由其他人編輯',
         editedByAgent: '由代理編輯',
+        setUpBy: ({ name }) => `由 ${name} 設定`,
+        setUpByPerson: '由其他人設定',
+        setUpByAgent: '由代理設定',
         completedWithFailures: ({ completed, failed }) =>
             `已完成，但有失敗。${completed} 個已完成，${failed} 個未能完成。`,
         approvalWanted: ({ block }) => `${block} 想要執行一個指令。`,

@@ -190,11 +190,11 @@ export function WorkflowRunsPage(props: Readonly<{
         glyph: () => null,
         loadingGlyph: false,
         title: (row) => row.title,
-        titleSuffix: (row) => row.editedBy,
+        titleSuffix: (row) => row.setUpBy,
         // A list row (a phone, a narrow page) reads the Run Lines and Row details (B1 list review 2): Lines 2 adds the
         // subject; Lines 3 adds who started it and how long it took on their own line. The table names them Columns.
-        byline: (row) => lines === 1 ? row.editedBy
-          : [row.editedBy, row.subject, readPluginDetail(row, 'context')].filter(Boolean).join(' · ') || null,
+        byline: (row) => lines === 1 ? row.setUpBy
+          : [row.setUpBy, row.subject, readPluginDetail(row, 'context')].filter(Boolean).join(' · ') || null,
         listDetail: lines === 3 ? (row) => [
           runDetails.startedBy ? row.startedBy : null,
           runDetails.took ? readWorkflowRunTook(row) : null,
@@ -209,7 +209,7 @@ export function WorkflowRunsPage(props: Readonly<{
         fields,
         accessibilityLabel: (row) => {
           const label = row.status?.word ?? row.result;
-          return [row.title, row.editedBy, label].filter(Boolean).join(', ');
+          return [row.title, row.setUpBy, label].filter(Boolean).join(', ');
         },
         testID: (row) => `workflow-runs:row:${row.key}`,
         columnTitles: { title: t('workflows.destination.columns.run') },

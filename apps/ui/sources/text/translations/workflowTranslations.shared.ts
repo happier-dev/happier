@@ -841,6 +841,9 @@ export const en = {
         editedByYou: 'Edited by you',
         editedByPerson: 'Edited by another person',
         editedByAgent: 'Edited by an agent',
+        setUpBy: ({ name }: { name: string }) => `Set up by ${name}`,
+        setUpByPerson: 'Set up by another person',
+        setUpByAgent: 'Set up by an agent',
         completedWithFailures: ({ completed, failed }: { completed: number; failed: number }) =>
             `Completed with failures. ${completed} completed; ${failed} could not finish.`,
         approvalWanted: ({ block }: { block: string }) => `${block} wants to run a command.`,

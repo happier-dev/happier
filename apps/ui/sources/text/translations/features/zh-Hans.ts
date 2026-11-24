@@ -21280,6 +21280,9 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         editedByYou: '由你编辑',
         editedByPerson: '由其他人编辑',
         editedByAgent: '由智能体编辑',
+        setUpBy: ({ name }) => `由 ${name} 设置`,
+        setUpByPerson: '由其他人设置',
+        setUpByAgent: '由智能体设置',
         completedWithFailures: ({ completed, failed }) =>
             `已完成，但有失败。${completed} 个已完成，${failed} 个未能完成。`,
         approvalWanted: ({ block }) => `${block} 想要执行一条命令。`,

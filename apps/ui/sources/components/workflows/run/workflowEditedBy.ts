@@ -17,12 +17,19 @@ export function resolveEditedByLabel(input: Readonly<{
     viewerAccountId: string | null | undefined;
     profile?: Readonly<{ name?: string | null; username?: string | null }> | null;
     viewerOwnSave: 'you' | 'omit';
+    /**
+     * `setUp`: a Run row names whose saved workflow it ran ("Set up by Mara"); a Run is not edited (NF-32).
+     * `edited` (default): History compares revisions, so the save reads as an edit.
+     */
+    wording?: 'edited' | 'setUp';
 }>): string | null {
     if (!input.savedBy) return null;
-    if (input.savedBy.kind === 'agent') return t('workflows.run.editedByAgent');
+    const setUp = input.wording === 'setUp';
+    if (input.savedBy.kind === 'agent') return t(setUp ? 'workflows.run.setUpByAgent' : 'workflows.run.editedByAgent');
     if (input.savedBy.accountId === input.viewerAccountId) {
         return input.viewerOwnSave === 'you' ? t('workflows.run.editedByYou') : null;
     }
     const name = input.profile ? formatAccountDisplayName(input.profile) : null;
+    if (setUp) return name ? t('workflows.run.setUpBy', { name }) : t('workflows.run.setUpByPerson');
     return name ? t('workflows.run.editedBy', { name }) : t('workflows.run.editedByPerson');
 }

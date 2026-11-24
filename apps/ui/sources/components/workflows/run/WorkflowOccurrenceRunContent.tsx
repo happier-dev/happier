@@ -897,7 +897,8 @@ function WorkflowOccurrenceRunFacts({ detail }: Readonly<{ detail: OccurrenceDet
             title={t('runs.runDetails.failedToLoad')} announce="alert" accessibilityLiveRegion="assertive"
             action={{ label: t('common.retry'), onPress: refresh, testID: 'automation-run-detail-stale-refresh-retry' }} /> : null}
         {/* Sections of the Run's page: title and description above their rows, as every page section reads. */}
-        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <ListPresentationProvider value="page">
+        {/* The managed Run body already owns the page column's padding: no second inset (phone NF-32). */}
+        {run === null ? loading ? <ActivitySpinner size="small" /> : null : <ListPresentationProvider value="page" pageInsets="contained">
             {run.replyHandoffState === 'none' ? null : <ItemGroup title={t('automations.detail.runMeta.replyHandoffTitle')}>
                 <WorkflowOccurrenceDeliveryItems detail={detail} />
             </ItemGroup>}

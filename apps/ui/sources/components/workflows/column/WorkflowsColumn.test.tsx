@@ -699,8 +699,10 @@ describe('WorkflowsColumn', () => {
             expect(saved?.sourceSavedBy).toEqual(shared.sourceSavedBy);
             const accessible = screen.findAll(node => node.props.testID === 'workflow-runs:row:shared-run'
                 && typeof node.props.accessibilityLabel === 'string').map(node => node.props.accessibilityLabel);
-            expect(accessible.join(' ')).toContain(t('workflows.run.editedBy', { name: author.name! }));
-            expect(screen.getTextContent()).toContain(t('workflows.run.editedBy', { name: author.name! }));
+            // NF-32: a Run is not edited; its saved author is who set it up.
+            expect(accessible.join(' ')).toContain(t('workflows.run.setUpBy', { name: author.name! }));
+            expect(screen.getTextContent()).toContain(t('workflows.run.setUpBy', { name: author.name! }));
+            expect(screen.getTextContent()).not.toContain(t('workflows.run.editedBy', { name: author.name! }));
         });
     });
 

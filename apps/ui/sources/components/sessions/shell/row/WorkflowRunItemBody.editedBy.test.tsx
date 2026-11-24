@@ -82,15 +82,16 @@ describe('History occurrence "Edited by" line', () => {
         expect(screen.getTextContent()).not.toContain(OTHER);
     });
 
+    // NF-32: outside History a Run row names who set it up; it is not "edited".
     it('outside Workflow History omits the viewer\'s own save but still names other people and agents', async () => {
         const own = await renderHistoryRow({ kind: 'person', accountId: VIEWER }, { inTriggerHistory: false });
         expect(own.getTextContent()).not.toContain(t('workflows.run.editedByYou'));
         standardCleanup();
         const other = await renderHistoryRow({ kind: 'person', accountId: OTHER }, { people: { [OTHER]: 'Bo Lindqvist' }, inTriggerHistory: false });
-        expect(other.getTextContent()).toContain(t('workflows.run.editedBy', { name: 'Bo Lindqvist' }));
+        expect(other.getTextContent()).toContain(t('workflows.run.setUpBy', { name: 'Bo Lindqvist' }));
         standardCleanup();
         const agent = await renderHistoryRow({ kind: 'agent', accountId: VIEWER }, { inTriggerHistory: false });
-        expect(agent.getTextContent()).toContain(t('workflows.run.editedByAgent'));
+        expect(agent.getTextContent()).toContain(t('workflows.run.setUpByAgent'));
     });
     it('draws no line when the frozen saved-by fact is absent', async () => {
         for (const savedBy of [undefined, null] as const) {

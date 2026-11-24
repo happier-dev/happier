@@ -1653,8 +1653,12 @@ describe('ApprovalDetailScreen', () => {
     currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
-    // Refused before any effect: a neutral "Not run", and the Status row says why, once.
-    expect(approvalStatus(screen)).toBe('approvals.status.notRun');
+    // Refused before any effect: a neutral "Not run" under the title, as Canceled and Declined read (NF-24),
+    // and the Status row says why, once, without repeating the status.
+    const header = screen.tree.root.findAll(node => node.props?.testID === 'approvals.header' && node.props?.title !== undefined)[0];
+    expect((header?.props.meta as readonly { key: string; text: string }[] | undefined)?.find(item => item.key === 'status')?.text)
+      .toBe('approvals.status.notRun');
+    expect(approvalItem(screen, 'approvals.status')?.props.detail).toBeUndefined();
     expect(approvalItem(screen, 'approvals.status')?.props.subtitle).toBe('approvals.failureNotAuthorized');
     expect(screen.findByTestId('approvals.execution-failure') === null).toBe(true);
   });

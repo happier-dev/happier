@@ -53,7 +53,8 @@ export type WorkflowRunCollectionRow = Readonly<{
     result: string | null;
     status: WorkStatusPresentation | null;
     startedBy: string | null;
-    editedBy: string | null;
+    /** Whose saved workflow this Run ran ("Set up by Mara"); a Run is not edited. */
+    setUpBy: string | null;
     subject: string | null;
     createdAt: number | undefined;
 }>;
@@ -156,7 +157,7 @@ export function useWorkflowRunCollection(focused: boolean) {
                 result: result === undefined ? null : readWorkflowRunWorkStatusFacts({ state: result }).word,
                 status: summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null,
                 startedBy: startedByLabel,
-                editedBy: resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId, viewerOwnSave: 'omit',
+                setUpBy: resolveEditedByLabel({ savedBy: summary?.sourceSavedBy, viewerAccountId, viewerOwnSave: 'omit', wording: 'setUp',
                     profile: summary?.sourceSavedBy?.kind === 'person' ? profiles.get(summary.sourceSavedBy.accountId)?.profile : null }),
                 subject: discussions.get(run.id) ?? subjects.get(run.id) ?? null,
                 createdAt,

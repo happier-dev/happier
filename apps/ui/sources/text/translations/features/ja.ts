@@ -21340,6 +21340,9 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         editedByYou: 'あなたが編集',
         editedByPerson: '他のユーザーが編集',
         editedByAgent: 'エージェントが編集',
+        setUpBy: ({ name }) => `${name}が設定`,
+        setUpByPerson: '他のユーザーが設定',
+        setUpByAgent: 'エージェントが設定',
         completedWithFailures: ({ completed, failed }) =>
             `失敗ありで完了しました。${completed} 件が完了し、${failed} 件は終えられませんでした。`,
         approvalWanted: ({ block }) => `${block} がコマンドを実行しようとしています。`,

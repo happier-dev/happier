@@ -21430,6 +21430,9 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         editedByYou: 'Изменено вами',
         editedByPerson: 'Изменено другим человеком',
         editedByAgent: 'Изменено агентом',
+        setUpBy: ({ name }) => `Настроено: ${name}`,
+        setUpByPerson: 'Настроено другим человеком',
+        setUpByAgent: 'Настроено агентом',
         completedWithFailures: ({ completed, failed }) =>
             `Завершено с ошибками. Выполнено: ${completed}. Не удалось завершить: ${failed}.`,
         approvalWanted: ({ block }) => `${block} хочет выполнить команду.`,

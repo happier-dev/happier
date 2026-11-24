@@ -36,6 +36,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 
 import {
     formatScheduledRunQualifier,
+    formatSessionLifecycleScope,
     formatTriggerSummary,
     readNextScheduledRunRefreshAtMs,
 } from './formatTriggerSummary';
@@ -423,9 +424,13 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 const summary = formatTriggerSummary(row.trigger);
                 const title = edited !== undefined ? startTitle(edited) : startId === null ? summary : startTitle(when!) || summary;
                 return { key: row.key, startId, startTitle: title, enabled: row.enabled, incomplete: edited !== undefined,
-                    // A session or run event's summary is its start again ("When a turn ends"): the chip names its rows instead (NF-29).
-                    detail: startId === null ? null : summary === title || row.trigger.kind === 'sessionLifecycle' || row.trigger.kind === 'runLifecycle'
-                        ? t('workflows.page.inspector.options') : summary,
+                    // A session event's summary is its start again ("When a turn ends"), so the chip says where it listens,
+                    // from the trigger's stored subject: "When a session finishes a turn in any session" (NF-29).
+                    ...(startId !== null && row.trigger.kind === 'sessionLifecycle'
+                        ? (({ word, title: scope }) => ({ detail: scope, detailWord: t(`workflows.sentence.${word}`) }))(
+                            formatSessionLifecycleScope(when !== null && 'subject' in when ? when.subject : undefined))
+                        : { detail: startId === null ? null : summary === title || row.trigger.kind === 'runLifecycle'
+                            ? t('workflows.page.inspector.options') : summary }),
                     onSelectStart: (id) => selectStart(when, id, (next) => editRow(row, next)),
                     onRemove: () => {
                         setEdits(({ [row.key]: _dropped, ...rest }) => rest);

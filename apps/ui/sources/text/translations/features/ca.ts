@@ -21419,6 +21419,9 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         editedByYou: 'Editat per tu',
         editedByPerson: 'Editat per una altra persona',
         editedByAgent: 'Editat per un agent',
+        setUpBy: ({ name }) => `Configurat per ${name}`,
+        setUpByPerson: 'Configurat per una altra persona',
+        setUpByAgent: 'Configurat per un agent',
         completedWithFailures: ({ completed, failed }) =>
             `Completat amb errors. ${completed} ${completed === 1 ? 'completat' : 'completats'}; ${failed} no ${failed === 1 ? 'ha pogut' : 'han pogut'} acabar.`,
         approvalWanted: ({ block }) => `${block} vol executar una ordre.`,

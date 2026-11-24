@@ -1,4 +1,4 @@
-import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent, type AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
@@ -258,6 +258,15 @@ function readOfflineEventName(event: Extract<TriggerSummarySource, { kind: 'plug
     if (!label || !/^\p{L}+(?:[-_.]\p{L}+)+$/u.test(label)) return null;
     const words = label.replace(/[-_.]/gu, ' ');
     return words[0]!.toLocaleUpperCase(getPreferredLanguage()) + words.slice(1);
+}
+
+/**
+ * Where a session event is listened for, from the trigger's stored subject: the Source field's resting value and
+ * the Sentence's scope chip ("When a turn ends in any session", "on this Machine") read this one owner.
+ */
+export function formatSessionLifecycleScope(subject: AutomationSessionLifecycleSubjectV1 | undefined): Readonly<{ word: 'in' | 'on'; title: string }> {
+    if (subject === undefined) return { word: 'in', title: t('workflows.triggers.card.subjectKinds.session.any') };
+    return { word: subject.kind === 'machine' ? 'on' : 'in', title: t(`workflows.triggers.card.subjectKinds.${subject.kind}.this`) };
 }
 
 export const DEPLOY_OUTCOME_FIELD = '/outcome';

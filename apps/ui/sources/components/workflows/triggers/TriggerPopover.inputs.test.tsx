@@ -588,7 +588,8 @@ describe('Run a workflow trigger inputs', () => {
             status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         const detail = screen.findAll(node => node.props.testID === 'once-sentence-trigger:new:c1-detail'
             && typeof node.props.label === 'string')[0];
-        expect(detail?.props.label).toBe('workflows.page.inspector.options');
+        expect(detail?.props.label).toBe('workflows.triggers.card.subjectKinds.session.this');
+        expect(screen.getTextContent()).toContain('workflows.sentence.in');
         await screen.unmount();
     });
     it('the When select switches a session trigger to another session event and keeps its Session and How often', async () => {
