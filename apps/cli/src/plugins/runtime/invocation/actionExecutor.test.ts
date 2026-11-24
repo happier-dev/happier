@@ -511,6 +511,21 @@ describe('target action executor', () => {
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('postgres://');
   });
 
+  it('names a result projection that replaced an executed value with the generic failure', async () => {
+    const diagnostic = vi.fn(async () => {});
+    const executor = createExecutor({ resolve: () => resolved(), diagnostic,
+      invoke: async () => ({ status: 'executed', value: { rows: ['secret-row postgres://user:pw@host/db'] } }),
+      redactFailureText: (_action, _value, purpose) => {
+        if (purpose === 'result') throw new RangeError('redactor refused postgres://user:pw@host/db');
+        return _value;
+      } });
+    await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
+      .resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed' });
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', code: 'plugin_action_execution_failed',
+      projectionCollapsed: true, causeClass: 'RangeError' }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('postgres://');
+  });
+
   it('normalizes requester rejection, cancellation, and invocation throws without escaping the final owner', async () => {
     const invoke = vi.fn(async () => { throw new Error('handler escaped'); });
     const requesterFailure = createExecutor({

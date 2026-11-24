@@ -54,11 +54,12 @@ export function projectTargetActionFailure(
     if (!redact) return result;
     try {
       return Object.freeze({ ...result, value: redactPluginInvocationResultData(result.value, redact) });
-    } catch {
-      return Object.freeze({ status: 'failed', code: 'plugin_action_execution_failed',
-        message: 'plugin_action_execution_failed' });
+    } catch (error) {
+      return recordProjectionCollapse(Object.freeze({ status: 'failed', code: 'plugin_action_execution_failed',
+        message: 'plugin_action_execution_failed' }), error);
     }
   }
+  let collapseCause: { error: unknown } | undefined;
   let code = projectPluginActionFailureCode(result.code);
   let message = result.message;
   let data = result.data;
@@ -79,7 +80,8 @@ export function projectTargetActionFailure(
         // Use its content-free schema failure rather than guessing operand text.
         message = 'Plugin action result does not match its executable result schema';
       }
-    } catch {
+    } catch (error) {
+      collapseCause = { error };
       code = 'plugin_action_execution_failed';
       message = code;
       data = undefined;
@@ -106,19 +108,40 @@ export function projectTargetActionFailure(
           acceptedValues: Object.freeze(issue.acceptedValues.map(value => typeof value === 'string' ? redactText(value) : value)),
         }),
       }));
-    } catch {
+    } catch (error) {
       // A failed scoped redactor cannot disclose a partially projected diagnostic.
+      collapseCause = { error };
       code = 'plugin_action_execution_failed';
       message = code;
       data = undefined;
       issues = undefined;
     }
   }
-  return Object.freeze({
+  const projected = Object.freeze({
     status: result.status, code, message: projectPluginFailureText(new Error(message)),
     ...(result.retryable === undefined ? {} : { retryable: result.retryable }),
     ...(data === undefined ? {} : { data }),
     ...(issues === undefined ? {} : { issues }),
     ...(result.actionHandlerInvocation === undefined ? {} : { actionHandlerInvocation: result.actionHandlerInvocation }),
   });
+  return collapseCause ? recordProjectionCollapse(projected, collapseCause.error) : projected;
+}
+
+/** Closed, content-free facts about a projection that substituted the generic failure code. */
+export type TargetActionProjectionCollapseCause = Readonly<{ causeClass: string; causeCode?: string }>;
+const projectionCollapseCauses = new WeakMap<object, TargetActionProjectionCollapseCause>();
+const CAUSE_IDENTIFIER = /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/;
+
+function recordProjectionCollapse<T extends object>(result: T, error: unknown): T {
+  const name = error instanceof Error ? error.name : typeof error;
+  const errorCode = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+    ? (error as { code: string }).code : undefined;
+  projectionCollapseCauses.set(result, { causeClass: CAUSE_IDENTIFIER.test(name) ? name : 'Error',
+    ...(errorCode && CAUSE_IDENTIFIER.test(errorCode) ? { causeCode: errorCode } : {}) });
+  return result;
+}
+
+/** The diagnostic owner reads why a projection replaced a result; never the replaced value or text. */
+export function readTargetActionProjectionCollapseCause(result: object): TargetActionProjectionCollapseCause | undefined {
+  return projectionCollapseCauses.get(result);
 }

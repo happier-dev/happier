@@ -26,7 +26,7 @@ import type {
 } from '../hostAccess/resolve';
 import type { PluginInvocationServiceBinding } from './services/types';
 import { readTargetActionDiagnosticConfidentiality } from './diagnostics';
-import { projectTargetActionFailure, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
+import { projectTargetActionFailure, readTargetActionProjectionCollapseCause, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
 export { projectTargetActionFailure, type TargetActionExecutionResult } from '@happier-dev/cli-common/plugins/registration';
 
 export type ResolvedTargetAction = NormalizedTargetActionPolicy & Readonly<{
@@ -341,8 +341,10 @@ export function createTargetActionExecutor(deps: Readonly<{
             occurrenceId: action?.occurrenceId ?? 'unavailable',
             surface: args.surface, status: publicResult.status, ...('code' in publicResult ? { code: publicResult.code } : {}),
             ...untypedFailureCauses.get(result),
-            ...('code' in result && 'code' in publicResult && result.code !== publicResult.code
-              && publicResult.code === 'plugin_action_execution_failed' ? { projectionCollapsed: true as const } : {}),
+            ...readTargetActionProjectionCollapseCause(publicResult),
+            ...(readTargetActionProjectionCollapseCause(publicResult) || ('code' in result && 'code' in publicResult
+              && result.code !== publicResult.code && publicResult.code === 'plugin_action_execution_failed')
+              ? { projectionCollapsed: true as const } : {}),
           });
         } catch { /* Diagnostics are failure-isolated from authorization and execution. */ }
         observingCredentialUse = false;
