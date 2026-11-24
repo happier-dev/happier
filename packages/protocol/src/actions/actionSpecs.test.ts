@@ -22,6 +22,7 @@ import { resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SIGNED_ROOT_ACTION_IDS, SignedRootActionIdSchema, SESSION_TRANSCRIPT_GET_MAX_LIMIT, ActionSurfaceSchema, PLUGIN_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_OUTPUT_SCHEMAS, PLUGIN_INVOCABLE_ACTION_IDS, PluginInvocableActionIdSchema, SessionTranscriptGetExternalShareableInputV1Schema, getActionContextualDefaults, getActionSpec, isActionSpecSurfacedOn, isHumanSecretApiExcludedActionId, isInternalActionId, isPluginProvenanceOnlyActionId, isPluginSurfaceExcludedActionId, isVoicePromptHotPathSpec, isVoiceSdkSafeActionSpec, listActionSpecs, listActionSpecsForSurface, listVoicePromptHotPathSpecs, projectSessionSpawnNewApiRequest, resolveRuntimeActionHostEffectClass } from './actionSpecs.js';
 import { HOME_GOVERNANCE_ACTION_IDS_V1 } from '../home/governance/actionsV1.js';
 import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
 import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecretResourceActionsV1.js';
 import { isSharedSavedSecretClientReadActionIdV1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
@@ -239,7 +240,7 @@ describe('Composer state mutation Actions', () => {
       // e7e3e2cdcfb2 routes both picker and Agent choices through the Session owner.
       executionPlacement: 'session',
       placements: [],
-      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     });
   });
 });
@@ -436,6 +437,7 @@ const RUNTIME_ACTION_IDS = [
 ] as const;
 
 const TEAM_NON_REFRESHABLE_DANGER_ACTION_ID_SET = new Set<ActionId>([
+  TEAM_SETUP_RUN_ACTION_ID_V1,
   // Preparation returns partial outcomes from the answering app's captured encryption owner.
   'teams.members.history.prepare',
   'teams.credentials.test',
@@ -1930,10 +1932,10 @@ describe('Action Spec Registry', () => {
     expect(getActionSpec('session.message.send').inputHints?.fields).toContainEqual(
       expect.objectContaining({ path: 'recipient', widget: 'json' }),
     );
-    // The same `wait` flag serves the main send and a targeted run send, so its
-    // hint must never claim parent-Session idle semantics (Lane 05 L05-A19).
     expect(getActionSpec('session.message.send').inputHints?.fields).toContainEqual(
-      expect.objectContaining({ path: 'wait', title: 'Wait for message completion (optional)' }),
+      expect.objectContaining({ path: 'reply', widget: 'select', options: expect.arrayContaining([
+        expect.objectContaining({ value: 'wait' }),
+      ]) }),
     );
     const publicInput = PUBLIC_ACTION_INPUT_SCHEMAS['session.message.send'];
     expect(publicInput.parse(input)).toEqual(input);

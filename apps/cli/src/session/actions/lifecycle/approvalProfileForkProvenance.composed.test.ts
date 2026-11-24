@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { buildSessionWorkspaceLocationV1 } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import * as persistence from '@/persistence';
+import * as machineRegistration from '@/daemon/machineIdentity/machineRegistrationStore';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { sealSessionStoredContent } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { createReplayMessagesPage } from '@/session/replay/replayMessagesFixture.testkit';
@@ -69,8 +70,9 @@ describe('approval profile provenance through Session lifecycle Actions', () => 
       revision: { headerVersion: 1, bodyVersion: 1 } }], profileId);
     const mode = 'plain';
     const secret = new Uint8Array(32).fill(9);
-    const credentials: persistence.StoredCredentials = { token: 'fixture-token',
-      encryption: null };
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'fixture-account', tokenEpoch: 0,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const credentials: persistence.StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
     const parentSessionId = 'c1234567890123456789012345';
     const machineId = 'machine-1';
     const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: mode,
@@ -98,6 +100,7 @@ describe('approval profile provenance through Session lifecycle Actions', () => 
     // Authentication/persistence and HTTP are system boundaries. RPC dispatch,
     // owner-envelope opening and Agent fork resolution stay real.
     vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
+    vi.spyOn(machineRegistration, 'readActiveMachineId').mockResolvedValue(machineId);
     vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: persistence.SUPPORTED_SCHEMA_VERSION,
       onboardingCompleted: true, machineId });
     vi.stubGlobal('fetch', vi.fn(async value => {

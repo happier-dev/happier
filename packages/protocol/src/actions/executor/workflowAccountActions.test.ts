@@ -81,7 +81,7 @@ describe('workflow Action refusal classification', () => {
   it('preserves renewed approval required by the Run owner through the strict Workflow failure consumer', () => {
     const result = normalizeWorkflowActionThrownError(Object.assign(new Error('approval_required'), { code: 'approval_required' }));
     expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'approval_required', error: 'approval_required',
-      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'approval_required', httpStatus: null } });
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: null } });
     expect(WorkflowOperationErrorCodeV1Schema.parse(result.errorCode)).toBe('approval_required');
   });
   it('preserves the typed wait refusal and its transport diagnostic through the strict Workflow consumer', async () => {
@@ -139,7 +139,7 @@ describe('workflow Action refusal classification', () => {
     const result = await actions.execute('workflow.definition.get', { definitionId }, { surface: 'ui' });
     expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'currentness_conflict',
       error: error.message, details: { revision: 7 },
-      failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: 'currentness_conflict', httpStatus: null } });
+      failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: null, httpStatus: null } });
   });
 
   it('does not prove cancellation when an Artifact delete commits but its receipt is aborted', async () => {
@@ -182,7 +182,7 @@ describe('workflow Action refusal classification', () => {
     const actions = createActionExecutor({ workflowAction: executor(false, error) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'api' }))
       .resolves.toEqual({ ok: false, effectAttempted: false, errorCode: 'workflow_http_error', error: error.message, details,
-        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: 'workflow_http_error', httpStatus: 400 } });
+        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: null, httpStatus: 400 } });
   });
   it('does not infer no effect from a server failure or a lost response', () => {
     for (const response of [{ status: 503 }, undefined]) {
@@ -198,7 +198,7 @@ describe('workflow Action refusal classification', () => {
       Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details })) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'ui' }))
       .resolves.toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details,
-        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } });
+        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: null, httpStatus: null } });
     expect(normalizeWorkflowActionThrownError(Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' })))
       .toMatchObject({ errorCode: 'target_unavailable', details: { code: 'target_unavailable', reason: 'selection_unavailable' } });
   });
