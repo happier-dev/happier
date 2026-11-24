@@ -1651,7 +1651,9 @@ export abstract class BasePermissionHandler {
             });
         }
 
-        if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision) {
+        if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision
+            // The offered native choice applies to the retained Run; this callback stops the foreground Session.
+            && !(result.nativeChoice && readRunScopedExecutionPermissionRequestIdentity(response.id))) {
             try {
                 const cb = this.onAbortRequested;
                 if (cb) {

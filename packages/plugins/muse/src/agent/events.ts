@@ -339,9 +339,15 @@ export function createMuseEventProjection<SessionId extends string | undefined =
           ? { content: [{ type: 'text', text: item.visibleOutput }] } : {}) }, ...owner });
     }
     if (!completed && !state.committed) return;
-    if (state.committed && previous && item.visibleOutput === previous.value.visibleOutput
-      && item.status === previous.value.status && item.failureKind === previous.value.failureKind
-      && item.failureReason === previous.value.failureReason && item.fallbackText === previous.value.fallbackText) return;
+    if (state.committed && previous && item.status === previous.value.status
+      && item.failureKind === previous.value.failureKind && item.failureReason === previous.value.failureReason
+      && item.fallbackText === previous.value.fallbackText) {
+      // Muse can add a denial notice after the structured approval rejection has settled.
+      const addsDenialNotice = item.kind === 'toolCall' && item.status === 'rejected'
+        && item.failureKind === 'approval_denied' && typeof item.failureReason === 'string'
+        && previous.value.visibleOutput === undefined;
+      if (item.visibleOutput === previous.value.visibleOutput || addsDenialNotice) return;
+    }
     state.committed = true;
     const text = fallback ? item.fallbackText ?? '' : item.visibleOutput;
     // Visible text supplements native failure status and details; it must not erase either.

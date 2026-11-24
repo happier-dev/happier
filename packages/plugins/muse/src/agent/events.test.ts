@@ -200,7 +200,7 @@ it('projects native process tool and inference usage observations', async () => 
   });
 });
 
-it('keeps the recorded rejected tool identity when its output arrives after completion', async () => {
+it('settles the recorded rejected tool once when Muse adds output after completion', async () => {
   await withNativeProjection('advanced', async ({ events }) => {
     events.expectAllEventsValidated();
     events.expectExactlyOneTerminalEvent({ turnId: 'host-tools-turn' });
@@ -210,9 +210,7 @@ it('keeps the recorded rejected tool identity when its output arrives after comp
     const sameTool = observed.filter(event => 'toolCallId' in event && event.toolCallId === nativeTool.toolCallId);
     expect(sameTool.filter(event => event.kind === 'tool-call')).toHaveLength(1);
     expect(sameTool.filter(event => event.kind === 'tool-result')).toMatchObject([
-      { isError: true },
-      { output: { text: expect.stringContaining('tool denied: approval aborted'), status: 'rejected',
-        failureKind: 'approval_denied', failureReason: 'approval aborted' }, isError: true },
+      { output: { status: 'rejected', failureKind: 'approval_denied', failureReason: 'approval aborted' }, isError: true },
     ]);
   });
 });

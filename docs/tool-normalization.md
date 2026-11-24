@@ -219,10 +219,13 @@ In **0.3 development source**, Muse's plugin decodes MSP `toolCall` and
 `userShell.commandText` supplies its command. Other native tool names, including
 MCP names, are preserved with their arguments. Incomplete argument JSON remains
 readable text. The native call/item identity stays stable across revisions, and
-a newer terminal output updates that same tool result. Native failure status is
-preserved independently of its visible output. These mappings are characterized
-against Muse 1.4.14 recordings; file, patch and search arguments are not inferred
-from tool names. The shared normalizer and renderers remain the semantic owners.
+a newer terminal output updates that same tool result. Muse may add a denial
+notice after a tool has already reported a structured approval rejection. When the
+status, failure kind and reason are unchanged, the original rejection is the
+terminal result. Native failure status is preserved independently of its visible
+output. These mappings are characterized against Muse 1.4.14 recordings. File,
+patch and search arguments are preserved as supplied. The shared normalizer and
+renderers remain the semantic owners.
 
 ---
 
