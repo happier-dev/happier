@@ -15,12 +15,15 @@ import { CollectionRows } from '@/components/ui/lists/collection/CollectionList'
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
+import { useRouteLaunchCurtainHold } from '@/components/appShell/workspace/useRouteLaunchCurtainHold';
+import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { useTeamMembersRoster, type TeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { getPreferredLanguage, t } from '@/text';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMemberDetailPath } from '../teamsRoutes';
+import { resolveTeamMembersCollectionLanding } from '../collection/teamsCollection';
 import { TeamOwnerRequiredNotice } from './TeamOwnerRequiredNotice';
 import { TeamMemberAddAction } from './TeamMemberAddAction';
 import { TeamMemberRow } from './TeamMemberRow';
@@ -277,8 +280,8 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
 
     if (view === 'pending') return null;
     if (view === 'land') {
-        const firstMember = roster.rows[0];
-        if (canRead && firstMember) return <Redirect href={teamMemberDetailPath(context.address, firstMember.id) as never} />;
+        const landing = canRead ? resolveTeamMembersCollectionLanding(roster.rows.map((row) => row.id), context.address) : null;
+        if (landing) return <Redirect href={teamMemberDetailPath(context.address, landing) as never} />;
         return (
             <ItemList>
                 {props.header}
@@ -350,7 +353,7 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
         query={query} setQuery={setQuery} />;
 });
 
-export const TeamMembersScreen = React.memo(function TeamMembersScreen(props: Readonly<{
+const TeamMembersPage = React.memo(function TeamMembersPage(props: Readonly<{
     serverId: string;
     teamId: string;
 }>) {
@@ -365,4 +368,50 @@ export const TeamMembersScreen = React.memo(function TeamMembersScreen(props: Re
             {(context, header) => <MemberRoster context={context} header={header} />}
         </TeamSection>
     );
+});
+
+/**
+ * Beside the Members rail a person is always open, so the index lands on one, decided as the Teams collection decides
+ * its landing: from the rows the roster already holds (last-known on a return), before anything of the index paints.
+ * While the Team or its roster is still being read, the index draws nothing of its own (the launch curtain stays up on
+ * a first load) instead of a "Members" header that the person's own replaces. A Team with nobody to land on, or a
+ * roster that could not be read, falls through to the page, which says so.
+ */
+const TeamMembersLanding = React.memo(function TeamMembersLanding(props: Readonly<{
+    serverId: string;
+    teamId: string;
+}>) {
+    const binding = useTeamBinding(props.serverId, props.teamId);
+    const projection = binding.kind === 'bound' ? binding : binding.kind === 'resolving' ? binding.retained : undefined;
+    const state = projection?.state.kind === 'ready' ? projection.state : null;
+    const canRead = state?.team.capabilities.viewRoster === true;
+    const roster = useTeamMembersRoster({
+        scope: state?.scope ?? null,
+        address: projection?.address ?? null,
+        filter: 'all',
+        enabled: canRead,
+    });
+    const landing = projection && canRead
+        ? resolveTeamMembersCollectionLanding(roster.rows.map((row) => row.id), projection.address)
+        : null;
+    // Still reading: the binding (or the Team) has not answered, or the roster's first page has not.
+    const waiting = landing === null && (
+        (binding.kind === 'resolving' && !projection)
+        || projection?.state.kind === 'loading'
+        || projection?.state.kind === 'unobserved'
+        || (canRead && roster.status === 'loading' && roster.error === null));
+    useRouteLaunchCurtainHold(waiting || landing !== null, props.serverId);
+    if (landing && projection) return <Redirect href={teamMemberDetailPath(projection.address, landing) as never} />;
+    if (waiting) return null;
+    return <TeamMembersPage serverId={props.serverId} teamId={props.teamId} />;
+});
+
+export const TeamMembersScreen = React.memo(function TeamMembersScreen(props: Readonly<{
+    serverId: string;
+    teamId: string;
+}>) {
+    const view = useHappierCollectionIndexView();
+    if (view === 'pending') return null;
+    if (view === 'land') return <TeamMembersLanding serverId={props.serverId} teamId={props.teamId} />;
+    return <TeamMembersPage serverId={props.serverId} teamId={props.teamId} />;
 });

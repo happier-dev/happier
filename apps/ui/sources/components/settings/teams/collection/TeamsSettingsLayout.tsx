@@ -8,7 +8,14 @@ import { teamAddressKey } from '@/sync/domains/teams/teamAddress';
 
 import { TeamMembersCollectionRail } from '../members/TeamMembersCollectionRail';
 import { TeamsCollectionRail } from './TeamsCollectionRail';
-import { recordTeamsCollectionVisit, resolveSelectedTeamAddress, resolveSelectedTeamMember } from './teamsCollection';
+import {
+    recordTeamMembersCollectionVisit,
+    recordTeamsCollectionVisit,
+    resolveSelectedTeamAddress,
+    resolveSelectedTeamMember,
+    teamMembersCollectionVisitKey,
+    type TeamMembersCollectionVisit,
+} from './teamsCollection';
 
 /** The narrowest Team page that still fits a field or segmented row beside its label. */
 const TEAMS_DETAIL_MIN_WIDTH_PX = 480;
@@ -28,6 +35,9 @@ export const TeamsSettingsLayout = React.memo(function TeamsSettingsLayout() {
     // Beside the rail and in the pushed list alike, the opened Team is what a wide collection lands on.
     useHappierCollectionVisit(recordTeamsCollectionVisit, resolveSelectedTeamAddress(pathname), teamAddressKey);
     const member = React.useMemo(() => resolveSelectedTeamMember(pathname), [pathname]);
+    const memberVisit = React.useMemo<TeamMembersCollectionVisit | null>(() => member?.membershipId
+        ? { address: member.address, membershipId: member.membershipId } : null, [member]);
+    useHappierCollectionVisit(recordTeamMembersCollectionVisit, memberVisit, teamMembersCollectionVisitKey);
     return (
         <SettingsCollectionLayout
             navigator="teams"

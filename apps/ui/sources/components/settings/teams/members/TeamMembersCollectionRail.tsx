@@ -79,8 +79,10 @@ export const TeamMembersCollectionRail = React.memo(
     const router = useRouter();
     const { theme } = useUnistyles();
     const binding = useTeamBinding(props.address.serverId, props.address.teamId);
-    const ready =
-      binding.kind === 'bound' && binding.state.kind === 'ready' ? binding : null;
+    // A return mounts the rail again while the Home's credential re-resolves: the projection this device already
+    // holds paints the Team's people at once (reads only; a write waits for the bound credential).
+    const projection = binding.kind === 'bound' ? binding : binding.kind === 'resolving' ? binding.retained : undefined;
+    const ready = projection?.state.kind === 'ready' ? projection : null;
     const team = ready?.state.kind === 'ready' ? ready.state.team : null;
     const state = ready?.state.kind === 'ready' ? ready.state : null;
     const canRead = team?.capabilities.viewRoster === true;
@@ -192,6 +194,8 @@ export const TeamMembersCollectionRail = React.memo(
                 address: ready.address,
                 homeName: ready.homeName,
                 team,
+                archived: state.archived,
+                approvalPending: false,
                 canMutate: state.mutationsAvailable && !state.archived,
               }}
             />

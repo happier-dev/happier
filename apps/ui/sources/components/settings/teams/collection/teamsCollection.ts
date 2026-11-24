@@ -83,6 +83,30 @@ const teamVisits = createHappierCollectionVisitMemory<TeamAddress>();
 export const recordTeamsCollectionVisit = teamVisits.record;
 export const readLastVisitedTeamsCollectionTeam = teamVisits.read;
 
+/** A person opened in a Team's Members collection: one Team's person, never carried to another Team. */
+export type TeamMembersCollectionVisit = Readonly<{ address: TeamAddress; membershipId: string }>;
+
+const teamMemberVisits = createHappierCollectionVisitMemory<TeamMembersCollectionVisit>();
+
+export const recordTeamMembersCollectionVisit = teamMemberVisits.record;
+export const teamMembersCollectionVisitKey = (visit: TeamMembersCollectionVisit) => `${teamAddressKey(visit.address)}\u0000${visit.membershipId}`;
+
+/**
+ * Where a wide Members collection lands when its route names no person: the same "always selected" policy as the
+ * Teams collection (the person opened last in this Team while still listed, else the first), decided from the rows
+ * the roster already holds, so the landing is known on the first paint.
+ */
+export function resolveTeamMembersCollectionLanding(
+    membershipIds: readonly string[],
+    address: TeamAddress,
+): string | null {
+    const lastVisited = teamMemberVisits.read();
+    return resolveHappierCollectionInitialKey({
+        keys: membershipIds,
+        lastVisited: lastVisited && teamAddressKey(lastVisited.address) === teamAddressKey(address) ? lastVisited.membershipId : null,
+    });
+}
+
 type RouteParam = string | string[] | undefined;
 
 /** The share-with-Team source a Teams route carries (`teamsDirectoryShareCredentialPath`), or null when incomplete. */

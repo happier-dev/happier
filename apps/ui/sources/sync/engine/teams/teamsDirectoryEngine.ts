@@ -371,8 +371,10 @@ const membersLoader = createScopedSnapshotLoader<TeamMembersTarget>({
         return !snapshot || snapshot.stale || (snapshot.data === null && snapshot.status !== 'loading');
     },
     invalidateServer: invalidateTeamsSnapshotsForServer,
-    invalidateTarget: ({ scope, address, queryKey }, reason) => {
-        if (reason === 'observer-gap') retireTeamMembersSnapshot(scope, address, queryKey);
+    invalidateTarget: ({ scope, address, query, queryKey }, reason) => {
+        // An unobserved search has no reader and retires. The roster itself keeps its last-known rows, only no longer
+        // current, so a return to Members paints them at once while its first observer revalidates them.
+        if (reason === 'observer-gap' && query !== '') retireTeamMembersSnapshot(scope, address, queryKey);
         else invalidateTeamMembersSnapshot(scope, address, queryKey);
     },
     matchesWake: event => event.entityIds === undefined || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),

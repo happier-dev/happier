@@ -142,6 +142,20 @@ describe('TeamMembersScreen', () => {
         await vi.waitFor(() => expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe(`/settings/teams/${encodeURIComponent(serverId)}/team-1/members/membership-1`));
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-members-virtualized-list');
     });
+    it('beside the Members rail, draws nothing of its own while the roster is read, then lands on a person', async () => {
+        const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));
+        let answer!: () => void;
+        harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: null },
+            respondAfter: new Promise<void>((resolve) => { answer = resolve; }) });
+        const screen = await renderMembers(serverId, true);
+        await act(async () => screen.findByTestId('members-test-layout')?.props.onLayout({ nativeEvent: { layout: { width: 1200 } } }));
+        await vi.waitFor(() => expect(harness.requestsFor(MEMBERS_LIST_PATH).length).toBeGreaterThan(0));
+        // No "Members" header that the person's own header would replace.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-page-header');
+        expect(screen.findAllByType('Redirect' as never)).toEqual([]);
+        await act(async () => { answer(); });
+        await vi.waitFor(() => expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe(`/settings/teams/${encodeURIComponent(serverId)}/team-1/members/membership-1`));
+    });
     it('keeps the last roster row, and its Load more control, clear of the phone floating tab bar', async () => {
         const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ viewRoster: true }) }));
         harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: 'cursor-2' } });
@@ -567,5 +581,27 @@ describe('TeamMembersScreen', () => {
         await waitForTestId(screen, 'team-members-row:membership-1');
 
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-owner-required');
+    });
+});
+
+describe('TeamMembersScreen return', () => {
+    it('paints the last-known roster and its Add member control in the first frame of a return', async () => {
+        const serverId = await addHome(teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageMembers: true }) }));
+        harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: null } });
+        const screen = await renderMembers(serverId);
+        await waitForTestId(screen, 'team-members-row:membership-1');
+        await waitForTestId(screen, 'team-members-add');
+
+        // Away and back in the same document; the return's own reads are held, so only last-known data can paint.
+        harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture()], nextCursor: null }, respondAfter: new Promise<void>(() => {}) });
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageMembers: true }) }), respondAfter: new Promise<void>(() => {}) });
+        await screen.update(<></>);
+        const commits: string[][] = [];
+        const stop = screen.tree.subscribe(() => { commits.push(collectRenderedTestIds(screen.tree.toJSON())); });
+        try {
+            await screen.update(<TeamMembersScreen serverId={serverId} teamId="team-1" />);
+        } finally { stop(); }
+        expect(commits[0]).toEqual(expect.arrayContaining(['team-members-row:membership-1', 'team-members-add']));
+        expect(commits.filter((ids) => ids.includes('team-members-loading'))).toEqual([]);
     });
 });

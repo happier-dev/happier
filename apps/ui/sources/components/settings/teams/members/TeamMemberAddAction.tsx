@@ -16,19 +16,24 @@ import { teamMemberAddPath } from '../teamsRoutes';
  * beside an open person. Two ways to add someone exist — an Account already on this Home, or an
  * invitation for anyone else — and they are named by what the owner knows rather than guessed: with
  * both available the action opens a menu; with one, it goes straight there. Inviting opens the one
- * Invite people dialog with this Team chosen. Renders nothing for a viewer who can do neither.
+ * Invite people dialog with this Team chosen. Renders nothing for a viewer who can do neither, or on an archived Team
+ * or while an approval holds its writes. While the Team's last-known answer is being revalidated (a return) it stands in
+ * its place, disabled, so it never pops in when the answer lands.
  */
 export const TeamMemberAddAction = React.memo(function TeamMemberAddAction(
   props: Readonly<{
-    context: Pick<TeamSectionContext, 'address' | 'homeName' | 'team' | 'canMutate'>;
+    context: Pick<TeamSectionContext, 'address' | 'homeName' | 'team' | 'canMutate' | 'archived' | 'approvalPending'>;
     /** `section`: the labelled action of a page section. `rail`: the plain "+" of a collection rail. */
     presentation: 'section' | 'rail';
   }>,
 ) {
   const router = useRouter();
   const { context } = props;
-  const canAdd = context.team.capabilities.manageMembers && context.canMutate;
-  const canInvite = context.team.capabilities.manageInvitations && context.canMutate;
+  // Which ways exist is the Team's projected capability; whether they may be used now is the shell's one decision.
+  const offered = !context.archived && !context.approvalPending;
+  const canAdd = context.team.capabilities.manageMembers && offered;
+  const canInvite = context.team.capabilities.manageInvitations && offered;
+  const disabled = !context.canMutate;
   const [open, setOpen] = React.useState(false);
   const addExisting = React.useCallback(
     () => router.push(teamMemberAddPath(context.address)),
@@ -52,6 +57,7 @@ export const TeamMemberAddAction = React.memo(function TeamMemberAddAction(
         accessibilityLabel={t('teams.members.add')}
         tooltip={t('teams.members.add')}
         variant="plain"
+        disabled={disabled}
         onPress={onPress}
       />
     ) : (
@@ -60,6 +66,7 @@ export const TeamMemberAddAction = React.memo(function TeamMemberAddAction(
         icon="plus"
         title={t('teams.members.add')}
         expanded={menu ? open : undefined}
+        disabled={disabled}
         onPress={onPress}
       />
     );

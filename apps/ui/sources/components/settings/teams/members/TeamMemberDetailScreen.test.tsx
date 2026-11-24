@@ -667,3 +667,32 @@ describe('TeamMemberDetailScreen effective Groups', () => {
         expect(screen.getTextContent()).toContain('teams.members.detailGroupsEmpty');
     });
 });
+
+describe('TeamMemberDetailScreen first frame', () => {
+    it('opens a person the roster already holds under their own header, and says "no Groups" at once for a Team that counts none', async () => {
+        const serverId = await addHome(teamSummaryFixture({
+            capabilities: teamCapabilitiesFixture({ viewRoster: true }),
+            counts: { members: 2, suspendedMembers: 0, groups: 0, waitingInvitations: null },
+        }));
+        // The person's own read and their Groups are held: only last-known facts can paint the first frame.
+        harness.answer(serverId, MEMBER_GET_PATH, { body: teamMembershipFixture(), respondAfter: new Promise<void>(() => {}) });
+        harness.answer(serverId, MEMBER_GROUPS_PATH, { body: { items: [], nextCursor: null }, respondAfter: new Promise<void>(() => {}) });
+        const { applyTeamMembersPage, teamMembersQueryKey } = await import('@/sync/store/teams/teamsSnapshots');
+        const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+        const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
+        applyTeamMembersPage({
+            scope: { serverId: scopeServerId, accountId: 'account-ada' },
+            address: { serverId: scopeServerId, teamId: 'team-1' },
+            queryKey: teamMembersQueryKey('all'),
+            items: [teamMembershipFixture()],
+            nextCursor: null,
+        });
+        const screen = await renderDetail(serverId);
+        await vi.waitFor(() => expect(harness.requestsFor(MEMBER_GET_PATH).length).toBeGreaterThan(0));
+        const ids = collectRenderedTestIds(screen.tree.toJSON());
+        expect(ids).toContain('team-member-identity');
+        expect(ids).not.toContain('team-member-loading');
+        expect(ids).toContain('team-member-groups-empty');
+        expect(ids.filter((id) => id.startsWith('team-member-groups-loading'))).toEqual([]);
+    });
+});

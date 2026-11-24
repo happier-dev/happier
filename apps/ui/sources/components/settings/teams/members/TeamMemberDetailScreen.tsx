@@ -35,6 +35,7 @@ import {
     type HomeDomainFailure,
 } from '@/sync/ops/teams/teamActionClient';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { getTeamMembersSnapshot, teamMembersQueryKey } from '@/sync/store/teams/teamsSnapshots';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { getPreferredLanguage, t } from '@/text';
 import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
@@ -65,6 +66,8 @@ type MembershipLoad =
     | Readonly<{ kind: 'ready'; membership: TeamMembershipV1 }>;
 
 const LOADING: MembershipLoad = Object.freeze({ kind: 'loading' as const });
+/** The person's Groups hold at most this many rows while they are read. */
+const MEMBER_GROUPS_RESERVE_MAX = 2;
 const UNAVAILABLE: MembershipLoad = Object.freeze({ kind: 'unavailable' as const });
 
 /** The fixed order roles are offered in, most authority first. */
@@ -91,6 +94,9 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
     const groupDisplayNames = useTeamGroupDisplayNames({ scope: context.scope, groups: groups.rows });
 
     if (!context.team.capabilities.viewRoster) return null;
+    // The Team summary counts its Groups: a person can be in at most that many, so a Team with none says so at once,
+    // and a waiting list reserves no more rows than could arrive.
+    const teamGroups = context.team.counts?.groups ?? null;
 
     // A still-loading list is not an empty one, and an unreachable Home is not an empty one
     // either: each says exactly what it knows, in the section's own place.
@@ -121,7 +127,7 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
                 );
             })}
             {/* Rows already read stay on screen through a failure. */}
-            {failure ?? (groups.rows.length > 0 ? null : groups.status === 'ready' || groups.status === 'refreshing' ? (
+            {failure ?? (groups.rows.length > 0 ? null : groups.status === 'ready' || groups.status === 'refreshing' || teamGroups === 0 ? (
                 <SurfaceStateCard
                     testID="team-member-groups-empty"
                     kind="empty"
@@ -132,7 +138,7 @@ const MemberGroupsSection = React.memo(function MemberGroupsSection(props: Reado
                 <ItemLoadStateRows
                     testID="team-member-groups-loading"
                     state={{ kind: 'loading' }}
-                    rows={2}
+                    rows={Math.min(teamGroups ?? MEMBER_GROUPS_RESERVE_MAX, MEMBER_GROUPS_RESERVE_MAX)}
                     accessibilityLabel={t('teams.members.detailGroups')}
                 />
             ))}
@@ -248,7 +254,13 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
 }>) {
     const router = useRouter();
     const { context, membershipId } = props;
-    const [load, setLoad] = React.useState<MembershipLoad>(LOADING);
+    // The roster this device already read holds this person's row: the page opens on it (last-known) while the
+    // Home is asked for the current membership, instead of a "Members" header that the person's own replaces.
+    const [load, setLoad] = React.useState<MembershipLoad>(() => {
+        const known = getTeamMembersSnapshot(context.scope, context.address, teamMembersQueryKey('all'))?.data
+            ?.find((membership) => membership.id === membershipId);
+        return known ? Object.freeze({ kind: 'ready' as const, membership: known }) : LOADING;
+    });
     const [readFailure, setReadFailure] = React.useState<HomeDomainFailure | null>(null);
     const readStateRef = React.useRef({ load, readFailure });
     readStateRef.current = { load, readFailure };

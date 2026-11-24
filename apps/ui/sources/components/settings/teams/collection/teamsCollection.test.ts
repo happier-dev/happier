@@ -118,3 +118,16 @@ describe('resolveSelectedTeamMember', () => {
         expect(resolveSelectedTeamMember('/settings/teams')).toBeNull();
     });
 });
+
+describe('resolveTeamMembersCollectionLanding', () => {
+    it('lands on the person opened last in this Team, never on one opened in another Team', async () => {
+        const { recordTeamMembersCollectionVisit, resolveTeamMembersCollectionLanding } = await import('./teamsCollection');
+        const team = { serverId: 'home-a', teamId: 'team-1' };
+        const other = { serverId: 'home-a', teamId: 'team-2' };
+        recordTeamMembersCollectionVisit({ address: team, membershipId: 'm-2' });
+        expect(resolveTeamMembersCollectionLanding(['m-1', 'm-2'], team)).toBe('m-2');
+        expect(resolveTeamMembersCollectionLanding(['m-1', 'm-2'], other)).toBe('m-1');
+        expect(resolveTeamMembersCollectionLanding(['m-1'], team)).toBe('m-1');
+        expect(resolveTeamMembersCollectionLanding([], team)).toBeNull();
+    });
+});
