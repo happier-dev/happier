@@ -29,6 +29,13 @@ export class ServerReachabilityWaitTimeoutError extends Error {
     }
 }
 
+export class ServerReachabilityOfflineError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ServerReachabilityOfflineError';
+    }
+}
+
 const DEFAULT_SERVER_RESTARTING_RETRY_AFTER_MS = 10_000;
 
 function normalizeServerRestartingRetryAfterMs(value: unknown): number {
@@ -372,7 +379,7 @@ function waitForState(params: Readonly<{
             }
             if (params.stopOnOffline && state.phase === 'offline') {
                 cleanup();
-                reject(new Error(state.lastErrorMessage ?? 'Server unreachable'));
+                reject(new ServerReachabilityOfflineError(state.lastErrorMessage ?? 'Server unreachable'));
                 return;
             }
             if (!params.predicate(state)) return;

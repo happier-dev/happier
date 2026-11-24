@@ -23,6 +23,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import { decodeServerFeaturesResponse } from './serverFeaturesParse';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
+import { ServerReachabilityOfflineError } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { normalizeBaseUrl } from './probeAuthenticatedServerAuthPingEndpoint';
@@ -54,7 +55,7 @@ const TTL_TRANSITIONAL_FEATURE_MS = TTL_ERROR_NETWORK_MS;
 export type ServerFeaturesSnapshot =
     | Readonly<{ status: 'ready'; features: ServerFeatures; serverIdentityId?: string | null }>
     | Readonly<{ status: 'unsupported'; reason: 'endpoint_missing' | 'invalid_payload' }>
-    | Readonly<{ status: 'error'; reason: 'network' | 'timeout' | 'response_status' | 'identity_conflict'; httpStatus?: number }>;
+    | Readonly<{ status: 'error'; reason: 'network' | 'home_unreachable' | 'timeout' | 'response_status' | 'identity_conflict'; httpStatus?: number }>;
 
 const cache = new AsyncTtlCache<ServerFeaturesSnapshot>({
     successTtlMs: TTL_READY_MS,
@@ -220,8 +221,11 @@ function writeActiveProjectionSnapshot(
     }
     transientRetryAtByProjectionKey.delete(retryKey);
     if (projection === 'public') {
-        const retained = writeServerFeaturesSnapshot(cacheKey, snapshot, ttlMs, serverUrl);
-        persistPublicSnapshot(cacheKey);
+        // An offline health verdict settles this observation without replacing
+        // the last feature declaration received from the Home.
+        const offline = snapshot.status === 'error' && snapshot.reason === 'home_unreachable';
+        const retained = writeServerFeaturesSnapshot(cacheKey, snapshot, ttlMs, offline ? null : serverUrl);
+        if (!offline) persistPublicSnapshot(cacheKey);
         return retained;
     }
     const previous = authenticatedCache.get(cacheKey);
@@ -651,6 +655,9 @@ async function getServerFeaturesSnapshotWithRetry(
                     }
                 } catch (error) {
                     throwIfAborted(signal);
+                    if (error instanceof ServerReachabilityOfflineError) {
+                        return publishSnapshot({ status: 'error', reason: 'home_unreachable' });
+                    }
                     const aborted = isAbortErrorLike(error);
                     const serverSwitchFailure =
                         error instanceof ServerFetchAbortedForServerSwitchError

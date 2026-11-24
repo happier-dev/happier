@@ -23,6 +23,7 @@ import {
     getServerFeaturesSnapshot,
     resetServerFeaturesClientForTests,
     refreshAuthenticatedServerFeaturesSnapshot,
+    retryServerFeaturesSnapshot,
     subscribeServerFeaturesSnapshot,
     getServerFeaturesSnapshotRetryDelayMs,
     probeServerFeaturesAtUrl,
@@ -98,6 +99,47 @@ it.each(['public', 'authenticated fallback'] as const)('uses the admitted addres
     } finally {
         caller.abort();
         await observation;
+    }
+});
+
+it('settles an unreachable saved Home with one health request per observation and reads again on Retry', async () => {
+    await upsertAndActivateServer({ serverUrl: 'https://focused-feature-home.example.test' });
+    const serverUrl = 'https://unreachable-saved-feature-home.example.test';
+    const serverIdentityId = 'srv_unreachable_saved_feature_home';
+    const home = await adoptHomeProfile({
+        source: 'manual',
+        descriptor: { serverUrl, canonicalServerUrl: serverUrl, homeServerIdentityId: serverIdentityId },
+    });
+    let reachable = false;
+    boundary.fetch.mockImplementation(async input => {
+        const url = new URL(String(input));
+        if (url.origin !== serverUrl || !reachable) throw new TypeError('Network request failed');
+        return Response.json(url.pathname === '/v1/features'
+            ? createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId } } })
+            : { ok: true });
+    });
+    const savedHomeRequests = () => boundary.fetch.mock.calls
+        .map(([input]) => new URL(String(input)))
+        .filter(url => url.origin === serverUrl)
+        .map(url => url.pathname);
+
+    vi.useFakeTimers();
+    const unsubscribe = subscribeServerFeaturesSnapshot(() => {});
+    try {
+        const observation = getServerFeaturesSnapshot({ serverId: home.id });
+        await vi.advanceTimersByTimeAsync(0);
+        await expect(observation).resolves.toMatchObject({ status: 'error' });
+        expect(savedHomeRequests()).toEqual(['/health']);
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(savedHomeRequests()).toEqual(['/health']);
+
+        reachable = true;
+        await expect(retryServerFeaturesSnapshot({ serverId: home.id }))
+            .resolves.toMatchObject({ status: 'ready', serverIdentityId });
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(savedHomeRequests()).toEqual(['/health', '/health', '/v1/features']);
+    } finally {
+        unsubscribe();
     }
 });
 

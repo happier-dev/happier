@@ -76,6 +76,10 @@ Expired observations still use the incumbent refresh/deduplication path; a fresh
 them, including disabled bits. Canonical invalidation removes the retained observation. A cold
 device or unreadable/mismatched stored entry has no inferred support.
 
+When the health probe for an explicitly selected saved Home fails, that feature observation
+settles. A person can retry it, and the normal connection lifecycle can request a new observation.
+The last feature declaration received from the Home stays available for reload.
+
 Authenticated descriptors, diagnostic endpoint probes, and demo/test priming are not persisted
 by this path. This is cache custody, not another feature-decision owner or an availability gate.
 
