@@ -374,6 +374,9 @@ export type WorktreeEnvironmentServiceV1 = Readonly<{
         Readonly<{ path: string; variable: string }>): Promise<string | undefined>;
     listDotenv(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'>):
         Promise<readonly Readonly<{ path: string; variable: string; value: string }>[]>;
+    /** A private local filesystem path for the admitted existing file in this exact checkout. */
+    resolveExistingFile?(input: Pick<DatabaseWorktreeTargetV1, 'workspace' | 'projectKey'> &
+        Readonly<{ path: string }>): Promise<string | undefined>;
 }>;
 
 export interface PluginServices {

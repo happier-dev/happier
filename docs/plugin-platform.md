@@ -94,6 +94,11 @@ Actions and daemon resource demand. The descriptor carries the
 source, variable name and database capabilities. Cold listing requires the daemon
 and Database Workbench plugin from matching 0.3 development source.
 
+An exact Worktree target with a `sqlite_file` source resolves an existing file
+through the admitted checkout's filesystem boundary. The standard SQLite
+engine opens that file. The descriptor retains the selected path operand and
+keeps the resolved Machine filesystem path private.
+
 The optional `requestListenerPorts(keys)` operation returns Protocol's existing
 `WorktreePortsResultV1`. The host binds the admitted execution root and launch
 signal to B's worktree port owner. A contribution requests its own named listeners

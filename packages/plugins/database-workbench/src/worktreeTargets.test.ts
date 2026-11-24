@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import { createWorktreeDatabaseTargets } from './worktreeTargets.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginServiceLaunchEnvironmentInputV1 } from '@happier-dev/plugin-sdk';
+import type { PluginServiceLaunchEnvironmentInputV1, WorktreeEnvironmentServiceV1 } from '@happier-dev/plugin-sdk';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
 import { DATABASE_ACCESS_READ_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
@@ -136,6 +136,40 @@ it('resolves the discovered service original into a native operation and withdra
         if (retained.kind === 'replace') await retained.release();
         await rm(directory, { recursive: true, force: true });
     }
+});
+
+it('opens only the addressed existing SQLite file through Worktree acquisition', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'dbw-selected-sqlite-'));
+    const path = join(directory, 'selected file.sqlite');
+    const db = openSqliteDatabaseSync(path);
+    db.exec("CREATE TABLE selected(label TEXT); INSERT INTO selected VALUES ('chosen-file');");
+    db.close();
+    const targets = createWorktreeDatabaseTargets();
+    const request = { identity, storage: emptyStorage, requester: 'person' as const, access: 'read' as const,
+        worktreeEnvironment: {
+            async listDotenv() { return []; },
+            async readDotenv() { return undefined; },
+            async resolveExistingFile(selected) {
+                return selected.workspace.workspaceId === workspace.workspaceId && selected.projectKey === scope.projectKey
+                    && selected.path === 'selected file.sqlite' ? path : undefined;
+            },
+        } satisfies WorktreeEnvironmentServiceV1,
+    };
+    const operation = { operation: 'statement.run' as const, mode: 'read' as const,
+        statement: { sql: 'SELECT label FROM selected', parameters: [] },
+        target: { ...scope, source: { kind: 'sqlite_file' as const, path: 'selected file.sqlite' } },
+    };
+    try {
+        const opened = await targets.resolve({ ...request, input: operation });
+        try {
+            expect(opened.descriptor).toMatchObject({ engine: 'sqlite', label: 'selected file.sqlite', target: operation.target });
+            expect(JSON.stringify(opened.descriptor)).not.toContain(directory);
+            expect(await opened.connection.execute(operation)).toMatchObject({ ok: true,
+                results: [{ rows: [{ cells: [{ type: 'text', value: 'chosen-file' }] }] }] });
+        } finally { await opened.connection.close(); }
+        await expect(targets.resolve({ ...request, input: { ...operation, target: { ...scope,
+            source: { kind: 'sqlite_file', path: 'absent.sqlite' } } } })).rejects.toMatchObject({ code: 'database_target_unavailable' });
+    } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 it('stores the worktree database agent level on this Machine: Read & write (asks first) by default, set by its owner', async () => {

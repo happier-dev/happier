@@ -1,6 +1,7 @@
 import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
 import { prepareProjectLaunchEnvironment } from '@/workspaces/projectSetup/projectLaunchEnvironment';
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
+import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { createDatabaseEnginesService } from './lifecycle/contributions/databaseEngines';
 import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
@@ -34,7 +35,7 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedService
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { tryDecryptSessionPresentationMetadataView, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { sessionMediaToStructuredImageInput, verifySessionStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
-import { realpath } from 'node:fs/promises';
+import { realpath, stat } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { SharedManagedProviderGatewayBinding } from './invocation/services/managedServicesAdapter';
@@ -4583,7 +4584,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         const authorization = seed.approvalContext?.externalActionExecutionAuthorization
             ?? seed.externalActionContext?.externalActionExecutionAuthorization;
         type DotenvScope = Parameters<NonNullable<PluginInvocationServicesSeed['worktreeEnvironment']>['listDotenv']>[0];
-        const readDeclaredDotenv = async ({ workspace, projectKey }: DotenvScope, variable?: string) => {
+        const readAcceptedWorkspace = async ({ workspace, projectKey }: DotenvScope) => {
             seed.signal.throwIfAborted();
             if (workspace.kind === 'managed' || workspace.machineId !== machineId) return undefined;
             const context = seed.approvalContext;
@@ -4603,6 +4604,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     ...account, address: workspace, serverId, serverHttpBaseUrl, signal: seed.signal,
                 });
                 if (accepted.project.projectId !== projectKey) return undefined;
+                return { accepted, account, serverHttpBaseUrl };
+            } catch {
+                seed.signal.throwIfAborted();
+                return undefined;
+            }
+        };
+        const readDeclaredDotenv = async (scope: DotenvScope, variable?: string) => {
+            const selected = await readAcceptedWorkspace(scope);
+            if (!selected) return undefined;
+            const { accepted, account, serverHttpBaseUrl } = selected;
+            try {
                 const root = accepted.workspace.rootPath;
                 const { effectiveDefinition } = await readProjectEffectiveDefinition({ root, account,
                     project: accepted.project, serverHttpBaseUrl, signal: seed.signal });
@@ -4627,6 +4639,20 @@ export async function resolveExecutablePluginRuntimeRegistry(
             async listDotenv(scope) {
                 const selected = await readDeclaredDotenv(scope);
                 return selected?.provenance.map(({ name, file }) => ({ path: file, variable: name, value: selected.environment[name] })) ?? [];
+            },
+            async resolveExistingFile({ path, ...scope }) {
+                const selected = await readAcceptedWorkspace(scope);
+                if (!selected) return undefined;
+                const file = validatePath(path, selected.accepted.workspace.rootPath);
+                if (!file.valid) return undefined;
+                try {
+                    const info = await stat(file.resolvedPath);
+                    seed.signal.throwIfAborted();
+                    return info.isFile() ? file.resolvedPath : undefined;
+                } catch {
+                    seed.signal.throwIfAborted();
+                    return undefined;
+                }
             },
         };
     }

@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { createCanonicalJsonSigningInput, PluginError, type DatabaseEnginesServiceV1, type PluginServices,
     type PluginServiceLaunchEnvironmentInputV1, type PluginServiceLaunchEnvironmentRuntimeV1 } from '@happier-dev/plugin-sdk';
 import type { StorageScopeService } from '@happier-dev/plugin-sdk/storage';
@@ -93,12 +94,19 @@ export function createWorktreeDatabaseTargets(): Readonly<{
         const target = worktreeTarget(request.input.target);
         const { source, ...scope } = target;
         admittedScope(scope, request.identity);
-        if (source.kind === 'sqlite_file') return unavailable();
         const entry = source.kind === 'service' ? entries.get(entryKey({ scope, serviceId: source.serviceId })) : undefined;
         if (source.kind === 'service' && !entry?.variables.includes(source.variable)) return unavailable();
         const agentAccess = await readLevel(request, target);
         const decision = decideDatabaseAccessV1({ ...accessFacts(request.requester, agentAccess), operation: request.access });
         if (!decision.ok) throw new PluginError({ code: decision.refusal });
+        if (source.kind === 'sqlite_file') {
+            return { target, agentAccess, async readConnectionString() {
+                const file = await request.worktreeEnvironment?.resolveExistingFile?.({
+                    workspace: target.workspace, projectKey: target.projectKey, path: source.path,
+                });
+                return file === undefined ? unavailable() : pathToFileURL(file).href;
+            } };
+        }
         if (source.kind === 'env_file') {
             return { target, agentAccess, async readConnectionString() {
                 const value = await request.worktreeEnvironment?.readDotenv({
@@ -115,13 +123,13 @@ export function createWorktreeDatabaseTargets(): Readonly<{
     const descriptor = async (target: DatabaseWorktreeTargetV1, connectionString: string, request: Request,
         admittedAccess?: DatabaseAgentAccessV1): Promise<DatabaseDescriptorV1 | undefined> => {
         const { source, workspace } = target;
-        if (source.kind === 'sqlite_file') return undefined;
         const selected = findDatabaseConnectionDescriptor(connectionString, request.databaseEngines);
         if (!selected) return undefined;
         const agentAccess = admittedAccess ?? await readLevel(request, target);
         const origin = source.kind === 'service' ? source.serviceId : source.path;
         const machine = workspace.kind === 'managed' ? workspace.controller : workspace;
-        return { target, label: `${origin} · ${source.variable}`, ...selected, capabilities: [...selected.capabilities],
+        const label = source.kind === 'sqlite_file' ? source.path : `${origin} · ${source.variable}`;
+        return { target, label, ...selected, capabilities: [...selected.capabilities],
             origin: { label: origin, environment: 'development' },
             access: summarizeDatabaseAccessV1(accessFacts(request.requester, agentAccess)),
             placement: { serverId: workspace.serverId, accountId: target.accountId,
@@ -187,7 +195,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
         async admit(request) {
             const { agentAccess, target, readConnectionString } = await admitTarget(request);
             // A held demand already owns its credential and validates its captured target.
-            if (target.source.kind === 'env_file' && request.input.subscriptionId === undefined) {
+            if (target.source.kind !== 'service' && request.input.subscriptionId === undefined) {
                 await readConnectionString();
             }
             return { agentAccess, access: summarizeDatabaseAccessV1(accessFacts(request.requester, agentAccess)) };
@@ -212,7 +220,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
                     connection: await openDatabaseConnection({ connectionString, access: request.access,
                         signal: request.signal, databaseEngines: request.databaseEngines }) };
             } catch (error) {
-                if (target.source.kind !== 'env_file') throw error;
+                if (target.source.kind === 'service') throw error;
                 request.signal?.throwIfAborted();
                 // Driver and parser errors may contain the private file value.
                 throw new PluginError({ code: 'database_target_unavailable' });
