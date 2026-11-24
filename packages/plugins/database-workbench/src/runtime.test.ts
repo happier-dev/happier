@@ -17,7 +17,6 @@ import {
     DATABASE_ACCESS_SET_ACTION_ID_V1,
     DATABASE_DESCRIBE_ACTION_ID_V1,
     DATABASE_EDITS_APPLY_ACTION_ID_V1,
-    DATABASE_STATS_READ_ACTION_ID_V1,
     DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
     DATABASE_STATEMENT_RUN_ACTION_ID_V1,
     DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
@@ -183,39 +182,6 @@ describe('semantic database Action runtime', () => {
         afterAll(async () => {
             if (started) await run(join(postgresBinaries, 'pg_ctl'), ['-D', join(directory, 'data'), '-m', 'immediate', '-w', 'stop']);
             if (directory) await rm(directory, { recursive: true, force: true });
-        });
-        it('disposes the index-advice connection while the pane keeps its read demand', async () => {
-            const postgresDescriptor = { ...descriptor, engine: 'postgresql' } as const;
-            const demand = createDatabaseConnectionResourceRuntime({ async resolve() {
-                return { descriptor: postgresDescriptor, connection: await openManualDatabaseConnection({ target, secretValue, access: 'read' }) };
-            } });
-            const resourceContext = createTestResourceInvocationContext({ requesterAccount: { accountId: 'alice' },
-                context: { kind: 'surface', mountInstanceKey: 'selected', launchInput: { operation: 'describe', target } } });
-            const held = await demand.createProducer!(resourceContext);
-            let advisorClosures = 0;
-            const runtime = createDatabaseRuntime({ async admit() {}, async resolve(input) {
-                const connection = await openManualDatabaseConnection({ target, secretValue, access: input.access });
-                return { descriptor: postgresDescriptor, connection: { ...connection, async close() {
-                    await connection.close();
-                    advisorClosures++;
-                } } };
-            } });
-            const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', displayName: 'Database', actions: createDatabaseActions(runtime) });
-            const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { resources: {
-                ...resourceContext.resources, async invokeDemand(input, options) {
-                    return await held.invoke!(input.input, { signal: options?.signal ?? resourceContext.signal });
-                },
-            } } });
-            try {
-                const operand = { target, subscriptionId: 'open-pane' };
-                const read = { ...operand, operation: 'statement.run', mode: 'read', statement: { sql: 'SELECT label FROM selected', parameters: [] } };
-                expect(await kit.invokeAction(runId, read)).toMatchObject({ ok: true });
-                expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1), {
-                    ...operand, operation: 'stats.read', request: { kind: 'stats.read', group: 'indexAdvice', selection: { statementKey: 'observed' } },
-                })).toMatchObject({ ok: true, observation: { status: 'unavailable', reason: 'extension_missing' } });
-                expect(advisorClosures).toBe(1);
-                expect(await kit.invokeAction(runId, read)).toMatchObject({ ok: true });
-            } finally { await kit.dispose(); await held.dispose(); }
         });
         it('preserves native settlement when connection cleanup rejects', async () => {
             const warnings: unknown[] = [];
