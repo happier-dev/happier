@@ -251,6 +251,7 @@ export function useMountedTargetedContributions(params: Readonly<{
     /** The occurrence the mount was built from; a change re-reads. */
     mountedOccurrenceId: string | null | undefined;
     enabled: boolean;
+    disabledByAvailability?: boolean;
     /** Already admitted no-points target; it needs no points RPC. */
     emptyTargetedContributions?: PluginUiTargetedContributionsV1 | null;
     /** Admitted declaration identities only; current executable facts come from the exact read. */
@@ -259,7 +260,7 @@ export function useMountedTargetedContributions(params: Readonly<{
     accountExecutionOrigin?: PluginUiAccountExecutableOrigin;
     /** Exact selected Machine caller, distinct from this renderer's Account custody. */
     machineTarget?: PluginUiTargetedContributionsV1['target'] | null;
-}>): MountedTargetedContributionsState {
+}>): MountedTargetedContributionsState & Readonly<{ recoveringOccurrence?: true }> {
     const machineId = normalizeKeyPart(params.machineId);
     const serverId = normalizeKeyPart(params.serverId);
     const pluginId = normalizeKeyPart(params.pluginId);
@@ -275,7 +276,8 @@ export function useMountedTargetedContributions(params: Readonly<{
     // latest committed declaration identities when that acquisition runs.
     const declaredActionsRef = React.useRef(declaredActions);
     React.useLayoutEffect(() => { declaredActionsRef.current = declaredActions; }, [declaredActions]);
-    const active = params.enabled && Boolean(machineId || accountOrigin) && Boolean(pluginId);
+    const eligible = params.enabled && Boolean(machineId || accountOrigin) && Boolean(pluginId);
+    const active = eligible && !params.disabledByAvailability;
     const accountLifetime = active ? params.accountLifetime : null;
     const accountAvailability = React.useMemo(() => accountLifetime
         ? readPluginAccountAvailability(accountLifetime.scope) : null, [accountLifetime]);
@@ -297,14 +299,30 @@ export function useMountedTargetedContributions(params: Readonly<{
         projectionScope ? getMachineContributionRegistryProjectionAuthorityRevision(projectionScope) : 0
     ), [projectionScope]);
     const authorityRevision = React.useSyncExternalStore(subscribe, getAuthorityRevision, getAuthorityRevision);
+    // Availability may withdraw the selected Machine supply along with the
+    // renderer. Keep the retirement scoped to the mounted plugin and Account.
+    const recoveryTarget = React.useMemo(() => pluginId && params.accountLifetime
+        ? { pluginId, lifetime: params.accountLifetime }
+        : null, [pluginId, params.accountLifetime]);
+    const recovery = React.useRef<{ target: NonNullable<typeof recoveryTarget>; refreshedScope: typeof projectionScope } | null>(null);
+    const recoveringOccurrence = projectionScope !== null && recovery.current !== null && recovery.current.target === recoveryTarget;
     const refreshKeyRef = React.useRef(params.refreshKey);
-    React.useEffect(() => {
-        if (refreshKeyRef.current === params.refreshKey) return;
+    React.useLayoutEffect(() => {
+        if (recovery.current?.target !== recoveryTarget) recovery.current = null;
+        if (params.disabledByAvailability && recoveryTarget) {
+            recovery.current = { target: recoveryTarget, refreshedScope: null };
+        }
+        const retired = recovery.current;
+        const resumed = projectionScope !== null && retired !== null && retired.refreshedScope !== projectionScope;
+        const retry = refreshKeyRef.current !== params.refreshKey;
         refreshKeyRef.current = params.refreshKey;
-        // Explicit Retry advances the incumbent Machine currentness owner so
-        // every mounted reader shares the same renewed question.
-        if (projectionScope) publishMachineContributionRegistryProjectionInvalidation(projectionScope, 'refresh');
-    }, [params.refreshKey, projectionScope]);
+        if (resumed) retired.refreshedScope = projectionScope;
+        // Both recovery paths wake the same registry owner as a fresh open.
+        // Re-enable withdraws the retired answer before consumers re-acquire.
+        if (projectionScope && (resumed || retry)) {
+            publishMachineContributionRegistryProjectionInvalidation(projectionScope, 'refresh');
+        }
+    }, [params.disabledByAvailability, params.refreshKey, projectionScope, recoveryTarget]);
     // The target identity. Revision, occurrence and retry only ask again; they
     // never discard the snapshot this target already showed.
     const targetKey = active ? JSON.stringify([serverId, machineId, pluginId, accountOrigin ?? null, machineTarget ?? null]) : '';
@@ -330,7 +348,7 @@ export function useMountedTargetedContributions(params: Readonly<{
         state: IDLE_STATE,
     });
     // The target or its Account lifetime can arrive after the first render (a routed binding resolving).
-    if (settled && accountLifetime && (loaded.requestKey !== targetKey || loaded.accountLifetime !== accountLifetime)) {
+    if (!recoveringOccurrence && settled && accountLifetime && (loaded.requestKey !== targetKey || loaded.accountLifetime !== accountLifetime)) {
         loaded = seed(settled, accountLifetime);
         setLoaded(loaded);
     }
@@ -415,6 +433,10 @@ export function useMountedTargetedContributions(params: Readonly<{
 
     React.useEffect(() => {
         if (!active || !accountLifetime) return;
+        const reacquireOccurrence = projectionScope !== null && recovery.current !== null && recovery.current.target === recoveryTarget;
+        // The re-enable layout effect can advance the revision before this
+        // render's effects run. Only ask against the new revision.
+        if (reacquireOccurrence && getRevision() !== projectionRevision) return;
         let alive = true;
         const abort = new AbortController();
         const retirement = accountLifetime.onRetire(() => abort.abort());
@@ -422,7 +444,7 @@ export function useMountedTargetedContributions(params: Readonly<{
             const sameTarget = previous.requestKey === targetKey
                 && previous.accountLifetime === accountLifetime;
             // The same authority's answer stays admitted while it is re-read.
-            if (sameTarget && previous.state.phase === 'ready' && previous.authorityRevision === authorityRevision) {
+            if (!reacquireOccurrence && sameTarget && previous.state.phase === 'ready' && previous.authorityRevision === authorityRevision) {
                 return previous.projectionRevision === projectionRevision ? previous : { ...previous, projectionRevision };
             }
             return {
@@ -432,7 +454,7 @@ export function useMountedTargetedContributions(params: Readonly<{
                 accountLifetime,
                 state: {
                     phase: 'loading',
-                    targetedContributions: sameTarget ? previous.state.targetedContributions : null,
+                    targetedContributions: sameTarget && !reacquireOccurrence ? previous.state.targetedContributions : null,
                     preparedTargetedSurfaceMounts: sameTarget
                         ? previous.state.preparedTargetedSurfaceMounts
                         : null,
@@ -444,10 +466,13 @@ export function useMountedTargetedContributions(params: Readonly<{
                 },
             };
         });
-        const isCurrent = () => alive && accountLifetime.isCurrent();
-        const publish = async (result: MachinePluginUiTargetedContributionsReadResult
+        const isCurrent = () => alive && accountLifetime.isCurrent()
+            && (!reacquireOccurrence || (recovery.current?.refreshedScope === projectionScope && getRevision() === projectionRevision));
+        const publish = async (answer: MachinePluginUiTargetedContributionsReadResult
             | Awaited<ReturnType<typeof readMountedAccountTargetedContributions>>, includeMachine = true) => {
             if (!isCurrent()) return;
+            const machineRead = 'machineRead' in answer ? answer.machineRead : answer;
+            const result = reacquireOccurrence && machineRead?.supported === false ? machineRead : answer;
             if (!result.supported) {
                 setLoaded((previous) => previous.requestKey !== targetKey
                     || previous.accountLifetime !== accountLifetime
@@ -464,6 +489,15 @@ export function useMountedTargetedContributions(params: Readonly<{
                         },
                     });
                 return;
+            }
+            if (reacquireOccurrence && machineRead?.supported) {
+                const expected = accountOrigin ? machineTarget?.occurrenceId : mountedOccurrenceId;
+                if (expected && expected !== machineRead.targetedContributions.target.occurrenceId) {
+                    // Catalog consumers are already resolving the current
+                    // registry revision. Wait for their matching placement
+                    // before requesting Actions for the caller.
+                    return;
+                }
             }
             const reused = prepareTargetedSurfaceMountsReusing(result.targetedSurfaceMounts, targetPublication.preparedWireMounts);
             targetPublication.preparedWireMounts = reused.wires;
@@ -574,6 +608,7 @@ export function useMountedTargetedContributions(params: Readonly<{
             targetPublication.current = targetedContributions;
             const sources = readCurrentSources();
             const readyState: MountedTargetedContributionsState = { phase: 'ready', targetedContributions, ...sources, failure: null };
+            if (reacquireOccurrence) recovery.current = null;
             if (!accountOrigin && includeMachine && machineId) {
                 keepSettledTarget(accountLifetime, targetKey, { projectionRevision, authorityRevision,
                     state: readyState,
@@ -589,8 +624,9 @@ export function useMountedTargetedContributions(params: Readonly<{
                 ? previous
                 : { ...previous, state: readyState });
         };
-        const read = emptyTargetedContributions
-            ? Promise.resolve({ supported: true as const, targetedContributions: emptyTargetedContributions,
+        const admittedEmptyTarget = reacquireOccurrence ? null : emptyTargetedContributions;
+        const read = admittedEmptyTarget
+            ? Promise.resolve({ supported: true as const, targetedContributions: admittedEmptyTarget,
                 targetedSurfaceMounts: [] as readonly MountedPluginUiTargetedSurfaceMountV1[], resourceDeclarationsByPluginId: undefined })
             : accountOrigin
             ? readMountedAccountTargetedContributions({ pluginId, origin: accountOrigin, accountLifetime,
@@ -598,14 +634,14 @@ export function useMountedTargetedContributions(params: Readonly<{
                 ...(machineId ? { machine: { machineId, serverId: serverId || null } } : {}),
             // Refreshes keep the last complete answer; only a cold mount needs
             // an Account-only publication while Machine hydration continues.
-            }, targetPublication.current ? undefined : result => publish(result, false))
+            }, targetPublication.current || reacquireOccurrence ? undefined : result => publish(result, false))
                 .catch((error: unknown) => ({ supported: false as const, reason: 'unavailable' as const,
                     code: isPluginError(error) ? error.code : 'plugin_targeted_contributions_unavailable' }))
             : machinePluginUiTargetedContributionsRead(machineId, {
                 serverId: serverId || null, pluginId, accountLifetime, signal: abort.signal,
             });
         void read.then(async result => {
-            if (emptyTargetedContributions && accountOrigin && !targetPublication.current) await publish(result, false);
+            if (admittedEmptyTarget && accountOrigin && !targetPublication.current) await publish(result, false);
             await publish(result);
         }).catch((error: unknown) => {
             if (!isCurrent()) return;
@@ -629,6 +665,7 @@ export function useMountedTargetedContributions(params: Readonly<{
         authorityRevision,
         childPublications,
         emptyTargetedContributions,
+        getRevision,
         machineId,
         machineTarget,
         mountedOccurrenceId,
@@ -639,6 +676,7 @@ export function useMountedTargetedContributions(params: Readonly<{
         projectionRevision,
         projectionScope,
         readCurrentSources,
+        recoveryTarget,
         serverId,
         targetKey,
         targetPublication,
@@ -646,7 +684,8 @@ export function useMountedTargetedContributions(params: Readonly<{
 
     let currentState = loaded.state;
     if (!active) currentState = IDLE_STATE;
-    else if (!accountLifetime?.isCurrent() || loaded.requestKey !== targetKey || loaded.accountLifetime !== accountLifetime) {
+    else if (!accountLifetime?.isCurrent() || loaded.requestKey !== targetKey || loaded.accountLifetime !== accountLifetime
+        || (recoveringOccurrence && (recovery.current?.refreshedScope !== projectionScope || loaded.projectionRevision !== projectionRevision))) {
         currentState = LOADING_STATE;
     }
     // Invalidation withdraws readiness in the render that observes it. Waiting
@@ -681,5 +720,5 @@ export function useMountedTargetedContributions(params: Readonly<{
         admittedActionSource.current = mountedActionSource ? { targetKey, occurrenceId: mountedOccurrenceId, accountLifetime, source: mountedActionSource } : null;
     }, [accountLifetime, mountedActionSource, mountedOccurrenceId, targetKey]);
     useMountedClientActionDemand(accountLifetime, mountedActionSource);
-    return currentState;
+    return recoveringOccurrence ? { ...currentState, recoveringOccurrence: true } : currentState;
 }

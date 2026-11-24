@@ -97,6 +97,84 @@ const source = definePlugin({ id: 'example.machine-source', version: '1.0.0', ac
     personal: protocol.contribute({ operations: { inspect: protocol.operations.inspect.bind('inspect') } }),
 } } } });
 
+it('hydrates Account surface Actions only for the current Machine occurrence after re-enable', async () => {
+    const home = await serveAccountHomes({
+        homes: [{ key: 'home', serverUrl: 'https://surface-recovery.test', accountId: 'alice' }],
+        route: () => undefined,
+    });
+    let unmount: (() => Promise<void>) | undefined;
+    try {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected Account lifetime');
+        const parsed = ingestPluginManifestV2(target.manifest);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        const manifest = parsed.manifest;
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId: manifest.id, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                    offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                release: { ref: { pluginId: manifest.id, version: manifest.version }, normalizedManifest: manifest,
+                    archiveDigestSha256: `sha256:${'a'.repeat(64)}`, collectionContracts: [], uiSlots: [],
+                    packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+            } }],
+        } });
+        const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(manifest.id);
+        if (selected.kind !== 'available' || selected.sourceCustody.kind !== 'account_release') throw new Error('Expected Account target');
+        const accountOrigin = { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody };
+        const machineTarget = (occurrenceId: string) => ({
+            pluginId: manifest.id, occurrenceId, sourceCustody: { kind: 'development', registeredRootId: 'surface-recovery' },
+        } as const);
+        let daemonOccurrence = 'before-disable';
+        const callers: string[] = [];
+        machineRpc.mockImplementation(async request => {
+            if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                callers.push(...request.payload.callers.map((caller: { occurrenceId: string }) => caller.occurrenceId));
+                return { protocolVersion: 1, projection: { v: 2, generation: 1 } };
+            }
+            const payload = DaemonPluginUiTargetedContributionsReadRequestSchema.parse(request.payload);
+            const response = payload.readMode === 'sourceDeclarations'
+                ? { status: 'sourceDeclarations', pluginId: manifest.id, sourceDeclarations: [] }
+                : { status: 'current', targetedContributions: { target: machineTarget(daemonOccurrence), points: [] }, targetedSurfaceMounts: [] };
+            return request.decodeResult(response);
+        });
+        const { useMountedTargetedContributions } = await import('./mountedTargetedContributions');
+        let disabled = false;
+        let selectedOccurrence = daemonOccurrence;
+        const mounted = await renderHook(() => useMountedTargetedContributions({
+            accountLifetime: lifetime, accountExecutionOrigin: accountOrigin,
+            machineId: 'machine-1', serverId: lifetime.scope.serverId, pluginId: manifest.id,
+            mountedOccurrenceId: selected.custodyId, machineTarget: machineTarget(selectedOccurrence),
+            enabled: true, disabledByAvailability: disabled,
+        }));
+        unmount = mounted.unmount;
+        await vi.waitFor(() => expect(mounted.getCurrent().projectionInputs?.pluginProjectionV2?.generation).toBe(1));
+        expect(mounted.getCurrent().phase).toBe('ready');
+        expect(callers).toEqual(['before-disable']);
+
+        disabled = true;
+        await mounted.rerender();
+        daemonOccurrence = 'after-enable';
+        disabled = false;
+        await mounted.rerender();
+        await flushHookEffects({ cycles: 3, turns: 2 });
+        expect(mounted.getCurrent().phase).toBe('loading');
+        expect(callers).toEqual(['before-disable']);
+
+        selectedOccurrence = daemonOccurrence;
+        await mounted.rerender();
+        await vi.waitFor(() => expect(mounted.getCurrent().projectionInputs?.pluginProjectionV2?.generation).toBe(1));
+        expect(mounted.getCurrent().phase).toBe('ready');
+        expect(callers).toEqual(['before-disable', 'after-enable']);
+        expect(mounted.getCurrent().targetedContributions?.target.occurrenceId).toBe(selected.custodyId);
+    } finally {
+        await unmount?.();
+        machineRpc.mockReset();
+        resetMachineProjectionReadsForTests();
+        await home.dispose();
+    }
+});
+
 const readSetInput = defineProtocolObject({ sessionIds: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' });
 const readSetResult = defineProtocolObject({ accepted: defineProtocolArray(defineProtocolString()) }, { policy: 'closed' });
 const readSetProtocol = defineContributionProtocol({ id: 'session-read-source', version: 1, operations: {

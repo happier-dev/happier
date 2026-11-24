@@ -2266,9 +2266,10 @@ function PluginSurfaceHostMount(props: Readonly<(
             : null,
         machineId,
         serverId,
-        pluginId: mountedTarget?.pluginId,
+        pluginId: mountedTarget?.pluginId ?? mountedPluginId,
         mountedOccurrenceId: mountedTarget?.occurrenceId,
-        enabled: !pluginDisabled && mountedTargetSnapshotRequired,
+        enabled: mountedTargetSnapshotRequired,
+        disabledByAvailability: pluginDisabled,
         emptyTargetedContributions: pointlessTargetedContributions,
         pluginUiProjection: mountedPluginUiProjection,
         refreshKey: mountedTargetRefreshKey,
@@ -2549,7 +2550,8 @@ function PluginSurfaceHostMount(props: Readonly<(
             ? pluginExecution.selectedSupply?.resourceCapability
             : readSelectedPluginUiResourceCapability(descriptor)
         : undefined;
-    const accountLocalInteractionEnabled = !pluginDisabled && accountLifetime?.isCurrent() === true;
+    const pluginRetired = pluginDisabled || mountedTargetRead.recoveringOccurrence === true;
+    const accountLocalInteractionEnabled = !pluginRetired && accountLifetime?.isCurrent() === true;
     // The Availability projection rematerializes an equivalent bound reader on
     // every AccountChange. A reader remains live for its bound Account scope,
     // so that update must not replace this mount's client (and reset its
@@ -2787,7 +2789,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     [clientExecutableAdmission]);
     const controllerFacts = Object.freeze({
         ...baseControllerFacts,
-        isHostCurrent: pluginDisabled ? isDisabledPluginSurfaceCurrent : baseControllerFacts.isHostCurrent,
+        isHostCurrent: pluginRetired ? isDisabledPluginSurfaceCurrent : baseControllerFacts.isHostCurrent,
         daemonReachable: daemonInteraction.daemonReachable,
         resourceContext: baseControllerFacts.resourceContext?.kind === 'global' ? baseControllerFacts.resourceContext
             : baseControllerFacts.resourceContext ? { ...baseControllerFacts.resourceContext,
@@ -3550,6 +3552,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         return renderPluginSurfaceUnavailable('plugin_disabled', props.unavailableAction,
             'unavailable', undefined, projectedBrand?.displayName);
     }
+    if (mountedTargetRead.recoveringOccurrence) return renderMountedTargetProjectionFallback();
     if (!renderGate.canRender) {
         if (renderGate.state === 'loading') {
             const { reason, state } = renderGate;

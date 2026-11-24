@@ -14071,6 +14071,81 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         } finally { await screen.unmount(); }
     });
 
+    it.each(['enable push', 'Try again'] as const)('resolves the new Machine occurrence on %s after disablement', async recovery => {
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const { useDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/useDaemonMergedProjectionInputs');
+        const pluginId = 'acme.browser';
+        const machineId = 'machine_1';
+        const serverId = 'server_1';
+        const serverIdentityId = 'srv_server_1';
+        await pluginSurfaceAccountLifetime.setScope({ serverId, accountId: 'account-a' }, { serverIdentityId });
+        const lifetime = pluginSurfaceAccountLifetime.value!;
+        await primeGeneratedArtifact();
+        const source = (occurrenceId: string, projectionGeneration: number) =>
+            primeExactTargetedContributions({ pluginId, occurrenceId, projectionGeneration });
+        const original = source('before-disable', 1);
+        const forMount = (fixture: typeof original) => ({
+            placement: {
+                ...generatedReactNativePlacement({ occurrenceId: fixture.mountedTarget.occurrenceId }),
+                executionOrigin: { serverIdentityId, sourceRef: { pluginId, machineId, sourceCustody: fixture.mountedTarget.sourceCustody } },
+            },
+            pluginUiProjection: withMountedTargetPackage(createGeneratedProjection(), fixture, {
+                displayName: 'Browser Inspector', version: '3.2.1', declaresContributionPoints: false,
+            }),
+        });
+        const originalMount = forMount(original);
+        let replacementMount = originalMount;
+        function MachinePlacement() {
+            const registry = useDaemonMergedProjectionInputs({ machineId, serverId, accountLifetime: lifetime, sections: 'complete' });
+            return <PluginSurfacePlacementHost
+                {...(registry.inputs?.pluginProjectionV2?.generation === 2 ? replacementMount : originalMount)}
+                resourceBrowserTarget={target} machineId={machineId} serverId={serverId} platform="web" />;
+        }
+        const publish = (availabilityCursor: number, enabled: boolean) => {
+            const materialization = {
+                serverIdentityId, machineId, pluginId, materializationId: 'browser-inspector', version: '3.2.1',
+                sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts: [], enabled, trustState: 'trusted',
+                observedAt: availabilityCursor,
+            } as const;
+            replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+                availabilityCursor, intentReads: [], materializations: [materialization],
+                snapshots: [{ serverIdentityId, machineId, materializations: [materialization] }],
+            } });
+        };
+        const entered: string[] = [];
+        function ActivityPanel(context: RenderContext) {
+            const occurrence = context.surface.targetedContributions?.target.occurrenceId ?? 'missing occurrence';
+            React.useEffect(() => { entered.push(occurrence); }, [occurrence]);
+            return React.createElement('Text', null, occurrence);
+        }
+        reactNativeSurfaceRuntime.enabled = true;
+        reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(ActivityPanel) };
+        publish(1, true);
+        const screen = await renderScreen(<MachinePlacement />);
+        try {
+            await vi.waitFor(() => expect(entered).toEqual(['before-disable']));
+            const readsBeforeUnchangedEnablement = contributionProjectionDescribeMock.mock.calls.length;
+            await act(async () => { publish(2, true); });
+            expect(contributionProjectionDescribeMock.mock.calls).toHaveLength(readsBeforeUnchangedEnablement);
+            await act(async () => { publish(3, false); });
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_disabled')).toBeTruthy();
+
+            replacementMount = forMount(source('after-enable', 2));
+            if (recovery === 'Try again') {
+                contributionProjectionDescribeMock.mockResolvedValue({ supported: false, reason: 'error' });
+            }
+            await act(async () => { publish(4, true); });
+            if (recovery === 'Try again') {
+                await vi.waitFor(() => expect(screen.findByTestId('plugin-surface-unavailable-action')).toBeTruthy());
+                source('after-enable', 2);
+                await screen.pressByTestIdAsync('plugin-surface-unavailable-action');
+            }
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('after-enable'));
+            expect(entered).toEqual(['before-disable', 'after-enable']);
+            expect(screen.findByTestId('plugin-surface-unavailable')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps a React Native signal through an equivalent target refresh and replaces it only when the mounted target generation changes', async () => {
         reactNativeSurfaceProps.length = 0;
         const { publishMachineContributionRegistryProjectionInvalidation } = await import(

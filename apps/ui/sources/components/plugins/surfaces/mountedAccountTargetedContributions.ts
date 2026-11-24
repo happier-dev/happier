@@ -114,5 +114,5 @@ function projectMountedAccountTargetedContributions(input: MountedAccountTargete
     const resourceDeclarationsByPluginId = machineRead?.supported && machineRead.resourceDeclarationsByPluginId
         ? Object.fromEntries(Object.entries(machineRead.resourceDeclarationsByPluginId).filter(([pluginId]) => machinePluginIds.has(pluginId)))
         : undefined;
-    return { supported: true as const, targetedContributions, targetedSurfaceMounts: Object.freeze(mounts), resourceDeclarationsByPluginId };
+    return { supported: true as const, targetedContributions, targetedSurfaceMounts: Object.freeze(mounts), resourceDeclarationsByPluginId, machineRead };
 }
