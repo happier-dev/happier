@@ -13,6 +13,7 @@ import type { Server, Socket } from "socket.io";
 
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { ActionFailureCauseV1Schema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionAuthorizationRefusalPhase';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ScmWorkEvidenceAuthorizationSelectorSchema, type ScmWorkEvidenceAdmission } from '@happier-dev/protocol/scm';
@@ -727,7 +728,9 @@ function writeSocketRegisteredRpcMethods(socket: Socket, methods: ReadonlySet<st
     ensureMutableSocketData(socket)[RPC_REGISTERED_METHODS_SOCKET_DATA_KEY] = [...methods];
 }
 
-function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: string): Readonly<{
+type RpcExecutionRefusalReason = ExternalActionAuthorizationRefusalPhase | 'deployment_archive_sender' | 'execution_sender';
+
+function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: string, nativeErrorReason?: RpcExecutionRefusalReason): Readonly<{
     ok: false; error: string; errorCode: string; failureCause?: ActionFailureCauseV1; effectAttempted?: false;
 }> {
     return {
@@ -735,7 +738,8 @@ function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: st
         error: RPC_ERROR_MESSAGES.FORBIDDEN,
         errorCode: RPC_ERROR_CODES.FORBIDDEN,
         ...(reason || phase ? { failureCause: { phase: phase ?? 'rpc.admission.machine', errorClass: 'Error' as const,
-            errorCode: reason ?? RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 } } : {}),
+            errorCode: reason ?? RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403,
+            ...(nativeErrorReason ? { nativeErrorReason } : {}) } } : {}),
         ...(phase ? { effectAttempted: false as const } : {}),
     };
 }
@@ -1418,9 +1422,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
+            let executionRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
             const verifiedExternalAction = externalActionExecution?.success
                 ? await verifyExternalActionMachineRpcExecution(externalActionExecution.data, {
                     method,
+                    onRefusal: phase => { executionRefusal = phase; },
                     resolveCurrentSessionMachine: input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.sessionPublisherPresence, ...input }),
                     ...(callerRequestId === undefined ? {} : { requestId: callerRequestId }),
                     ...(callParams === undefined ? {} : { params: callParams }),
@@ -1475,7 +1481,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                                 && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) === workspaceSyncSourceWriterTargetRouting.sourceWriter.installationId))))
             ) {
                 logDeploymentChildRefusal('external_action_execution');
-                callback?.(buildForbiddenRpcResponse(undefined, 'rpc.admission.execution'));
+                const refusal = !verifiedExternalAction ? executionRefusal
+                    : deploymentArchiveChild && !verifiedArchiveSender ? 'deployment_archive_sender' : 'execution_sender';
+                callback?.(buildForbiddenRpcResponse(undefined, 'rpc.admission.execution', refusal));
                 return;
             }
             if (originalActionEnvelope) {

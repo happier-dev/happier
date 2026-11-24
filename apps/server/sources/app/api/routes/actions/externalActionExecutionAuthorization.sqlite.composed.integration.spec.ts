@@ -14002,7 +14002,8 @@ describe("external Action execution authorization", () => {
             expect(await request(packet(child.id), true)).toMatchObject({ ok: false, error: 'Forbidden' });
             for (const denied of [unrelated, foreign]) {
                 expect(await request(packet(denied.id))).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
-                    failureCause: { phase: 'rpc.admission.execution' }, effectAttempted: false });
+                    failureCause: { phase: 'rpc.admission.execution', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+                        nativeErrorReason: 'resolved_target', httpStatus: 403 }, effectAttempted: false });
             }
             expect(cancelled).not.toHaveBeenCalled();
             expect(await request(packet(child.id))).toMatchObject({ ok: true });

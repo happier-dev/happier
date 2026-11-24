@@ -5527,7 +5527,12 @@ export async function verifyExternalActionMachineRpcExecution(
         onRefusal?: ExternalActionExecutionRequestProof['onRefusal'];
         resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'] }>,
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
-    if (!request.requestId || execution.authorization.binding.requesterOperationRead) return null;
+    const refuse = (phase: ExternalActionAuthorizationRefusalPhase) => {
+        request.onRefusal?.(phase);
+        return null;
+    };
+    if (!request.requestId) return refuse('proof_shape');
+    if (execution.authorization.binding.requesterOperationRead) return refuse('verification_purpose');
     if (request.workspaceSyncSeedRouting) {
         if (execution.managedAdmission !== undefined || execution.deploymentChildRouting || execution.deploymentChildExecution
             || request.paramsPresent !== undefined || request.paramsDigest !== undefined || request.originalActionEnvelope
@@ -5561,12 +5566,13 @@ export async function verifyExternalActionMachineRpcExecution(
     }
 
     const binding = await auth.verifyExternalActionExecutionAuthorization(execution.authorization.token);
-    if (!binding || binding.serverIdentityId !== await initializeServerIdentityCache()
-        || !execution.deploymentChildRouting && !execution.deploymentChildExecution
-            && !await hasCurrentExternalActionSessionSource(binding, request.resolveCurrentSessionMachine)
-        || !matchesExternalActionAuthorizationBinding(binding, execution.authorization.binding)
-        || !isExternalActionResolvedTargetAllowedV1({ authorizedTarget: binding.target,
-            resolvedTarget: execution.target, selectedMachineId: binding.machineId })) return null;
+    if (!binding) return refuse('authorization_token');
+    if (binding.serverIdentityId !== await initializeServerIdentityCache()) return refuse('server_identity');
+    if (!execution.deploymentChildRouting && !execution.deploymentChildExecution
+        && !await hasCurrentExternalActionSessionSource(binding, request.resolveCurrentSessionMachine)) return refuse('source_before_principal');
+    if (!matchesExternalActionAuthorizationBinding(binding, execution.authorization.binding)) return refuse('proof_shape');
+    if (!isExternalActionResolvedTargetAllowedV1({ authorizedTarget: binding.target,
+        resolvedTarget: execution.target, selectedMachineId: binding.machineId })) return refuse('resolved_target');
 
     const separator = request.method.indexOf(':');
     if (readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, execution.effectActionId, execution.reviewedChild)) {
@@ -5952,7 +5958,7 @@ export async function verifyExternalActionMachineRpcExecution(
     if (!effect.success
         || binding.actionId === PROJECT_PREPARE_ACTION_ID_V1 && binding.actionId !== execution.effectActionId && !projectPrepareReviewPurpose
         || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId) && !readinessPurpose && !prepareInputPurpose && !projectPrepareReviewPurpose && !reviewScmPreparationPurpose
-        || (binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== execution.effectActionId) return null;
+        || (binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== execution.effectActionId) return refuse('effect_family');
     if (binding.managedAdmission?.actionId === 'action.operations.get' && typeof request.params !== 'string') {
         // Encrypted input is compared at the reached daemon. Visible ordinary
         // input must also spend the exact operation named by this signed root.
@@ -6001,14 +6007,14 @@ export async function verifyExternalActionMachineRpcExecution(
         if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !nestedRunStartPurpose && !projectPrepareReviewPurpose && !reviewScmPreparationPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
-            || effectActionId !== execution.effectActionId)) return null;
+            || effectActionId !== execution.effectActionId)) return refuse('effect_family');
     }
     // Home proves the original Session or accepted handoff source. RPC effects
     // cannot substitute the destination signer for that original authority.
     const requiresSource = !managedGuestActivity && Boolean(binding.handoffContinuation || binding.handoffPreflight
         || 'authentication' in binding && binding.sessionActionOrigin);
     const sourceKey = requiresSource ? await readCurrentExternalActionSourceSigningPublicKey(binding) : null;
-    if (requiresSource && !sourceKey) return null;
+    if (requiresSource && !sourceKey) return refuse('source_before_principal');
     const machine = await db.machine.findFirst({
         where: { id: binding.machineId, accountId: binding.custodianAccountId, installationId: binding.installationId },
         select: {
@@ -6029,7 +6035,8 @@ export async function verifyExternalActionMachineRpcExecution(
         || machine.installationId !== execution.installationId
         || binding.installationId !== execution.installationId
         || !signingPublicKey
-        || !verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild,
+    ) return refuse('machine_identity');
+    if (!verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild,
             authorizationToken: execution.authorization.token,
             requesterAccountContext: execution.authorization.requesterAccountContext,
             effectActionId: execution.effectActionId,
@@ -6041,20 +6048,20 @@ export async function verifyExternalActionMachineRpcExecution(
             ...(request.params === undefined ? {} : { params: request.params }),
             publicKey: signingPublicKey,
             signature: execution.machineSignature,
-        })
-    ) return null;
+    })) return refuse('machine_signature');
     const currentPrincipal = await verifyCurrentExternalActionPrincipal(binding);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
-    if (!principal) return null;
+    if (!principal) return refuse('principal');
     const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || nestedRunStartPurpose || projectPrepareReviewPurpose || reviewScmPreparationPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
-    if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)
-        || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),
-            authority: principal.authority, grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+    if (!credentialAction.success) return refuse('credential_action_admission');
+    if (!readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)) return refuse('machine_admission_after_principal');
+    if (!binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),
+        authority: principal.authority, grant: 'grant' in binding ? binding.grant : null }).ok) return refuse('credential_action_admission');
     if (abortSessionId && (execution.target.kind === 'session' && execution.target.sessionId !== abortSessionId
         || abortSessionId !== installedAbortOrigin?.caller.sessionId && !await isInstalledSessionSubtreeMember({
             binding, principal, effectiveAuthority: principal.authority,
-        }, abortSessionId, true))) return null;
+        }, abortSessionId, true))) return refuse('resolved_target');
     const readinessAdmission = readinessPurpose ? await resolveMachineAdmissionInTx(db, {
         actorAccountId: binding.accountId, machineId: binding.machineId, rpcMethod: request.method.slice(separator + 1),
         callerAuthority: principal.authority, executionBinding: binding,
