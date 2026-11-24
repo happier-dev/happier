@@ -6,7 +6,7 @@ import {
     installDisconnectedServerSocketBoundary, restoreServerAccountForTest,
 } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { standardCleanup, createSessionFixture } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -18,11 +18,9 @@ import {
     WidgetLayoutFragmentActionOutputSchemasV1, captureWidgetLayoutFragmentGroupV1,
     buildWidgetSurfaceArtifactIdV1, USAGE_WIDGET_PRESET_IDS, flattenWidgetLayoutWidgetsV1, type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
-import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
-import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactCreateHttpResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { decodeBase64 } from 'privacy-kit';
 import { projectArtifactHttpRead } from '../../../../../server/sources/app/artifacts/artifactHttpRead';
 
@@ -161,7 +159,7 @@ describe('widget semantic Actions through production UI composition', () => {
             context: { period: { kind: 'value', value: { relative: '7days' } } },
             children: [{ kind: 'widget', instance: { ...peak, id: 'other-child' }, size: 'medium' }],
         } }, context());
-        expect(privateGroup).toMatchObject({ ok: false, errorCode: 'widget_inputs_invalid' });
+        expect(privateGroup).toMatchObject({ ok: false, errorCode: 'widget_public_profile_input_forbidden' });
         const { runCopyWidgetGroupCommandV1 } = await import('@/components/widgets/definitions/widgetLayoutFragmentCommands');
         const { WidgetLayoutGroupV1Schema } = await import('@happier-dev/protocol/widgets');
         const copy = await runCopyWidgetGroupCommandV1(WidgetLayoutGroupV1Schema.parse({ ...group, id: 'private-source',
@@ -179,7 +177,7 @@ describe('widget semantic Actions through production UI composition', () => {
         expect(JSON.stringify(read)).not.toMatch(/private-copy|private-group|7days|cost/);
         expect(JSON.stringify(read)).not.toMatch(/private-agent|private label/);
     });
-    it('retains a bound human area edit through explicit Ask with the supplied scoped executor', async () => {
+    it('retains a bound human area edit through native Ask with the supplied scoped executor', async () => {
         const { scopedHomeActionExecutor } = await import('./scopedHomeActionExecutor');
         const { createBoundPluginSurfaceController } = await import('@/components/plugins/surfaces/boundPluginSurfaceController');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -190,7 +188,8 @@ describe('widget semantic Actions through production UI composition', () => {
         const binding = normalizePluginUiDestinationBindingV1({ pluginId, destinationId: pageId,
             container: 'appPage', target: { kind: 'app' }, rendererId: 'native', instancePolicy: 'singleton' });
         if (!binding) throw new Error('Destination admission failed');
-        let approvalId: string | undefined;
+        const decision = createDeferred<boolean>();
+        const confirm = vi.fn(() => decision.promise);
         const controller = createBoundPluginSurfaceController({ facts: {
             pluginId, contributionId: pageId, surfaceId, placement: 'appPage', platform: 'web', serverId,
             accountLifetime: captureActiveServerAccountScopeLifetime(), interactionEnabled: true, daemonInteractionEnabled: false,
@@ -202,25 +201,28 @@ describe('widget semantic Actions through production UI composition', () => {
                 },
             } },
         }, binding: { executeHostAction: scopedHomeActionExecutor({ serverId, accountId }, {
-            onBlockingApprovalPending: ({ artifactId }) => { approvalId = artifactId; },
+            presentUserActionConfirmation: confirm,
         }) } });
         setActionPolicy({ v: 1, actions: { 'widgets.item.add': { approvalRequiredSurfaces: ['ui'] } } });
         let settled = false;
-        let observedResult: unknown;
         const pending = controller.widgetArea!({ area: 'pinned', operation: { actionId: 'widgets.item.add', instance: instance('asked-copy') } })
-            .then(result => { observedResult = result; return result; })
             .finally(() => { settled = true; });
         try {
-            await vi.waitFor(() => expect({ approvalId, observedResult }).toMatchObject({ approvalId: expect.any(String) }));
+            await vi.waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.objectContaining({
+                actionId: 'widgets.item.add', context: expect.objectContaining({ actionCaller: { kind: 'host' } }),
+            })));
+            expect(confirm).toHaveBeenCalledTimes(1);
             expect(settled).toBe(false);
             expect(homes.artifacts(serverId).read(buildWidgetSurfaceArtifactIdV1(surface))).toBeNull();
-            expect(ApprovalRequestV2Schema.parse(storedBody(approvalId!)))
-                .toMatchObject({ status: 'open', approval: { flow: 'blocking' }, executionOriginV1: { caller: { kind: 'host' } } });
-            expect(await decideApprovalAsInbox(serverId, approvalId!, 'approve')).toMatchObject({ ok: true });
+            decision.resolve(true);
             expect(await pending).toMatchObject({ ok: true, result: { instance: { id: 'asked-copy' } } });
             expect(WidgetAreaLayoutV1Schema.parse(storedBody(buildWidgetSurfaceArtifactIdV1(surface))).items)
                 .toEqual(expect.arrayContaining([expect.objectContaining({ instance: expect.objectContaining({ id: 'asked-copy' }) })]));
-        } finally { controller.dispose(); await pending; }
+        } finally {
+            decision.resolve(false);
+            controller.dispose();
+            await pending;
+        }
     });
 
     it('resizes a private Home widget through its real writer without a pre-admission confirmation', async () => {
@@ -253,14 +255,15 @@ describe('widget semantic Actions through production UI composition', () => {
             const result = await executor.execute('widgets.item.rename', { ref: { surface, instanceId: 'one' }, displayName: 'Updated' },
                 context());
             if (required) {
-                expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'widgets.item.rename' } });
+                expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+                expect(Modal.confirm).toHaveBeenCalledTimes(1);
                 expect(storedBody(artifactId)).toEqual(before);
             } else {
+                expect(Modal.confirm).not.toHaveBeenCalled();
                 expect(result).toMatchObject({ ok: true, result: { instance: { id: 'one', displayName: 'Updated' } } });
                 expect(flattenWidgetLayoutWidgetsV1(WidgetAreaLayoutV1Schema.parse(storedBody(artifactId)).items)
                     .find(item => item.instance.id === 'one')?.instance.displayName).toBe('Updated');
             }
-            expect(Modal.confirm).not.toHaveBeenCalled();
         },
     );
 
@@ -289,24 +292,33 @@ describe('widget semantic Actions through production UI composition', () => {
         const before = HomeHubLayoutV1Schema.parse(storedBody(buildHomeHubArtifactIdV1(accountId)));
         const account = await captureLazyActionAccountContext(serverId);
         setActionPolicy({ v: 1, actions: { 'widgets.item.remove': { approvalRequiredSurfaces: ['ui'] } } });
-        let continuation: ActionApprovalContinuation | undefined;
+        const removalDecision = createDeferred<boolean>();
+        vi.mocked(Modal.confirm).mockImplementationOnce(() => removalDecision.promise);
         const pending = executeHomeHubLayoutIntent({ intent: { kind: 'remove', instanceId: 'group' },
             scope: { serverId, accountId }, transport: account.homeHubArtifactTransport, execute: executor.execute,
-            onApprovalPending: registration => { continuation = registration; registration.onTerminal?.('canceled'); } });
-        await expect(pending).rejects.toThrow();
-        expect(continuation).toBeDefined();
+            onApprovalPending: () => { throw new Error('Native confirmation entered approval custody'); } })
+            .catch((error: unknown) => error);
+        try {
+            await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+            expect(HomeHubLayoutV1Schema.parse(storedBody(buildHomeHubArtifactIdV1(accountId)))).toEqual(before);
+        } finally {
+            removalDecision.resolve(false);
+            await pending;
+        }
+        expect(await pending).toMatchObject({ code: 'approval_canceled' });
         expect(HomeHubLayoutV1Schema.parse(storedBody(buildHomeHubArtifactIdV1(accountId)))).toEqual(before);
         setActionPolicy({ v: 1 });
         await expect(executeHomeHubLayoutIntent({ intent: { kind: 'remove', instanceId: 'group' },
             scope: { serverId, accountId }, transport: account.homeHubArtifactTransport, execute: executor.execute,
             onApprovalPending: () => { throw new Error('Default confirmation incorrectly entered approval custody'); } }))
             .rejects.toMatchObject({ code: 'approval_canceled' });
-        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
         expect(HomeHubLayoutV1Schema.parse(storedBody(buildHomeHubArtifactIdV1(accountId)))).toEqual(before);
         waiveUiAction('widgets.item.remove');
         const after = await executeHomeHubLayoutIntent({ intent: { kind: 'remove', instanceId: 'group' },
             scope: { serverId, accountId }, transport: account.homeHubArtifactTransport, execute: createDefaultActionExecutor().execute,
             onApprovalPending: () => { throw new Error('Removal waiver was ignored'); } });
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
         expect(after.items.some(item => item.kind === 'group' && item.id === 'group')).toBe(false);
         expect(flattenWidgetLayoutWidgetsV1(after.items).some(item => ['one', 'two'].includes(item.instance.id))).toBe(false);
         expect(HomeHubLayoutV1Schema.parse(storedBody(buildHomeHubArtifactIdV1(accountId)))).toEqual(after);
@@ -458,14 +470,15 @@ describe('widget semantic Actions through production UI composition', () => {
             const response = await homes.artifacts(serverId).handle(new URL(request.url).pathname, request.init);
             if (!response) throw new Error('Artifact create boundary did not handle its route');
             if (!response.ok) return { status: response.status, body: await response.json() };
-            const row = ArtifactHttpReadV1Schema.parse(await response.json());
-            return { body: projectArtifactHttpRead({ ...row, kind: row.kind ?? null,
+            const { created, ...row } = ArtifactCreateHttpResponseV1Schema.parse(await response.json());
+            const artifact = projectArtifactHttpRead({ ...row, kind: row.kind ?? null,
                 header: decodeBase64(row.header), body: decodeBase64(row.body),
                 dataEncryptionKey: decodeBase64(row.dataEncryptionKey),
                 provenance: row.provenance ? decodeBase64(row.provenance) : null,
                 provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ? decodeBase64(row.provenanceDataEncryptionKey) : null,
                 createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt),
-            }) };
+            });
+            return { body: { ...artifact, created } };
         } });
         const executor = createDefaultActionExecutor();
         const base = scope({ kind: 'corePage', pageId: 'usage', area: 'main' });
