@@ -21,11 +21,34 @@ export function projectTriageEntrySessionSettlement(
     return isPluginActionConfirmationDeclined(settlement) ? { status: 'idle' } : settlement;
 }
 
-export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOptionsV1): TriageEntrySessionStartUiControllerV1 {
+export function useTriageEntrySessionStart(
+    options?: TriageEntrySessionStartOptionsV1 & Readonly<{ reviewKey?: string }>,
+): TriageEntrySessionStartUiControllerV1 {
     const host = usePluginHostApi() as unknown as TriageStartHostV1;
     const text = usePluginTranslation();
-    const owner = React.useMemo(() => createTriageEntrySessionStartController(host, options), [host, options?.mintCreationKey]);
-    React.useEffect(() => { owner.activate(); return () => owner.dispose(); }, [owner]);
+    const scope = usePluginUiEphemeralSharedScope();
+    const reviewKey = options?.reviewKey;
+    const local = React.useMemo(() => createTriageEntrySessionStartController(host, options), [host, options?.mintCreationKey, scope, reviewKey]);
+    const [shared, setShared] = React.useState<Readonly<{ local: typeof local; owner: typeof local }> | null>(null);
+    React.useLayoutEffect(() => {
+        const lease = scope === null || reviewKey === undefined ? null : scope.acquire(`triage.review-entry-start.v1:${reviewKey}`, () => ({
+            value: local,
+            retainWhenIdle: true,
+            onIdle: () => {
+                local.dispose(true);
+                if (!local.hasAdmittedReview()) lease?.retire?.();
+            },
+            dispose: () => local.dispose(),
+        }));
+        if (lease === null) {
+            local.activate(host);
+            return () => local.dispose();
+        }
+        lease.value.activate(host);
+        setShared({ local, owner: lease.value });
+        return lease.release;
+    }, [scope, reviewKey, local, host]);
+    const owner = shared?.local === local ? shared.owner : local;
     const snapshot = React.useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
     const settleAction = React.useCallback<PluginUiActionControlController['onSettled']>(execution => {
         owner.getSnapshot().settleAction(projectTriageEntrySessionSettlement(execution, text));

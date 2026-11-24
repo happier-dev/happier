@@ -1,3 +1,4 @@
+import { defineProtocolJsonValue, type ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageStartEntrySessionResultV1 } from '../../actions/entrySessionProtocol.js';
@@ -45,6 +46,7 @@ export type TriageEntrySessionNoticeV1 = Readonly<{
   /** Values the translated `labelKey` takes (the Session a send names); `label` already carries them in English. */
   labelParams?: Readonly<Record<string, string>>;
   failureCode?: string;
+  failureDetails?: ProtocolJsonValue;
   failure?: TriageNewSessionFailureV1;
 }>;
 
@@ -160,12 +162,20 @@ function settledNotice(
     case 'creationFailed': {
       const codes = [result.failureCode, result.failureCause?.errorCode, result.failureCause?.nativeErrorCode]
         .filter((code): code is string => typeof code === 'string');
-      return notice(
+      const failure = notice(
         'danger',
         'plugins.triage.surface.session.creationFailed',
         'This session could not be created.',
         codes.length === 0 ? undefined : { codes },
       );
+      return {
+        ...failure,
+        failureCode: result.failureCode,
+        failureDetails: defineProtocolJsonValue().parse({
+          ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }),
+          ...(result.spawnFailure === undefined ? {} : { details: result.spawnFailure }),
+        }),
+      };
     }
     case 'workspacePreparationFailed':
       // `retryable` asks one question: could this same request, repeated

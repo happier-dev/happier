@@ -27,7 +27,8 @@ import {
     testkitTriageActionId,
 } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 import { testkitLocator, testkitSnapshot, testkitViewer } from '../../corpus/testkit/observations.test-support.js';
-import { describeTriageEntrySessionPhaseV1 } from './sessionStartOutcome.js';
+import { describeTriageEntrySessionPhaseV1, type TriageEntrySessionNoticeV1 } from './sessionStartOutcome.js';
+import { createTriageEphemeralSharedScopeOriginFixture } from '../window/ephemeralSharedScope.test-support.js';
 import { useTriageEntrySessionStart, type TriageEntrySessionStartRequestV1 } from './useEntrySessionStart.js';
 import type { TriageActionProfilePreferencesV1 } from '../../sessions/actionLaunch.js';
 
@@ -166,6 +167,9 @@ const REJOINED_RESULT = {
 let activeStartRequest: TriageEntrySessionStartRequestV1 = START_REQUEST;
 let mintedKeys: string[] = [];
 let notice: string | null = null;
+let settledNotice: TriageEntrySessionNoticeV1 | null = null;
+let probeVisible = true;
+let reviewKey: string | undefined;
 let phase: ReturnType<typeof useTriageEntrySessionStart>['phase'];
 let effectSetups = 0;
 let probeKey = 0;
@@ -179,8 +183,10 @@ function StartProbe(_context: RenderContext): React.ReactElement {
     React.useEffect(() => { effectSetups += 1; }, []);
     const controller = useTriageEntrySessionStart({
         mintCreationKey,
+        reviewKey,
     });
-    notice = describeTriageEntrySessionPhaseV1(controller.phase)?.labelKey ?? null;
+    settledNotice = describeTriageEntrySessionPhaseV1(controller.phase);
+    notice = settledNotice?.labelKey ?? null;
     phase = controller.phase;
     return (
         <Button
@@ -190,7 +196,7 @@ function StartProbe(_context: RenderContext): React.ReactElement {
     );
 }
 function StartProbeScope(context: RenderContext): React.ReactElement {
-    return <StartProbe key={probeKey} {...context} />;
+    return probeVisible ? <StartProbe key={probeKey} {...context} /> : <></>;
 }
 const startProbeSurface = defineUiSurface(StartProbeScope);
 
@@ -237,6 +243,7 @@ async function mountProbe(input: Readonly<{
     /** How the host answers the source selection, in order. Default: submitted. */
     selectionResults?: readonly ScriptedSelection[];
     beforePreparedSelection?: (signal: AbortSignal) => Promise<void>;
+    beforeStartSettlement?: () => Promise<void>;
     linkedSession?: Readonly<{ sessionId: string; serverId?: string; machineId: string; path: string }>;
     projects?: readonly unknown[];
     cancelPlacement?: boolean;
@@ -250,12 +257,14 @@ async function mountProbe(input: Readonly<{
     const startResults = [...(input.startResults ?? [])];
     const selectionResults = [...(input.selectionResults ?? [])];
     const actionCalls: string[] = [];
+    const account = createTriageEphemeralSharedScopeOriginFixture();
     const fixture = await createPluginUiTestkit({
         identity: { instanceId: 'fixture-instance-190', mountNonce: 'fixture-mount-190' },
         authorPlugin: { id: 'happier.triage', version: '0.0.0' },
         surface: startProbeSurface,
         surfaceContext: createSurfaceContextFixture(),
-        adapter: createPluginUiRnwSemanticSurfaceAdapter({ strictMode: input.strictMode }),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ strictMode: input.strictMode,
+            ephemeralSharedScope: account.forExecutionOrigin('pr-review') }),
         handlers: {
             executeAction: async ({ action, input: actionInput, selectedActionInput }) => {
                 const actionId = testkitTriageActionId(action);
@@ -271,6 +280,7 @@ async function mountProbe(input: Readonly<{
                     // The host emitted the exact daemon Action and never learned
                     // what it settled on (`plugin_ui_action_outcome_unknown`).
                     if (next === 'lost') throw new Error('plugin_ui_action_outcome_unknown');
+                    await input.beforeStartSettlement?.();
                     return next as unknown as never;
                 }
                 if (actionId === 'sessions.spawn.profiles.list') {
@@ -399,6 +409,9 @@ afterEach(async () => {
     comparisonOpens = [];
     mintedKeys = [];
     notice = null;
+    settledNotice = null;
+    probeVisible = true;
+    reviewKey = undefined;
     effectSetups = 0;
     probeKey = 0;
     activeStartRequest = START_REQUEST;
@@ -486,6 +499,38 @@ describe('read-only PR Walk placement', () => {
         expect(comparisonOpens).toEqual([{ sessionId: 'session-a', serverId: 'server-a',
             destination: { kind: 'scmReview', comparison: PR_COMPARISON, view: 'walkthrough' } }]);
     });
+});
+
+it('shows the typed Review Session refusal after the approval route retires the PR, and accepts a retry', async () => {
+    reviewKey = 'example-repository:17:account-source';
+    let releaseApproval!: () => void;
+    const approval = new Promise<void>(resolve => { releaseApproval = resolve; });
+    const failureCause = { phase: 'session.spawn_new', errorClass: 'Error', errorCode: null,
+        nativeErrorCode: 'agent_signed_out', httpStatus: null } as const;
+    const refusal = { v: 1, type: 'creationFailed', failureCode: 'agent_signed_out', failureCause } as const;
+    const { fixture } = await mountProbe({
+        request: { ...SETTLED_PREPARED_REVIEW_SEND_REQUEST, action: { ...SETTLED_PREPARED_REVIEW_SEND_REQUEST.action,
+            actionId: 'review', target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review this change.' },
+        } },
+        startResults: [refusal, refusal],
+        beforeStartSettlement: () => approval,
+    });
+    const press = () => act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Compose in worktree' })); });
+    await press();
+    await settle();
+    expect(startInputs).toHaveLength(1);
+    probeVisible = false;
+    await act(async () => { await fixture.updateSurface(fixture.context.surface); });
+    await act(async () => { releaseApproval(); });
+    probeVisible = true;
+    await act(async () => { await fixture.updateSurface(fixture.context.surface); });
+    await settle();
+    expect(phase).toMatchObject({ kind: 'settled', result: refusal });
+    expect(settledNotice).toMatchObject({ failureCode: 'agent_signed_out', failureDetails: { failureCause } });
+    await press();
+    await settle();
+    expect(startInputs).toHaveLength(2);
+    expect(mintedKeys).toEqual(['minted-key-1', 'minted-key-2']);
 });
 
 describe('single-entry compose checkout handoff', () => {

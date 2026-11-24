@@ -1,10 +1,11 @@
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
     PluginActionInputById,
     PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
-import { ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
+import { ActionFailureCauseV1Schema, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { completeSessionInputLifecycleV1, runSessionInputDestinationV1, spawnSessionInputDestinationV1, projectSessionInputSpawnFailureV1,
-    SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, type SessionId } from '@happier-dev/plugin-sdk/sessions';
+    SessionServerStartSpawnDraftV1Schema, projectSessionSpawnNewActionInputV2, SPAWN_SESSION_ERROR_CODES, type SessionId } from '@happier-dev/plugin-sdk/sessions';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
 import type { TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
@@ -202,6 +203,7 @@ export type TriageEntrySessionStartResultV1 = (
         type: 'creationFailed';
         failureCode: Extract<PluginActionResultById['session.spawn_new'], { type: 'error' }>['code'];
         failureCause?: ReturnType<typeof ActionFailureCauseV1Schema.parse>;
+        spawnFailure: JsonValue;
         creationKey: string;
         workspace: TriageEntrySessionWorkspaceFactsV1;
     }>
@@ -232,12 +234,21 @@ export type TriageEntrySessionDepsV1 = Readonly<{
     signal?: AbortSignal;
 }>;
 
-/** SDK admission refusals reject; Session creation settlements are returned. */
 async function spawnEntrySession(
     deps: TriageEntrySessionDepsV1,
     input: SessionSpawnInput,
 ): Promise<PluginActionResultById['session.spawn_new']> {
-    return spawnSessionInputDestinationV1({ execute: deps.execute, spawn: input, signal: deps.signal });
+    try {
+        return await spawnSessionInputDestinationV1({ execute: deps.execute, spawn: input, signal: deps.signal });
+    } catch (error) {
+        // The Action bridge throws this native pre-admission refusal with its public settlement in details.
+        if (!isPluginError(error) || error.code !== SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT) throw error;
+        const details = error.details;
+        const agentId = details !== null && typeof details === 'object' ? Reflect.get(details, 'agentId') : undefined;
+        if (typeof agentId !== 'string') throw error;
+        return { type: 'error', code: error.code, retryable: false, agentId,
+            ...(error.data.failureCause === undefined ? {} : { failureCause: error.data.failureCause }) };
+    }
 }
 
 /**
@@ -296,8 +307,16 @@ async function completeEntrySessionDestination(
     if (result.type === 'pending') return {
         type: 'creationPending', creationKey: creationKey!, outcome: result.outcome, workspace: input.workspace,
     };
+    const failure = projectSessionInputSpawnFailureV1(result);
+    // Keep the creator's public refusal for the host presenter. Native launch text stays on the Machine.
+    const spawnFailure = {
+        type: result.type, code: result.code, retryable: result.retryable, ...failure,
+        ...('agentId' in result && result.agentId !== undefined ? { agentId: result.agentId } : {}),
+        ...('incompatibleTarget' in result && result.incompatibleTarget !== undefined ? { incompatibleTarget: result.incompatibleTarget } : {}),
+        ...('reason' in result ? { reason: result.reason } : {}),
+    };
     return { type: 'creationFailed', failureCode: result.code,
-        ...projectSessionInputSpawnFailureV1(result), creationKey: creationKey!, workspace: input.workspace };
+        ...failure, spawnFailure, creationKey: creationKey!, workspace: input.workspace };
 }
 
 async function linkDeliverThenOpen(

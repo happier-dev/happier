@@ -142,7 +142,9 @@ it.each(['start', 'resume'] as const)('carries a typed spawn refusal through the
         ...(phase === 'resume' ? { resume: { phase: 'creationPending' as const } } : {}),
     }, { execute: invoker.execute, linkSession: async () => ({ status: 'linked' }) });
     expect(TriageStartEntrySessionResultV1Schema.parse(result)).toEqual({ v: 1, type: 'creationFailed',
-        failureCode: 'spawn_failed', failureCause });
+        failureCode: 'spawn_failed', failureCause, spawnFailure: {
+            type: 'error', code: 'spawn_failed', retryable: false, failureCause,
+        } });
 });
 
 async function createContext(
@@ -1623,7 +1625,11 @@ describe('the Session-start wire', () => {
         ).toBe(true);
     });
 
-    it.each([false, true])('prepares native input from the exact operation source with exact carrier comparison (mismatch: %s)', async (mismatch) => {
+    it.each(['created', 'carrier mismatch', 'agent signed out'] as const)('starts from the exact provider Action through native Session admission (%s)', async (outcome) => {
+        const mismatch = outcome === 'carrier mismatch';
+        const failureCause = { phase: 'session.launch.authentication', errorClass: 'Error',
+            errorCode: 'agent_signed_out', httpStatus: null } as const;
+        const spawnFailure = { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'pi' } as const;
         const { collections } = createTestkitCorpusCollections();
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()] });
         const base = createTriageSelectedPrStartApprovalInput();
@@ -1634,6 +1640,32 @@ describe('the Session-start wire', () => {
         const request = { ...base.destination.materialization.request, instance: { ...instance, binding: {
             purpose: instance.binding.purpose, source: 'native' as const, service: instance.binding.account.service,
         } } };
+        const agentTargetKey = 'agent:happier.agent.pi/pi';
+        const recipe = SessionServerStartSpawnDraftV1Schema.parse({
+            ...base.destination.spawn,
+            directory: { kind: 'path', path: TESTKIT_SELECTED_WORKSPACE.rootPath },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } },
+            teamCredentialBindings: [{
+                v: 1, slot: { kind: 'provider_model' }, resourceId: 'team-muse', teamId: 'team-b',
+                expectedResourceRevision: 0, deliveryMode: 'brokered',
+                providerModelSelection: {
+                    agentTargetKey, modelId: 'muse-spark-1.3-contributor',
+                    application: {
+                        agentTargetKey,
+                        implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+                        endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses',
+                    },
+                    executionMachineId: TESTKIT_SELECTED_WORKSPACE.machineId,
+                },
+            }],
+        });
+        const destination = projectTriageNewSessionDestinationV1({
+            workspaceMode: 'pull_request', creationKey: base.destination.creationKey, settlement: recipe,
+            reviewWorkspace: request,
+        });
+        if (destination.status !== 'settled') throw new Error('Expected the host draft to settle');
+        const selectedRequest = destination.destination.materialization;
+        if (selectedRequest.kind !== 'reviewWorkspace') throw new Error('Expected a review workspace');
         const selected = base.prepareReviewWorkspaceSelection.selection;
         // The host boundary supplies the public handle identity for this exact
         // Machine role, independently of the mixed contributor's Account owner.
@@ -1643,12 +1675,22 @@ describe('the Session-start wire', () => {
             role: 'prepareReviewWorkspace',
         } };
         let prepared = false;
-        const context = await createContext(collections, invoker);
+        const context = await createContext(collections, invoker, async (actionId, actionInput) => {
+            if (actionId === 'session.spawn_new') {
+                const spawn = PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput);
+                if (spawn.teamCredentialBindings === undefined || outcome === 'agent signed out') {
+                    throw new PluginError({ code: spawnFailure.code, details: spawnFailure, failureCause });
+                }
+                return invoker.execute(actionId, spawn);
+            }
+            if (actionId === 'session.open') return invoker.execute(actionId, PLUGIN_ACTION_INPUT_SCHEMAS[actionId].parse(actionInput));
+            throw new Error(`Unexpected host Action ${String(actionId)}`);
+        });
         const handler = registeredHandler(TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1);
         const result = await handler(TriageStartEntrySessionInputV1Schema.parse({ ...base,
-            destination: { ...base.destination, materialization: { kind: 'reviewWorkspace', request } },
+            destination: destination.destination,
             prepareReviewWorkspaceSelection: { selection: selected, input: {
-                ...projectTriagePrepareReviewWorkspaceInputV1(request),
+                ...projectTriagePrepareReviewWorkspaceInputV1(selectedRequest.request),
                 ...(mismatch ? { entryRef: { ...request.entryRef, entryId: 'other' } } : {}),
             } },
         }), { ...context, services: { ...context.services,
@@ -1665,7 +1707,7 @@ describe('the Session-start wire', () => {
                 executeAdmittedTargetedOperation: async (selectedOperation: unknown, value: unknown, options: unknown) => {
                     prepared = true;
                     expect(selectedOperation).toBe(operation);
-                    expect(value).toEqual(projectTriagePrepareReviewWorkspaceInputV1(request));
+                    expect(value).toEqual(projectTriagePrepareReviewWorkspaceInputV1(selectedRequest.request));
                     expect(options).not.toHaveProperty('expectedSelectedConnectedAccountRef');
                     return { kind: 'prepared', repositoryPath: '/workspaces/example-review', branch: 'pr-17', created: false,
                         pullRequest: { number: 17 }, currentness: { kind: 'currentAtObservedHead' } };
@@ -1673,8 +1715,17 @@ describe('the Session-start wire', () => {
             },
         } } as unknown as PluginInvocationContext); // Host admission, Action RPC and Collection boundaries.
         expect(prepared).toBe(!mismatch);
+        if (outcome === 'agent signed out') {
+            expect(result).toMatchObject({ type: 'creationFailed', failureCode: spawnFailure.code, failureCause, spawnFailure });
+            expect(invoker.callsFor('session.open')).toHaveLength(0);
+            return;
+        }
         expect(result).toMatchObject(mismatch ? { type: 'workspacePreparationFailed' } : { type: 'opened', sessionId: 'session-a' });
         expect(invoker.callsFor('session.spawn_new')).toHaveLength(mismatch ? 0 : 1);
+        if (!mismatch) expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({
+            teamCredentialBindings: recipe.teamCredentialBindings,
+            directory: { kind: 'path', path: '/workspaces/example-review' },
+        });
     });
 
     it('carries an exact selected-PR workspace request only to the supplied admitted operation', async () => {

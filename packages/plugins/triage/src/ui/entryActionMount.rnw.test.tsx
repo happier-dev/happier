@@ -1214,7 +1214,7 @@ describe('the entry action controls on the mounted detail header', () => {
 
         const notice = pending
             ? /could not confirm whether this session was created/
-            : /This session could not be created/;
+            : /spawn_failed/;
         await pressAction(shell, 'Start');
         expect(document.body.textContent).toMatch(notice);
         expect(invoker.callsFor('session.spawn_new')).toHaveLength(1);
@@ -1222,7 +1222,7 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(invoker.callsFor('session.open')).toHaveLength(0);
         if (!pending) {
             await pressAction(shell, 'Details');
-            expect(document.body.textContent).toMatch(/spawn_failed\s+SPAWN_VALIDATION_FAILED/);
+            expect(document.body.textContent).toContain('SPAWN_VALIDATION_FAILED');
         }
 
         await pressAction(shell, 'Start');

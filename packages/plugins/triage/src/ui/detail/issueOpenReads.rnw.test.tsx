@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { Button, Text, defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
@@ -49,12 +49,13 @@ import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../project
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('one opened GitHub issue read owner', () => {
-  it('refreshes full fields once for a newer source revision and ignores unchanged publications', async () => {
-    const entryRef = testkitEntryRef();
+  it('retains an exact refusal on unchanged publications and refreshes once for a newer source revision', async () => {
+    const entryRef = testkitEntryRef({ kindId: 'pull-request' });
     const lanes = Object.freeze([]);
     let revision = 1;
     let observedAtMs = 10;
     let reads = 0;
+    let exactRefused = true;
     const observation = () => testkitObservation({ observedAtMs,
       outcome: testkitPresentOutcome({ sourceUpdatedAtMs: revision }) });
     const row = () => foldTriageListWindow({ observations: [{ ...observation(), entryRef }], lanes,
@@ -63,7 +64,8 @@ describe('one opened GitHub issue read owner', () => {
     const surface = defineUiSurface(() => {
       const [published, setPublished] = React.useState(row);
       const detail = useTriagePostMutationRow(published, lanes);
-      return <><Text value={`Full notes:${detail.exactRead?.taskFields?.body ?? 'reading'}`} />
+      return <><Text value={detail.readFailed ? `Read failed:${detail.failure?.code}` : `Full notes:${detail.exactRead?.taskFields?.body ?? 'reading'}`} />
+        <Button title="Retry detail" onPress={() => { void detail.completePostMutation(); }} />
         <Button title="Publish source change" onPress={() => { revision = 2; observedAtMs++; setPublished(row()); }} />
         <Button title="Publish same source revision" onPress={() => { observedAtMs++; setPublished(row()); }} /></>;
     });
@@ -78,17 +80,24 @@ describe('one opened GitHub issue read owner', () => {
           handlers: { executeAction: request => {
             TriageReobserveEntryInputV1Schema.parse(request.input);
             reads++;
+            if (exactRefused) throw new PluginError({ code: 'plugin_action_execution_failed' });
             return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation()),
               taskFields: { body: `Source revision ${revision}` } };
           } } });
       });
-      await shell!.getByText('Full notes:Source revision 1');
+      await shell!.getByText('Read failed:plugin_action_execution_failed');
+      await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'Publish same source revision' })); });
+      await shell!.getByText('Read failed:plugin_action_execution_failed');
       expect(reads).toBe(1);
+      exactRefused = false;
+      await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'Retry detail' })); });
+      await shell!.getByText('Full notes:Source revision 1');
+      expect(reads).toBe(2);
       await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'Publish source change' })); });
       await vi.waitFor(() => expect(document.body.textContent?.includes('Full notes:Source revision 2')).toBe(true));
-      expect(reads).toBe(2);
+      expect(reads).toBe(3);
       await act(async () => { await shell!.press(await shell!.getByRole('button', { name: 'Publish same source revision' })); });
-      expect(reads).toBe(2);
+      expect(reads).toBe(3);
       expect(document.body.textContent?.includes('Full notes:Source revision 2')).toBe(true);
     } finally { await act(async () => { await shell?.dispose(); }); }
   });

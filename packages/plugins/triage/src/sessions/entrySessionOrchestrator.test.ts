@@ -130,6 +130,7 @@ describe('startEntrySession', () => {
                 directory: { kind: 'managed' }, workspace: { kind: 'referenceOnly' } },
         });
         expect(result).toEqual({ type: 'creationFailed', failureCode: 'target_unavailable',
+            spawnFailure: { type: 'error', code: 'target_unavailable', retryable: false },
             creationKey: 'refused-start', workspace: { kind: 'referenceOnly' } });
         expect(invoker.calls).toEqual([]);
     });
@@ -933,9 +934,10 @@ describe('startEntrySession', () => {
             pending: { type: 'creationPending', creationKey: 'creation-key-a', spawn: TESTKIT_SPAWN_REQUEST,
                 directory: { kind: 'path', path: '/projects/example' }, workspace: { kind: 'referenceOnly' } },
         });
-        expect(result).toEqual({ type: 'creationFailed', failureCode: 'spawn_failed',
-            failureCause: { phase: 'session.spawn_new', errorClass: 'Error', errorCode: null,
-                nativeErrorCode: 'agent_startup_transport_failed', httpStatus: null },
+        const failureCause = { phase: 'session.spawn_new', errorClass: 'Error', errorCode: null,
+            nativeErrorCode: 'agent_startup_transport_failed', httpStatus: null };
+        expect(result).toEqual({ type: 'creationFailed', failureCode: 'spawn_failed', failureCause,
+            spawnFailure: { type: 'error', code: 'spawn_failed', retryable: true, failureCause },
             creationKey: 'creation-key-a', workspace: { kind: 'referenceOnly' } });
         expect(invoker.callsFor('session.message.send')).toEqual([]);
     });
@@ -962,6 +964,7 @@ describe('startEntrySession', () => {
         expect(result).toEqual({
             type: 'creationFailed',
             failureCode: 'creation_conflict',
+            spawnFailure: { type: 'error', code: 'creation_conflict', retryable: false },
             creationKey: 'creation-key-a',
             workspace: { kind: 'referenceOnly' },
         });

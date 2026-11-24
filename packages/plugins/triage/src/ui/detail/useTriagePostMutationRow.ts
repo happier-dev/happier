@@ -112,8 +112,9 @@ export function useTriagePostMutationRow(
     : publication?.getRow(triageEntryRowKey(row.entryRef)) ?? row), [publication, reobserveRow, row]);
   const reobserveSelection = React.useEffectEvent((opening: boolean) => reobserveRow(windowRow, true, opening));
   React.useEffect(() => {
-    setState((current) => current.ownerKey === ownerKey && (current.row !== null || current.readFailed)
-      ? { ...current, row: null, readFailed: false } : current);
+    // A list publication replaces local row facts. Only the next exact read can clear an exact refusal.
+    setState((current) => current.ownerKey === ownerKey && current.row !== null
+      ? { ...current, row: null } : current);
   }, [ownerKey, windowRow]);
   React.useEffect(() => {
     // Opening a selected owner reads its exact facts once. Later retained publications

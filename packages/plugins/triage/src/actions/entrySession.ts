@@ -223,7 +223,7 @@ function projectStartResult(
             };
         }
         case 'creationFailed':
-            return { v: 1, type: 'creationFailed', failureCode: result.failureCode,
+            return { v: 1, type: 'creationFailed', failureCode: result.failureCode, spawnFailure: result.spawnFailure,
                 ...(result.failureCause === undefined ? {} : { failureCause: result.failureCause }) };
         case 'workspacePreparationFailed':
             return {

@@ -131,10 +131,10 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
     } finally { await plugin.dispose(); }
   });
 
-  it('uses the exact repository read when the place picker searches for owner/name', async () => {
+  it('checks an exact creation place by full name or a unique configured repository name', async () => {
     const transport = createStubGithubTransport({ respond: (request) => {
       const path = new URL(request.url).pathname;
-      if (path === '/search/repositories') return { status: 200, body: { items: [], total_count: 0 } };
+      if (path === '/search/repositories') return { status: 404, body: { message: 'Not Found' } };
       if (path === `/repos/${route}`) return { status: 200, body: { ...GITHUB_REPOSITORY_RESPONSE, full_name: route, has_issues: true } };
       return undefined;
     } });
@@ -146,6 +146,12 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       const expected = { kind: 'page', status: 'complete', places: [place] };
       expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance, scopeId: route })).toEqual(expected);
       expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance, query: route })).toEqual(expected);
+      const name = route.split('/')[1]!;
+      expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance, query: name })).toEqual(expected);
+      const ambiguous = { ...instance, configuration: { v: 1, token: JSON.stringify({ v: 1,
+        selection: { kind: 'selected', unitIds: [route, `another-owner/${name}`] } }) } };
+      expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance: ambiguous, query: name }))
+        .toMatchObject({ kind: 'failed', failure: { code: 'github_not_found' } });
     } finally { await plugin.dispose(); }
   });
 

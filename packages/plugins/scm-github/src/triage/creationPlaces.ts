@@ -11,8 +11,12 @@ export async function listGithubCreationPlaces(raw: unknown, context: GithubTria
   const input = TriageSourceCredentialInputsV1.listCreationPlaces.parse(raw);
   const resolved = resolveGithubTriageInstance(input.instance);
   if (!resolved.ok) return { kind: 'failed', failure: resolved.failure };
-  // A full repository name identifies a place even when GitHub's search index omits it.
-  const route = parseGithubRoutingToken(input.scopeId ?? input.query);
+  // The configured selection can identify an exact repository without relying on search.
+  const selection = resolved.configuration.selection;
+  const name = input.query?.trim().toLowerCase();
+  const nameMatches = input.scopeId === undefined && name && !name.includes('/') && selection.kind === 'selected'
+    ? selection.unitIds.filter(id => parseGithubRoutingToken(id)?.name === name) : [];
+  const route = parseGithubRoutingToken(input.scopeId ?? (nameMatches.length === 1 ? nameMatches[0] : input.query));
   const scopeId = input.scopeId ?? (route === null ? null : buildGithubRepositoryKey(route));
   if (route === null || scopeId === null || !githubSelectionIncludes(resolved.configuration, scopeId)) {
     if (input.scopeId !== undefined) return { kind: 'failed', failure: { class: 'unsupportedContract', code: 'github_repository_not_included' } };

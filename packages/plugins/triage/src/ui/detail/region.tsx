@@ -298,6 +298,10 @@ function renderEntrySessionNotice(
 ) {
   if (notice === null) return null;
   const label = text(notice.labelKey, notice.label, notice.labelParams);
+  if (notice.failureDetails !== undefined && notice.failureCode !== undefined) {
+    return <ActionFailureDetails code={notice.failureCode} details={notice.failureDetails}
+      inline={{ fallback: label, diagnostics: failure?.codes }} />;
+  }
   if (notice.failureCode !== undefined) return <ActionFailureDetails code={notice.failureCode} message={label} />;
   // A failure's codes sit behind the line's own quiet Details, so the sentence leads and nothing below outweighs it (N13).
   const details = failure === undefined || failure.codes.length === 0 ? undefined : [...new Set(failure.codes),
@@ -347,6 +351,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   actionsNavigation: TriageDetailActionsNavigationV1;
   /** Source-owned offer for the header composer; the source retains write/confirmation custody. */
   sourcePrimaryWrite?: TriageDetailPrimaryWriteV1;
+  /** The exact PR and source connection across workspace approval navigation. */
+  reviewKey?: string;
   /** What the source calls itself ("GitHub"), naming that control. */
   sourceLabel?: string | null;
   /** The entry's attention reason, at the far end of the action row. */
@@ -369,7 +375,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
 }>): React.ReactElement {
   const host = usePluginHostApi();
   const text = usePluginTranslation();
-  const controller = useTriageEntrySessionStart();
+  const controller = useTriageEntrySessionStart({ reviewKey: props.reviewKey });
   // A Happier task can be shared through the host's own ShareSheet; an older host without it offers nothing.
   const shareSheet = useHostTaskShareSheet();
   const viewerScope = useSurfaceContext().accountScope;
@@ -648,7 +654,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       )}
       {renderEntrySessionNotice(notice, text, sessionFailure)}
       {renderEntrySessionNotice(retainedNotice, text)}
-      {sessionFailure === undefined || (notice !== null && notice.failureCode === undefined) ? null : (
+      {sessionFailure === undefined || (notice !== null && (notice.failureCode === undefined || notice.failureDetails !== undefined)) ? null : (
         <PullRequestFailureDetails codes={sessionFailure.codes} requestId={sessionFailure.requestId} />
       )}
       {comparisonFailed ? <Status tone="warning"
@@ -1492,11 +1498,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       disabled={detail?.kind !== 'ready'} onApplied={completePostMutation}>{(task) => {
       const detailBody = renderDetailBody(task);
       if (display === null || actionPresentation === null || selected === null) return renderDetail(null, task, detailBody);
+      const actionKey = deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId);
       // Custody belongs to the selected entry, not the header/footer where its controls happen to be placed.
       // A key cannot retain a component moved between those parents during a resize.
       return (
         <TriageEntryScopedActionRegion
-          key={deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId)}
+          key={actionKey}
+          reviewKey={workflowSubject === 'pullRequest' ? actionKey : undefined}
           target={props.target}
           actions={props.actions}
           workflowSubject={workflowSubject}

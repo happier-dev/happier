@@ -526,7 +526,8 @@ function readSendStatus(
 export function createTriageEntrySessionStartController(
     host: TriageStartHostV1,
     options?: TriageEntrySessionStartOptionsV1,
-): Readonly<{ getSnapshot: () => TriageEntrySessionStartControllerV1; getRecovery: () => TriageSingleStartRecoveryV1 | null; restore: (recovery: TriageSingleStartRecoveryV1) => void; subscribe: (listener: () => void) => () => void; activate: () => void; dispose: () => void; waitForSettled: () => Promise<TriageEntrySessionStartControllerV1> }> {
+) {
+    let admittedReview = false;
     let phase: TriageEntrySessionStartPhaseV1 = IDLE;
     let authoringResult: 'seeded' | 'cancelled' | undefined;
     const listeners = new Set<() => void>();
@@ -684,7 +685,7 @@ export function createTriageEntrySessionStartController(
             : input.delivery !== undefined
                 ? { kind: 'send', status: readSendStatus(result) }
                 : { kind: 'none' };
-        if (!retired.current) {
+        if (!retired.current || admittedReview) {
             if (request.comparisonDestination !== undefined && result.type === 'linked') {
                 const opened = await openLinkedSession({
                     execute: host.executeAction.bind(host), sessionId: result.sessionId,
@@ -848,6 +849,8 @@ export function createTriageEntrySessionStartController(
             return;
         }
 
+        admittedReview = false;
+        setReview(null);
         setPhase(RESOLVING);
         void (async () => {
             // Whether the start Action itself left this surface. Everything
@@ -1129,10 +1132,12 @@ export function createTriageEntrySessionStartController(
                     ...(reviewInstructions === undefined ? {} : { reviewInstructions }),
                 };
                 submitted = true;
+                // The workspace approval can navigate away after the Action takes custody.
+                admittedReview = reviewInstructions !== undefined;
                 const result = await submitTriageEntrySessionStart(host, input, startOptions);
                 await settle(request, input, result, reviewInstructions);
             } catch (error) {
-                if (!retired.current) {
+                if (!retired.current || admittedReview) {
                     setPhase(unavailable(submitted && !isPluginActionHandlerInvocationNotStartedAdvisory(error)
                         ? 'startOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
                 }
@@ -1144,6 +1149,7 @@ export function createTriageEntrySessionStartController(
     };
 
     const reset = () => {
+        admittedReview = false;
         authoringResult = undefined;
         setReview(null);
         setPhase(IDLE);
@@ -1162,6 +1168,7 @@ export function createTriageEntrySessionStartController(
     const prepareAction: TriageEntrySessionStartControllerV1['prepareAction'] = async (request, options, selectedSession) => {
         if (inFlight.current || retired.current || options.signal.aborted || configuredOutcomeUnknown && configuredResult?.recovery === undefined) return null;
         const previous = configuredResult?.recovery;
+        admittedReview = false;
         inFlight.current = true;
         authoringResult = undefined;
         setReview(null);
@@ -1274,7 +1281,7 @@ export function createTriageEntrySessionStartController(
                 ...(custody.current.pending === undefined ? {} : { resume: custody.current.pending }) },
             ...(custody.current.reviewInstructions === undefined ? {} : { reviewInstructions: custody.current.reviewInstructions }),
         },
-        restore: (recovery) => {
+        restore: (recovery: TriageSingleStartRecoveryV1) => {
             if (inFlight.current) return;
             const { resume, ...input } = retainedStartInput(recovery.input);
             custody.current = { actionId: recovery.actionId, input,
@@ -1282,12 +1289,19 @@ export function createTriageEntrySessionStartController(
                 ...(recovery.reviewInstructions === undefined ? {} : { reviewInstructions: recovery.reviewInstructions }),
             };
         },
-        activate: () => {
+        hasAdmittedReview: () => admittedReview,
+        activate: (nextHost: TriageStartHostV1 = host) => {
+            host = nextHost;
             retired.current = false;
             if (selectionLifetime.signal.aborted) selectionLifetime = new AbortController();
         },
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        dispose: () => { retired.current = true; selectionLifetime.abort(); listeners.clear(); },
+        dispose: (retainAdmittedReview = false) => {
+            if (!retainAdmittedReview) admittedReview = false;
+            retired.current = true;
+            selectionLifetime.abort();
+            listeners.clear();
+        },
         waitForSettled,
     });
 }

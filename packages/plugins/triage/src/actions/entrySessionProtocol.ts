@@ -170,6 +170,7 @@ const settledSessionChoices = {
     agentModeId: defineProtocolJsonValue().optional(),
     configuration: defineProtocolJsonValue().optional(),
     connectedServices: defineProtocolJsonValue().optional(),
+    teamCredentialBindings: defineProtocolJsonValue().optional(),
     capabilitySelection: defineProtocolJsonValue().optional(),
     allowedTools: defineProtocolJsonValue().optional(),
     unlistedTools: defineProtocolJsonValue().optional(),
@@ -723,6 +724,7 @@ const startEntrySessionResult = defineProtocolUnion([
         type: defineProtocolLiteral('creationFailed'),
         failureCode: defineProtocolString().optional(),
         failureCause: ActionFailureCauseV1ProtocolSchema.optional(),
+        spawnFailure: defineProtocolJsonValue().optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         v: defineProtocolLiteral(1),
