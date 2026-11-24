@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { createServer, Server } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountKvTransaction, DaemonDatabaseService, PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
@@ -185,6 +187,77 @@ describe('capture Action producer bindings', () => {
             await expect(createCaptureActionProducers({ runtime, stopProjectCapture: scope => owner.stopProjectCapture(scope, 'account') }).configure({ project, enabled: true }))
                 .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
         } finally { await lease?.release(); lifetime.abort(); await running; fixture.close(); account.close(); }
+    });
+
+    it.each(['ready', 'failed', 'cancelled'] as const)('reports selected preparation until the local listener settles as %s', async outcome => {
+        const fixture = createCaptureSqliteFixture(), account = accountStorageFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const owner = localCaptureBackground, lifetime = new AbortController(), launchSignal = new AbortController();
+        const storage = { daemon: { async database() { return fixture.db; } }, account: account.storage };
+        const running = owner.run({ signal: lifetime.signal, services: { storage, events: { host: { subscribe: () => ({ dispose() {} }) } } } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN, services: { storage } });
+        const caller = { requesterAccount: { accountId: 'account' }, chosenMachine: { machineId: project.machineId, installationId: 'installed' } };
+        const source = { kind: 'worktree' as const, ...project, workspaceId: 'selected' };
+        const status = (selected: typeof source, invocation = caller) =>
+            host.invokeAction(database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1), { source: selected }, invocation);
+        const partition = captureSourcePartition(source, caller.requesterAccount.accountId);
+        const occupied = createServer();
+        let port = 0;
+        const heldBinding: { resume?: () => void } = {};
+        const bindRequested = Promise.withResolvers<void>();
+        let pending: ReturnType<typeof owner.acquireLocalCapture> | undefined;
+        try {
+            await vi.waitFor(() => expect(owner.readRuntime()).not.toBeNull());
+            await host.invokeAction(database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1), { project, enabled: true }, caller);
+            if (outcome === 'failed') {
+                occupied.listen(0, '127.0.0.1');
+                await once(occupied, 'listening');
+                const address = occupied.address();
+                if (!address || typeof address === 'string') throw new Error('Expected an occupied TCP port');
+                port = address.port;
+            }
+            // Hold only the external bind. The receiver still settles through the real OS listener.
+            const listen = Server.prototype.listen;
+            const held = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server, ...args: unknown[]) {
+                heldBinding.resume = () => { Reflect.apply(listen, this, args); };
+                bindRequested.resolve();
+                return this;
+            });
+            try {
+                pending = owner.acquireLocalCapture({ enabled: true, projectScope: project, ownerAccountId: caller.requesterAccount.accountId,
+                    physicalRootIdentity: '/physical/selected', partition, urls: [], otlpPort: port, signal: launchSignal.signal });
+                await Promise.race([bindRequested.promise, pending.then(() => { throw new Error('The receiver did not try to bind'); })]);
+            } finally { held.mockRestore(); }
+            if (!heldBinding.resume) throw new Error('The receiver did not try to bind');
+            await expect(status(source)).resolves.toMatchObject({ ok: true, enabled: true, preparing: true });
+            expect(await status({ ...source, workspaceId: 'other' })).not.toHaveProperty('preparing');
+            expect(await status(source, { ...caller, requesterAccount: { accountId: 'another-account' } })).not.toHaveProperty('preparing');
+            if (outcome === 'cancelled') {
+                launchSignal.abort();
+                expect(await status(source)).not.toHaveProperty('preparing');
+            }
+            heldBinding.resume();
+            delete heldBinding.resume;
+            const settled = await pending;
+            expect(await status(source)).not.toHaveProperty('preparing');
+            if (outcome === 'ready') {
+                expect(settled.endpoint).toBeDefined();
+                expect((await fetch(`${settled.endpoint}/v1/traces`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status).toBe(200);
+            } else if (outcome === 'failed') {
+                expect(settled.failures).toMatchObject([{ name: 'otlp', code: 'EADDRINUSE' }]);
+            } else {
+                expect(settled.endpoint).toBeUndefined();
+            }
+        } finally {
+            heldBinding.resume?.();
+            await (await pending)?.release();
+            if (occupied.listening) await new Promise<void>(resolve => occupied.close(() => resolve()));
+            lifetime.abort();
+            await running;
+            await host.dispose();
+            fixture.close();
+            account.close();
+        }
     });
 
     it('reports restart for a stopped capture binding until the selected launch releases it', async () => {

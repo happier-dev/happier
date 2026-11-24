@@ -1596,6 +1596,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.database.capture.off",
   "plugins.database.capture.on",
   "plugins.database.capture.pending",
+  "plugins.database.capture.preparing",
   "plugins.database.capture.retry",
   "plugins.database.capture.status",
   "plugins.database.capture.title",

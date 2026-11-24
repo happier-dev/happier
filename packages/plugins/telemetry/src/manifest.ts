@@ -28,7 +28,7 @@ function localCaptureOwner(machineId: string, context: PluginInvocationContext):
 
 const capture = createCapturePublicActionProducers({
  acquireRuntime: localCaptureBackground.acquireRuntime,
- readRestartRequired: localCaptureBackground.readRestartRequired,
+ readWorktreeLaunchStatus: localCaptureBackground.readWorktreeLaunchStatus,
  async admitSource({ source }, context, actionId) {
   if (source.kind === 'worktree') {
    return { source, partition: captureSourcePartition(source, localCaptureOwner(source.machineId, context)) };

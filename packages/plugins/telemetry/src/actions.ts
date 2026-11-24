@@ -283,7 +283,7 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
 export function createCapturePublicActionProducers(options: Readonly<{
     admitSource: CaptureSourceAdmission;
     acquireRuntime: ReturnType<typeof createCaptureBackgroundOwner>['acquireRuntime'];
-    readRestartRequired: ReturnType<typeof createCaptureBackgroundOwner>['readRestartRequired'];
+    readWorktreeLaunchStatus: ReturnType<typeof createCaptureBackgroundOwner>['readWorktreeLaunchStatus'];
     configureCapture?: CapturePublicActionProducers['configureCapture'];
 }>): CapturePublicActionProducers {
     async function withSource<T>(input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
@@ -309,7 +309,7 @@ export function createCapturePublicActionProducers(options: Readonly<{
                 const storage = context.services.storage.account;
                 const enabled = storage ? await readCapturePreference(storage, status.source) : undefined;
                 return { ...status, ...(enabled === undefined ? {} : { enabled }),
-                    ...(options.readRestartRequired(partition) ? { restartRequired: true as const } : {}) };
+                    ...options.readWorktreeLaunchStatus(partition) };
             });
         },
         async listCapturedQueries(input, context) {

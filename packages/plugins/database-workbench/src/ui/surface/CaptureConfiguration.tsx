@@ -45,9 +45,11 @@ export function CaptureConfiguration({ scope }: Readonly<{
   const status = parsed?.success && parsed.data.ok ? parsed.data : null;
   const enabled = status?.enabled;
   const unavailable = t('plugins.database.capture.unavailable', 'Capture status is unavailable.');
-  const statusText = enabled === undefined ? unavailable : enabled
+  const preferenceText = enabled === undefined ? unavailable : enabled
     ? t('plugins.database.capture.on', 'Capture is on')
     : t('plugins.database.capture.off', 'Capture is off');
+  const statusText = status?.preparing
+    ? t('plugins.database.capture.preparing', 'Preparing capture…') : preferenceText;
   const onSettled = (kind: 'configure' | 'clear') => (result: PluginUiActionControlExecution) => {
     const settled = projectPluginActionControlExecutionV1(result, t);
     if (isPluginActionConfirmationDeclined(settled)) return;

@@ -1132,12 +1132,13 @@ describe('Database workbench surfaces', () => {
     const daemon = daemonAnswers([descriptor]);
     let enabled = true;
     let retainedBinding = false;
+    let preparing = true;
     const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
       if (typeof request.action !== 'string' && request.action.localId === status) {
         expect(request.action.pluginId).toBe('happier.telemetry');
         expect(request.input).toEqual({ source });
         return { ok: true, source, enabled, coverage: { lostObservations: 0, reason: 'receiver_unavailable' },
-          ...(retainedBinding ? { restartRequired: true } : {}) };
+          ...(retainedBinding ? { restartRequired: true } : {}), ...(preparing ? { preparing: true } : {}) };
       }
       return daemon(request);
     });
@@ -1167,6 +1168,11 @@ describe('Database workbench surfaces', () => {
       const statusCalls = executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status);
       expect(statusCalls).toHaveLength(1);
       expect(captureWrite).not.toHaveBeenCalled();
+      expect(await fixture.queryByText('Preparing capture…')).toBeTruthy();
+      preparing = false;
+      await fixture.press(await fixture.getByRole('button', { name: 'Check capture status' }));
+      expect(await fixture.getByText('Capture is on')).toBeTruthy();
+      await expect(fixture.queryByText('Preparing capture…')).resolves.toBeUndefined();
       await act(async () => actionControl.press('Turn off capture'));
       expect(await fixture.getByText('Restart affected services in Dev servers to apply the capture change.')).toBeTruthy();
       expect(await fixture.getByText('Capture is off')).toBeTruthy();
@@ -1181,7 +1187,7 @@ describe('Database workbench surfaces', () => {
         [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: configure }, input: { project, enabled: true, retry: true } })],
         [expect.objectContaining({ action: { pluginId: 'happier.telemetry', localId: clear }, input: { source } })],
       ]);
-      expect(executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status)).toHaveLength(5);
+      expect(executeAction.mock.calls.filter(([request]) => typeof request.action !== 'string' && request.action.localId === status)).toHaveLength(6);
     } finally { await fixture.dispose(); }
   });
 

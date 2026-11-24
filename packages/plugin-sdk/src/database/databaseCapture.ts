@@ -60,6 +60,8 @@ export const DatabaseCaptureStatusInputV1Schema = z.strictObject(sourceInput);
 export const DatabaseCaptureStatusResultV1Schema = z.union([DatabaseFailureV1Schema, z.extend(status, {
     ok: z.literal(true),
     enabled: z.optional(z.boolean()),
+    /** Worktree status: an admitted launch is waiting for a local capture listener to bind. */
+    preparing: z.optional(z.literal(true)),
     /** Worktree status: a live launch still holds a binding after its recording stopped. */
     restartRequired: z.optional(z.literal(true)),
     /** Environment status: the newest retained observation, null until the collector stores data. */

@@ -10803,6 +10803,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.database.capture.off": "Capture is off",
     "plugins.database.capture.on": "Capture is on",
     "plugins.database.capture.pending": "Waiting for approval.",
+    "plugins.database.capture.preparing": "Preparing capture…",
     "plugins.database.capture.retry": "Retry capture",
     "plugins.database.capture.status": "Check capture status",
     "plugins.database.capture.title": "Local capture",
@@ -56807,6 +56808,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.database.capture.off'
     | 'plugins.database.capture.on'
     | 'plugins.database.capture.pending'
+    | 'plugins.database.capture.preparing'
     | 'plugins.database.capture.retry'
     | 'plugins.database.capture.status'
     | 'plugins.database.capture.title'

@@ -44,7 +44,10 @@ async function acquireReceiver(runtime:CaptureRuntime,context:LocalPartition,por
  return {endpoint:slot.receiver.endpoint,release(){released??=(async()=>{slot.users.delete(token);if(!slot.users.size){if(active.get(key)===pending)active.delete(key);await slot.receiver.release();}})();return released;}};
 }
 /** A consumes these prepared values; this function never composes an environment. */
-export async function bindLocalCapture(input:LocalPartition & {enabled:boolean;runtime:CaptureRuntime;urls:readonly CaptureUrlOffer[];otlpPort?:number;signal:AbortSignal}){
+export async function bindLocalCapture(input: LocalPartition & {
+ enabled: boolean; runtime: CaptureRuntime; urls: readonly CaptureUrlOffer[]; otlpPort?: number; signal: AbortSignal;
+ onBindingStart?(): void;
+}) {
  const context = { partition: input.partition, physicalRootIdentity: input.physicalRootIdentity };
  const replacements:Record<string,string>={},proxies:Awaited<ReturnType<typeof acquireProxy>>[]=[];
  let receiver:Awaited<ReturnType<typeof acquireReceiver>>|undefined,released:Promise<void>|undefined;
@@ -55,6 +58,7 @@ export async function bindLocalCapture(input:LocalPartition & {enabled:boolean;r
  function onAbort(){void release();}
  const unavailable=(name:string,error:unknown)=>failures.push({name,code:error!==null&&typeof error==='object'&&'code'in error&&typeof error.code==='string'?error.code:'action_failed'});
  if(input.enabled&&!input.signal.aborted){
+  if (input.urls.length || input.otlpPort !== undefined) input.onBindingStart?.();
   for(const offer of input.urls){try{
    const proxy=await acquireProxy(input.runtime,context,offer);proxies.push(proxy);
    replacements[offer.name]=offer.original.slice(0,offer.hostSpan.start)+`127.0.0.1:${proxy.port}`+offer.original.slice(offer.hostSpan.end);
