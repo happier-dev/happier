@@ -2054,10 +2054,13 @@ network, timeout, inventory-conflict and server failures retry until activation 
 shutdown. Delays use the existing quota failure-backoff bounds and jitter through
 the daemon's backoff calculator; activation does not hold machine connection open.
 Authentication and invalid-content failures leave the policy disabled and emit a
-warning. Shutdown cancels retry waits and prevents late coordinator creation.
+warning. Shutdown cancels retry waits and prevents late activation.
 
-Late activation assigns the same coordinator, schedules current-source refresh and
-starts the same quota loop as successful startup. Connectivity pause/resume reads
+When quota support is enabled, the daemon can redeem a manually selected reset
+while inventory hydration is pending or has failed. The quota coordinator checks
+the selected credential and fresh provider eligibility and owns the receipt for
+manual and automatic use. After hydration, the daemon uses that same coordinator
+to schedule current-source refresh and start the quota loop. Connectivity pause/resume reads
 the current loop handle, so a loop created after machine connection still follows
 connectivity changes. Session credential hot-apply warnings include the Session,
 service, available profile/group/generation, mapped failure code and sanitized
