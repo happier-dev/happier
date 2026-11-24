@@ -227,8 +227,7 @@ export async function waitForIdleObservation(params: Readonly<{
     };
 
 
-    const observePendingInputCount = (body: unknown) => {
-      const count = readSessionProjectedPendingInputCount(body);
+    const observePendingInputCount = (count: number | null) => {
       if (count === null || count === 0) return;
       pendingUserTurns = Math.max(pendingUserTurns, count);
       if (preferProjectionUpdates) {
@@ -248,21 +247,18 @@ export async function waitForIdleObservation(params: Readonly<{
       const parsed = UpdateContainerSchema.safeParse(raw);
       if (!parsed.success) return;
       const update: UpdateContainer = parsed.data;
-      const observedBody = update.body;
-      const sessionId = 'sid' in observedBody ? observedBody.sid ?? ('sessionId' in observedBody ? observedBody.sessionId : undefined)
-        : 'id' in observedBody ? observedBody.id : undefined;
-      if (sessionId === params.sessionId) observationRevision += 1;
-
       if (update.body?.t === 'pending-changed') {
         if (!preferProjectionUpdates && !readyCompletesPendingUserTurns) return;
         const body = update.body;
         const sessionId = body.sid ?? body.sessionId;
         if (sessionId !== params.sessionId) return;
-        observePendingInputCount(body);
+        observationRevision += 1;
+        const pendingInputCount = readSessionProjectedPendingInputCount(body);
+        observePendingInputCount(pendingInputCount);
         // A blocked-custody push needs the exact crossover even while the total stays positive.
         const hasBlockedInput = (body.pendingBlockedCount ?? 0) > 0;
         if (hasBlockedInput) requiresTranscriptIdleEvidence = true;
-        if ((hasBlockedInput || readSessionProjectedPendingInputCount(body) === 0)
+        if ((hasBlockedInput || pendingInputCount === 0)
           && waitingForIdleAfterFreshBusy) resolveIdle();
         return;
       }
@@ -271,20 +267,27 @@ export async function waitForIdleObservation(params: Readonly<{
         const body = update.body;
         if (String(body.id ?? '') !== params.sessionId) return;
 
-        if (preferProjectionUpdates || readyCompletesPendingUserTurns) observePendingInputCount(body);
+        const pendingInputCount = readSessionProjectedPendingInputCount(body);
         const observedTurnStatus = readSessionProjectedTurnStatus(body.latestTurnStatus);
+        const projectedPendingRequests = summarizeProjectedPendingRequests(body);
+        const agentState = body.agentState;
+        const hasAgentState = typeof agentState?.value === 'string' && agentState.value.trim().length > 0;
+        // Only a change to observed activity supersedes an in-flight idle read.
+        if (pendingInputCount === null && observedTurnStatus === null && projectedPendingRequests === null
+          && !hasAgentState) return;
+        observationRevision += 1;
+        if (preferProjectionUpdates || readyCompletesPendingUserTurns) observePendingInputCount(pendingInputCount);
         const projectedActivity = observedTurnStatus ? detectSessionTurnActivityFromProjection(body) : null;
         const shouldReadProjection = preferProjectionUpdates || !readyCompletesPendingUserTurns || projectedActivity !== null;
         let state: unknown;
-        const agentState = body.agentState;
-        if (typeof agentState?.value === 'string' && agentState.value.trim()) {
+        if (hasAgentState) {
           const opened = params.openAgentState(agentState.value, agentState.version);
           state = opened instanceof Promise ? await opened : opened;
           if (settled) return;
         }
         const observedSummary = state == null ? null : summarizeAgentState(state);
         const projectedSummary = shouldReadProjection
-          ? mergeProjectedPendingRequestCount(summarizeProjectedPendingRequests(body), observedSummary ?? latestSummary)
+          ? mergeProjectedPendingRequestCount(projectedPendingRequests, observedSummary ?? latestSummary)
           : null;
         const projectedTurnStatus = shouldReadProjection ? observedTurnStatus : null;
         const canUseTerminalProjection =
@@ -408,6 +411,7 @@ export async function waitForIdleObservation(params: Readonly<{
       const messageBody = update.body;
       if (messageBody.t !== 'new-message') return;
       if (String(messageBody.sid ?? '') !== params.sessionId) return;
+      observationRevision += 1;
       if (messageBody.delivery !== 'full') {
         clearTimeout(timer);
         cleanup();
