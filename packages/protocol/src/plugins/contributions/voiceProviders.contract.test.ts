@@ -6,6 +6,8 @@ import {
   resolveVoiceSpeechSettingsCorrespondence,
   deriveVoiceCredentialBindingIdentityV1,
   resolveVoiceCredentialOperationAuthorization,
+  resolveVoiceCredentialMediatedGrantDeclarationsV1,
+  VoiceRawCredentialGrantDeclarationSchema,
   VoiceCredentialSlotIdSchema,
   VoiceProviderContributionSchema,
   VoiceProviderSettingsSchema,
@@ -276,6 +278,16 @@ describe('canonical Voice provider declarations', () => {
     })).toMatchObject({
       projection: { kind: 'recipientCredential', phase: 'connection' },
     });
+    const grants = resolveVoiceCredentialMediatedGrantDeclarationsV1({
+      pluginId: input.pluginId,
+      contribution,
+      phase: 'connection',
+    });
+    expect(grants.map(grant => VoiceRawCredentialGrantDeclarationSchema.parse(grant))).toEqual([{
+      realm: 'web',
+      phase: 'connection',
+      request: { kind: 'httpHeaders', origin: hostOperation.request.origin, headerNames: ['authorization'] },
+    }]);
     expect(resolveVoiceCredentialOperationAuthorization({
       ...input,
       selectedSource: { kind: 'savedSecret' },

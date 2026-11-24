@@ -106,7 +106,8 @@ describe('local Voice Action contract', () => {
         context: { surface: 'ui', authority: 'present_user' } }).required).toBe(false);
       const required = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
       expect(resolveActionApprovalRouting({ actionId, spec, input: { expectedAttempt: 'current-attempt', muted }, settings: required,
-        context: { surface: 'ui', authority: 'present_user' } }).required).toBe(true);
+        context: { surface: 'ui', authority: 'present_user' } }))
+        .toMatchObject({ required: false, uiConfirmationRequired: true });
       expect(resolveActionApprovalRouting({ actionId, spec, input: { expectedAttempt: 'current-attempt', muted },
         context: { surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId } } }).required).toBe(false);
     }
