@@ -60,7 +60,7 @@ function useCreateInboxWorkProjection() {
     const profileScope = storage(state => state.profileScope);
     const pluginSessionInbox = useInboxPluginSessionRows();
     const executionRuns = useInboxExecutionRunSource();
-    const workflowAttention = useFullWorkflowAttentionSource();
+    const { workflowAttention, workflowRunIdsWithOccurrence } = useFullWorkflowAttentionSource();
     const occurrenceRunIds = useInboxWorkflowOccurrenceRunIds();
     const workflowRunOnceDeliveries = React.useMemo(() => new Map(executionRuns.workflowFollows.map(follow =>
         [follow.source.runId, follow.onceDeliveries ?? []] as const)), [executionRuns.workflowFollows]);
@@ -179,6 +179,10 @@ function useCreateInboxWorkProjection() {
         for (const group of workGroups) for (const item of group.items) {
             if (item.kind === 'session' && item.entry.candidate.address) refs.push({ kind: 'session', address: item.entry.candidate.address });
             else if (item.kind === 'workflow_run') refs.push({ kind: 'workflow_run', runId: item.runId });
+            // Boards keep the native Run membership when Inbox displays it as an occurrence.
+            else if (item.kind === 'automation_run' && workflowRunIdsWithOccurrence.has(item.row.id)) {
+                refs.push({ kind: 'workflow_run', runId: item.row.id });
+            }
         }
         const previous = previousMembership.current;
         const retained = refs.map((ref, index) => {
@@ -193,7 +197,7 @@ function useCreateInboxWorkProjection() {
             ? previous : { refs: stableRefs, isLoading: membershipLoading };
         previousMembership.current = next;
         return next;
-    }, [workGroups, membershipLoading]);
+    }, [workGroups, membershipLoading, workflowRunIdsWithOccurrence]);
     return React.useMemo(() => ({ source, overview, openApprovalEntries, artifactSource, profileScope,
         pluginSessionInbox, executionRuns, workflowAttention, workflowRunOnceDeliveries, automationAttention,
         automationRuns, attentionStandings, sessionsById, sessionPresentation, workGroups, membership }),

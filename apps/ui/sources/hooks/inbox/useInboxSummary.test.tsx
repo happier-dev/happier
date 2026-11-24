@@ -405,7 +405,14 @@ describe('useInboxSummary workflow source', () => {
         listAutomationRuns.mockResolvedValue({ runs: [occurrence], nextCursor: null });
 
         let inbox: InboxModel | null = null;
+        const { useInboxWorkMembershipWhen } = await import('./useInboxWorkProjection');
+        let membership: ReturnType<typeof useInboxWorkMembershipWhen> = null;
+        function MembershipProbe() {
+            membership = useInboxWorkMembershipWhen(true);
+            return null;
+        }
         const screen = await renderScreen(<InboxSummaryProvider><Probe /><InboxModelProvider>
+            <MembershipProbe />
             <DirectInboxRows view="updates" observe={model => { inbox = model; }} />
         </InboxModelProvider></InboxSummaryProvider>);
         await waitForHomeGovernance(() => {
@@ -420,6 +427,7 @@ describe('useInboxSummary workflow source', () => {
                 pageRoute: expect.stringContaining('target=occurrence'), context: expect.stringMatching(/finding observed/i) }),
         ]);
         expect(screen.findByTestId(`inbox.automation_run.${occurrence.id}`)).toBeTruthy();
+        expect(membership).toMatchObject({ refs: [{ kind: 'workflow_run', runId: occurrence.id }] });
     });
 
     it('does not read ordinary failures through the released alias when Workflows is disabled', async () => {
