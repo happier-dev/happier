@@ -1,5 +1,5 @@
 import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import { MachinePresenceReadResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readServerAccountScopeOwnerLifetime, serverAccountScopedResourceKey, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -13,7 +13,6 @@ import { isBeyondWorkflowRunListSpan, workflowRunStoreKey } from '@/sync/store/d
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/changesPlanner';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
-import { executeMachineAccessHttpAction } from '@/sync/api/machines/machineAccessApi';
 import { refreshWorkflowRunsByIds } from './refreshWorkflowRun';
 import { projectWorkflowActivityRunFact, workflowActivityTurnEvents, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
 
@@ -93,9 +92,34 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         controller = new AbortController();
         const signal = controller.signal;
         const snapshot = storage.getState();
-        const machines = new Map<string, boolean>(Object.entries(snapshot.machineRecordsByServerId[serverId] ?? {})
-            .filter(([, machine]) => readMachinePresenceAnswer(machine))
-            .map(([id, machine]) => [id, readMachineActivity(machine).active] as const));
+        const machines = new Map<string, { active: boolean; transitions: Machine['presenceTransitions'] }>();
+        const projectMachine = (machine: Machine, batch: WorkflowActivityLiveFact[]) => {
+            const transitions = machine.presenceTransitions;
+            if (transitions === undefined && !readMachinePresenceAnswer(machine)) return;
+            const activity = readMachineActivity(machine);
+            const previous = machines.get(machine.id);
+            machines.set(machine.id, { active: activity.active, transitions });
+            const append = (event: 'offline' | 'online', sourceRevision: number, occurredAt: number, coverage: 'retained' | 'live') => {
+                batch.push({ kind: 'machine', machineId: machine.id, event, sourceRevision, occurredAt, coverage,
+                    key: serverAccountScopedResourceKey(lifetime.scope, 'machine', machine.id, event, String(sourceRevision)) });
+            };
+            if (transitions !== undefined) {
+                for (const event of ['offline', 'online'] as const) {
+                    const occurrence = transitions?.[event];
+                    if (!occurrence || occurrence.revision === previous?.transitions?.[event]?.revision) continue;
+                    append(event, occurrence.revision, occurrence.occurredAt,
+                        occurrence.occurredAt >= listeningSince ? 'live' : 'retained');
+                }
+            } else if (previous && previous.transitions === undefined && previous.active !== activity.active) {
+                // Older Homes only publish current presence.
+                const occurredAt = activity.activeAt ?? machine.activeAt;
+                append(activity.active ? 'online' : 'offline', occurredAt, occurredAt, 'live');
+            }
+        };
+        const initialMachineFacts: WorkflowActivityLiveFact[] = [];
+        for (const machine of Object.values(snapshot.machineRecordsByServerId[serverId] ?? {})) {
+            projectMachine(machine, initialMachineFacts);
+        }
         const runs = new Map<string, Pick<WorkflowRunSummaryV1, 'state' | 'attentionRequired'>>();
         for (const row of Object.values(snapshot.workflowRunsById)) {
             const summary = row.summary;
@@ -145,28 +169,6 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             }
             publish(batch);
         }));
-        const readMachineHistory = async (machineId: string) => {
-            try {
-                const result = MachinePresenceReadResultV1Schema.parse(await executeMachineAccessHttpAction({
-                    scope: lifetime.scope, actionId: 'machines.presence.read',
-                    input: { serverId: lifetime.scope.serverId, machineId },
-                    isCurrent: () => lifetime.isCurrent() && !signal.aborted, signal,
-                }));
-                if (result.kind !== 'present' || !result.transitions || signal.aborted) return;
-                const batch: WorkflowActivityLiveFact[] = [];
-                for (const event of ['offline', 'online'] as const) {
-                    const occurrence = result.transitions[event];
-                    if (!occurrence) continue;
-                    batch.push({ kind: 'machine', machineId, event, sourceRevision: occurrence.revision,
-                        occurredAt: occurrence.occurredAt, coverage: 'retained',
-                        key: serverAccountScopedResourceKey(lifetime.scope, 'machine', machineId, event, String(occurrence.revision)) });
-                }
-                publish(batch);
-            } catch {
-                // Presence history is additive. A refused or unavailable Machine must not withdraw
-                // the live subscription or turn a working Events feed into a listening failure.
-            }
-        };
         detach.push(subscribeMachineUpdates((home, ids) => {
             if (resolveServerProfileScopeIdForIdentifier(home) !== serverId) return;
             const batch: WorkflowActivityLiveFact[] = [];
@@ -177,20 +179,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                     machines.delete(id);
                     continue;
                 }
-                if (!readMachinePresenceAnswer(machine)) continue;
-                const activity = readMachineActivity(machine);
-                const previous = machines.get(id);
-                machines.set(id, activity.active);
-                if (previous === undefined) {
-                    void readMachineHistory(id);
-                    continue;
-                }
-                if (previous === activity.active) continue;
-                const event = activity.active ? 'online' : 'offline';
-                const sourceRevision = activity.activeAt ?? machine.activeAt;
-                batch.push({ kind: 'machine', machineId: id, event, sourceRevision,
-                    occurredAt: sourceRevision, coverage: 'live',
-                    key: serverAccountScopedResourceKey(lifetime.scope, 'machine', id, event, String(sourceRevision)) });
+                projectMachine(machine, batch);
             }
             publish(batch);
         }));
@@ -243,7 +232,9 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
             if (signal.aborted) return;
             mergePage(retained, true);
         }, { onError: reportError, onRetryFailure: reportError });
-        for (const id of machines.keys()) void readMachineHistory(id);
+        if (initialMachineFacts.length > 0) queueMicrotask(() => {
+            if (!signal.aborted) publish(initialMachineFacts);
+        });
     };
     // Requested membership follows the Account across view handoffs; live listeners follow demand.
     lifetime.onRetire(() => { close(); page = undefined; retainedRuns.clear(); observers.clear(); });

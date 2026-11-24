@@ -149,6 +149,76 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         } finally { db.$transaction = originalTransaction; }
     });
 
+    it('carries requested presence history in Machine sync without extra SQL', async () => {
+        const data = await fixture('plain', 32, 1);
+        const [machineId] = data.ids;
+        const otherAccountId = (await db.account.create({ data: { encryptionMode: 'plain' } })).id;
+        const foreign = await db.machine.create({ data: { id: randomUUID(), accountId: otherAccountId, metadata: '' } });
+        const presenceTransitions = { v: 1, revision: 2, offline: { revision: 1, occurredAt: 10 }, online: { revision: 2, occurredAt: 20 } };
+        await db.machine.update({ where: { id: machineId }, data: { presenceTransitions: JSON.stringify(presenceTransitions) } });
+        const originalTransaction = db.$transaction;
+        const traced = tracedTransport();
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.$transaction, traced, args);
+        } });
+        try {
+            await withAuthenticatedTestApp(machinesRoutes, async app => {
+                for (const [surface, request] of [
+                    ['census', { method: 'GET' as const, url: '/v1/machines?includeRevoked=true' }],
+                    ['changed', { method: 'POST' as const, url: '/v1/machines/read-batch',
+                        payload: { machineIds: [machineId, foreign.id] } }],
+                ] as const) {
+                    const measure = async (optIn: boolean) => {
+                        statements.length = 0;
+                        const response = await app.inject({ ...request, headers: { ...headers(data.owner.id), ...(optIn
+                            ? { accept: 'application/json;happier-machine-projection=presence-events-v1' } : {}) } });
+                        expect(response.statusCode, response.body).toBe(200);
+                        const body = response.json();
+                        const rows = surface === 'census' ? body : MachineReadBatchResponseV1Schema.parse(body)
+                            .results.flatMap(result => result.status === 'found' ? [result.machine] : []);
+                        const cost = { statements: statements.length, presenceReads: statements.filter(event =>
+                            /^SELECT\s+["`]?presenceTransitions/u.test(event.query)).length,
+                            candidateReads: statements.filter(event => event.query.includes('"AutomationTrigger"')).length };
+                        expect(rows).toHaveLength(surface === 'census' ? data.ids.length : 1);
+                        expect(rows.some((row: { id: string }) => row.id === foreign.id)).toBe(false);
+                        return { cost, row: rows.find((row: { id: string }) => row.id === machineId) };
+                    };
+                    const legacy = await measure(false);
+                    const negotiated = await measure(true);
+                    console.info('MACHINE_PRESENCE_SYNC_SQL', JSON.stringify({ surface, legacy: legacy.cost, negotiated: negotiated.cost }));
+                    expect(legacy.row).not.toHaveProperty('presenceTransitions');
+                    expect(negotiated.cost).toEqual(legacy.cost);
+                    expect(negotiated.cost).toMatchObject({ presenceReads: 0, candidateReads: 0 });
+                    expect(negotiated.row).toHaveProperty('presenceTransitions', presenceTransitions);
+                }
+            });
+        } finally { db.$transaction = originalTransaction; }
+    });
+
+    it('reads the exact daemon recovery Machine once for admission and history', async () => {
+        const data = await fixture('plain', 1, 1);
+        const [machineId] = data.ids;
+        const transitions = { v: 1, revision: 1, offline: { revision: 1, occurredAt: 10 }, online: null };
+        await db.machine.update({ where: { id: machineId }, data: { presenceTransitions: JSON.stringify(transitions) } });
+        const originalTransaction = db.$transaction;
+        const traced = tracedTransport();
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(traced.$transaction, traced, args);
+        } });
+        try {
+            await withAuthenticatedTestApp(machinesRoutes, async app => {
+                statements.length = 0;
+                const response = await app.inject({ method: 'GET', url: `/v1/machines/${machineId}/presence`, headers: headers(data.owner.id) });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toEqual({ kind: 'present', machineId, transitions, occurrences: [] });
+                const cost = { statements: statements.length, presenceReads: statements.filter(event =>
+                    /^SELECT\s+["`]?presenceTransitions/u.test(event.query)).length };
+                console.info('MACHINE_PRESENCE_RECOVERY_SQL', JSON.stringify(cost));
+                expect(cost.presenceReads).toBe(0);
+            });
+        } finally { db.$transaction = originalTransaction; }
+    });
+
     it.each([
         { mode: 'plain', owned: true }, { mode: 'plain', owned: false },
         { mode: 'e2ee', owned: true }, { mode: 'e2ee', owned: false },

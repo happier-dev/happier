@@ -326,6 +326,7 @@ export interface Machine {
     activity?: import('@/sync/domains/machines/machineActivity').MachineActivityState;
     /** Home-owned transition-only presence; absent on legacy Homes. */
     presenceProtocolVersion?: 1;
+    presenceTransitions?: import('@happier-dev/protocol/machines/machinePresenceTransitionsV1').MachinePresenceTransitionsV1 | null;
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: number | string | null;

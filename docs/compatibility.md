@@ -9952,6 +9952,14 @@ access. Enrollment starts at the current revision; stable occurrence identities
 use the committed revision rather than heartbeat clocks. The retained pair
 coalesces overwritten cycles rather than recording every transition.
 
+The existing Machine census and changed-ID batch can carry the structural pair
+on admitted rows when the reader sends
+`Accept: application/json;happier-machine-projection=presence-events-v1`.
+An explicit null means there is no retained occurrence. Earlier Homes omit the
+field, so Events continues to use their live presence. Earlier clients receive
+their original row shape. The exact Machine recovery read still supplies
+recipient-specific Automation candidates to daemons.
+
 Machine services declares `health-check-failed`, `health-check-recovered`,
 `deployment-failed`, `deployment-succeeded`, `promotion-completed`,
 `deployment-cancelled`, `deployment-outcome-unknown`, `rollback-completed`,

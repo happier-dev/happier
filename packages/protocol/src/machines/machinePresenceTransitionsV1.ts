@@ -15,6 +15,7 @@ export const MachinePresenceTransitionsV1Schema = lazyZodSchema(() => z.strictOb
   offline: z.nullable(occurrence), online: z.nullable(occurrence),
 }));
 export type MachinePresenceTransitionsV1 = z.infer<typeof MachinePresenceTransitionsV1Schema>;
+export const MACHINE_PRESENCE_EVENTS_PROJECTION_V1 = 'application/json;happier-machine-projection=presence-events-v1';
 /** Recipient-specific structural candidates; authored definitions stay private.
  * This travels on the existing Account change feed, not a transition journal. */
 export const MachinePresenceAutomationOccurrenceV1Schema = lazyZodSchema(() => z.strictObject({

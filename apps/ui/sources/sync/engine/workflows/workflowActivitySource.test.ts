@@ -362,7 +362,7 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     expect(activeSubscriptions).toBe(0);
 });
 
-it('hydrates durable Machine history and starts a fresh live listening window after the last host closes', async () => {
+it('opens retained Machine history without per-Machine requests and publishes a changed revision once', async () => {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-presence.test' });
     boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'presence-account',
@@ -378,10 +378,21 @@ it('hydrates durable Machine history and starts a fresh live listening window af
     expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
     const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
     const scope = getActiveServerAccountScope()!;
-    const machine = createMachineFixture({ id: 'presence-machine', active: true, activeAt: 20 });
-    const access = await import('@/sync/api/machines/machineAccessApi');
-    vi.spyOn(access, 'executeMachineAccessHttpAction').mockResolvedValue({ kind: 'present', machineId: machine.id,
-        transitions: { v: 1, revision: 4, offline: { revision: 3, occurredAt: 10 }, online: { revision: 4, occurredAt: 20 } } });
+    const transitions = { v: 1 as const, revision: 4, offline: { revision: 3, occurredAt: 10 }, online: { revision: 4, occurredAt: 20 } };
+    const machine = { ...createMachineFixture({ id: 'presence-machine', active: true, activeAt: 20 }), presenceTransitions: transitions };
+    const fleet = Array.from({ length: 31 }, (_, i) => ({
+        ...createMachineFixture({ id: `presence-machine-${i}`, active: true, activeAt: 20 }), presenceTransitions: null,
+    }));
+    const request = boundary.request;
+    const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    const historyRequests: string[] = [];
+    setRuntimeFetch((url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (!/^\/v1\/machines\/[^/]+\/presence$/.test(path)) return request(url, init);
+        historyRequests.push(path);
+        return Promise.resolve(Response.json({ kind: 'present', machineId: path.split('/')[3],
+            transitions: path === `/v1/machines/${machine.id}/presence` ? transitions : null, occurrences: [] }));
+    });
     const { getWorkflowActivitySource } = await import('./workflowActivitySource');
     const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
     const persistence = getPersistenceStorage();
@@ -393,13 +404,18 @@ it('hydrates durable Machine history and starts a fresh live listening window af
     const release = source.acquire({ onLive: rows => first.push(...rows), onRetained() {} });
     releases.push(release);
     // Direct navigation can open Events before the Account inventory arrives.
-    expect(access.executeMachineAccessHttpAction).not.toHaveBeenCalled();
-    await publishMachineInventoryForTest(scope, [machine]);
+    expect(historyRequests).toHaveLength(0);
+    await publishMachineInventoryForTest(scope, [machine, ...fleet]);
     await vi.waitFor(() => expect(first.filter(row => row.kind === 'machine')).toHaveLength(2));
-    await publishMachineInventoryForTest(scope, [{ ...machine, activeAt: 21 }]);
-    expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(1);
+    expect(historyRequests).toHaveLength(0);
     const listeningSince = source.listeningSince();
     expect(listeningSince).toBeGreaterThan(1);
+    const offline = { ...machine, active: false, presenceTransitions: { ...transitions, revision: 5,
+        offline: { revision: 5, occurredAt: listeningSince! + 1 } } };
+    await publishMachineInventoryForTest(scope, [offline, ...fleet]);
+    await publishMachineInventoryForTest(scope, [{ ...offline, activeAt: 21 }, ...fleet]);
+    expect(first.filter(row => row.kind === 'machine').map(row => [row.sourceRevision, row.coverage]))
+        .toEqual([[3, 'retained'], [4, 'retained'], [5, 'live']]);
     expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(0);
     const overlappingHost = source.acquire({ onLive() {}, onRetained() {} });
     releases.push(overlappingHost);
@@ -414,6 +430,6 @@ it('hydrates durable Machine history and starts a fresh live listening window af
     clock.mockRestore();
     await vi.waitFor(() => expect(second.filter(row => row.kind === 'machine')).toHaveLength(2));
     expect(source.listeningSince()).toBe(listeningSince! + 1000);
-    expect(access.executeMachineAccessHttpAction).toHaveBeenCalledTimes(2);
+    expect(historyRequests).toHaveLength(0);
     expect(writes.mock.calls.filter(([key]) => key === listeningKey)).toHaveLength(0);
 });

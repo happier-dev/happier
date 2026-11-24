@@ -97,7 +97,10 @@ export function haveSameMachineContentAuthority(previous: MachineContentAuthorit
 export function retainMachineRecord(previous: Machine | null | undefined, next: Machine): Machine {
     // Ingress owns a new record; an incoming object's client-lifetime activity is never another Home's answer.
     if (!previous || previous.storageMode !== next.storageMode || !haveSameMachineContentAuthority(previous, next)) return { ...next, activity: undefined };
-    if (areStoredMachineSemanticsEqual(previous, next)) return previous;
+    const previousHistory = previous.presenceTransitions;
+    const nextHistory = next.presenceTransitions;
+    const sameHistory = (previousHistory?.revision ?? previousHistory) === (nextHistory?.revision ?? nextHistory);
+    if (sameHistory && areStoredMachineSemanticsEqual(previous, next)) return previous;
     const retained: Machine = { ...next, activity: previous.activity };
     // Exact-field readers share the admitted siblings even when another field in the same decoded
     // blob advances. Whole-row version authority stays above.
@@ -109,6 +112,7 @@ export function retainMachineRecord(previous: Machine | null | undefined, next: 
     for (const key of ['metadata', 'daemonState', 'availability', 'access', 'keyBasis', 'operationProtocolCapabilities', 'managedMachineRef'] as const) {
         retainField(key);
     }
+    if (sameHistory) retained.presenceTransitions = previousHistory;
     return retained;
 }
 

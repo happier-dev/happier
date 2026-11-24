@@ -66,6 +66,8 @@ import { transitionMachineContentKeyInTx, readMachineContentKeySnapshotInTx } fr
 import { readCurrentManagedGuestActivityInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { registerMachineAccessRoutes } from './machineAccessRoutes';
+import { MACHINE_PRESENCE_EVENTS_PROJECTION_V1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
+import { parseStoredMachinePresenceTransitions } from '@/app/presence/machinePresenceTransitions';
 import {
     listMachineCandidatesInTx,
     listScopedTeamMachineCandidatesInTx,
@@ -91,6 +93,7 @@ async function readAccessibleMachineProjectionsInTx(
     // and terminal reads never consume them, so they do not pay for the recipient query.
     const schedulesRecipientRepair = input.projection !== 'hostFacts'
         && input.request.authAuthority === 'present_user' && input.request.authTokenKind === 'account';
+    const includePresenceHistory = input.request.headers.accept === MACHINE_PRESENCE_EVENTS_PROJECTION_V1;
     const openings = await readAccessibleMachineOpeningsInTx(tx, { actorAccountId: input.actorAccountId, machineIds: input.machineIds,
         ...(input.admission ? { admission: input.admission } : {}),
         ...(schedulesRecipientRepair ? { includeRecipientWork: true as const } : {}) });
@@ -101,13 +104,16 @@ async function readAccessibleMachineProjectionsInTx(
         if (!opening) return [];
         const { machine } = opening;
         return [{ ...opening, projection: input.projection === 'hostFacts' ? serializeMachineHostFacts(machine, opening.access)
-            : serializeAccessibleMachineRow(machine, {
-            ...opening,
-            devcontainerChild: children?.get(machine.id) ?? null,
-            deploymentApp: apps?.get(machine.id) ?? null,
-            recipientAccountStoredContentProtocolVersion:
-                readAccountStoredContentCompatibilityForHttpRequest(input.request).declaration?.protocolVersion,
-        }) }];
+            : {
+                ...serializeAccessibleMachineRow(machine, {
+                    ...opening,
+                    devcontainerChild: children?.get(machine.id) ?? null,
+                    deploymentApp: apps?.get(machine.id) ?? null,
+                    recipientAccountStoredContentProtocolVersion:
+                        readAccountStoredContentCompatibilityForHttpRequest(input.request).declaration?.protocolVersion,
+                }),
+                ...(includePresenceHistory ? { presenceTransitions: parseStoredMachinePresenceTransitions(machine.presenceTransitions) } : {}),
+            } }];
     });
 }
 

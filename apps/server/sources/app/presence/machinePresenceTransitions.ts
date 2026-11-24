@@ -1,6 +1,6 @@
 import { MachinePresenceTransitionsV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
-import { readAccessibleMachineAccessInTx } from '@/app/machines/machineAccess';
+import { readAccessibleMachineOpeningsInTx } from '@/app/machines/machineAccess';
 import { getDbProviderFromEnv, resolveDbSqlDialect } from '@/config/databaseProvider';
 import type { Tx } from '@/storage/inTx';
 import { invalidateManagedWakeControllerInTx } from '@/app/machines/managed/managedWakeAvailability';
@@ -34,10 +34,11 @@ async function readPresenceCandidatesInTx(tx: Tx, input: Readonly<{
 }
 
 export async function readMachinePresenceForAccountInTx(tx: Tx, input: Readonly<{ actorAccountId: string; machineId: string }>) {
-    const access = await readAccessibleMachineAccessInTx(tx, input);
-    if (!access) return { kind: 'refused' as const, code: 'machine_unavailable' as const };
-    const transitions = await readMachinePresenceTransitionsInTx(tx, input.machineId);
-    const serverId = await readCurrentServerIdentityId(process.env, tx);
+    const openings = await readAccessibleMachineOpeningsInTx(tx, { actorAccountId: input.actorAccountId, machineIds: [input.machineId] });
+    const opening = openings.get(input.machineId);
+    if (!opening) return { kind: 'refused' as const, code: 'machine_unavailable' as const };
+    const transitions = parseStoredMachinePresenceTransitions(opening.machine.presenceTransitions);
+    const serverId = transitions ? await readCurrentServerIdentityId(process.env, tx) : null;
     const occurrences: MachinePresenceAutomationOccurrenceV1[] = [];
     if (transitions && serverId) for (const transition of ['offline', 'online'] as const) {
         const fact = transitions[transition];
@@ -56,7 +57,10 @@ export async function readMachinePresenceTransitionsInTx(tx: Pick<Tx, '$queryRaw
     const rows = dialect === 'mysql'
         ? await tx.$queryRaw<Array<{ presenceTransitions: string | null }>>`SELECT \`presenceTransitions\` FROM \`Machine\` WHERE \`id\` = ${machineId}`
         : await tx.$queryRaw<Array<{ presenceTransitions: string | null }>>`SELECT "presenceTransitions" FROM "Machine" WHERE "id" = ${machineId}`;
-    const stored = rows[0]?.presenceTransitions;
+    return parseStoredMachinePresenceTransitions(rows[0]?.presenceTransitions);
+}
+
+export function parseStoredMachinePresenceTransitions(stored: string | null | undefined) {
     return stored == null ? null : MachinePresenceTransitionsV1Schema.parse(JSON.parse(stored));
 }
 

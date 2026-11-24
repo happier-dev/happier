@@ -1,5 +1,6 @@
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { MachinePublishedRowWireV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MACHINE_PRESENCE_EVENTS_PROJECTION_V1, MachinePresenceTransitionsV1Schema } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
 import { z } from 'zod/mini';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { requestHomeDomain, type HomeDomainResult } from '@/sync/api/home/homeServerActionTransport';
@@ -132,7 +133,8 @@ async function readMachineRowsBatch(source: MachineRowsSource, ids: readonly str
     for (const machineIds of batches) {
         const input = MachineReadBatchRequestV1Schema.parse({ machineIds });
         const init = {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
+            method: 'POST', headers: { 'Content-Type': 'application/json', Accept: MACHINE_PRESENCE_EVENTS_PROJECTION_V1 },
+            body: JSON.stringify(input), signal,
         };
         const consume = async (response: Response) => {
             assertMachineReadResponse(response);
@@ -167,10 +169,17 @@ export async function readMachineCensus(params: Readonly<{
         assertMachineReadResponse(response);
         // Incumbent census admission/opening validates these rows. This owner
         // shares only the physical observation, never a decrypted authority.
-        return await response.json() as FetchedMachineRow[];
+        const rows = await response.json() as FetchedMachineRow[];
+        return rows.map(row => {
+            const { presenceTransitions, ...machine } = row;
+            if (presenceTransitions === undefined || presenceTransitions === null) return row;
+            const parsed = MachinePresenceTransitionsV1Schema.safeParse(presenceTransitions);
+            return parsed.success ? { ...machine, presenceTransitions: parsed.data } : machine;
+        });
     };
-    if (!params.readTransport) return consume(await params.request(path, { headers: params.headers, signal: params.signal }));
     const headers = new Headers(params.headers);
+    headers.set('Accept', MACHINE_PRESENCE_EVENTS_PROJECTION_V1);
+    if (!params.readTransport) return consume(await params.request(path, { headers, signal: params.signal }));
     headers.delete('Authorization');
     const transportKey = params.readTransport.key;
     return censusReads.run(JSON.stringify(['machine-census-include-revoked-v1', transportKey]), signal => params.readTransport!.read(path,

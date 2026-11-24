@@ -13,6 +13,7 @@ import { createMachineDataEncryptionKeyV1, isMachineDataEncryptionKeyTransferabl
 import { DevcontainerChildProjectionV1Schema } from './managed/devcontainerV1.js';
 import { DeploymentAppMachineAssociationV1Schema } from './enrollmentV1.js';
 import { ManagedMachineRefV1Schema, ManagedMachineRefReadV1Schema, ManagedMachineInputRuntimeV1Schema } from './managed/managedMachineV1.js';
+import { MachinePresenceTransitionsV1Schema } from './machinePresenceTransitionsV1.js';
 
 /** The persisted owner envelope and both revisions form one content identity. */
 export const MachineKeyBasisV1Schema = lazyZodSchema(() => z.strictObject({
@@ -93,6 +94,7 @@ const MachinePublishedRowCanonicalV1Schema = lazyZodSchema(() => z.strictObject(
   active: z.optional(z.boolean()),
   activeAt: z.optional(z.number()),
   presenceProtocolVersion: z.optional(z.literal(1)),
+  presenceTransitions: z.optional(z.nullable(MachinePresenceTransitionsV1Schema)),
   revokedAt: z.optional(z.nullable(z.number())),
   createdAt: z.optional(z.number()),
   updatedAt: z.optional(z.number()),

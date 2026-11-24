@@ -62,6 +62,7 @@ type MachineIdentityFields = Pick<
     Machine,
     | 'kind'
     | 'presenceProtocolVersion'
+    | 'presenceTransitions'
     | 'replacedByMachineId'
     | 'replacedAt'
     | 'replacementReason'
@@ -100,6 +101,7 @@ export type FetchedMachineRow = Readonly<{
     active: boolean;
     activeAt: number;
     presenceProtocolVersion?: 1;
+    presenceTransitions?: Machine['presenceTransitions'];
     revokedAt?: number | null;
     replacedByMachineId?: string | null;
     replacedAt?: number | string | null;
@@ -159,6 +161,7 @@ function readMachineIdentityFields(source: MachineIdentityFieldSource): MachineI
     return {
         kind: MachineKindFromLegacyProjectionSchema.parse(source.kind),
         ...(source.presenceProtocolVersion === 1 ? { presenceProtocolVersion: 1 as const } : {}),
+        ...(source.presenceTransitions !== undefined ? { presenceTransitions: source.presenceTransitions } : {}),
         replacedByMachineId: source.replacedByMachineId ?? null,
         replacedAt: source.replacedAt ?? null,
         replacementReason: source.replacementReason ?? null,
