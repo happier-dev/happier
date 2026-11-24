@@ -308,9 +308,10 @@ describe('SessionPaneHeader', () => {
         });
     });
 
-    // Owner ruling (UI refinements delta 12): a phone header has no room for the chip beside the folder, so
-    // the Task is one ⋯ row that opens the same page; a wide header keeps the chip.
-    it('folds linked Tasks into the header overflow on a phone and keeps the chip on a wide header', async () => {
+    // Owner rulings (UI refinements delta 12, then its 600 px follow-up): the header folds by its own measured
+    // row, not the viewport. When the Task chip would take more of the title column than it leaves, it becomes
+    // one ⋯ row opening the same page; a 600 px desktop pane and a 390 px phone take the same path.
+    it('folds linked Tasks into the header overflow when its measured column is short and keeps the chip when it fits', async () => {
         const { SessionViewLiveStatusPaneHeader } = await import('./SessionViewLiveStatusPaneHeader');
         const { resolveSessionViewHeaderProps } = await import('./resolveSessionViewHeaderProps');
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
@@ -325,33 +326,61 @@ describe('SessionPaneHeader', () => {
                 sessionInfoHref: `/session/${sessionId}/info`, sessionRunsHref: `/session/${sessionId}/runs`,
                 sessionAutomationsHref: `/session/${sessionId}/automations`, sessionAutomationsEnabledCount: 0,
                 sessionExecutionRunsSupported: false, showAutomations: false, shouldShowSubagentsButton: false,
+                workSummary: { outstanding: 1, needsYou: 1, stalled: 0, sessions: 1, runs: 0 },
                 navigateWithBlurOnWeb: action => action(), handleHeaderExtraItemSelect: () => false,
                 router: { push: () => {}, navigate: () => {} }, actionIconColor: '#000', headerTintColor: '#000',
                 statusErrorColor: '#f00', externalSessionRuntime: null,
             });
             const taskRowId = `header.task:${key}`;
+            const chipID = `session-header-task-chip:${key}`;
+            // The layout boundary: what the browser measured for the title column and the chip's own width.
+            const layout = async (screen: Awaited<ReturnType<typeof renderScreen>>, testID: string, width: number) => {
+                await act(async () => {
+                    for (const node of screen.findAllByTestId(testID)) node.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width, height: 20 } } });
+                });
+            };
+            const renderMeasured = async (windowWidth: number, columnPx: number) => {
+                const screen = await renderScreen(present(<SessionViewLiveStatusPaneHeader {...headerAt(windowWidth)} />));
+                await vi.waitFor(() => expect(screen.findAllByTestId(chipID).length).toBeGreaterThan(0));
+                await layout(screen, 'session-header-task-links', 246);
+                await layout(screen, 'session-header-title-row', columnPx);
+                return screen;
+            };
             const openMenuRows = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
                 await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
                 return () => screen.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; title: string }>;
             };
-
-            const phone = await renderScreen(present(<SessionViewLiveStatusPaneHeader {...headerAt(390)} />));
-            try {
-                const rows = await openMenuRows(phone);
+            const expectFolded = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+                expect(screen.findAllByTestId(chipID)).toHaveLength(0);
+                const rows = await openMenuRows(screen);
                 await vi.waitFor(() => expect(rows().find(row => row.id === taskRowId)?.title)
                     .toBe(`${t('boards.kinds.task')} · Reconcile invoices`));
                 expect(rows().filter(row => row.id.startsWith('header.task:'))).toHaveLength(1);
-                expect(phone.findAllByTestId(`session-header-task-chip:${key}`)).toHaveLength(0);
-                await act(async () => { phone.findByType(DropdownMenu).props.onSelect(taskRowId); });
-                await vi.waitFor(() => expect(taskPagePush).toHaveBeenCalledWith(`/plugins/${pluginId}/tasks/selected/invoices`));
-            } finally { await phone.unmount(); }
+                return rows;
+            };
 
-            const wide = await renderScreen(present(<SessionViewLiveStatusPaneHeader {...headerAt(1440)} />));
+            // A 600 px desktop window whose Session pane leaves the title column no room beside its actions.
+            const pane = await renderMeasured(600, 0);
             try {
-                await vi.waitFor(() => expect(wide.findAllByTestId(`session-header-task-chip:${key}`).length).toBeGreaterThan(0));
+                await expectFolded(pane);
+                await act(async () => { pane.findByType(DropdownMenu).props.onSelect(taskRowId); });
+                await vi.waitFor(() => expect(taskPagePush).toHaveBeenCalledWith(`/plugins/${pluginId}/tasks/selected/invoices`));
+            } finally { await pane.unmount(); }
+
+            const phone = await renderMeasured(390, 192);
+            try { await expectFolded(phone); } finally { await phone.unmount(); }
+
+            const wide = await renderMeasured(1440, 545);
+            try {
+                expect(wide.findAllByTestId(chipID).length).toBeGreaterThan(0);
                 const rows = await openMenuRows(wide);
                 expect(rows().length).toBeGreaterThan(0);
                 expect(rows().some(row => row.id.startsWith('header.task:'))).toBe(false);
+                // The column narrowing later (a pane resize) folds the chip it already measured; widening unfolds it.
+                await layout(wide, 'session-header-title-row', 300);
+                await expectFolded(wide);
+                await layout(wide, 'session-header-title-row', 545);
+                expect(wide.findAllByTestId(chipID).length).toBeGreaterThan(0);
             } finally { await wide.unmount(); }
         }); } finally { restorePopoverGlobals(); }
     });

@@ -236,7 +236,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         const target = { serverId, sessionId: session.id };
         const selectedByHost: string[] = [];
         const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session}
-            collaborationHeader={{ target, compact: false }} destinationsInMenu
+            collaborationHeader={{ target }} destinationsInMenu
             onSelectExtraItem={(actionId) => { selectedByHost.push(actionId); return actionId === 'header.share'; }} />);
         const menu = screen.findByType(DropdownMenu);
         const rows: ReadonlyArray<{ id: string; category?: string; subtitle?: string }> = menu.props.items;
@@ -259,7 +259,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         });
         storage.setState({ sessions: { [session.id]: session } });
         const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session}
-            collaborationHeader={{ target: { serverId, sessionId: session.id }, compact: false }} destinationsInMenu />);
+            collaborationHeader={{ target: { serverId, sessionId: session.id } }} destinationsInMenu />);
         const giveCopy = () => (screen.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; loading?: boolean;
             keepMenuOpen?: boolean }>).find(row => row.id === 'header.giveBotCopy');
         expect(giveCopy()?.keepMenuOpen).toBe(true);

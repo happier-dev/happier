@@ -81,7 +81,7 @@ export type SessionViewHeaderProps = Readonly<{
      * live runtime source, since the shell Session does not move with a turn's thinking/status writes.
      */
     liveStatusSource?: SessionViewHeaderLiveStatusSource;
-    /** Linked Tasks drawn as chips in the facts line; a folded (phone) header carries them in ⋯ instead. */
+    /** Linked Tasks: chips in the facts line, or ⋯ rows when the header's measured row is short. */
     taskSession?: SessionHeaderTaskSession;
 }>;
 
@@ -141,7 +141,6 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     headerMenuExtraItems?: ReadonlyArray<DropdownMenuItem>;
     collaborationHeader?: Readonly<{
         target: SessionAddress;
-        compact: boolean;
     }>;
     router: Readonly<Pick<ReturnType<typeof useRouter>, 'push' | 'navigate'>>;
     actionIconColor: string;
@@ -201,10 +200,6 @@ const LOADING_HEADER_PROPS: SessionViewHeaderProps = {
     flavor: null,
 };
 
-export function shouldFoldSessionHeaderIconActions(windowWidth: number): boolean {
-    return windowWidth < 520;
-}
-
 export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPropsInput): SessionViewHeaderProps {
     // Explicit denial outranks hydration progress and the deleted shell: a revoked Session is not
     // missing, and its cached title is no longer ours to display.
@@ -244,7 +239,6 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ownerMetadata,
         input.currentMachineId,
     );
-    const shouldFoldHeaderIconActions = shouldFoldSessionHeaderIconActions(input.windowWidth);
     const badgeLabel = input.sessionAutomationsEnabledCount > 99 ? '99+' : String(input.sessionAutomationsEnabledCount);
     const title = getSessionName(session);
     const fallbackSubtitle = ownerMetadata?.path
@@ -351,7 +345,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const preferredCompanionPlacement = input.companionHeaderAction
         ? resolveSessionCompanionHeaderPlacement({
             ...input.companionHeaderAction,
-            headerActionsFolded: shouldFoldHeaderIconActions,
+            // Companion always lives in ⋯ here (below); the header's own measured fit folds the rest.
+            headerActionsFolded: true,
         })
         : null;
     // Board, Companion and plugin actions keep their scope and invocation but live in ⋯: the header
@@ -440,13 +435,13 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     destinationsInMenu={destinationsInMenu}
                     // Session details live in the rail's Info tab; without a visible rail the header keeps (i), before ⋯.
                     beforeMenu={destinationsInMenu ? <SessionHeaderInfoButton onPress={openSessionInfo} /> : null}
-                    taskSession={shouldFoldHeaderIconActions ? input.taskSession : undefined}
+                    taskSession={input.taskSession}
                 />
             </SessionHeaderActionsRow>
         ),
         badges: resolvedBadges,
-        // A folded header has no room for a chip beside the folder: its Tasks are ⋯ rows, never squeezed.
-        taskSession: shouldFoldHeaderIconActions ? undefined : input.taskSession,
+        // The header's measured fit draws them as chips or folds them into ⋯ rows (SessionPaneHeader).
+        taskSession: input.taskSession,
         isConnected,
         liveStatusSource,
         flavor,

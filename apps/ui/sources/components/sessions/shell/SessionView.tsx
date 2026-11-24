@@ -176,7 +176,7 @@ import { SessionViewerStickySlot } from "@/components/sessions/viewer/SessionVie
 import { WarningActionBanner } from "./view/WarningActionBanner";
 import { ComposerBannerCollapseProvider } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
 import { readExternalSessionLink } from "@/sync/domains/session/external/readExternalSessionLink";
-import { resolveSessionViewHeaderProps, shouldFoldSessionHeaderIconActions } from "./view/resolveSessionViewHeaderProps";
+import { resolveSessionViewHeaderProps } from "./view/resolveSessionViewHeaderProps";
 import { useVoiceConversationHeaderSubtitle } from '@/voice/presence/useVoiceConversationHeaderSubtitle';
 import { useWorkspaceSyncRelationshipSummaries } from "@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries";
 import { resolveWorkspaceSyncSetAttention } from "@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel";
@@ -1384,10 +1384,12 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     );
     const collaborationAdmitted = useSessionCollaborationDestinationEntryAdmitted(currentSessionRouteServerId ?? '');
     const collaborationAvailable = session !== null && sessionRouteAddress !== null && collaborationAdmitted;
-    const foldCollaborationHeaderEntry = shouldFoldSessionHeaderIconActions(windowWidth);
+    // The composer's access chip hands off to Collaboration on a narrow window (no pointer geometry to anchor
+    // its editor). That is a window fact, kept as it was; the header's own fold is measured (SessionPaneHeader).
+    const foldCollaborationHeaderEntry = windowWidth < 520;
     const collaborationHeader = React.useMemo(() => collaborationAvailable && sessionRouteAddress
-        ? { target: sessionRouteAddress, compact: foldCollaborationHeaderEntry }
-        : undefined, [collaborationAvailable, sessionRouteAddress, foldCollaborationHeaderEntry]);
+        ? { target: sessionRouteAddress }
+        : undefined, [collaborationAvailable, sessionRouteAddress]);
     const openSessionCollaboration = useOpenSessionCollaboration({ target: sessionRouteAddress, pane });
     const openSessionAccess = useOpenSessionCollaboration({ target: sessionRouteAddress, pane, focusTarget: 'access' });
     const mountedBoardForHeader = useMountedSessionBoardController(sessionRouteAddress);

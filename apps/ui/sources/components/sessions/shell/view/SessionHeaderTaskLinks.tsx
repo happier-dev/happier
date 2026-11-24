@@ -1,7 +1,8 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_BADGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { buildWorkBoardItemKeyV1, type BoardItemRefV1 } from '@happier-dev/protocol/boards/workBoardV1';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -52,9 +53,22 @@ export function useSessionHeaderTaskLinks(taskSession: SessionHeaderTaskSession 
     }), [tasks.items, tasks.linkedRefs]);
 }
 
-export const SessionHeaderTaskLinks = React.memo(function SessionHeaderTaskLinks(taskSession: SessionHeaderTaskSession) {
+/**
+ * The chips in the facts line. Folded (the header's fit), they draw nothing and the ⋯ lists them; drawn, they
+ * report their whole width so the header can judge the fit. Width is reported only from a visible layout.
+ */
+export const SessionHeaderTaskLinks = React.memo(function SessionHeaderTaskLinks({ taskSession, folded, onWidth }: Readonly<{
+    taskSession: SessionHeaderTaskSession;
+    folded: boolean;
+    onWidth: (widthPx: number) => void;
+}>) {
     const links = useSessionHeaderTaskLinks(taskSession);
-    return links.length > 0 ? <View style={styles.links}>{links.map(link => (
+    const testID = useOptionalSessionScreenTestId('session-header-task-links');
+    const onLayout = (event: LayoutChangeEvent) => {
+        const width = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
+        if (width !== null) onWidth(Math.ceil(width));
+    };
+    return links.length > 0 && !folded ? <View testID={testID} style={styles.links} onLayout={onLayout}>{links.map(link => (
         <TaskLinkChip key={link.key} itemKey={link.key} title={link.title} href={link.href} />
     ))}</View> : null;
 });
@@ -72,7 +86,7 @@ function TaskLinkChip({ itemKey, title, href }: Readonly<{ itemKey: string; titl
 }
 
 const styles = StyleSheet.create(theme => ({
-    // The folder gives way first; a chip truncates its own label only when it alone outgrows the line.
-    links: { flexDirection: 'row', flexShrink: 0, maxWidth: '100%', gap: theme.space.s6 },
+    // Whole width, never squeezed: the folder gives way, and where the chips would not fit they fold into ⋯.
+    links: { flexDirection: 'row', flexShrink: 0, gap: theme.space.s6 },
     chip: { flexShrink: 1, minWidth: 0, borderRadius: HAPPIER_BADGE_METRICS.radius },
 }));

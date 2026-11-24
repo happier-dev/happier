@@ -157,6 +157,7 @@ import { getSessionActionMetadata } from './sessionActionMetadata';
 import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessionComputerScreen';
 import { useOpenSessionSimulatorPreview } from '@/components/sessions/simulator/useOpenSessionSimulatorPreview';
 import { SESSION_HEADER_TASK_MENU_ID_PREFIX, useSessionHeaderTaskLinks, type SessionHeaderTaskSession } from '@/components/sessions/shell/view/SessionHeaderTaskLinks';
+import { SessionHeaderOptionalEntriesFoldedContext } from '@/components/sessions/shell/view/sessionHeaderTitleCompact';
 
 const SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID = 'follow.set';
 
@@ -213,7 +214,6 @@ type SessionHeaderActionMenuProps = Readonly<{
   /** Live collaboration presentation stays inside this memoized header child. */
   collaborationHeader?: Readonly<{
     target: SessionAddress;
-    compact: boolean;
   }>;
   /**
    * The Session's right rail is not on screen: People and Computer, which the rail carries, are reached
@@ -222,7 +222,7 @@ type SessionHeaderActionMenuProps = Readonly<{
   destinationsInMenu?: boolean;
   /** A header control that sits just before the ⋯ (the no-rail (i)), after Follow (lab cshead H1p). */
   beforeMenu?: React.ReactNode;
-  /** A folded header's linked Tasks: each is a row here instead of a chip in the facts line. */
+  /** The Session's linked Tasks: rows here while the header's measured fit folds them out of the facts line. */
   taskSession?: SessionHeaderTaskSession;
 }>;
 
@@ -640,8 +640,10 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
     });
   }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, externalSessionLink]);
   const accountShowToolCalls = useSetting('transcriptShowToolCalls');
-  // Rows mount on first open and stay: later opens list the Tasks at once, as the chip form would.
-  const taskLinks = useSessionHeaderTaskLinks(props.taskSession ?? null);
+  // Rows mount on first open and stay: later opens list the Tasks at once, as the chip form would. Only a
+  // folded header lists them; otherwise its facts line carries them as chips.
+  const tasksFolded = React.useContext(SessionHeaderOptionalEntriesFoldedContext);
+  const taskLinks = useSessionHeaderTaskLinks(tasksFolded ? props.taskSession ?? null : null);
   const actions = React.useMemo(() => {
     if (!open) return NO_MENU_ROWS;
     const actionItems: DropdownMenuItem[] = listActionSpecs()
@@ -1226,9 +1228,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     get current() { return followChipAnchorRef.current ?? menuAnchorRef.current; },
   }) as React.RefObject<View | null>, []);
   const followEditor = useAccountSessionFollowEditorHost({ serverId: sessionServerId ?? null, sessionId: props.sessionId, anchorRef: followAnchorRef });
-  // A tight header (a session column beside the editor) takes the chip's icon form too, so the title keeps its room.
+  // A tight header (the band's measured compact fit: a narrow pane, a session column beside the editor) folds
+  // Follow into ⋯, where its row stays and the editor anchors, so the title keeps its room. A phone keeps the icon.
   const headerCompact = useDetailsTabHeaderActionsCompact();
-  const followChipCompact = !useIsTablet() || headerCompact;
+  const followChipCompact = !useIsTablet();
   const invokePluginHeaderAction = React.useCallback((menuActionId: string, anchor?: PopoverAnchor) => {
     // Both responsive controls re-resolve the selected descriptor against the
     // current projection through this one callback. The descriptor list never
@@ -1285,7 +1288,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           <SessionHeaderGlyph name={action.iconName} />
         </SessionHeaderActionButton>
       ))}
-      {followEditor.enabled && sessionServerId ? (
+      {followEditor.enabled && sessionServerId && !headerCompact ? (
         <SessionFollowHeaderChip
           sessionId={props.sessionId}
           serverId={sessionServerId}

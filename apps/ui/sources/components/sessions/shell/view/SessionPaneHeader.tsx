@@ -29,8 +29,8 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
-import { SessionHeaderTitleAccessoryCompactContext } from './sessionHeaderTitleCompact';
-import { SessionHeaderTaskLinks } from './SessionHeaderTaskLinks';
+import { SessionHeaderOptionalEntriesFoldedContext, SessionHeaderTitleAccessoryCompactContext, shouldFoldSessionHeaderIconActions } from './sessionHeaderTitleCompact';
+import { SessionHeaderTaskLinks, type SessionHeaderTaskSession } from './SessionHeaderTaskLinks';
 
 export type SessionPaneHeaderProps = Readonly<{
     title: string;
@@ -56,7 +56,8 @@ export type SessionPaneHeaderProps = Readonly<{
     lineage?: React.ReactNode;
     /** The sandbox the Session runs in, after the folder (a leaf that draws nothing for a Session that runs directly). */
     sandbox?: React.ReactNode;
-    taskSession?: React.ComponentProps<typeof SessionHeaderTaskLinks>;
+    /** The presented Session's linked Tasks: chips in the facts line, or ⋯ rows when the measured row is short. */
+    taskSession?: SessionHeaderTaskSession;
     /** The header's controls: Next, attention, Follow, ⋯, the pane's Hide. */
     rightElement?: React.ReactNode;
     /** A phone screen's Back; absent beside a permanent sidebar, where there is no stack to pop. */
@@ -117,6 +118,16 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                 ? <SessionBotFaceMark sessionId={props.editBotFace.sessionId} serverId={props.editBotFace.serverId} facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />
                 : <SessionBotFace facts={props.botFace} size={32} mood={props.botActivity} motion="interaction" />)
                 : props.avatarId ? <Avatar id={props.avatarId} size={32} monochrome={!isConnected} flavor={props.flavor} /> : null;
+    // The header's fold is judged on its own measured row: the title column's width (the title row spans it)
+    // and the Task chips' whole width, each committed only when a layout changes it.
+    const [columnPx, setColumnPx] = React.useState<number | null>(null);
+    const [taskChipsPx, setTaskChipsPx] = React.useState<number | null>(null);
+    const reportColumn = React.useCallback((width: number) => setColumnPx((current) => current === width ? current : width), []);
+    const reportTaskChips = React.useCallback((width: number) => setTaskChipsPx((current) => current === width ? current : width), []);
+    const tasksFolded = props.taskSession !== undefined && shouldFoldSessionHeaderIconActions({ roomPx: columnPx, needPx: taskChipsPx });
+    const actions = React.useMemo(() => props.rightElement ? (
+        <SessionHeaderOptionalEntriesFoldedContext.Provider value={tasksFolded}>{props.rightElement}</SessionHeaderOptionalEntriesFoldedContext.Provider>
+    ) : props.rightElement, [props.rightElement, tasksFolded]);
     const pullable = props.onPullAllTabs !== undefined;
     const titleControl = (
         <PullTarget pullable={pullable}>
@@ -137,7 +148,8 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
             ) : (
                 <SessionHeaderTitle title={props.title} accessory={props.titleAccessory}
                     onBeginRename={props.rename ? editing.begin : undefined}
-                    triggerRef={editing.titleTriggerRef} lineageBelow={props.lineage != null} />
+                    triggerRef={editing.titleTriggerRef} lineageBelow={props.lineage != null}
+                    onRowWidth={props.taskSession ? reportColumn : undefined} />
             )}
         </PullTarget>
     );
@@ -165,13 +177,13 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                     ) : null}
                     {props.sandbox}
                     {props.lineage}
-                    {props.taskSession ? <SessionHeaderTaskLinks {...props.taskSession} /> : null}
+                    {props.taskSession ? <SessionHeaderTaskLinks taskSession={props.taskSession} folded={tasksFolded} onWidth={reportTaskChips} /> : null}
                     {props.badges?.map((badge, index) => (
                         <SessionHeaderBadge key={`${badge}:${index}`} label={badge} index={index} />
                     ))}
                 </SessionScreenTestIdView>
             ) : undefined}
-            actions={editing.draft === null ? props.rightElement : undefined}
+            actions={editing.draft === null ? actions : undefined}
             buttons={buttons}
             notice={editing.reason ? <Text testID="session-header-title-reason" style={styles.reason}>{editing.reason}</Text> : undefined}
             navigation={props.showBackButton !== false && props.onBackPress ? {
@@ -217,6 +229,8 @@ function SessionHeaderTitle(props: Readonly<{
     triggerRef?: (instance: HappierFocusable | null) => void;
     /** The lineage breadcrumb sits flush above the title: its hit area keeps that side, the title's stops at the seam. */
     lineageBelow?: boolean;
+    /** The title row spans the header's title column; its width (zero when the actions take it all) feeds the header's fold. */
+    onRowWidth?: (widthPx: number) => void;
 }>) {
     const { theme } = useUnistyles();
     const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
@@ -238,7 +252,10 @@ function SessionHeaderTitle(props: Readonly<{
                 themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'title' } : undefined)]}>{props.title}</Text>
     );
     return (
-        <View style={styles.titleRow} testID="session-header-title-row" onLayout={props.accessory ? measure(setRowWidth) : undefined}>
+        <View style={styles.titleRow} testID="session-header-title-row" onLayout={props.accessory || props.onRowWidth ? (event: LayoutChangeEvent) => {
+            if (props.accessory) measure(setRowWidth)(event);
+            props.onRowWidth?.(Math.round(event.nativeEvent.layout.width));
+        } : undefined}>
             {props.accessory ? (
                 <Text testID="session-header-title-measure" numberOfLines={1} aria-hidden accessibilityElementsHidden
                     importantForAccessibility="no-hide-descendants" onLayout={measure(setTitleWidth)}
