@@ -13,6 +13,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1,
     DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinksListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { DeploymentReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -572,8 +573,11 @@ describe('deployment UI Action callbacks', () => {
         expect(commits).toEqual([{ input: preview.input, confirmed: false }, { input: preview.input, confirmed: true }]);
         if (host === 'dialog') {
             expect(nativeReview.shown).toHaveLength(1);
-            // The person sees the receiving executor's own review, not a bare restatement of the input.
-            expect(nativeReview.shown[0]?.summary).toContain('Create Staging from the reviewed definition');
+            expect(nativeReview.shown[0]).toMatchObject({
+                actionArgs: preview.input,
+                preview: { summary: 'Create Staging from the reviewed definition' },
+                title: expect.any(String),
+            });
         } else {
             // No dialog follows the step: the step is the confirmation.
             expect(nativeReview.shown).toHaveLength(0);
@@ -726,7 +730,11 @@ describe('deployment UI Action callbacks', () => {
         }
         expect(Modal.confirm).not.toHaveBeenCalled();
         expect(nativeReview.shown).toHaveLength(1);
-        expect(nativeReview.shown[0]?.summary).toContain('Turn on previews for this environment');
+        expect(nativeReview.shown[0]).toMatchObject({
+            actionArgs: dispatched[0]?.input,
+            preview: { summary: 'Turn on previews for this environment' },
+            title: expect.any(String),
+        });
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
@@ -982,11 +990,19 @@ describe('deployment UI Action callbacks', () => {
         let preparations = 0;
         const providerRole = deploy ? 'deploy' : rollback ? 'rollback' : 'promote';
         const providerAction = { pluginId: 'fixture.platform', localId: providerRole };
-        const controllerReview = { summary: action === 'redeploy PostgreSQL'
-            ? 'Redeploy PostgreSQL from its live revision, keeping the data volume'
-            : 'Deploy the reviewed Compose services', sourceMethod: 'storedCompose',
-            source: { label: 'Compose file, revision 1' },
-            services: action === 'redeploy PostgreSQL' ? [{ name: 'postgres' }] : [{ name: 'web' }, { name: 'worker' }] };
+        const reviewedSha = 'b'.repeat(40);
+        const controllerReview = DeploymentReviewV1Schema.parse({
+            environment: { id: environment.id, name: 'Staging website' },
+            revision: { kind: 'repository', sha: reviewedSha },
+            ...(rollback ? { rollbackData: rollbackInput.restoreBackupId ? 'restoreBackup' : 'keep' } : {}),
+            inspection: 'complete',
+            services: (action === 'redeploy PostgreSQL' ? ['postgres'] : ['web', 'worker']).map(name => ({
+                name, replicas: null, resources: { cpus: null, memory: null }, restartPolicy: null,
+                healthcheck: 'absent', ports: [], mounts: [],
+            })),
+            risks: [],
+            target: { engine: 'native', requiresAwakeComputerAndDockerDesktop: false, domains: 'notDetermined' },
+        });
         // A deterministic native-port fixture distinguishes raw-intent regeneration from retained reviewed refs.
         // Account capture, Home transport, Protocol policy and digest-bound receiving admission stay real;
         // the CLI deployment-role composition separately exercises the actual daemon preparation factory.
@@ -1003,7 +1019,7 @@ describe('deployment UI Action callbacks', () => {
                 const retained = 'contentArtifactId' in input;
                 if (!retained) preparations += 1;
                 const currentReview = choice === 'changes' && receivedInputs.length > 1
-                    ? { ...controllerReview, source: { label: 'Compose file, revision 2' } } : controllerReview;
+                    ? { ...controllerReview, revision: { kind: 'repository', sha: 'c'.repeat(40) } } : controllerReview;
                 return { input: retained ? input : preparations === 1 ? prepared : { ...prepared,
                     requestKey: `controller-prepared-request-${preparations}`, contentArtifactId: `artifact-candidate-${preparations}` },
                     preview: currentReview, ...(platform ? {
@@ -1106,7 +1122,8 @@ describe('deployment UI Action callbacks', () => {
             expect(Modal.confirm).not.toHaveBeenCalled();
             expect(nativeReview.shown).toHaveLength(1);
             expect(nativeReview.shown[0]?.preview).toMatchObject({ deploymentReview: controllerReview });
-            expect(nativeReview.shown[0]?.summary).toContain(controllerReview.summary);
+            expect(nativeReview.shown[0]?.title).toContain('Staging website');
+            expect(nativeReview.shown[0]?.title).toContain(reviewedSha.slice(0, 7));
             expect(nativeReview.shown[0]?.actionArgs).toEqual(prepared);
             if (action === 'redeploy PostgreSQL') expect(receivedInputs[0]).toMatchObject({ sha: 'b'.repeat(40),
                 requestKey: 'redeploy-live-postgres', environmentId: environment.id });
