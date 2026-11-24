@@ -14,7 +14,8 @@ import {
     tryWriteServerEnabledBitInPlace,
 } from '@happier-dev/protocol/features/serverEnabledBit';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { Modal } from '@/modal';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -47,6 +48,9 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 import { t } from '@/text';
 import { useLiveSessionAccessEditorController } from './useLiveSessionAccessEditorController';
 import type { SessionAccessEditorController } from './sessionAccessEditorTypes';
+
+// The real Action presenter runs up to the modal host, where the test supplies the person's answer.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -470,6 +474,7 @@ async function mountController(serverId: string, options?: Readonly<{ metadataLa
 }
 
 beforeEach(async () => {
+    vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     webLocks = installWebLockManagerMock();
     await loadSyncSingletonForTests();
     TEAM_DIRECTORY.failed = false;
@@ -1259,8 +1264,7 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
  * The Account's own explicit choice, in the canonical Actions settings owner, to
  * confirm these in-app Actions — activated for the live Account the way the sync
  * owner activates it (`activateAccountSettingsScope`: settings and profile scopes
- * together), which is what lets the approval writer publish the settled Artifact
- * to the mounted continuation.
+ * together), so the real executor reads the person’s saved UI Ask.
  */
 async function requireSharedActionConfirmation(scope: Readonly<{ serverId: string; accountId: string }>, actionIds: readonly string[]) {
     const settingsScope = createAccountSettingsScope(scope.serverId, scope.accountId);
@@ -1287,28 +1291,35 @@ function approvalIds(home: Readonly<{ artifacts: ReturnType<typeof createArtifac
     return home.artifacts.list().map((row) => row.id);
 }
 
-// teams-lane-04-session-access-sharing-authorship-presence.md §5: "Pending Action
-// approval, known rejection, unknown outcome ... are rendered and recoverable."
-//
-// The Account is E2EE: the approval is sealed by the real Artifact codec, stored by
-// the Home's stateful Artifact routes, decided through the Inbox's generic executor,
-// and observed by the editor through the real approval reader.
-describe('useLiveSessionAccessEditorController deferred approval', () => {
-    it('cancels manual preparation without losing the acknowledged encryption state or writing an envelope', async () => {
+function holdNativeConfirmation() {
+    const answer = createDeferred<boolean>();
+    vi.mocked(Modal.confirm).mockImplementationOnce(() => answer.promise);
+    return answer;
+}
+
+function expectNoDurableApproval(home: Parameters<typeof approvalIds>[0], controller: SessionAccessEditorController) {
+    expect(approvalIds(home)).toEqual([]);
+    expect(controller.model.pendingApproval).toBeUndefined();
+}
+
+describe('useLiveSessionAccessEditorController native confirmation', () => {
+    it('settles a declined manual preparation without reading or writing envelopes', async () => {
         const home = await setupHome({ sharing: true, encrypted: true });
         await requireSharedActionConfirmation({ serverId: home.profile.id, accountId: MANAGER.accountId }, ['session.access.encryption.prepare']);
         const controller = await mountController(home.profile.id);
         await vi.waitFor(() => expect(controller().model.encryption?.statusKey).toBe('ready'));
         const reads = home.envelopeStates.length;
+        const answer = holdNativeConfirmation();
         await act(async () => { controller().actions.prepareAccess(); });
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toBeDefined());
-        expect((await decideApprovalAsInbox(home.profile.id, approvalIds(home)[0]!, 'cancel')).ok).toBe(true);
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toBeUndefined());
-        expect(controller().model.encryption?.statusKey).toBe('ready');
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+        await act(async () => { answer.resolve(false); });
+        await vi.waitFor(() => expect(controller().model.encryption?.error?.code).toBe('approval_canceled'));
         expect(home.state.uploaded).toBeNull();
         expect(home.envelopeStates).toHaveLength(reads);
+        expectNoDurableApproval(home, controller());
     });
-    it.each([undefined, RECIPIENT_ID])('settles a manual preparation approval through the real client family owner: %s', async recipient => {
+
+    it.each([undefined, RECIPIENT_ID])('prepares encrypted access after the person confirms: %s', async recipient => {
         const home = await setupHome({ sharing: true, encrypted: true });
         home.state.granted = true;
         const actionId = recipient === undefined ? 'session.access.encryption.prepare' : 'session.access.encryption.reprepare';
@@ -1320,75 +1331,89 @@ describe('useLiveSessionAccessEditorController deferred approval', () => {
             { summary: { prepared: 1, pending: 0, invalid: 0, recipientKeyUnavailable: 0 }, items: [] },
             { summary: { prepared: 1, pending: 0, invalid: 0, recipientKeyUnavailable: 0 }, items: [] },
         );
+        const answer = holdNativeConfirmation();
         await act(async () => { controller().actions.prepareAccess(recipient); });
-        await vi.waitFor(() => {
-            expect(controller().model.encryption?.error).toBeUndefined();
-            expect(controller().model.pendingApproval).toBeDefined();
-        });
-        expect(controller().model.encryption?.statusKey).toBe('ready');
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
         expect(home.state.uploaded).toBeNull();
-        const decision = await decideApprovalAsInbox(home.profile.id, approvalIds(home)[0]!, 'approve');
-        expect(decision.ok).toBe(true);
+        expectNoDurableApproval(home, controller());
+
+        await act(async () => { answer.resolve(true); });
         await vi.waitFor(() => expect(home.state.uploaded?.recipientAccountId).toBe(RECIPIENT_ID));
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toBeUndefined());
-        expect(approvalIds(home)).toHaveLength(1);
+        await vi.waitFor(() => expect(controller().model.encryption?.statusKey).toBe('ready'));
+        expect(home.paths.filter(path => path.startsWith('PATCH ') && path.endsWith('/data-key/envelopes'))).toHaveLength(1);
+        expectNoDurableApproval(home, controller());
     });
 
-    it('renders an approval-routed add as pending, holds further edits, and applies the executed approval once', async () => {
+    it('holds a repeated Add during native confirmation and applies the confirmed grant once', async () => {
         const home = await setupHome({ sharing: true, encrypted: true, sessionEncrypted: false });
         await requireSharedActionConfirmation({ serverId: home.profile.id, accountId: MANAGER.accountId }, ['session.access.grant.set']);
         const controller = await mountController(home.profile.id);
+        const answer = holdNativeConfirmation();
 
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
-        await vi.waitFor(() => expect(approvalIds(home)).toHaveLength(1));
-        const approvalId = approvalIds(home)[0]!;
-        // An E2EE Account's approval never reaches its Home as plaintext.
-        expect(home.artifacts.readPlainBody(approvalId)).toBeNull();
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toEqual({
-            artifactId: approvalId, serverId: home.profile.id,
-        }));
-        // The real front door routed the intent to an approval: nothing reached the
-        // grant writer, nothing is committed, and it is not an unknown outcome.
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
         expect(home.paths).not.toContain('/v2/sessions/access-grants/set');
         expect(controller().model.grants).toHaveLength(0);
         expect(controller().model.content.issue).toBeUndefined();
+        expectNoDurableApproval(home, controller());
 
-        // One approval at a time: a second intent is held, not silently submitted.
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
-        expect(approvalIds(home)).toEqual([approvalId]);
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        await act(async () => { answer.resolve(true); });
 
-        // The Inbox approves: its replay is the one grant write on the Home.
-        const decision = await decideApprovalAsInbox(home.profile.id, approvalId, 'approve');
-        expect(decision, JSON.stringify(decision)).toMatchObject({
-            ok: true, result: { status: 'executed' },
-        });
         await vi.waitFor(() => expect(controller().model.grants).toHaveLength(1));
-        expect(controller().model.pendingApproval).toBeUndefined();
         expect(controller().model.grants[0]?.operation).toEqual({ kind: 'idle' });
-        expect(home.paths.filter((path) => path === '/v2/sessions/access-grants/set')).toHaveLength(1);
+        expect(home.paths.filter(path => path === '/v2/sessions/access-grants/set')).toHaveLength(1);
+        expectNoDurableApproval(home, controller());
     });
 
-    it('releases the pending state without any change when the approval is rejected', async () => {
+    it('leaves access unchanged on decline and lets the person try Add again', async () => {
         const home = await setupHome({ sharing: true, encrypted: true, sessionEncrypted: false });
         await requireSharedActionConfirmation({ serverId: home.profile.id, accountId: MANAGER.accountId }, ['session.access.grant.set']);
         const controller = await mountController(home.profile.id);
+        const answer = holdNativeConfirmation();
 
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
-        await vi.waitFor(() => expect(approvalIds(home)).toHaveLength(1));
-        const approvalId = approvalIds(home)[0]!;
-        await vi.waitFor(() => expect(controller().model.pendingApproval?.artifactId).toBe(approvalId));
-
-        const decision = await decideApprovalAsInbox(home.profile.id, approvalId, 'reject');
-        expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toBeUndefined());
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+        await act(async () => { answer.resolve(false); });
         expect(controller().model.grants).toHaveLength(0);
         expect(controller().model.content.issue).toBeUndefined();
         expect(home.paths).not.toContain('/v2/sessions/access-grants/set');
+        expectNoDurableApproval(home, controller());
 
-        // The editor is usable again: the next intent opens a fresh approval.
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
-        await vi.waitFor(() => expect(approvalIds(home)).toHaveLength(2));
-        await vi.waitFor(() => expect(controller().model.pendingApproval?.artifactId).toBe(approvalIds(home)[1]));
+        await vi.waitFor(() => expect(controller().model.grants).toHaveLength(1));
+        expect(Modal.confirm).toHaveBeenCalledTimes(2);
+        expect(home.paths.filter(path => path === '/v2/sessions/access-grants/set')).toHaveLength(1);
+        expectNoDurableApproval(home, controller());
+    });
+
+    it('holds the same access widening for durable approval when requested by automation', async () => {
+        const home = await setupHome({ sharing: true, encrypted: true, sessionEncrypted: false });
+        const controller = await mountController(home.profile.id);
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null });
+        const result = await executor.execute('session.access.grant.set', {
+            sessionId: SESSION_ID, subject: { kind: 'account', accountId: RECIPIENT_ID },
+            accessLevel: 'view', canApprovePermissions: false,
+        }, {
+            serverId: home.profile.id, surface: 'agent', authority: 'account_automation',
+            actionRequestId: 'agent-request-session-access',
+        });
+        const [artifactId] = approvalIds(home);
+        expect(artifactId).toBeDefined();
+        expect(approvalIds(home)).toHaveLength(1);
+        expect(result).toMatchObject({ ok: true, result: { artifactId } });
+        expect(home.artifacts.readPlainBody(artifactId!)).toBeNull();
+        expect(Modal.confirm).not.toHaveBeenCalled();
+        expect(home.paths).not.toContain('/v2/sessions/access-grants/set');
+        expect(controller().model.grants).toHaveLength(0);
+
+        const decision = await decideApprovalAsInbox(home.profile.id, artifactId!, 'approve');
+        expect(decision).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(home.paths.filter(path => path === '/v2/sessions/access-grants/set')).toHaveLength(1);
+        expect(home.state.granted).toBe(true);
     });
 });
 
@@ -1454,17 +1479,19 @@ describe('useLiveSessionAccessEditorController historical (0.2) Session', () => 
         expect(home.state.grantAccessLevel).toBe('view');
     });
 
-    it('keeps the historical layout offer when its Update approval is rejected', async () => {
+    it('keeps the historical layout offer when the person declines Update', async () => {
         const home = await setupHome({ sharing: true, encrypted: true });
         await storePredecessorSession(home);
         await requireSharedActionConfirmation({ serverId: home.profile.id, accountId: MANAGER.accountId }, ['session.access.layout.update']);
         const controller = await mountController(home.profile.id, { metadataLayoutVersion: 0 });
+        const answer = holdNativeConfirmation();
         await act(async () => { controller().actions.updateHistoricalLayout?.(); });
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toBeDefined());
-        expect((await decideApprovalAsInbox(home.profile.id, approvalIds(home)[0]!, 'reject')).ok).toBe(true);
-        await vi.waitFor(() => expect(controller().model.pendingApproval).toBeUndefined());
-        expect(controller().model.historicalLayout).toEqual({ updating: false });
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+        await act(async () => { answer.resolve(false); });
+        await vi.waitFor(() => expect(controller().model.historicalLayout).toMatchObject({ updating: false }));
+        expect(controller().actions.updateHistoricalLayout).toBeDefined();
         expect(home.state.metadataPatches).toHaveLength(0);
+        expectNoDurableApproval(home, controller());
     });
 
     it('offers its owner an explicit update that splits it through the one tuple owner without changing content', async () => {
@@ -1474,18 +1501,19 @@ describe('useLiveSessionAccessEditorController historical (0.2) Session', () => 
         const controller = await mountController(home.profile.id, { metadataLayoutVersion: 0 });
         await vi.waitFor(() => expect(controller().model.historicalLayout).toEqual({ updating: false }));
 
+        const answer = holdNativeConfirmation();
         await act(async () => { controller().actions.updateHistoricalLayout?.(); });
-        await vi.waitFor(() => {
-            expect(controller().model.historicalLayout?.error).toBeUndefined();
-            expect(controller().model.pendingApproval).toBeDefined();
-        });
-        expect(controller().model.historicalLayout?.updating).toBe(false);
+        await vi.waitFor(() => expect(Modal.confirm).toHaveBeenCalledTimes(1));
+        expect(controller().model.historicalLayout?.error).toBeUndefined();
         expect(home.state.metadataPatches).toHaveLength(0);
-        expect((await decideApprovalAsInbox(home.profile.id, approvalIds(home)[0]!, 'approve')).ok).toBe(true);
+        expectNoDurableApproval(home, controller());
+
+        await act(async () => { answer.resolve(true); });
         await vi.waitFor(() => expect(home.paths).toContain(`PATCH /v2/sessions/${SESSION_ID}`));
         await vi.waitFor(() => expect(controller().model.historicalLayout).toBeUndefined());
 
         expect(home.state.metadataPatches).toHaveLength(1);
+        expectNoDurableApproval(home, controller());
         const patch = home.state.metadataPatches[0] as {
             mode: string;
             source: { metadataLayoutVersion: number; metadata: { version: number }; agentState: { version: number } };
