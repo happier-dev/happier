@@ -90,7 +90,7 @@ export const DatabaseFindingBaselineV1Schema = z.extend(DatabaseFindingObservati
 });
 export type DatabaseFindingBaselineV1 = z.infer<typeof DatabaseFindingBaselineV1Schema>;
 export const DatabaseFindingBriefBuildInputV1Schema = z.extend(DatabaseFindingReadInputV1Schema, {
-    baseline: DatabaseFindingBaselineV1Schema,
+    baseline: z.optional(DatabaseFindingBaselineV1Schema),
 });
 export type DatabaseFindingBriefBuildInputV1 = z.infer<typeof DatabaseFindingBriefBuildInputV1Schema>;
 

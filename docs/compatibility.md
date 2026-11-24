@@ -10452,6 +10452,12 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, the Database finding brief build Action accepts a
+selected finding with an optional baseline. Omitting it uses the completed
+selected observation as the baseline. Explicit baselines preserve the
+existing request semantics. A client that omits the baseline requires the
+matching bundled declaration and daemon from 0.3 development source.
+
 In unreleased 0.3, `session.access.context.set` returns the direct Team grants
 remaining at the end of the operation, including their access levels. An empty
 list means there are no direct Team grants. Earlier results omit `teamGrants`,

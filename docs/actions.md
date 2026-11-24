@@ -2355,6 +2355,13 @@ history stay under the editor's device scope, and staged edits remain in
 the mounted Workbench until the reviewed Apply. The Open Action returns
 a location outcome and carries no Console content.
 
+In 0.3 development source, the Database Workbench's Prepare brief control
+invokes `happier.database/actions/insights/brief/build` for the selected
+finding. The build reads the selection once and takes its initial baseline
+from that observation. Callers that already hold an earlier baseline can
+pass it to preserve the before numbers. The brief carries the baseline
+and the verification operands into editable Session composition.
+
 In 0.3 development source, `action_interception_rejected` is presented as
 a refusal. `readActionFailurePresentationV1` owns that classification and reads
 only the producer's safe `details.message`; absent text uses the surface's

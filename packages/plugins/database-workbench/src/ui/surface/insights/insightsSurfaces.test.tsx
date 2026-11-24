@@ -456,8 +456,7 @@ describe('Database Insights surfaces', () => {
       await act(async () => { await details.press(await details.getByRole('button', { name: 'Prepare brief' })); });
       await settle();
       expect(findingCalls()).toMatchObject([
-        { action: readId, input: { target: descriptor.target, recordKey: 'q-slow' } },
-        { action: buildId, input: { target: descriptor.target, recordKey: 'q-slow', baseline: { ...baseline, basis } } },
+        { action: buildId, input: { target: descriptor.target, recordKey: 'q-slow' } },
       ]);
       expect(await details.getByText('Investigate the selected statement')).toBeTruthy();
       expect(handoff).not.toHaveBeenCalled();

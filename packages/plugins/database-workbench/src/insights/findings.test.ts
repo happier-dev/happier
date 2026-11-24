@@ -47,6 +47,16 @@ describe('selected native finding identity', () => {
                     { ...detailInput, baseline: { ...list.observation, basis: detail.finding.verification.basis } }, invocation));
                 if (!brief.ok) throw new Error(`Brief failed: ${brief.code}`);
                 expect(JSON.parse(brief.brief.evidence.items[0]!.text)).toMatchObject({ currentDetail: { object: identities[index] } });
+                const freshBrief = DatabaseFindingBriefBuildResultV1Schema.parse(await kit.invokeAction(
+                    databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1), detailInput, invocation));
+                if (!freshBrief.ok) throw new Error(`Brief failed: ${freshBrief.code}`);
+                const { baseline, currentDetail } = JSON.parse(freshBrief.brief.evidence.items[0]!.text);
+                expect(baseline).toMatchObject({
+                    evidenceIdentity: currentDetail.evidenceIdentity,
+                    summary: currentDetail.summary,
+                    observedWindow: currentDetail.observedWindow,
+                    basis: currentDetail.verification.basis,
+                });
             }
         } finally { await kit.dispose(); await native.dispose(); }
     });
