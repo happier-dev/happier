@@ -106,7 +106,7 @@ describe('provider account usage selectors', () => {
         const snapshot = makeSnapshot();
 
         expect(selectors.selectProviderUsageDisplaySource({
-            providerId: null,
+            agentId: null,
             metadataRecordIds: [snapshot.recordId],
             accountUsageSnapshotsByRecordId: {
                 [snapshot.recordId]: snapshot,
@@ -122,7 +122,7 @@ describe('provider account usage selectors', () => {
         const quotaView = makeQuotaSnapshot();
 
         expect(selectors.selectProviderUsageDisplaySource({
-            providerId: 'openai-codex',
+            agentId: 'codex',
             metadataRecordIds: [snapshot.recordId],
             accountUsageSnapshotsByRecordId: {
                 [snapshot.recordId]: snapshot,
@@ -140,7 +140,7 @@ describe('provider account usage selectors', () => {
         const snapshot = makeSnapshot({ recoveryCreditDetails: { saved: { remainingCount: 2, appliesToProviderLimitIds: ['seven_day'], unavailableReason: 'paused' } } });
 
         expect(selectors.selectProviderUsageDisplaySource({
-            providerId: null,
+            agentId: null,
             metadataRecordIds: [snapshot.recordId],
             accountUsageSnapshotsByRecordId: {
                 [snapshot.recordId]: snapshot,
@@ -151,6 +151,26 @@ describe('provider account usage selectors', () => {
             kind: 'account_usage',
             snapshot,
         });
+    });
+
+    it('uses the native Codex Provider declared by the Agent catalog', async () => {
+        const { resolveAgentCatalogProjection } = await import('@/agents/backendCatalog/agentCatalogProjection');
+        const { getConnectedServiceUsageIdentity } = await import('../connectedServiceRegistry');
+        const selectors = await loadSelectors();
+        const agentId = 'happier.agent.codex/codex';
+        const catalog = resolveAgentCatalogProjection(agentId, { enabledAgentIds: [] });
+        const catalogProviderIds = catalog.connectedAccounts.flatMap(({ service }) => {
+            const providerId = getConnectedServiceUsageIdentity(service)?.providerId;
+            return providerId ? [providerId] : [];
+        });
+        const snapshot = makeSnapshot({ recordKey: {
+            providerId: 'openai-codex', accountSubjectId: 'acct_stable', subjectKind: 'account', quotaScope: 'account',
+        } });
+        expect(selectors.selectProviderUsageDisplaySource({
+            agentId, catalogProviderIds, metadataRecordIds: [snapshot.recordId],
+            accountUsageSnapshotsByRecordId: { [snapshot.recordId]: snapshot }, connectedServiceProfileRef: null,
+            connectedServiceQuotaView: null,
+        })).toEqual({ kind: 'account_usage', snapshot });
     });
 
     it('derives canonical loaded, empty, stale, and last-known-good states without clearing snapshots', async () => {

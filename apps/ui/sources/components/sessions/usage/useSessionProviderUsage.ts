@@ -17,6 +17,7 @@ import {
   computeProviderAccountUsageGaugeViewModel,
   selectProviderUsageDisplaySource,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageSelectors';
+import { getConnectedServiceUsageIdentity } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { resolveQualifiedConnectedAccountProfilePreference } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import {
   computeConnectedServiceQuotaGaugeViewModel,
@@ -26,6 +27,7 @@ import {
   type ConnectedServiceQuotaGaugeWindowMode,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
+import { resolveSessionUsageAccount } from '@/sync/domains/connectedServices/resolveSessionUsageAccount';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -241,13 +243,25 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
     () => readProviderAccountUsageRecordIdsFromMetadata(ownerMetadata),
     [ownerMetadata],
   );
+  const connectedUsageAccount = React.useMemo(() => {
+    if (quotaProfileIdentity) return undefined;
+    const usageAccount = resolveSessionUsageAccount({ metadata: ownerMetadata, agentId: agentId ?? '' });
+    return usageAccount.status === 'known' ? usageAccount.account : undefined;
+  }, [agentId, ownerMetadata, quotaProfileIdentity]);
   const accountUsageSnapshots = useProviderAccountUsageSnapshots(
     accountUsageRecordIds,
+    { includeSources: connectedUsageAccount !== undefined },
   );
   const displaySource = React.useMemo(
     () =>
       selectProviderUsageDisplaySource({
-        providerId: agentId,
+        agentId,
+        connectedAccount: connectedUsageAccount,
+        catalogProviderIds: connectedAccounts.flatMap(purpose => {
+          const providerId = getConnectedServiceUsageIdentity(purpose.service)?.providerId;
+          return providerId ? [providerId] : [];
+        }),
+        sourcesByRecordId: accountUsageSnapshots.sourcesByRecordId,
         metadataRecordIds: accountUsageRecordIds,
         accountUsageSnapshotsByRecordId:
           accountUsageSnapshots.snapshotsByRecordId,
@@ -256,10 +270,13 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
       }),
     [
       agentId,
+      connectedUsageAccount,
+      connectedAccounts,
       quotaProfileIdentity,
       quotaSnapshot,
       accountUsageRecordIds,
       accountUsageSnapshots.snapshotsByRecordId,
+      accountUsageSnapshots.sourcesByRecordId,
     ],
   );
   const accountUsageSnapshot =

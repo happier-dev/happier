@@ -1,9 +1,11 @@
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveProviderAccountUsageReadState, type ProviderAccountUsageEmptyRead } from './providerAccountUsageSelectors';
 
 export type ProviderAccountUsageCacheEntry = Readonly<{
     snapshot: ProviderAccountUsageSnapshotV1 | null;
+    sources?: readonly QualifiedConnectedServiceUsageSourceV4[];
     nextFetchAtMs: number;
     loading: boolean;
     hadError: boolean;
@@ -130,10 +132,15 @@ export function updateProviderAccountUsageCacheEntries(
     let unchanged = Object.keys(currentEntries).length === Object.keys(incomingEntries).length;
     for (const [recordId, incoming] of Object.entries(incomingEntries)) {
         const previous = currentEntries[recordId];
-        const next = previous && incoming.snapshot !== previous.snapshot
+        const snapshot = previous && incoming.snapshot !== previous.snapshot
             && sameStrictJsonValue(previous.snapshot, incoming.snapshot)
-            ? { ...incoming, snapshot: previous.snapshot }
-            : incoming;
+            ? previous.snapshot : incoming.snapshot;
+        const sources = previous && incoming.sources !== previous.sources
+            && sameStrictJsonValue(previous.sources, incoming.sources)
+            ? previous.sources : incoming.sources;
+        const next = snapshot === incoming.snapshot && sources === incoming.sources
+            ? incoming
+            : { ...incoming, snapshot, sources };
         const equal = previous && previous.snapshot === next.snapshot && sameStrictJsonValue(previous, next)
             && resolveProviderAccountUsageReadState({ ...previous, nowMs: publishedAtMs })
                 === resolveProviderAccountUsageReadState({ ...next, nowMs });

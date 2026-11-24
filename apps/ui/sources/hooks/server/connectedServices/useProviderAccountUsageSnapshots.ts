@@ -8,9 +8,7 @@ import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot'
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import {
     getAddressedProviderAccountUsageRecord,
-    getProviderAccountUsageSnapshotPlain,
     openAddressedProviderAccountUsageRecord,
-    getProviderAccountUsageSnapshotSealed,
 } from '@/sync/api/account/apiProviderAccountUsage';
 import {
     getProviderAccountUsageCacheState,
@@ -20,12 +18,8 @@ import {
     type ProviderAccountUsageCacheEntry,
     type ProviderAccountUsageCacheState,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
-import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
 import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
-import {
-    buildProviderAccountUsageScopeKey,
-    readProviderAccountUsageSnapshotForMode,
-} from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
+import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
 import {
     normalizeProviderAccountUsageRecordIds,
     resolveProviderAccountUsageReadState,
@@ -38,10 +32,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
-import type {
-    ProviderAccountUsageRecordId,
-    ProviderAccountUsageSnapshotV1,
-} from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+import type { QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { useCredentialScopedAccountModeResolver, type CredentialScopedAccountMode } from './useCredentialScopedAccountModeResolver';
 
 export type ProviderAccountUsageSnapshotsFetchPolicy = 'poll' | 'cache_only';
@@ -49,6 +41,7 @@ export type ProviderAccountUsageSnapshotsFetchPolicy = 'poll' | 'cache_only';
 
 export type ProviderAccountUsageSnapshotsResult = Readonly<{
     snapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null>>;
+    sourcesByRecordId: Readonly<Record<string, readonly QualifiedConnectedServiceUsageSourceV4[]>>;
     loadingByRecordId: Readonly<Record<string, boolean>>;
     stateByRecordId: Readonly<Record<string, ProviderAccountUsageReadState>>;
 }>;
@@ -57,43 +50,6 @@ function buildRecordIdsSignature(recordIds: ReadonlyArray<string>): string {
     return normalizeProviderAccountUsageRecordIds(recordIds).join('\u0001');
 }
 
-async function readProviderAccountUsageSnapshot(params: Readonly<{
-    credentials: NonNullable<ReturnType<typeof useAuth>['credentials']>;
-    mode: CredentialScopedAccountMode;
-    recordId: ProviderAccountUsageRecordId;
-    signal: AbortSignal;
-    serverBasis: ExpectedActiveServerFetchBasis;
-}>): Promise<ProviderAccountUsageSnapshotV1 | null> {
-    return await readProviderAccountUsageSnapshotForMode({
-        mode: params.mode,
-        readPlain: () => getProviderAccountUsageSnapshotPlain(
-            params.credentials,
-            { recordId: params.recordId },
-            {
-                signal: params.signal,
-                expectedActiveServer: params.serverBasis,
-                retry: 'none',
-            },
-        ),
-        readSealed: () => getProviderAccountUsageSnapshotSealed(
-            params.credentials,
-            { recordId: params.recordId },
-            {
-                signal: params.signal,
-                expectedActiveServer: params.serverBasis,
-                retry: 'none',
-            },
-        ),
-        openSealed: (response) => {
-            const snapshot = openProviderAccountUsageSnapshot(
-                params.credentials,
-                response.content,
-            );
-            if (snapshot?.recordId !== params.recordId) throw new Error('Could not open provider account usage snapshot');
-            return snapshot;
-        },
-    });
-}
 /** The existing cache retain owner shares one acquisition per credential-scoped record. */
 function createUsageRowObserver(input: Readonly<{
     credentials: NonNullable<ReturnType<typeof useAuth>['credentials']>;
@@ -145,6 +101,7 @@ function createUsageRowObserver(input: Readonly<{
                 if (!current()) return Promise.resolve();
                 const previous = readEntry();
                 enqueue({ recordId, current, entry: { snapshot: previous?.snapshot ?? null,
+                        sources: previous?.sources,
                         nextFetchAtMs: previous?.nextFetchAtMs ?? 0,
                         loading: true, hadError: previous?.hadError ?? false, emptyRead: previous?.emptyRead } });
                 const requestController = new AbortController();
@@ -152,29 +109,23 @@ function createUsageRowObserver(input: Readonly<{
                 reading = (async () => {
                     let entry: Outcome['entry'];
                     try {
-                        let opened: ProviderAccountUsageSnapshotV1 | null;
-                        if (addressedRecordId) {
+                        const readRecord = () => getAddressedProviderAccountUsageRecord(input.credentials, recordId, {
+                            signal: requestController.signal, expectedActiveServer: input.serverBasis,
+                        });
+                        const [record, mode] = addressedRecordId
                             // Join the wake's raw acquisition before awaiting Account mode.
-                            const [record, mode] = await Promise.all([
-                                getAddressedProviderAccountUsageRecord(input.credentials, recordId, {
-                                    signal: requestController.signal, expectedActiveServer: input.serverBasis,
-                                }),
-                                input.resolveAccountMode(),
-                            ]);
-                            if (!current()) return;
-                            opened = record ? openAddressedProviderAccountUsageRecord(input.credentials, recordId, mode, record) : null;
-                        } else {
-                            const mode = await input.resolveAccountMode();
-                            if (!current()) return;
-                            opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId, signal: requestController.signal });
-                        }
+                            ? await Promise.all([readRecord(), input.resolveAccountMode()])
+                            : await input.resolveAccountMode().then(async mode =>
+                                [current() ? await readRecord() : null, mode] as const);
                         if (!current()) return;
-                        entry = { snapshot: opened, nextFetchAtMs: Number.POSITIVE_INFINITY,
+                        const opened = record ? openAddressedProviderAccountUsageRecord(input.credentials, recordId, mode, record) : null;
+                        entry = { snapshot: opened, sources: record?.sources, nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: false, emptyRead: opened ? undefined : 'missing' };
                     } catch (error) {
                         if (!current()) return;
                         const denied = error instanceof HappyError && (error.status === 401 || error.status === 403);
                         entry = { snapshot: denied ? null : previous?.snapshot ?? null,
+                            sources: denied ? undefined : previous?.sources,
                             nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: !denied, emptyRead: denied ? 'denied' : undefined };
                     } finally {
@@ -202,6 +153,8 @@ export function useProviderAccountUsageSnapshots(
     recordIds: ReadonlyArray<string>,
     options: Readonly<{
         fetchPolicy?: ProviderAccountUsageSnapshotsFetchPolicy;
+        /** Sessions with a connected binding select by the sources admitted with each reading. */
+        includeSources?: boolean;
         /**
          * Whether this reader presents in-flight revalidation (`loadingByRecordId`). Only such readers
          * render for a loading flip; every other reader renders only for a usage, error or row change.
@@ -231,6 +184,7 @@ export function useProviderAccountUsageSnapshots(
     const recordIdsSignature = React.useMemo(() => buildRecordIdsSignature(recordIds), [recordIds]);
     const normalizedRecordIds = React.useMemo(() => normalizeProviderAccountUsageRecordIds(recordIds), [recordIdsSignature]);
     const presentsLoading = options.loading === true;
+    const includeSources = options.includeSources === true;
     // Select presentation facts, not cache rows: a row object also changes for scheduling
     // (`nextFetchAtMs`) and in-flight activity that this reader may not present.
     const selectEntries = useShallow((state: ProviderAccountUsageCacheState) => {
@@ -241,6 +195,7 @@ export function useProviderAccountUsageSnapshots(
         for (const recordId of normalizedRecordIds) {
             const entry = entries?.[recordId];
             selected[`${recordId}\u0000snapshot`] = entry?.snapshot ?? null;
+            if (includeSources) selected[`${recordId}\u0000sources`] = entry?.sources;
             selected[`${recordId}\u0000state`] = resolveProviderAccountUsageReadState({
                 snapshot: entry?.snapshot ?? null, loading: entry?.loading ?? false, hadError: entry?.hadError ?? false,
                 emptyRead: entry?.emptyRead, nowMs,
@@ -291,24 +246,29 @@ export function useProviderAccountUsageSnapshots(
         if (!quotasEnabled) {
             return {
                 snapshotsByRecordId: {},
+                sourcesByRecordId: {},
                 loadingByRecordId: {},
                 stateByRecordId: {},
             } satisfies ProviderAccountUsageSnapshotsResult;
         }
 
         const snapshotsByRecordId: Record<string, ProviderAccountUsageSnapshotV1 | null> = {};
+        const sourcesByRecordId: Record<string, readonly QualifiedConnectedServiceUsageSourceV4[]> = {};
         const loadingByRecordId: Record<string, boolean> = {};
         const stateByRecordId: Record<string, ProviderAccountUsageReadState> = {};
         for (const recordId of normalizedRecordIds) {
             const snapshot = (cacheByRecordId[`${recordId}\u0000snapshot`] ?? null) as ProviderAccountUsageSnapshotV1 | null;
             const loading = cacheByRecordId[`${recordId}\u0000loading`] === true;
             snapshotsByRecordId[recordId] = snapshot;
+            const sources = cacheByRecordId[`${recordId}\u0000sources`] as readonly QualifiedConnectedServiceUsageSourceV4[] | undefined;
+            if (sources) sourcesByRecordId[recordId] = sources;
             loadingByRecordId[recordId] = loading;
             stateByRecordId[recordId] = cacheByRecordId[`${recordId}\u0000state`] as ProviderAccountUsageReadState;
         }
 
         return {
             snapshotsByRecordId,
+            sourcesByRecordId,
             loadingByRecordId,
             stateByRecordId,
         } satisfies ProviderAccountUsageSnapshotsResult;

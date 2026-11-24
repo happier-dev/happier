@@ -1,10 +1,9 @@
-import {
-    resolveAgentIdFromFlavor,
-    isBundledAgentId,
-} from '@/agents/catalog/catalog';
+import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 
 import { ProviderAccountUsageRecordIdSchema, type ProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1, type ProviderAccountUsageStateV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import type { QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
     computeConnectedServiceQuotaGaugeViewModel,
@@ -37,19 +36,6 @@ function isDisplayableProviderAccountUsageSnapshot(snapshot: ProviderAccountUsag
     return snapshot.meters.length > 0;
 }
 
-function providerAccountUsageSnapshotMatchesRequestedProvider(params: Readonly<{
-    snapshot: ProviderAccountUsageSnapshotV1;
-    providerId: string | null | undefined;
-}>): boolean {
-    const requestedProviderId = String(params.providerId ?? '').trim();
-    if (!requestedProviderId) return true;
-    if (params.snapshot.providerId === requestedProviderId) return true;
-    const agentId = isBundledAgentId(requestedProviderId)
-        ? requestedProviderId
-        : resolveAgentIdFromFlavor(requestedProviderId);
-    return agentId === params.snapshot.providerId;
-}
-
 function compareProviderAccountUsageCandidates(
     left: ProviderAccountUsageSnapshotV1,
     right: ProviderAccountUsageSnapshotV1,
@@ -67,11 +53,17 @@ function compareProviderAccountUsageCandidates(
     return left.recordId.localeCompare(right.recordId);
 }
 
-function selectCandidateAccountUsageSnapshots(params: Readonly<{
-    providerId: string | null;
+type ProviderUsageCandidates = Readonly<{
+    agentId: string | null;
+    catalogProviderIds?: readonly string[];
+    connectedAccount?: QualifiedConnectedAccountRef;
+    sourcesByRecordId?: Readonly<Record<string, readonly QualifiedConnectedServiceUsageSourceV4[]>>;
     metadataRecordIds: ReadonlyArray<string>;
     accountUsageSnapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null | undefined>>;
-}>): ProviderAccountUsageSnapshotV1[] {
+}>;
+
+function selectCandidateAccountUsageSnapshots(params: ProviderUsageCandidates): ProviderAccountUsageSnapshotV1[] {
+    const { connectedAccount, agentId } = params;
     const candidates: ProviderAccountUsageSnapshotV1[] = [];
     const seenRecordIds = new Set<string>();
     for (const rawRecordId of params.metadataRecordIds) {
@@ -81,16 +73,18 @@ function selectCandidateAccountUsageSnapshots(params: Readonly<{
         const snapshot = params.accountUsageSnapshotsByRecordId[parsedRecordId.data] ?? null;
         if (!snapshot) continue;
         if (!isDisplayableProviderAccountUsageSnapshot(snapshot)) continue;
-        if (!providerAccountUsageSnapshotMatchesRequestedProvider({ snapshot, providerId: params.providerId })) continue;
+        if (connectedAccount) {
+            if (!params.sourcesByRecordId?.[parsedRecordId.data]?.some(source =>
+                sameQualifiedConnectedAccountRef(source.ref, connectedAccount))) continue;
+        } else if (agentId && !params.catalogProviderIds?.includes(snapshot.providerId)
+            // Released native observations may carry the catalog's Agent spelling.
+            && !areSameAgentRoutingIdentity(agentId, snapshot.providerId)) continue;
         candidates.push(snapshot);
     }
     return candidates.sort(compareProviderAccountUsageCandidates);
 }
 
-export function selectProviderUsageDisplaySource(params: Readonly<{
-    providerId: string | null;
-    metadataRecordIds: ReadonlyArray<string>;
-    accountUsageSnapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null | undefined>>;
+export function selectProviderUsageDisplaySource(params: ProviderUsageCandidates & Readonly<{
     connectedServiceProfileRef: ProviderUsageDisplayConnectedServiceProfileRef | null;
     connectedServiceQuotaView: ConnectedServiceQuotaSnapshotV1 | null;
 }>): ProviderUsageDisplaySnapshotSource | null {
