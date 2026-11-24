@@ -128,6 +128,7 @@ function createUsageRowObserver(input: Readonly<{
         let disposed = false;
         let controller: AbortController | null = null;
         let reading: Promise<void> | null = null;
+        let snapshotMode: CredentialScopedAccountMode | undefined;
         const readEntry = () => getProviderAccountUsageCacheState().entriesByCredentialScope[input.credentialScope]?.[recordId];
         const current = () => !disposed && input.isCurrent();
         const observation = observeUsageProjection({
@@ -135,7 +136,7 @@ function createUsageRowObserver(input: Readonly<{
             readRecordId: () => recordId,
             applyObservation(observation) {
                 const retained = readEntry();
-                if (!current() || !retained?.snapshot || retained.hadError) return false;
+                if (!current() || !retained?.snapshot || retained.hadError || snapshotMode !== 'plain') return false;
                 const snapshot = applyUsageObservationTime(retained.snapshot, observation);
                 if (snapshot !== retained.snapshot) updateProviderAccountUsageCacheEntries(input.credentialScope,
                     entries => ({ ...entries, [recordId]: { ...retained, snapshot } }), 'account-observation');
@@ -161,6 +162,7 @@ function createUsageRowObserver(input: Readonly<{
                     let entry: Outcome['entry'];
                     try {
                         let opened: ProviderAccountUsageSnapshotV1 | null;
+                        let admittedMode: CredentialScopedAccountMode;
                         if (observation) {
                             // Join the wake's raw acquisition before awaiting Account mode.
                             const [record, mode] = await Promise.all([
@@ -171,11 +173,14 @@ function createUsageRowObserver(input: Readonly<{
                             ]);
                             if (!current()) return;
                             opened = record ? openAddressedProviderAccountUsageRecord(input.credentials, recordId, mode, record) : null;
+                            admittedMode = mode;
                         } else {
-                            const mode = await input.resolveAccountMode();
+                            admittedMode = await input.resolveAccountMode();
                             if (!current()) return;
-                            opened = await readProviderAccountUsageSnapshot({ ...input, mode, recordId, signal: requestController.signal });
+                            opened = await readProviderAccountUsageSnapshot({ ...input, mode: admittedMode, recordId, signal: requestController.signal });
                         }
+                        if (!current()) return;
+                        snapshotMode = opened ? admittedMode : undefined;
                         entry = { snapshot: opened, nextFetchAtMs: Number.POSITIVE_INFINITY,
                             loading: false, hadError: false, emptyRead: opened ? undefined : 'missing' };
                     } catch (error) {

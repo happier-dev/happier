@@ -7920,10 +7920,15 @@ same bodyless fact travels on the existing Account wake for secondary Homes.
 Coalescing keeps the latest accepted clock and preserves any material change.
 The durable row lets primary Home detect a material change since its cursor.
 
-With an admitted retained reading, a clock-only fact advances freshness without
-a quota GET. A material fact reads that record directly. For a sealed reading,
-the wake carries the accepted fetch clock. An older publisher that omits the
-fact keeps the previous read behavior. A legacy/unscoped key, an incomplete
+With an admitted plaintext reading, a complete clock-only fact updates quota
+fetch time, quota provider observation time and subscription observation time
+from their separate stored values without a quota GET. The subscription clock
+is null when the record has no stored subscription. A material fact reads that
+record directly. A change to an independently aged fact the hint cannot
+reproduce requires that read. For a sealed reading, the wake carries the
+accepted fetch clock and readers open the addressed record to verify its clocks.
+An older publisher that omits the fact keeps the previous read behavior. An
+incomplete clock-only fact requires a read. A legacy/unscoped key, an incomplete
 pair, unknown scope, snapshot, foreground or explicit recovery keeps the full
 reread. An older UI still consumes the global key. Replacing a source's record
 binding publishes the existing Connected Service change fact so readers

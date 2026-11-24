@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { createRenderCommitCounter, createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { updateEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
@@ -63,6 +65,23 @@ describe('useProviderAccountUsageSnapshots', () => {
         storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
         await updateEffectiveHomeViewState(current => ({ ...current, activeTargetKind: 'server',
             activeTargetId: getActiveServerSnapshot().serverId }), { scope: 'device' });
+    }
+    async function connectForWakeCounts(options?: Parameters<typeof createQualifiedQuotaTestHarness>[0]) {
+        await boundary.dispose();
+        boundary = await createQualifiedQuotaTestHarness({
+            ...options, configureSocket: configureConnectedServerSocketBoundary,
+            request: async (input, init) => {
+                const pathname = new URL(String(input)).pathname;
+                const response = await options?.request?.(input, init);
+                return response ?? (pathname === '/v1/account/profile'
+                    ? Response.json(AccountProfileSchema.parse({ id: 'quota-account' }))
+                    : pathname === '/v1/machines' ? null : createEmptyAccountBootstrapHttpResponse(pathname, init));
+            },
+        });
+        await installFeatures();
+        const { fetchAccountEncryptionIdentity } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        await fetchAccountEncryptionIdentity(boundary.account.credentials, { usage: 'identity' });
+        await flushHookEffects({ cycles: 16, turns: 16 });
     }
     function wake() { publishHomeAccountChange(getActiveServerSnapshot().serverId,
         [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], { changeKinds: ['account'] }); }
@@ -134,7 +153,8 @@ describe('useProviderAccountUsageSnapshots', () => {
         const wakeObservation = (fetchedAtMs: number, contentChanged: boolean) =>
             publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs, observedAtMs: fetchedAtMs, contentChanged }],
+                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs, observedAtMs: fetchedAtMs,
+                    subscriptionObservedAtMs: null, contentChanged }],
             });
         const later = changed.fetchedAtMs + 30_000;
         await act(async () => { wakeObservation(later, false); });
@@ -165,6 +185,146 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(boundary.usageRead).not.toHaveBeenCalled();
         expect(connectionReads()).toHaveLength(0);
         await screen.unmount();
+    });
+
+    it('matches a cold opener and Plans price when quota and subscription clocks advance independently', async () => {
+        await connectForWakeCounts();
+        const { openProviderAccountUsageRecordV4 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const { projectProviderAccountSubscriptionMonetaryFacts } = await import('@happier-dev/protocol/connect/accountSubscription');
+        const start = Date.now() - 10_000;
+        const subscription = {
+            status: 'subscribed' as const, renewal: 'on' as const, observedAtMs: start + 1_000, staleAfterMs: 5_000,
+            currentPeriodStartAtMs: start, currentPeriodEndAtMs: start + 30_000,
+            monetaryFacts: [{ kind: 'paid' as const, amount: 20, currency: 'USD',
+                source: { kind: 'provider' as const, id: 'fixture', version: '1' },
+                effectiveAtMs: start, asOfMs: start, period: { startAtMs: start, endAtMs: start + 30_000 } }],
+        };
+        let reading = { ...quotaTestProviderUsageSnapshot(start + 1_000), subscription };
+        const recordId = reading.recordId;
+        const record = () => quotaTestProviderUsageResponse(reading);
+        boundary.usageRead.mockImplementation(async () => Response.json(record()));
+        const mounted = await renderHook(() => useProviderAccountUsageSnapshots([recordId]), { wrapper: Wrapper });
+        try {
+            await flushHookEffects({ cycles: 16, turns: 16 });
+            const cold = () => openProviderAccountUsageRecordV4({ accountMode: 'plain', recordId, record: record() });
+            expect(mounted.getCurrent().snapshotsByRecordId[recordId]).toEqual(cold());
+            const wake = async (fact: { fetchedAtMs: number; observedAtMs: number; subscriptionObservedAtMs: number; contentChanged: boolean }) => {
+                await act(async () => {
+                    publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
+                        changeKinds: ['account'], providerAccountUsageRecordIds: [recordId],
+                        providerAccountUsageObservations: [{ recordId, ...fact }],
+                    });
+                });
+                await flushHookEffects({ cycles: 16, turns: 16 });
+            };
+            const requests = boundary.requests.length;
+            reading = { ...reading, fetchedAtMs: start + 5_500, observedAtMs: start + 5_500,
+                subscription: { ...subscription, observedAtMs: start + 5_500 } };
+            const fact = { fetchedAtMs: reading.fetchedAtMs, observedAtMs: reading.observedAtMs,
+                subscriptionObservedAtMs: reading.subscription.observedAtMs, contentChanged: false };
+            await wake(fact);
+            const price = (snapshot: ReturnType<typeof cold> | undefined) =>
+                projectProviderAccountSubscriptionMonetaryFacts({ subscription: snapshot?.subscription, nowMs: start + 6_500 }).paid;
+            expect(price(cold())).toMatchObject({ amount: 20, currency: 'USD' });
+            expect.soft(price(mounted.getCurrent().snapshotsByRecordId[recordId])).toEqual(price(cold()));
+            expect.soft(mounted.getCurrent().snapshotsByRecordId[recordId]).toEqual(cold());
+            // The second write advances only the subscription clock, then a newer fetch
+            // carries different provider evidence. An older arrival cannot rewind either.
+            reading = { ...reading, subscription: { ...reading.subscription, observedAtMs: start + 5_750 } };
+            await wake({ ...fact, subscriptionObservedAtMs: reading.subscription.observedAtMs, contentChanged: true });
+            await wake(fact); // The earlier clock-only wake uses the same fetch timestamp.
+            expect.soft(mounted.getCurrent().snapshotsByRecordId[recordId]).toEqual(cold());
+            reading = { ...reading, fetchedAtMs: start + 6_000, observedAtMs: start + 2_000 };
+            await wake({ ...fact, fetchedAtMs: reading.fetchedAtMs, observedAtMs: reading.observedAtMs,
+                subscriptionObservedAtMs: reading.subscription.observedAtMs });
+            await wake(fact);
+            expect.soft(mounted.getCurrent().snapshotsByRecordId[recordId]).toEqual(cold());
+            expect(boundary.requests.slice(requests)).toEqual([{ method: 'GET', path: '/v4/connect/qualified/provider-account-usage/record' }]);
+        } finally { await mounted.unmount(); }
+    });
+
+    it('matches cold sealed Pace and quota clocks without trusting plaintext wake times', async () => {
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { createAccountEncryptionCurrentnessFixtureForCredentials } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+        const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
+        const { openProviderAccountUsageRecordV4 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const { deriveProviderAccountUsagePace } = await import('@happier-dev/protocol/connect/deriveProviderAccountUsagePace');
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(3) };
+        const credentials = { token: createAccountTokenForTests('quota-account', { currentAccount: true }),
+            secret: Buffer.from(material.secret).toString('base64url') };
+        await connectForWakeCounts({ credentials, accountMode: 'e2ee',
+            request: async input => new URL(String(input)).pathname === '/v1/account/encryption/currentness'
+                ? Response.json(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)) : null,
+        });
+        const start = Date.now() - 4_000;
+        const base = quotaTestProviderUsageSnapshot(start);
+        const first = { ...base, staleAfterMs: 1_200,
+            meters: base.meters.map(meter => ({ ...meter, utilizationPct: 40, resetsAt: start + 6_000,
+                windowDurationMs: 7_000 })) };
+        const { recordId } = first;
+        let nonce = 0;
+        const seal = (reading: typeof first) => {
+            const { ciphertext } = sealProviderAccountUsageSnapshot({ material, snapshot: reading,
+                randomBytes: length => new Uint8Array(length).fill(++nonce) });
+            return { content: { t: 'encrypted' as const, c: ciphertext }, sources: [],
+                metadata: { fetchedAt: reading.fetchedAtMs, staleAfterMs: reading.staleAfterMs, status: 'ok' } };
+        };
+        let record = seal(first);
+        boundary.usageRead.mockImplementation(async () => Response.json(record));
+        const mounted = await renderHook(() => useProviderAccountUsageSnapshots([recordId]), { wrapper: Wrapper });
+        try {
+            await flushHookEffects({ cycles: 16, turns: 16 });
+            const cold = () => openProviderAccountUsageRecordV4({ recordId, accountMode: 'e2ee', material, record });
+            const current = () => mounted.getCurrent().snapshotsByRecordId[recordId];
+            expect(current()).toEqual(cold());
+            const pace = (snapshot: NonNullable<ReturnType<typeof current>>) =>
+                deriveProviderAccountUsagePace({ snapshot, meterId: 'weekly', nowMs: start + 1_400 });
+            for (const [contentChanged, next, expectedPace, untrustedPlainClocks] of [
+                [false, { ...first, fetchedAtMs: start + 1_000 }, 'unavailable'],
+                [true, { ...first, fetchedAtMs: start + 1_100, observedAtMs: start + 1_050 }, 'available'],
+                [true, { ...first, fetchedAtMs: start + 1_200, observedAtMs: start + 1_050,
+                    meters: first.meters.map(meter => ({ ...meter, used: 60, remainingPct: 40, utilizationPct: 60 })) }, 'available'],
+                [false, { ...first, fetchedAtMs: start + 1_300 }, 'unavailable',
+                    { observedAtMs: start + 1_300, subscriptionObservedAtMs: null }],
+            ] as const) {
+                record = seal(next);
+                const requests = boundary.requests.length;
+                await act(async () => {
+                    publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
+                        changeKinds: ['account'], providerAccountUsageRecordIds: [recordId],
+                        providerAccountUsageObservations: [{ recordId, fetchedAtMs: next.fetchedAtMs, contentChanged,
+                            ...untrustedPlainClocks }],
+                    });
+                });
+                await flushHookEffects({ cycles: 16, turns: 16 });
+                expect.soft(current()).toEqual(cold());
+                expect.soft(pace(cold()).status).toBe(expectedPace);
+                expect.soft(pace(current()!)).toEqual(pace(cold()));
+                expect.soft(boundary.requests.slice(requests)).toEqual([{ method: 'GET', path: '/v4/connect/qualified/provider-account-usage/record' }]);
+            }
+        } finally { await mounted.unmount(); }
+    });
+
+    it('opens a material wake with the connected Home mode and exactly one HTTP request', async () => {
+        const { fetchAccountEncryptionIdentity } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        const { readQualifiedConnectedAccountQuota } = await import('@/sync/api/account/qualifiedConnectedAccountQuotaTransport');
+        let blockModeHttp = false;
+        await boundary.dispose();
+        boundary = await createQualifiedQuotaTestHarness({
+            configureSocket: configureConnectedServerSocketBoundary,
+            request: async input => blockModeHttp && new URL(String(input)).pathname.startsWith('/v1/account/encryption')
+                ? Response.json({ error: 'unavailable' }, { status: 503 }) : null,
+        });
+        await installFeatures();
+        await fetchAccountEncryptionIdentity(boundary.account.credentials, { usage: 'identity' });
+        const reading = quotaTestProviderUsageSnapshot();
+        boundary.usageRead.mockImplementation(async () => Response.json({ ...quotaTestProviderUsageResponse(reading),
+            sources: [{ bindingKind: 'account', ref: quotaTestRef }] }));
+        blockModeHttp = true;
+        const requests = boundary.requests.length;
+        const result = readQualifiedConnectedAccountQuota(boundary.context(), reading.recordId);
+        await expect.soft(result).resolves.toMatchObject({ recordId: reading.recordId, snapshot: { fetchedAt: reading.fetchedAtMs } });
+        expect(boundary.requests.slice(requests)).toEqual([{ method: 'GET', path: '/v4/connect/qualified/provider-account-usage/record' }]);
     });
 
     it('withdraws hidden presentation reads and renders without disturbing a visible peer, then reopens fresh', async () => {
@@ -426,11 +586,15 @@ describe('useProviderAccountUsageSnapshots', () => {
         const tick = (at: number, contentChanged = false) => publishHomeAccountChange(getActiveServerSnapshot().serverId,
             [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs: at, observedAtMs: at, contentChanged }],
+                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs: at, observedAtMs: at,
+                    subscriptionObservedAtMs: null, contentChanged }],
             });
+        const { openProviderAccountUsageRecordV4 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const cold = openProviderAccountUsageRecordV4({ recordId: snapshot.recordId, accountMode: 'plain',
+            record: quotaTestProviderUsageResponse({ ...snapshot, fetchedAtMs: nextAsOf, observedAtMs: nextAsOf }) });
         await act(async () => { tick(nextAsOf); });
         await flushHookEffects({ cycles: 16, turns: 16 });
-        expect(sessionUsage.getCurrent().accountUsageSnapshot?.fetchedAtMs, 'composer as-of').toBe(nextAsOf);
+        expect(sessionUsage.getCurrent().accountUsageSnapshot, 'composer equals a cold opening').toEqual(cold);
         expect(screen.findAllByType(SurfaceAsOfLabel).find(node => node.props.testID === 'sidebar-usage-as-of')?.props.at, 'sidebar as-of').toBe(nextAsOf);
         await act(async () => { tick(snapshot.fetchedAtMs + 500); });
         await flushHookEffects({ cycles: 8, turns: 8 });
@@ -474,7 +638,8 @@ describe('useProviderAccountUsageSnapshots', () => {
             const fetchedAtMs = snapshot.fetchedAtMs + 50;
             publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
                 changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
-                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs, observedAtMs: fetchedAtMs, contentChanged: false }],
+                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs, observedAtMs: fetchedAtMs,
+                    subscriptionObservedAtMs: null, contentChanged: false }],
             });
         });
         await flushHookEffects({ cycles: 8, turns: 8 });
@@ -492,7 +657,8 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(boundary.usageRead).toHaveBeenCalledTimes(1);
     });
 
-    it('treats a plaintext miss as authoritative without another representation read', async () => {
+    it('preserves a cold miss and admits the first reading from a named wake', async () => {
+        await connectForWakeCounts();
         const snapshot = makeUsageSnapshot();
         boundary.usageRead.mockImplementation(async () => new Response('{}', { status: 404 }));
         const hook = await renderHook(() => useProviderAccountUsageSnapshots([snapshot.recordId]), { wrapper: Wrapper });
@@ -500,6 +666,23 @@ describe('useProviderAccountUsageSnapshots', () => {
         expect(boundary.usageRead).toHaveBeenCalledTimes(1);
         expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]).toBeNull();
         expect(hook.getCurrent().loadingByRecordId[snapshot.recordId]).toBe(false);
+
+        const record = quotaTestProviderUsageResponse(snapshot);
+        boundary.usageRead.mockImplementation(async () => Response.json(record));
+        const { openProviderAccountUsageRecordV4 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+        const requests = boundary.requests.length;
+        await act(async () => {
+            publishHomeAccountChange(getActiveServerSnapshot().serverId, [PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1], {
+                changeKinds: ['account'], providerAccountUsageRecordIds: [snapshot.recordId],
+                providerAccountUsageObservations: [{ recordId: snapshot.recordId, fetchedAtMs: snapshot.fetchedAtMs,
+                    observedAtMs: snapshot.observedAtMs, contentChanged: true }],
+            });
+        });
+        await flushHookEffects({ cycles: 16, turns: 16 });
+        expect(hook.getCurrent().snapshotsByRecordId[snapshot.recordId]).toEqual(openProviderAccountUsageRecordV4({
+            recordId: snapshot.recordId, accountMode: 'plain', record,
+        }));
+        expect(boundary.requests.slice(requests)).toEqual([{ method: 'GET', path: '/v4/connect/qualified/provider-account-usage/record' }]);
     });
 
     it.each([false, true])('does not commit a held response after Home/generation replacement (same Home: %s)', async sameHome => {

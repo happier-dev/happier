@@ -13,6 +13,8 @@ import { isMachineReachable, resolveMachineReachability, readMachineRequestReach
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isConnectedServiceUsageCapable, subscribeConnectedServiceRegistry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { projectProviderAccountUsageEnteredPriceV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { resolveUsageQueryPeriod, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
@@ -46,18 +48,30 @@ export function readUsageQuotaObservations(event: HomeAccountChangeEvent): reado
     const addressed = new Map<string, ProviderAccountUsageObservationV1>(observations.map(observation => [observation.recordId, observation]));
     const selected = ids.flatMap(id => {
         const observation = addressed.get(id);
-        return observation ? [observation] : [];
+        if (!observation) return [];
+        // Older writers and sealed readings can omit clocks needed for a patch.
+        const carriesPlainClocks = observation.observedAtMs !== undefined && observation.subscriptionObservedAtMs !== undefined;
+        return [observation.contentChanged || carriesPlainClocks ? observation : { ...observation, contentChanged: true }];
     });
     return selected.length === ids.length ? selected : undefined;
 }
 
-/** Advance accepted clocks without making an older arrival current. */
-export function applyUsageObservationTime<T extends Readonly<{ fetchedAtMs: number; observedAtMs: number }>>(
-    reading: T, observation: ProviderAccountUsageObservationV1,
-): T {
+/** The fetch orders arrivals; each accepted clock updates only its own facet. */
+export function applyUsageObservationTime(
+    reading: ProviderAccountUsageSnapshotV1, observation: ProviderAccountUsageObservationV1,
+): ProviderAccountUsageSnapshotV1 {
     if (observation.fetchedAtMs <= reading.fetchedAtMs) return reading;
-    return { ...reading, fetchedAtMs: observation.fetchedAtMs,
-        observedAtMs: Math.max(reading.observedAtMs, observation.observedAtMs ?? observation.fetchedAtMs) };
+    const observedAtMs = observation.observedAtMs ?? reading.observedAtMs;
+    const subscription = reading.subscription;
+    const subscriptionObservedAtMs = observation.subscriptionObservedAtMs;
+    const next = { ...reading, fetchedAtMs: observation.fetchedAtMs, observedAtMs };
+    if (!subscription || subscriptionObservedAtMs === undefined) return next;
+    if (subscriptionObservedAtMs === null) {
+        // Re-project the user-entered price with the same opener as a cold read.
+        const { subscription: _previousProjection, ...withoutSubscription } = next;
+        return projectProviderAccountUsageEnteredPriceV1(withoutSubscription, subscription.enteredMonthlyPrice);
+    }
+    return { ...next, subscription: { ...subscription, observedAtMs: subscriptionObservedAtMs } };
 }
 
 /** An unresolved source still needs acquisition; admitted sources consume only their record changes. */

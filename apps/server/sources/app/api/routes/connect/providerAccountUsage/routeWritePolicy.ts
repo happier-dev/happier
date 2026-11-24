@@ -7,6 +7,7 @@ import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationAtOrBeforeNow } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { inTx } from "@/storage/inTx";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
@@ -15,7 +16,6 @@ import {
     readProviderAccountUsageRecordWithCurrentGuard,
     updateProviderAccountUsageRecordIfCurrent,
     retainProviderAccountUsageHistory,
-    sameProviderAccountUsageMaterial,
     updateProviderAccountUsageRecordMetadataIfCurrent,
 } from "./recordStorage";
 import type {
@@ -29,6 +29,14 @@ import { readProviderAccountUsageLegacyPendingDays } from './daySummaryPendingSt
 import { publishUsageRecordChange } from './publishUsageRecordChange';
 
 type ProviderAccountUsagePolicyClient = TransactionClient;
+
+/** Compare only after removing the clocks the plain wake can reproduce. */
+function plainUsageWakeContent(snapshot: ProviderAccountUsageSnapshotV1) {
+    const { fetchedAtMs: _fetch, observedAtMs: _provider, subscription, ...content } = snapshot;
+    if (!subscription) return content;
+    const { observedAtMs: _subscription, ...subscriptionContent } = subscription;
+    return { ...content, subscription: subscriptionContent };
+}
 
 export type ProviderAccountUsageWritePolicyParams = Readonly<{
     accountId: string;
@@ -329,15 +337,27 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, captured.guard, params.client);
         if (updated) {
             const historyChanged = await retainProviderAccountUsageHistory(nextWrite, params.client);
-            const contentChanged = !sameProviderAccountUsageMaterial(nextWrite, existing)
-                || nextWrite.status !== existing.status || nextWrite.staleAfterMs !== existing.staleAfterMs
-                || clearsRefreshRequest || advancesFailure;
+            const previous = existing.snapshot;
+            const next = nextWrite.snapshot;
+            const contentChanged = nextWrite.status !== existing.status || nextWrite.staleAfterMs !== existing.staleAfterMs
+                || clearsRefreshRequest || advancesFailure || existing.payloadMode !== nextWrite.payloadMode
+                // Same-fetch subscription writes have no distinct fetch clock
+                // to order their wakes against an earlier observation.
+                || (!isNewer && subscriptionAdvanced)
+                || (previous && next
+                    ? !sameStrictJsonValue(plainUsageWakeContent(previous), plainUsageWakeContent(next), { omitUndefinedObjectMembers: true })
+                    // Equal material fingerprints do not prove equality of
+                    // the authenticated provider clock inside a resealed body.
+                    : nextFetchedAt !== existingFetchedAt
+                        || !sameStrictJsonValue(nextWrite.sealedPayload, existing.sealedPayload, { omitUndefinedObjectMembers: true }));
             // History materialization still consumes accepted observations.
             // Current-reading consumers only need the accepted clocks when its body holds.
             if (historyChanged || contentChanged || isNewer) {
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
                     observation: { recordId: params.recordId, fetchedAtMs: nextFetchedAt,
-                        ...(nextWrite.snapshot ? { observedAtMs: nextWrite.snapshot.observedAtMs } : {}), contentChanged },
+                        ...(next ? { observedAtMs: next.observedAtMs } : {}),
+                        ...(!contentChanged && next ? { subscriptionObservedAtMs: next.subscription?.observedAtMs ?? null } : {}),
+                        contentChanged },
                     ...(historyChanged ? { dayStartAtMs: Math.floor(nextFetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
                         historyFromAtMs: nextFetchedAt } : {}) });
             }

@@ -507,8 +507,9 @@ describe("provider account usage record storage (integration)", () => {
                     snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, client });
             const wake = () => UpdateContainerSchema.parse(emitted.mock.calls.filter(([event]) =>
                 event.userId === account.id && event.payload.body.t === 'account-change').at(-1)?.[0].payload);
-            const fact = (offset: number, contentChanged: boolean) => ({ recordId: initial.recordId,
-                fetchedAtMs: initial.fetchedAtMs + offset, observedAtMs: initial.observedAtMs + offset, contentChanged });
+            const fact = (offset: number, contentChanged: boolean, includesClocks = !contentChanged) => ({ recordId: initial.recordId,
+                fetchedAtMs: initial.fetchedAtMs + offset, observedAtMs: initial.observedAtMs + offset,
+                ...(includesClocks ? { subscriptionObservedAtMs: null } : {}), contentChanged });
             await write(initial);
             const firstCursor = wake().seq;
             expect(wake().providerAccountUsageObservations).toEqual([fact(0, true)]);
@@ -522,34 +523,110 @@ describe("provider account usage record storage (integration)", () => {
                 await write(reading(3000), tx);
                 await write(reading(4000), tx);
             });
-            expect(wake().providerAccountUsageObservations).toEqual([fact(4000, true)]);
+            expect(wake().providerAccountUsageObservations).toEqual([fact(4000, true, true)]);
             const throughCursor = wake().seq;
             const page = await db.accountChange.findMany({ where: { accountId: account.id, kind: 'account' } });
-            expect(readProviderAccountUsageObservationsV1(page, firstCursor)).toEqual([fact(4000, true)]);
+            expect(readProviderAccountUsageObservationsV1(page, firstCursor)).toEqual([fact(4000, true, true)]);
             expect(readProviderAccountUsageObservationsV1(page, throughCursor - 1)).toEqual([fact(4000, false)]);
         } finally { emitted.mockRestore(); }
     });
 
-    it('publishes sealed freshness from admitted metadata and treats new opaque facets as material', async () => {
+    it('publishes all accepted plain clocks and reads when an independent error clock changes', async () => {
+        const { eventRouter } = await import('@/app/events/connectionEventRouter');
+        const emitted = vi.spyOn(eventRouter, 'emitUpdate');
+        try {
+            const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+            const start = Date.now() - 10_000;
+            const subscription = { status: 'subscribed' as const, renewal: 'on' as const, observedAtMs: start,
+                staleAfterMs: 5_000, lastRefreshError: { code: 'network' as const, observedAtMs: start } };
+            const first = { ...createUsageSnapshot({ fetchedAt: start }), subscription };
+            const write = (snapshot: typeof first) => writeProviderAccountUsageRecordWithPolicy({
+                accountId: account.id, recordId: first.recordId, recordKey: first.recordKey,
+                payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+                fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+            });
+            const latest = () => emitted.mock.calls.filter(([event]) => event.userId === account.id
+                && event.payload.body.t === 'account-change').at(-1)?.[0].payload;
+            await write(first);
+            expect(latest()?.providerAccountUsageObservations?.[0]?.contentChanged).toBe(true);
+            // A write at the same fetch can update ancillary facets, but it
+            // cannot replace the provider observation owned by that fetch.
+            await write({ ...first, observedAtMs: start + 250 });
+            await expect(readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId }))
+                .resolves.toMatchObject({ snapshot: { observedAtMs: first.observedAtMs } });
+            let reading = first;
+            for (const [fetch, observed, sub, error, contentChanged] of [
+                [1_000, 0, 0, 0, false], // fetch only
+                [2_000, 1_000, 0, 0, false], // fetch and provider
+                [2_000, 1_000, 2_000, 0, true], // same-fetch writes need an ordered read
+                [3_000, 3_000, 3_000, 0, false], // ordinary renewal
+                [4_000, 500, 3_000, 0, false], // newer fetch, lower provider evidence
+                [4_000, 500, 3_000, 4_000, true], // error clock alone is material
+            ] as const) {
+                const cursor = latest()?.seq;
+                reading = { ...reading, fetchedAtMs: start + fetch, observedAtMs: start + observed,
+                    subscription: { ...subscription, observedAtMs: start + sub,
+                        lastRefreshError: { ...subscription.lastRefreshError, observedAtMs: start + error } } };
+                await expect(write(reading)).resolves.toBe('written');
+                expect.soft(latest()?.seq).toBeGreaterThan(cursor!);
+                expect.soft(latest()?.providerAccountUsageObservations).toEqual([{
+                    recordId: first.recordId, fetchedAtMs: reading.fetchedAtMs, observedAtMs: reading.observedAtMs,
+                    ...(contentChanged ? {} : { subscriptionObservedAtMs: reading.subscription.observedAtMs }),
+                    contentChanged,
+                }]);
+                await expect(readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId }))
+                    .resolves.toMatchObject({ snapshot: reading });
+            }
+            const cursor = latest()?.seq;
+            await expect(write(first)).resolves.toBe('stale');
+            expect(latest()?.seq).toBe(cursor);
+        } finally { emitted.mockRestore(); }
+    });
+
+    it('requires a read when resealing can change the protected provider clock despite equal material', async () => {
         const { eventRouter } = await import('@/app/events/connectionEventRouter');
         const emitted = vi.spyOn(eventRouter, 'emitUpdate');
         try {
             const account = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }, select: { id: true } });
             const initial = createUsageSnapshot({ fetchedAt: Date.now() - 10_000 });
-            const write = (offset: number, recoveryCreditDetails?: { ciphertext: string }) =>
-                writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: initial.recordId,
-                    recordKey: initial.recordKey, payloadMode: 'sealed_account_scoped_v1', status: 'ok',
-                    sealedPayload: { format: 'account_scoped_v1', ciphertext: `opaque-${offset}`,
-                        ...(recoveryCreditDetails ? { recoveryCreditDetails } : {}) },
-                    materialFingerprint: 'same-keyed-material', fetchedAt: initial.fetchedAtMs + offset, staleAfterMs: initial.staleAfterMs });
+            const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
+            const { openProviderAccountUsageRecordV4 } = await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+            const { deriveProviderAccountUsagePace } = await import('@happier-dev/protocol/connect/deriveProviderAccountUsagePace');
+            const { projectProviderAccountUsageRecordV4 } = await import('./recordStorage');
+            const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+            let nonce = 0;
+            const first = { ...initial, staleAfterMs: 1_200 };
+            const write = (snapshot: typeof first) => {
+                const sealedPayload = sealProviderAccountUsageSnapshot({ material, snapshot,
+                    randomBytes: length => new Uint8Array(length).fill(++nonce) });
+                return writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: first.recordId,
+                    recordKey: first.recordKey, payloadMode: 'sealed_account_scoped_v1', status: 'ok', sealedPayload,
+                    materialFingerprint: 'same-keyed-material', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
+            };
+            const open = async () => {
+                const stored = (await readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId }))!;
+                return openProviderAccountUsageRecordV4({ recordId: first.recordId, accountMode: 'e2ee', material,
+                    record: projectProviderAccountUsageRecordV4(stored, []) });
+            };
             const fact = () => emitted.mock.calls.filter(([event]) => event.userId === account.id
                 && event.payload.body.t === 'account-change').at(-1)?.[0].payload.providerAccountUsageObservations;
-            await write(0);
-            expect(fact()).toEqual([{ recordId: initial.recordId, fetchedAtMs: initial.fetchedAtMs, contentChanged: true }]);
-            await write(1000);
-            expect(fact()).toEqual([{ recordId: initial.recordId, fetchedAtMs: initial.fetchedAtMs + 1000, contentChanged: false }]);
-            await write(2000, { ciphertext: 'opaque-new-recovery-facet' });
-            expect(fact()).toEqual([{ recordId: initial.recordId, fetchedAtMs: initial.fetchedAtMs + 2000, contentChanged: true }]);
+            await write(first);
+            expect(fact()).toEqual([{ recordId: first.recordId, fetchedAtMs: first.fetchedAtMs, contentChanged: true }]);
+            let mounted = await open();
+            // The first new fetch retains the provider clock. The next advances it.
+            // Matching fingerprints alone distinguish neither case.
+            for (const next of [{ ...first, fetchedAtMs: first.fetchedAtMs + 1000 },
+                { ...first, fetchedAtMs: first.fetchedAtMs + 1100, observedAtMs: first.observedAtMs + 1050 }]) {
+                await write(next);
+                expect.soft(fact()).toEqual([{ recordId: first.recordId, fetchedAtMs: next.fetchedAtMs, contentChanged: true }]);
+                const cold = await open();
+                if (fact()?.[0]?.contentChanged) mounted = await open();
+                expect.soft(mounted).toEqual(cold);
+                const pace = (snapshot: typeof first) => deriveProviderAccountUsagePace({ snapshot, meterId: 'weekly',
+                    nowMs: first.observedAtMs + 1_400 });
+                expect.soft(pace(mounted)).toEqual(pace(cold));
+                if (next.observedAtMs === first.observedAtMs) expect(pace(cold)).toEqual({ status: 'unavailable', reason: 'stale' });
+            }
         } finally { emitted.mockRestore(); }
     });
 

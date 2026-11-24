@@ -2338,12 +2338,14 @@ replacements rearm health work, but metadata-only health changes and notificatio
 preference changes do not discard an existing failure deadline.
 
 Accepted quota freshness remains readable from the exact usage record's
-`fetchedAt` metadata. A freshness-only write does not publish the material
-`provider-account-usage` Account change. The write policy reuses the canonical
-history material comparison (including reset phases), while retaining
-publications for initial history, status changes and completed explicit refresh
-requests. Opaque observations without a material fingerprint remain conservative;
-this does not remove fresh mode or credential admission from genuine reads.
+`fetchedAt` metadata. The existing bodyless Account hint can update the separate
+stored clocks of a retained plaintext reading when all its other facts match.
+For sealed readings the hint publishes the accepted fetch metadata, and a
+changed ciphertext, fetch time or opaque facet requires an addressed read.
+The client verifies the sealed snapshot and its bound metadata when it opens the
+record. Equal material fingerprints can still accompany different authenticated
+clocks. The history comparison and mode and credential admission remain at
+their existing owners.
 
 Manual quota Refresh commits its existing record marker and an exact,
 credential-free `provider-account-usage-refresh:<recordId>` Account change in the

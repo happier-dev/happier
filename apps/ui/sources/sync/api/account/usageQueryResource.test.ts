@@ -4481,6 +4481,11 @@ describe('usage query captured Resource adapter', () => {
         v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'codex',
         accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: start, fetchedAtMs: start,
         staleAfterMs: minute, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+        subscription: { status: 'subscribed', renewal: 'on', observedAtMs: start, staleAfterMs: 2 * minute,
+          currentPeriodStartAtMs: start, currentPeriodEndAtMs: start + 60 * minute,
+          monetaryFacts: [{ kind: 'paid', currency: 'USD', amount: 20, effectiveAtMs: start, asOfMs: start,
+            source: { kind: 'provider', id: 'fixture', version: '1' },
+            period: { startAtMs: start, endAtMs: start + 60 * minute } }] },
         meters: [{ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
           unit: 'requests', status: 'ok', resetsAt: start + 2 * minute, details: {} }],
       });
@@ -4519,7 +4524,7 @@ describe('usage query captured Resource adapter', () => {
       const recordIds = selected.map(row => row.snapshot.recordId);
       if (typedObservation) {
         const observations = selected.map(({ snapshot }) => ({ recordId: snapshot.recordId, observedAtMs: snapshot.observedAtMs,
-          fetchedAtMs: snapshot.fetchedAtMs, contentChanged }));
+          fetchedAtMs: snapshot.fetchedAtMs, subscriptionObservedAtMs: snapshot.subscription!.observedAtMs, contentChanged }));
         const { serverId } = captured.accountLifetime.scope;
         if (scenario.startsWith('secondary')) {
           const wake = { t: 'account-change' as const, changeKinds: ['account' as const],
@@ -4584,12 +4589,14 @@ describe('usage query captured Resource adapter', () => {
         expect(afterFirstMinute, 'only demand for a replacement reading causes another attempt')
           .toEqual(rows.map(() => [attempts, attempts * recordsPerResolve]));
       }
+      const afterMountHttp = home!.requests.length;
       for (let tick = 1; tick < 10; tick++) {
         if (hasPublication) {
           const selected = contentChanged ? rows.slice(0, 1) : rows;
           for (const row of selected) {
             const time = start + tick * minute;
             row.snapshot = { ...row.snapshot, fetchedAtMs: time, observedAtMs: time,
+              subscription: { ...row.snapshot.subscription!, observedAtMs: time },
               meters: scenario === 'changed' || contentChanged ? row.snapshot.meters.map(meter => ({
                 ...meter, used: 10 + tick, remaining: 90 - tick, utilizationPct: 10 + tick,
               })) : row.snapshot.meters };
@@ -4608,7 +4615,9 @@ describe('usage query captured Resource adapter', () => {
         expect(counts[0]![0]).toBeGreaterThan(2);
         expect(counts[0]![1]).toBeGreaterThan(2);
       } else if (typedObservation) {
+        const routes = home!.requests.slice(afterMountHttp).map(request => `${request.method} ${request.path}`);
         const afterMount = counts.map(([resolves, records], index) => [resolves! - cold[index]![0]!, records! - cold[index]![1]!]);
+        expect(routes).toEqual(Array.from({ length: contentChanged ? 9 : 0 }, () => 'GET /v4/connect/qualified/provider-account-usage/record'));
         for (const openUIs of [1, 16]) {
           expect(afterMount.map(count => count.map(requests => requests * openUIs)),
             `only changed bodies for ${openUIs} independently mounted UIs`)
@@ -4625,6 +4634,7 @@ describe('usage query captured Resource adapter', () => {
           const projected = new Map(quota.map(row => [row.current?.recordId, row.current]));
           for (const { snapshot } of rows) {
             expect(projected.get(snapshot.recordId)?.fetchedAtMs).toBe(snapshot.fetchedAtMs);
+            expect(projected.get(snapshot.recordId)?.subscription).toEqual(snapshot.subscription);
             expect(projected.get(snapshot.recordId)?.meters[0]?.used).toBe(snapshot.meters[0]?.used);
           }
         }

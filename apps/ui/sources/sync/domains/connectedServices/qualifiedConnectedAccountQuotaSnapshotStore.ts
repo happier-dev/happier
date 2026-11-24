@@ -55,6 +55,7 @@ type InternalEntry = {
     loading: boolean;
     refreshing: boolean;
     error: string | null;
+    openedContent: NonNullable<Awaited<ReturnType<typeof readQualifiedConnectedAccountQuota>>>['openedContent'];
     /** Credential scope this entry was last retained for; drives eviction. */
     credentialScope: string | null;
     producerRefreshPending: boolean;
@@ -90,6 +91,7 @@ let detachProfileChanges: (() => void) | null = null;
 function clearSnapshot(entry: InternalEntry): void {
     entry.snapshot = null;
     entry.usageRecordId = null;
+    entry.openedContent = undefined;
 }
 
 function retirePendingReads(entry: InternalEntry): void {
@@ -169,6 +171,7 @@ function getOrCreateEntry(key: string): InternalEntry {
         loading: false,
         refreshing: false,
         error: null,
+        openedContent: undefined,
         credentialScope: null,
         producerRefreshPending: false,
         loadAttempted: false,
@@ -232,7 +235,7 @@ function reconcilePolling(key: string, initialReadCompleted?: boolean): void {
             && Date.now() <= entry.snapshot.fetchedAt + entry.snapshot.staleAfterMs),
         readRecordId: () => entry.usageRecordId,
         applyObservation({ fetchedAtMs }) {
-            if (!entry.snapshot || entry.error !== null || entry.producerRefreshPending) return false;
+            if (!entry.snapshot || entry.openedContent !== 'plain' || entry.error !== null || entry.producerRefreshPending) return false;
             if (fetchedAtMs > entry.snapshot.fetchedAt) {
                 entry.snapshot = { ...entry.snapshot, fetchedAt: fetchedAtMs, fetchedAtMs,
                     staleAtMs: fetchedAtMs + entry.snapshot.staleAfterMs };
@@ -331,6 +334,7 @@ async function runLoad(
                 clearSnapshot(entry);
             }
             entry.snapshot = snapshot ?? (entry.refreshing ? entry.snapshot : null);
+            entry.openedContent = snapshot ? read?.openedContent : entry.refreshing ? entry.openedContent : undefined;
             entry.usageRecordId = admitted ? read?.recordId ?? (entry.refreshing ? entry.usageRecordId : null) : null;
             const diagnostic = read?.diagnostics?.find((value) => value.kind === 'provider_http');
             // The producer removes this fact when acquisition settles, including

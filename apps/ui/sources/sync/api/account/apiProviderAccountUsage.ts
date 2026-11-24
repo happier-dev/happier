@@ -178,6 +178,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     }>): Promise<ConnectedServiceQuotaGetResultV1> {
     const transportOptions = { ...inputOptions, request: inputOptions.request ?? createServerFetchForActiveServer(inputOptions.expectedActiveServer) };
     const request = ConnectedServiceQuotaGetInputV1Schema.parse(input);
+    const addressed = inputOptions.addressedReads?.get(createCanonicalJsonSigningInput(request.source));
     // Address resolution and encrypted-byte acquisition need the captured
     // Account, not its mode. Opening still waits for the authoritative mode.
     const [{ resolution, recordJson, retainedCurrent, publication }, accountMode] = await Promise.all([(async () => {
@@ -197,12 +198,11 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
                 if (day.history && !prior.missingDays.some(missing => missing.dayStartAtMs === day.dayStartAtMs)) publication = { kind: 'observation', prior };
             }
         }
-        const addressed = inputOptions.addressedReads?.get(createCanonicalJsonSigningInput(request.source));
         if (addressed) {
             const { observation, retained } = addressed;
             const { recordId } = observation;
             const resolution = { recordId, providerAccountId: retained?.recordKey.accountSubjectId };
-            if (retained && !observation.contentChanged) {
+            if (retained && !observation.contentChanged && await inputOptions.accountMode === 'plain') {
                 return { resolution, recordJson: null, retainedCurrent: applyUsageObservationTime(retained, observation), publication };
             }
             const read = await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(recordId), transportOptions);
@@ -217,7 +217,10 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
         const recordJson = resolution ? (await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(resolution.recordId), transportOptions))?.json ?? null : null;
         return { resolution, recordJson, retainedCurrent: null, publication: resolution?.recordId === day?.recordId ? publication : undefined };
     })(), inputOptions.accountMode]);
-    let options: ProviderAccountUsageQuotaReadOptions = { ...transportOptions, accountMode };
+    // Addressed reads belong to the mounted Usage Resource. Its independent
+    // catalog subscription supplies current entered prices during composition.
+    let options: ProviderAccountUsageQuotaReadOptions = { ...transportOptions, accountMode,
+        ...(addressed ? { readEnteredMonthlyPrice: undefined } : {}) };
     throwIfAborted(options.signal); options.assertCurrent?.();
     const material = options.accountMode === 'e2ee' ? options.material ?? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
     const progressive = options.readAllHistory && (request.history || request.projection) && resolution;

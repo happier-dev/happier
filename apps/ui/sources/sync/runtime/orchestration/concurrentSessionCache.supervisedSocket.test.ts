@@ -695,7 +695,8 @@ describe('concurrent session cache supervised sockets', () => {
             id: `quota-${cursor}`, seq: cursor, createdAt: cursor,
             body: { t: 'account-change', changeKinds: ['account'],
                 entityIds: ['provider-account-usage', `provider-account-usage-record:${recordId}`], sessionSystemRecords: [] },
-            ...(contentChanged === undefined ? {} : { providerAccountUsageObservations: [{ recordId, fetchedAtMs: cursor, contentChanged }] }),
+            ...(contentChanged === undefined ? {} : { providerAccountUsageObservations: [{ recordId, fetchedAtMs: cursor,
+                observedAtMs: cursor - 1, subscriptionObservedAtMs: null, contentChanged }] }),
         });
         publish(20, false);
         expect(asOf).toBe(20);

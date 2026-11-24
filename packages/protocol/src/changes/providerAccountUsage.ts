@@ -24,6 +24,9 @@ export const ProviderAccountUsageObservationV1Schema = lazyZodSchema(() => z.str
   recordId: ProviderAccountUsageRecordIdSchema,
   fetchedAtMs: z.number().check(z.int(), z.nonnegative()),
   observedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
+  // null denotes a plain observation with no stored subscription. Absence
+  // can also mean a sealed body or a writer that did not report this clock.
+  subscriptionObservedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
   contentChanged: z.boolean(),
 }));
 
