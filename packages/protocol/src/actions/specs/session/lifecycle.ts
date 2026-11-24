@@ -436,6 +436,7 @@ function createSessionLifecycleActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.restore', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    irreversible: true,
     sideEffectClass: 'danger',
     title: 'Restore checkpoint',
     description: 'Restore a selected session checkpoint source.',

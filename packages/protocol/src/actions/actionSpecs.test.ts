@@ -4561,6 +4561,9 @@ describe('Action Spec Registry', () => {
     expect(restore.bindings?.rpcMethod).toBe('session.restore');
     expect(checkpoint.surfaces.ui).toBe(true);
     expect(restore.surfaces.ui).toBe(true);
+    expect(restore.surfaces.agent).toBe(false);
+    expect(restore.surfaces.mcp).toBe(false);
+    expect(restore.irreversible).toBe(true);
     expect(checkpoint.surfaces.rpc).toBe(true);
     expect(restore.surfaces.rpc).toBe(true);
     expect(checkpoint.placements).toEqual([]);

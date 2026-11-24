@@ -42,7 +42,7 @@ export type ScopedSessionCryptoContext =
   | Readonly<{ encryptionMode: 'plain'; sessionDataKey: null }>
   | Readonly<{ encryptionMode: 'e2ee'; sessionDataKey: Uint8Array }>
   | Readonly<{ encryptionMode: 'legacy_fallback'; sessionDataKey: null }>
-  | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null; hydrationState?: SessionDataKeyHydrationState }>;
+  | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null; httpStatus?: 404; hydrationState?: SessionDataKeyHydrationState }>;
 
 async function hydrateScopedSessionCryptoContext(params: Readonly<{
   sessionId: string;
@@ -125,7 +125,7 @@ async function fetchSessionCryptoContext(params: Readonly<SessionAddress & {
       if (isAuthenticationResponseStatus(response.status)) {
         throw createNotAuthenticatedError(response.status);
       }
-      return { encryptionMode: 'unknown', sessionDataKey: null };
+      return { encryptionMode: 'unknown', sessionDataKey: null, ...(response.status === 404 ? { httpStatus: 404 as const } : {}) };
     }
 
     const body = response.body;

@@ -12,6 +12,7 @@ import type { setSessionArchivedState } from '@/session/services/setSessionArchi
 import { SessionResumeRequestV1Schema, type SessionResumeRequestV1 } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { createSessionCheckpointActionDeps } from '@happier-dev/session-core/state';
 import type { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -209,18 +210,8 @@ export function createCliSessionLifecycleActionDeps(
       request,
       signal,
     ),
-    sessionCheckpoint: async ({ request, signal }) => await callResolvedSessionRpc(
-      request.sessionId,
-      SESSION_RPC_METHODS.SESSION_CHECKPOINT,
-      request,
-      signal,
-    ),
-    sessionRestore: async ({ request, signal }) => await callResolvedSessionRpc(
-      request.sessionId,
-      SESSION_RPC_METHODS.SESSION_RESTORE,
-      request,
-      signal,
-    ),
+    ...createSessionCheckpointActionDeps(({ sessionId, method, payload, signal }) =>
+      callResolvedSessionRpc(sessionId, method, payload, signal)),
     sessionContinuationInspect: async ({ input }) => {
       if (!params.credentials) return { status: 'answered', inspection: { type: 'unavailable', reason: 'operation_unavailable' } };
       const invocation: Parameters<typeof import('@/session/agentTransition/sessionContinuationInspection').inspectSessionContinuation>[0] = {

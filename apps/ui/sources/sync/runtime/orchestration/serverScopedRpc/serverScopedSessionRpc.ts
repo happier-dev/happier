@@ -96,6 +96,9 @@ async function callScopedSessionRpc<R, A>(params: Readonly<{
         : {}),
     });
     if (params.signal?.aborted) throw createSocketRpcAbortError();
+    if (cryptoContext.encryptionMode === 'unknown' && cryptoContext.httpStatus === 404) {
+      throw createRpcCallError({ error: 'session_not_found', errorCode: 'session_not_found' });
+    }
 
     const socket = await createEphemeralServerSocketClient(
       {

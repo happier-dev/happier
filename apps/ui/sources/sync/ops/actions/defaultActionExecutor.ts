@@ -397,6 +397,7 @@ import {
   flushWorkspaceSyncRelationship,
   terminatePersistedWorkspaceSyncRelationship,
 } from '@/sync/ops/workspaceSync';
+import { createSessionCheckpointActionDeps } from '@happier-dev/session-core/state';
 import { sessionRpcWithServerAccountScope, sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 import { createExecutionRunHostApprovalReplay } from './executionRunHostApproval';
 import { createApprovalArtifactAccess } from './approvalReading';
@@ -3341,6 +3342,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
 
     checkpointCodeRollback: async ({ request, serverId, signal }) =>
       await withAccountLifetime(signal, ownedSignal => rollbackSessionCheckpointCodeOp({ request, serverId, signal: ownedSignal })),
+
+    ...createSessionCheckpointActionDeps(params => accountContext
+      ? actionSessionRpc(params, accountContext.accountLifetime.scope)
+      : Promise.resolve({ ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' })),
 
     sessionHandoffTargetReplacementApprovalPreflight: async ({
       targetMachineId,
