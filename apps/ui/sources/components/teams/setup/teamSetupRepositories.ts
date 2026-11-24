@@ -9,7 +9,6 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import {
   buildProjectOpenDraft,
   buildProjectOpenInput,
-  selectProjectOpenDiscoveredClone,
   suggestProjectOpenDestination,
   type ProjectOpenChoiceState,
 } from '@/components/projects/activation/projectOpenChoices';
@@ -46,10 +45,7 @@ export function buildTeamSetupRepository(
   };
   let state: ProjectOpenChoiceState;
   if (adoptedPath && adoptedPath !== checkout?.rootPath) {
-    state = selectProjectOpenDiscoveredClone(base, {
-      rootPath: adoptedPath,
-      repositoryIdentity: readSourceIdentity(source)!,
-    });
+    state = { ...base, use: 'existing' };
   } else if (checkout) {
     state = { ...base, use: 'existing', checkoutId: checkout.id, checkouts: [checkout] };
   } else {
@@ -57,7 +53,11 @@ export function buildTeamSetupRepository(
     if (!destination) return null;
     state = { ...base, destination };
   }
-  const input = buildProjectOpenInput(buildProjectOpenDraft(state), state.checkouts);
+  const draft = buildProjectOpenDraft(state);
+  if (adoptedPath && !state.checkoutId && draft.source?.kind === 'source') {
+    draft.source = { ...draft.source, checkoutPath: adoptedPath };
+  }
+  const input = buildProjectOpenInput(draft, state.checkouts);
   if (!input) return null;
   const { serverId: _serverId, machineId: _machineId, ...rest } = input;
   return { id: source.id, input: rest };

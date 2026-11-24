@@ -23,7 +23,7 @@ function formatSetupSummary(setup: Extract<GovernanceApprovalSummary, { kind: 't
             const source = input.source.kind === 'folder' ? input.source.path
                 : input.source.kind === 'workspace' ? input.source.checkout?.rootPath ?? t('actionConfirmations.governance.setupWorkspace')
                 : [input.source.selector.repository.nameWithOwner, input.source.selector.provider.baseUrl,
-                    input.source.kind === 'source' && input.source.checkout?.rootPath].filter(Boolean).join(' · ');
+                    input.source.kind === 'source' && (input.source.checkoutPath ?? input.source.checkout?.rootPath)].filter(Boolean).join(' · ');
             const checkout = input.materialization;
             const destination = checkout.kind === 'clone'
                 ? `${checkout.destinationParentPath}/${checkout.destinationDirectoryName}`

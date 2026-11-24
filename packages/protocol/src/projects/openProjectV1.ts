@@ -54,6 +54,8 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
       selector: ProjectSourceRepositorySelectorV1Schema,
       defaultRef: z.optional(IdSchema), subdir: z.optional(ScmRepositoryContainedSubdirV1Schema),
       checkout: z.optional(WorkspaceAddressV2Schema),
+      /** Explicit folder already chosen for this Source, before a Workspace row exists. */
+      checkoutPath: z.optional(PathSchema),
     }),
     z.strictObject({ kind: z.literal('repository'), selector: ProjectSourceRepositorySelectorV1Schema }),
   ]),
@@ -72,6 +74,10 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   }
   if (input.materialization.kind === 'attach' && input.materialization.targetManaged && (input.source.kind !== 'folder' || input.cloneSource)) {
     context.addIssue({ code: 'custom', path: ['materialization', 'targetManaged'], message: 'Native attachment selects a folder' });
+  }
+  if (input.source.kind === 'source' && input.source.checkoutPath !== undefined
+    && (input.materialization.kind !== 'attach' || input.source.checkout !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['source', 'checkoutPath'], message: 'An existing folder is a single attachment choice' });
   }
   if ((input.source.kind === 'workspace' || input.source.kind === 'source') && input.source.checkout) {
     if (input.source.checkout.serverId !== input.serverId

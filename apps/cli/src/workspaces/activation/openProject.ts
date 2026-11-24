@@ -296,10 +296,12 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       sessionRequester: context.requesterSessionBootstrap?.attribution,
       sessionRequesterHomeServerIdentityId: context.requesterSessionBootstrap?.homeServerIdentityId });
     if (executionIdentity.kind === 'unknown') return refused(executionIdentity.reason);
+    const selectedFolder = input.source.kind === 'folder' ? input.source.path
+      : input.source.kind === 'source' ? input.source.checkoutPath : undefined;
     // Where the owner turned isolation off, a guest's own Project opens on the daemon like their Agent runs.
     const usesOwnerRoot = isHostRequesterUnrestrictedOwner(executionIdentity)
       || isRequesterOwnWorkPlacedOnDaemonForHost(executionIdentity, runtime.readAgentIsolation)
-      || input.source.kind === 'folder' && input.materialization.kind === 'attach'
+      || selectedFolder !== undefined && input.materialization.kind === 'attach'
         && executionIdentity.requester.accountId === admission.custodianAccountId;
     const ownerCloneAccount = usesOwnerRoot && input.materialization.kind === 'clone' ? input.materialization.gitAccount : undefined;
     // Native Machine management does not grant access to the daemon Account's GitHub connection.
@@ -330,7 +332,11 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       let managedCopySource: ManagedWorkspaceRefV2 | undefined;
       let facts: WorkspaceProjectFactsV1 = {};
       let parentWorkspace: WorkspaceAddressV1 | undefined;
-      if (input.source.kind === 'workspace' || input.source.kind === 'source' && input.materialization.kind !== 'clone') {
+      if (selectedFolder !== undefined) {
+        sourceDirectory = sourceRootPath = selectedFolder;
+        if (input.materialization.kind === 'attach') sourceWorkspaceRefId = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs,
+          { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: sourceRootPath })?.id;
+      } else if (input.source.kind === 'workspace' || input.source.kind === 'source' && input.materialization.kind !== 'clone') {
         const selected = input.source.kind === 'workspace' ? input.source.checkout ?? { serverId: runtime.serverId, id: input.source.workspaceId }
           : input.source.checkout;
         if (!selected) return refused('workspace_unavailable');
@@ -352,10 +358,6 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         if (input.materialization.kind === 'worktree') parentWorkspace = workspaceAddressFromRefV1(source.ref);
         facts = { ...(source.ref.repositoryIdentity ? { repositoryIdentity: source.ref.repositoryIdentity } : {}),
           ...(source.ref.source ? { source: source.ref.source } : {}) };
-      } else if (input.source.kind === 'folder') {
-        sourceDirectory = sourceRootPath = input.source.path;
-        if (input.materialization.kind === 'attach') sourceWorkspaceRefId = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs,
-          { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: sourceRootPath })?.id;
       }
       if (sourceProvenance) facts = { ...facts, source: sourceProvenance };
       if (!usesOwnerRoot) {
@@ -366,7 +368,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           ?? context.callerInputAuthorization?.binding.requestId;
         if (!materializationKey || input.materialization.kind !== 'clone'
           && !(input.materialization.kind === 'worktree' && sourceWorkspaceRefId)
-          && !(input.materialization.kind === 'attach' && (sourceWorkspaceRefId || input.source.kind === 'folder'))
+          && !(input.materialization.kind === 'attach' && (sourceWorkspaceRefId || selectedFolder !== undefined))
           && !(input.materialization.kind === 'sync' && sourceWorkspaceRefId && runtime.workspaceSyncAdapter?.preparePrivateExecution))
           return refused('workspace_private_checkout_required');
         const requesterAccount = readRequesterAccountActionContext(context.callerInputAuthorization
@@ -378,7 +380,10 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         const privateRequest = input.materialization.kind === 'clone' && selector
           ? { ...input, source: { kind: 'repository' as const, selector }, ref, subdir }
           : (input.materialization.kind === 'attach' || input.materialization.kind === 'sync' || input.materialization.kind === 'worktree') && sourceWorkspaceRefId
-            ? { ...input, source: { kind: 'workspace' as const, workspaceId: sourceWorkspaceRefId } } : input;
+            ? { ...input, ...(input.source.kind === 'source' && input.source.checkoutPath !== undefined ? { subdir } : {}),
+              source: { kind: 'workspace' as const, workspaceId: sourceWorkspaceRefId } }
+            : input.materialization.kind === 'attach' && selectedFolder !== undefined
+              ? { ...input, subdir, source: { kind: 'folder' as const, path: selectedFolder } } : input;
         privateCheckout = await preparePrivateProjectOpenCheckout({ runtime: runtime.privateCheckout!,
           ingress: context,
           requesterAccount, ...(retainedRequesterCustody ? { retainedRequesterCustody } : {}),

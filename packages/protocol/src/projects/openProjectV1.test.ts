@@ -71,6 +71,12 @@ describe('OpenProject V1 wire admission', () => {
     expect(OpenProjectInputV1Schema.safeParse({ ...input, source }).success).toBe(true);
     const checkout = { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/repo' };
     expect(OpenProjectInputV1Schema.parse({ ...input, source: { ...source, checkout } }).source).toEqual({ ...source, checkout });
+    const adopted = { ...input, source: { ...source, checkoutPath: '/repo' } };
+    expect(OpenProjectInputV1Schema.parse(adopted)).toEqual(adopted);
+    expect(OpenProjectInputV1Schema.safeParse({ ...adopted, source: { ...adopted.source, checkout } }).success).toBe(false);
+    expect(OpenProjectInputV1Schema.safeParse({ ...adopted, materialization: {
+      kind: 'clone', destinationParentPath: '/repos', destinationDirectoryName: 'another',
+    } }).success).toBe(false);
     expect(OpenProjectInputV1Schema.safeParse({ ...input, source: { ...source, checkout: { ...checkout, admitted: true } } }).success).toBe(false);
     expect(OpenProjectInputV1Schema.parse({ ...input, source: { kind: 'workspace', workspaceId: 'workspace', checkout } }).source)
       .toEqual({ kind: 'workspace', workspaceId: 'workspace', checkout });

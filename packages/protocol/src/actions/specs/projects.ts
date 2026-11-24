@@ -267,8 +267,12 @@ function createProjectContextActionSpecs() {
     outputSchema: OpenProjectResultV1Schema,
     approvalPresentation: { summary: (input: unknown) => {
       const parsed = OpenProjectInputV1Schema.safeParse(input);
-      if (!parsed.success || parsed.data.materialization.kind !== 'clone') return null;
-      const choice = parsed.data.materialization;
+      if (!parsed.success) return null;
+      const { source, machineId, materialization: choice } = parsed.data;
+      if (source.kind === 'source' && source.checkoutPath !== undefined) {
+        return `Attach ${source.selector.repository.nameWithOwner} at ${source.checkoutPath} on Machine ${machineId}. Project setup requires separate approval.`;
+      }
+      if (choice.kind !== 'clone') return null;
       return `Clone on Machine ${parsed.data.machineId}. Destination folder: ${choice.destinationParentPath}; checkout: ${choice.destinationDirectoryName}. Project setup requires separate approval.`;
     } },
     inputHints: {

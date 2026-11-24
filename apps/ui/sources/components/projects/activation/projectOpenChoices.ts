@@ -224,7 +224,8 @@ export function buildProjectOpenDraft(state: ProjectOpenChoiceState): OpenProjec
 export function buildProjectOpenInput(selection: OpenProjectDraftSelectionV1, checkouts: readonly WorkspaceRefV1[]): OpenProjectInputV1 | null {
   const { editing, ...input } = selection;
   const needsCheckout = selection.source?.kind === 'workspace'
-    || selection.source?.kind === 'source' && selection.materialization?.kind !== 'clone';
+    || selection.source?.kind === 'source' && selection.materialization?.kind !== 'clone'
+      && selection.source.checkoutPath === undefined;
   const capturedCheckout = selection.source?.kind === 'source' || selection.source?.kind === 'workspace'
     ? selection.source.checkout : undefined;
   const selectedCheckout = selection.materialization?.kind === 'clone' && selection.source?.kind === 'source'
@@ -257,7 +258,8 @@ export function buildProjectOpenInput(selection: OpenProjectDraftSelectionV1, ch
     selector: selection.source.selector,
     ...(selection.source.defaultRef ? { defaultRef: selection.source.defaultRef } : {}),
     ...(selection.source.subdir ? { subdir: selection.source.subdir } : {}),
-    ...(needsCheckout && checkout ? { checkout } : {}),
+    ...(checkout ? { checkout } : {}),
+    ...(selection.source.checkoutPath !== undefined ? { checkoutPath: selection.source.checkoutPath } : {}),
   } : undefined;
   const parsed = OpenProjectInputV1Schema.safeParse({ ...input,
     serverId: resolveServerProfileScopeIdForIdentifier(selection.serverId),

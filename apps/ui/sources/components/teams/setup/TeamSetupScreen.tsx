@@ -44,6 +44,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { GITHUB_CONNECTED_SERVICE_ROUTE } from '@/sync/domains/connectedServices/githubConnectedServiceRoute';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
   useMachineAdministrationTargetSelection,
@@ -74,6 +75,7 @@ import { findTeamSetupSourceCheckout, TeamSetupSourceChange } from './TeamSetupS
 import { useRetainedTeamSetupPlan } from './TeamSetupPlanProvider';
 import type { TeamSetupBatch } from './useTeamSetupPlan';
 import { useTeamSetupBatchProgress, type TeamSetupRepositoryPhase } from './useTeamSetupBatchProgress';
+import { useTeamSetupHeldReviews } from './useTeamSetupRepositoryProgress';
 import {
   useTeamSetupResources,
   type TeamSetupResources,
@@ -273,6 +275,7 @@ function TeamSetupPlanPage(
 
   const presetValue = resources.preset?.state.value ?? null;
   const repositories = resources.repositorySources;
+  const heldReviews = useTeamSetupHeldReviews(context.scope, repositories, props.preview);
   const githubServiceKey = resolveQualifiedConnectedAccountServiceKey(GITHUB_CONNECTED_SERVICE_ROUTE.params.serviceId);
   const [excluded, setExcluded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
@@ -324,6 +327,7 @@ function TeamSetupPlanPage(
     !!machineId &&
     !!homeId &&
     !running &&
+    heldReviews.size === 0 &&
     run.kind !== 'approval' &&
     run.kind !== 'done' &&
     (!hasPreset || !!machinePlan?.plan) &&
@@ -510,6 +514,7 @@ function TeamSetupPlanPage(
       excluded={excluded}
       onToggleRepository={toggleRepository}
       batch={currentBatch}
+      heldReviews={heldReviews}
       requirements={requirements}
       sharedKeys={sharedKeys}
       keyDisplayNames={resources.credentialDisplayNames}
@@ -557,6 +562,7 @@ export function TeamSetupPageView(
     excluded: ReadonlySet<string>;
     onToggleRepository: (sourceId: string, included: boolean) => void;
     batch: TeamSetupBatch | null;
+    heldReviews?: ReadonlyMap<string, ActionOperationProjection>;
     requirements?: ReturnType<typeof useSourceSetupRequirementNames>;
     sharedKeys: TeamSetupResources['credentials']['resources'];
     keyDisplayNames: Readonly<Record<string, string | null>>;
@@ -632,7 +638,7 @@ export function TeamSetupPageView(
         ) : undefined}
       />
     </ItemGroup>
-  ) : run.kind === 'done' || run.kind === 'approval' ? null : (
+  ) : run.kind === 'done' || run.kind === 'approval' || props.heldReviews?.size ? null : (
     <>
       <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')} children={null} />
       <MachineAdministrationTargetSelector
@@ -859,6 +865,7 @@ export function TeamSetupPageView(
               teamName={teamName}
               onStartSession={props.onStartSession}
               batch={props.batch}
+              heldReview={props.heldReviews?.get(source.id)}
               requirements={readRequirementsForSource(props.requirements?.entries.get(source.id), source.revision)}
               onRetryRequirements={props.requirements?.retry}
               disabled={running || run.kind === 'done'}
@@ -955,6 +962,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     teamName: string;
     onStartSession?: (project: OpenedProject) => void;
     batch: TeamSetupBatch | null;
+    heldReview?: ActionOperationProjection;
     requirements?: SourceSetupRequirementRead;
     onRetryRequirements?: () => void;
     disabled: boolean;
@@ -965,13 +973,15 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   const progress = useTeamSetupBatchProgress(props.batch, props.source.id, undefined, { observeOpen: false });
   const router = useRouter();
   const [choosingClone, setChoosingClone] = React.useState(false);
+  const heldReview = progress ? undefined : props.heldReview;
   const opened = progress?.readyProject;
   // The member's existing checkout of this Source on the chosen Machine, whose owner says if its shared setup moved on.
   const { checkout } = props;
   const cloneChoice = props.clonePaths && props.clonePaths.length > 1 ? props.clonePaths : null;
   const existingPath = cloneChoice ? props.adoptedPath ?? checkout?.rootPath : checkout?.rootPath ?? props.adoptedPath;
   const projectResult = progress?.openedProject;
-  const setupOperation = progress?.progress.setupOperation ?? progress?.progress.openOperation;
+  const setupOperation = heldReview ?? progress?.progress.setupOperation ?? progress?.progress.openOperation;
+  const phase = heldReview ? 'approval' : progress?.phase;
   const workspace = projectResult && 'machineId' in projectResult.workspace
     ? projectResult.workspace : null;
   const bindingsProject = workspace ?? (checkout && (!props.adoptedPath || checkout.rootPath === props.adoptedPath)
@@ -1005,7 +1015,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
         serverId: setupOperation.serverId, operationId: setupOperation.snapshot.operationId,
       }) : undefined}
       showChevron={!!setupOperation && !opened}
-      detail={progress && !(opened && props.onStartSession) ? STATUS_WORD[progress.phase]() : undefined}
+      detail={phase && !(opened && props.onStartSession) ? STATUS_WORD[phase]() : undefined}
       rightElement={
         opened && props.onStartSession ? (
           <RoundButton
@@ -1015,7 +1025,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
             title={t('teams.join.setupPage.startSession')}
             onPress={() => props.onStartSession?.(opened)}
           />
-        ) : progress ? undefined : (
+        ) : phase ? undefined : (
           <Switch
             testID={`team-setup-repository-include:${props.source.id}`}
             value={props.included}

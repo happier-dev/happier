@@ -331,6 +331,17 @@ identity plus the optional canonical Session refusal, preserving signed-out
 launch diagnostics. No migration, wire epoch, new refusal vocabulary or adapter
 is added.
 
+An Open request can attach a reviewed Source to an explicit existing
+`source.checkoutPath` before it has a Workspace id. This is a closed,
+attach-only input. It cannot also carry a qualified Workspace checkout. Open
+uses the existing Source admission and writes the admitted Source into the
+existing checkout provenance. Team Setup uses that provenance together with
+the exact workspace on the native Project Prepare hold to reopen its review.
+An origin match can suggest a folder but carries no Source authority. Existing
+Folder and qualified Workspace Open inputs keep their shape. This unreleased
+field requires matching 0.3 development Protocol, Home, daemon and UI readers.
+The 0.2 checkout at `ba3670d22d` has no Project Open request or handler.
+
 ## Member SCM analysis ownership (unreleased 0.3)
 
 Machine Run and saved SCM result invalidations optionally carry the existing

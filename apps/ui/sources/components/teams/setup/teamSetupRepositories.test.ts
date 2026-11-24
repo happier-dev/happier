@@ -31,16 +31,13 @@ describe('Team setup repositories', () => {
     });
   });
 
-  it('attaches the adopted clone through the ordinary folder Open instead of cloning', () => {
-    const repository = buildTeamSetupRepository(
-      web,
-      target,
-      '/home/mara/code/acme-web',
-    );
+  it('attaches the chosen clone with the exact reviewed Source', () => {
+    const secondSource = { ...web, id: 'acme-web-preview', defaultRef: 'preview' };
+    const repository = buildTeamSetupRepository(secondSource, target, '/home/mara/code/acme-web');
     expect(repository).toMatchObject({
-      id: 'acme-web',
+      id: 'acme-web-preview',
       input: {
-        source: { kind: 'folder', path: '/home/mara/code/acme-web' },
+        source: { kind: 'source', id: 'acme-web-preview', checkoutPath: '/home/mara/code/acme-web' },
         materialization: { kind: 'attach' },
       },
     });

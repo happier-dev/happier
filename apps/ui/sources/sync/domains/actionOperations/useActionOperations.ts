@@ -1,6 +1,8 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { useShallow } from 'zustand/react/shallow';
 
 import { actionOperationSelectors, createActionOperationSelectors, selectTerminalActionOperationState, type DeploymentTargetLinkOperationQuery, type TerminalActionOperationQuery } from './actionOperationSelectors';
 import { actionOperationStore, isActionOperationTerminal, type ActionOperationReadOwner } from './actionOperationStore';
@@ -188,6 +190,11 @@ export function useProjectSetupActionOperation(query: ActionOperationProjectWork
 
 export function useProjectHeldSetupReviewOperation(query: ActionOperationProjectWorkspaceQuery) {
     return useActionOperationSelector(() => actionOperationSelectors.selectHeldProjectSetupReview(actionOperationStore.getSnapshot(), query));
+}
+
+export function useProjectHeldSetupReviewOperations(accountId: string, workspaces: readonly WorkspaceAddressV1[]) {
+    return useActionOperationSelector(useShallow(() =>
+        actionOperationSelectors.selectHeldProjectSetupReviews(actionOperationStore.getSnapshot(), accountId, workspaces)));
 }
 
 export function useProjectServiceActionOperations(query: ActionOperationProjectServicesQuery) {

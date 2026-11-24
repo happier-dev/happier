@@ -599,10 +599,11 @@ function createTeamActionSpecs(): TeamActionSpecs {
           ...(target.appChildren ?? []).map(child => child.actionId),
         ]) : []),
         ...repositories.map(({ input }) => {
+          const checkoutPath = input.source.kind === 'source' ? input.source.checkoutPath ?? input.source.checkout?.rootPath : undefined;
           const source = input.source.kind === 'folder' ? input.source.path
             : input.source.kind === 'workspace' ? input.source.checkout?.rootPath ?? `Workspace ${input.source.workspaceId}`
             : `${input.source.selector.repository.nameWithOwner} on ${input.source.selector.provider.baseUrl}`
-              + (input.source.kind === 'source' && input.source.checkout ? ` at ${input.source.checkout.rootPath}` : '');
+              + (checkoutPath ? ` at ${checkoutPath}` : '');
           const checkout = input.materialization;
           const destination = checkout.kind === 'clone'
             ? ` → ${checkout.destinationParentPath}/${checkout.destinationDirectoryName}`

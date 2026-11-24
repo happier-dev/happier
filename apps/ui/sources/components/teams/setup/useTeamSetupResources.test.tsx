@@ -4,17 +4,85 @@ import { renderHook, renderScreen, standardCleanup, teamPolicyFixture, teamSumma
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { act } from 'react-test-renderer';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
 const { useTeamSetupResources } = await import('@/components/teams/setup/useTeamSetupResources');
+
+it('reopens an exact held checkout on cold Team Setup entry without offering a fresh Run', async () => {
+    onTestFinished(await installRealActionExecutorModuleLoader());
+    const serverId = await homes.addHome({ name: 'Setup Home', serverUrl: 'https://setup-cold-hold.example.test',
+        serverIdentityId: 'srv_setup_cold_hold', accountId: 'member', currentAccount: true, teamsEnabled: true });
+    const [{ storage }, { getActiveServerSnapshot }, { publishAppliedActiveServerSnapshot }, { resolveServerProfileScopeIdForIdentifier },
+        { actionOperationStore }, { reconcileActionOperationsOnce }, { TeamSetupScreen }, { TeamSetupPlanProvider },
+        { createFrontDoorActionExecute }, { ModalProvider }] = await Promise.all([
+        import('@/sync/domains/state/storageStore'), import('@/sync/domains/server/serverRuntime'),
+        import('@/sync/runtime/orchestration/appliedActiveServerRuntime'), import('@/sync/domains/server/serverProfiles'),
+        import('@/sync/domains/actionOperations/actionOperationStore'), import('@/sync/domains/actionOperations/actionOperationRuntime'),
+        import('./TeamSetupScreen'), import('./TeamSetupPlanProvider'),
+        import('@/sync/ops/actions/frontDoorRuntimeActionExecutor'), import('@/modal'),
+    ]);
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'member' };
+    storage.getState().activateProfileScope(scope);
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    onTestFinished(() => actionOperationStore.reset());
+    const team = teamSummaryFixture({ id: 'cold-team', policy: teamPolicyFixture({ managedDefaults: null }) });
+    homes.answer(serverId, '/v1/teams/get', { body: team });
+    const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: team.id });
+    homes.answer(serverId, summary.path, { body: { teamId: team.id, kinds: [{ kind: 'projectSources', status: 'available', count: 2 }] } });
+    const laterSource = { id: 'shared-later', revision: 1, name: 'Later checkout', audience: [], createdByAccountId: 'member',
+        repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+            repository: { nameWithOwner: 'team/later' }, protocol: 'https' } };
+    const earlierSource = { ...laterSource, id: 'shared-earlier', name: 'Earlier checkout' };
+    homes.answer(serverId, '/v1/projects/sources', { body: { ok: true, sources: [earlierSource, laterSource],
+        coverage: { complete: true, nextCursor: null } } });
+    const source = { sourceId: 'shared-later', revision: 1 };
+    const machineId = 'member-machine';
+    homes.answer(serverId, '/v1/machines/member-machine', { body: {
+        machine: createPlainMachineRowFixture({ id: machineId, accountId: scope.accountId }),
+    } });
+    const checkout = { id: 'exact-checkout', serverId: scope.serverId, machineId, rootPath: '/checkout/later', source, createdAtMs: 1 };
+    storage.getState().activateProjectAccountRowsScope(scope);
+    storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [{ ...checkout, id: 'other-checkout', rootPath: '/other',
+            source: { sourceId: earlierSource.id, revision: earlierSource.revision } }, checkout],
+        relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+    const held = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'exact-hold', revision: 1,
+        actionId: 'projects.prepare', state: 'accepted', title: 'Later checkout setup', createdAt: 2, cancellation: 'supported',
+        scope: { accountId: scope.accountId, machineId }, domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: scope.serverId,
+            machineId, workspaceRefId: checkout.id, cwd: checkout.rootPath,
+            sourceWorkspace: { serverId: scope.serverId, machineId, workspaceId: checkout.id, rootPath: checkout.rootPath } },
+        setupReview: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'held-effect',
+            reviewedEffect: { commands: [] } },
+    });
+    const screen = await renderScreen(<ModalProvider><TeamSetupPlanProvider execute={createFrontDoorActionExecute()}
+        context={{ surface: 'ui', serverId, expectedAccountId: 'member' }}>
+        <TeamSetupScreen serverId={serverId} teamId={team.id} />
+    </TeamSetupPlanProvider></ModalProvider>);
+    try {
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-repository:shared-later')).not.toBeNull());
+        const list = vi.fn(async () => ({ items: [held], nextCursor: null }));
+        await act(async () => reconcileActionOperationsOnce({ scope: { ...scope, machineId }, list }));
+        expect(screen.findByTestId('team-setup-run')).toBeNull();
+        expect(screen.findByTestId('team-setup-repository-include:shared-earlier')).not.toBeNull();
+        expect(screen.findByTestId('team-setup-repository-include:shared-later')).toBeNull();
+        await screen.pressByTestIdAsync('team-setup-repository:shared-later');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('project-setup-session-review:exact-hold')).not.toBeNull());
+        expect(list).toHaveBeenCalledOnce();
+        expect(homes.requests.some(request => /\/actions\/(projects\.open|projects\.prepare)(?:\/|$)/.test(request.path))).toBe(false);
+    } finally { await screen.unmount(); }
+});
 
 beforeEach(async () => { await homes.reset(); });
 afterEach(async () => { standardCleanup(); await homes.reset(); });

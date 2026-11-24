@@ -1808,7 +1808,7 @@ describe('Project Open RPC', () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it.each(['metadata', 'override', 'selector', 'revoked', 'repository_removed'] as const)('admits a captured Source before checkout effects (%s)', async change => {
+  it.each(['metadata', 'override', 'selector', 'revoked', 'repository_removed', 'adopted', 'adopted_revoked'] as const)('admits a captured Source before checkout effects (%s)', async change => {
     const root = await mkdtemp(join(tmpdir(), 'happier-source-open-'));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const source = { id: 'source', revision: 1, name: 'Original', createdByAccountId: 'account', audience: [],
@@ -1819,12 +1819,14 @@ describe('Project Open RPC', () => {
       ...(change === 'override' ? { subdir: 'other' } : {}),
       ...(change === 'selector' ? { repository: { ...source.repository, repository: { nameWithOwner: 'group/other', cloneUrl: 'https://forge.example/group/other.git' } } } : {}) };
     const key = { kind: 'workspace-ref' as const, serverId: 'srv_test_home', id: 'checkout' };
-    const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: { t: 'plain', v: { key,
+    const adopted = change === 'adopted' || change === 'adopted_revoked';
+    const revoked = change === 'revoked' || change === 'adopted_revoked';
+    const rows: ProjectAccountRowV1[] = adopted ? [] : [{ key, revision: 0, content: { t: 'plain', v: { key,
       value: { id: 'checkout', serverId: 'srv_test_home', machineId: 'machine', rootPath: root, createdAtMs: 1 } } } }];
     const reads: string[] = [];
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       reads.push(config.url ?? '');
-      return { status: change === 'revoked' ? 404 : 200, data: change === 'revoked'
+      return { status: revoked ? 404 : 200, data: revoked
         ? { ok: false, error: 'source_unavailable' } : { ok: true, source: current, canManage: true } };
     });
     vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
@@ -1848,13 +1850,17 @@ describe('Project Open RPC', () => {
       const result = await register(RPC_METHODS.PROJECTS_OPEN, { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example',
         machineId: 'machine', accountId: 'account', readCredentials: async () => ({ token, encryption: null }) })({
         serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'source', id: source.id, revision: source.revision,
-          selector: source.repository, subdir: source.subdir, checkout: { serverId: 'srv_test_home', workspaceId: 'checkout', machineId: 'machine', rootPath: root } },
+          selector: source.repository, subdir: source.subdir,
+          ...(adopted ? { checkoutPath: root } : { checkout: { serverId: 'srv_test_home', workspaceId: 'checkout', machineId: 'machine', rootPath: root } }) },
         ...(change === 'override' ? { subdir: 'packages/app' } : {}), materialization: change === 'selector' || change === 'revoked' || change === 'repository_removed'
           ? { kind: 'clone', destinationParentPath: root, destinationDirectoryName: 'must-not-exist' } : { kind: 'attach' },
       }, context);
       expect(reads).toEqual(['https://home.example/v1/projects/sources/source?serverId=srv_test_home']);
-      if (change === 'metadata' || change === 'override') {
-        expect(result).toMatchObject({ kind: 'opened', directory: join(root, 'packages/app'), facts: { source: { sourceId: 'source', revision: 9 } } });
+      if (change === 'metadata' || change === 'override' || change === 'adopted') {
+        expect(result).toMatchObject({ kind: 'opened', directory: join(root, 'packages/app'),
+          workspace: { machineId: 'machine', rootPath: root }, facts: { source: { sourceId: 'source', revision: 9 } } });
+        expect(rows.find(row => row.key.kind === 'workspace-ref')).toMatchObject({ content: { t: 'plain',
+          v: { value: { source: { sourceId: 'source', revision: 9 } } } } });
         expect(writes.length).toBeGreaterThan(0);
       } else {
         expect(result).toMatchObject({ kind: 'refused', code: change === 'repository_removed' ? 'needs_repository'

@@ -4,6 +4,7 @@ import { readActionOperationTaskQuestionV1, type ActionOperationSudoQuestionV1,
     type ActionOperationTaskQuestionV1 } from '@happier-dev/protocol/actions/operations/taskQuestionV1';
 import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { areServerProfileIdentifiersEquivalent } from '../server/serverProfiles';
 
 import { isActionOperationReviewHeld, isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation, type ActionOperationStoreSnapshot } from './actionOperationStore';
@@ -120,6 +121,7 @@ export type ActionOperationSelectors = Readonly<{
     selectForProjectSetup(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
     selectForProjectOpen(state: ActionOperationStoreSnapshot, query: ActionOperationProjectSourceQuery): ActionOperationProjection | null;
     selectHeldProjectSetupReview(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
+    selectHeldProjectSetupReviews(state: ActionOperationStoreSnapshot, accountId: string, workspaces: readonly WorkspaceAddressV1[]): readonly ActionOperationProjection[];
     selectForManagedMachine(state: ActionOperationStoreSnapshot, query: ActionOperationManagedMachineQuery): ActionOperationProjection | null;
     selectForMachineSetup(state: ActionOperationStoreSnapshot, query: ActionOperationMachineSetupQuery): ActionOperationProjection | null;
     selectForMachineSetupRun(state: ActionOperationStoreSnapshot, query: ActionOperationMachineSetupRunQuery): ActionOperationProjection | null;
@@ -135,6 +137,23 @@ export type ActionOperationSelectors = Readonly<{
 
 const EMPTY_OPERATIONS: readonly ActionOperationProjection[] = Object.freeze([]);
 const EMPTY_INBOX_OPERATIONS: readonly InboxActionOperationEntry[] = Object.freeze([]);
+
+function projectOperationWorkspaceKey(workspace: WorkspaceAddressV1): string | null {
+    const rootPath = normalizeWorkspaceRootPathV1(workspace.rootPath);
+    return rootPath ? JSON.stringify([workspace.serverId, workspace.machineId, workspace.workspaceId, rootPath]) : null;
+}
+
+function readProjectOperationWorkspace(operation: QualifiedActionOperation, accountId: string): WorkspaceAddressV1 | null {
+    const { snapshot } = operation;
+    const attachment = snapshot.domainRef;
+    if (snapshot.scope.accountId !== accountId || attachment?.kind !== 'projectCommand') return null;
+    const source = attachment.sourceWorkspace;
+    return source?.serverId === operation.serverId ? source : null;
+}
+
+function isProjectSetupReviewHeld(snapshot: ActionOperationSnapshotV1): boolean {
+    return !isActionOperationTerminal(snapshot.state) && snapshot.setupReview !== undefined;
+}
 
 export type DeploymentTargetLinkOperationQuery = Readonly<{
     serverId: string | null;
@@ -383,18 +402,16 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         matches: (snapshot: ActionOperationSnapshotV1) => boolean,
     ): ActionOperationProjection | null => {
         const serverId = normalizeActionOperationServerId(query.workspace.serverId);
-        const rootPath = normalizeWorkspaceRootPathV1(query.workspace.rootPath);
-        if (!serverId || !query.accountId || !rootPath) return null;
+        if (!serverId || !query.accountId) return null;
+        const workspaceKey = projectOperationWorkspaceKey({ ...query.workspace, serverId });
+        if (!workspaceKey) return null;
         selectAll(state);
         let selected: ActionOperationProjection | null = null;
         for (const [key, operation] of state.operationsByKey) {
             const snapshot = operation.snapshot;
-            const attachment = snapshot.domainRef;
-            if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId || attachment?.kind !== 'projectCommand') continue;
-            const source = attachment.sourceWorkspace;
-            if (!source || source.serverId !== serverId || source.machineId !== query.workspace.machineId
-                || source.workspaceId !== query.workspace.workspaceId || normalizeWorkspaceRootPathV1(source.rootPath) !== rootPath
-                || !matches(snapshot)) continue;
+            if (operation.serverId !== serverId || !matches(snapshot)) continue;
+            const source = readProjectOperationWorkspace(operation, query.accountId);
+            if (!source || projectOperationWorkspaceKey(source) !== workspaceKey) continue;
             // Activity dismissal affects Activity, not the checkout's last/current run.
             const projection = readProjection(state, key, operation);
             const order = selected ? compareOperations(projection, selected) : -1;
@@ -438,9 +455,21 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
     ));
 
     /** The setup review this checkout is waiting on, whichever standalone preparation or Script run holds it. */
-    const selectHeldProjectSetupReview = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery) => selectProjectOperation(state, query, snapshot => (
-        !isActionOperationTerminal(snapshot.state) && snapshot.setupReview !== undefined
-    ));
+    const selectHeldProjectSetupReview = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery) =>
+        selectProjectOperation(state, query, isProjectSetupReviewHeld);
+
+    const selectHeldProjectSetupReviews = (state: ActionOperationStoreSnapshot, accountId: string, workspaces: readonly WorkspaceAddressV1[]) => {
+        if (!accountId || workspaces.length === 0) return EMPTY_OPERATIONS;
+        const workspaceKeys = new Set(workspaces.map(projectOperationWorkspaceKey).filter(key => key !== null));
+        const reviews: ActionOperationProjection[] = [];
+        for (const [key, operation] of state.operationsByKey) {
+            if (!isProjectSetupReviewHeld(operation.snapshot)) continue;
+            const source = readProjectOperationWorkspace(operation, accountId);
+            const workspaceKey = source && projectOperationWorkspaceKey(source);
+            if (workspaceKey && workspaceKeys.has(workspaceKey)) reviews.push(readProjection(state, key, operation));
+        }
+        return reviews.sort(compareOperations);
+    };
 
     const selectForProjectServices = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectServicesQuery) => {
         const serverId = normalizeActionOperationServerId(query.serverId);
@@ -665,6 +694,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectForProjectSetup,
         selectForProjectOpen,
         selectHeldProjectSetupReview,
+        selectHeldProjectSetupReviews,
         selectForManagedMachine,
         selectForMachineSetup,
         selectForMachineSetupRun,
