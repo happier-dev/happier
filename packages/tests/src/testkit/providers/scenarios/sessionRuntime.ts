@@ -8,7 +8,8 @@ import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../../rpcCrypto';
 import { sleep } from '../../timing';
 import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
 import { createUserScopedSocketCollector } from '../../socketClient';
-import { createLegacyRpcClient } from '../../syntheticAgent/rpcClient';
+import { createEncryptedRpcClient, createLegacyRpcClient } from '../../syntheticAgent/rpcClient';
+import { unwrapSerializedJsonValue } from '../../unwrapSerializedJsonValue';
 import { enrichCapabilityProbeError } from '../harness/capabilityProbeFailure';
 import { invokeRpcAcrossMachineIds, waitForDaemonMachineIds } from './runtimeHelpers';
 
@@ -88,6 +89,7 @@ export async function callSessionScopedRpc(params: {
   method: string;
   payload: unknown;
   secret: Uint8Array;
+  encryptionVariant?: 'legacy' | 'dataKey';
   timeoutMs?: number;
 }): Promise<unknown> {
   const ui = createUserScopedSocketCollector(params.baseUrl, params.token);
@@ -103,13 +105,17 @@ export async function callSessionScopedRpc(params: {
 
   try {
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 30_000;
-    const response = await createLegacyRpcClient(ui, params.secret, 'session').call(
-      `${params.sessionId}:${params.method}`, params.payload, timeoutMs,
-    );
-    if (!response || typeof response !== 'object' || response.ok !== true) {
-      throw new Error(`session rpc ${params.method} returned non-ok response`);
+    const client = params.encryptionVariant === 'dataKey'
+      ? createEncryptedRpcClient(ui, {
+        encryptRaw: async value => encryptDataKeyBase64(value, params.secret),
+        decryptRaw: async ciphertext => decryptDataKeyBase64(ciphertext, params.secret),
+      }, 'session')
+      : createLegacyRpcClient(ui, params.secret, 'session');
+    const response = await client.call(`${params.sessionId}:${params.method}`, params.payload, timeoutMs);
+    if (!response.ok) {
+      throw new Error(`session rpc ${params.method} failed (${response.errorCode ?? 'no_error_code'})`);
     }
-    return response.result;
+    return params.encryptionVariant === 'dataKey' ? unwrapSerializedJsonValue(response.result) : response.result;
   } finally {
     ui.close();
   }

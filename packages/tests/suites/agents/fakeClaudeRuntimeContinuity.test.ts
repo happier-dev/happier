@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { fakeClaudeEchoResponseText } from '../../src/testkit/fakeClaude';
 
 import {
   readFakeClaudeRuntimeContinuityEvidence,
@@ -18,14 +19,16 @@ describe('fake Claude runtime continuity boundary control', () => {
     const logPath = join(dir, 'fake-claude.jsonl');
     const releaseFilePath = join(dir, 'release');
     const promptMarker = 'DAEMON_RUNTIME_CONTINUITY_HOLD_UNIT';
+    const prefixedPrompt = `${'startup instructions '.repeat(60)}\n\n${promptMarker}`;
     const child = spawn(
       process.execPath,
-      [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json'],
+      [fixturePath, '--output-format', 'stream-json', '--input-format', 'stream-json', '--model', 'opus'],
       {
         cwd: dir,
         env: {
           ...process.env,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
+          HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1',
           HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: 'continuity-invocation',
           HAPPIER_E2E_FAKE_CLAUDE_SESSION_ID: 'continuity-provider-session',
           HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'daemon-runtime-continuity',
@@ -52,7 +55,7 @@ describe('fake Claude runtime continuity boundary control', () => {
         type: 'message',
         message: {
           role: 'user',
-          content: [{ type: 'text', text: promptMarker }],
+          content: [{ type: 'text', text: prefixedPrompt }],
         },
       })}\n`);
 
@@ -73,9 +76,12 @@ describe('fake Claude runtime continuity boundary control', () => {
       const exit = await childExit;
       expect(exit, stderr).toEqual({ code: 0, signal: null });
       expect(stdout).toContain('FAKE_CLAUDE_OK_1');
+      expect(stdout).toContain(fakeClaudeEchoResponseText(prefixedPrompt));
+      expect(stdout).toContain('"model":"opus"');
       expect(await readFakeClaudeRuntimeContinuityEvidence(logPath)).toMatchObject({
         sdkInvocationCount: 1,
         sdkProviderPids: [child.pid],
+        userPromptPreviews: [prefixedPrompt],
         providerEffectEntries: [{
           pid: child.pid,
           sessionId: 'continuity-provider-session',

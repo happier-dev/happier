@@ -400,6 +400,9 @@ async function runSdkStreamUntilEof() {
     };
   }
 
+  const continuityScenario = scenario === 'daemon-runtime-continuity';
+  const sdkModel = (continuityScenario ? findArgValue(argv, '--model') : null) || 'fake-claude';
+
   function createSystemInitMessage() {
     const mcpServers = Object.keys(mergedMcpServers || {}).map((name) => ({
       name,
@@ -425,7 +428,7 @@ async function runSdkStreamUntilEof() {
       cwd: process.cwd(),
       tools,
       mcp_servers: mcpServers,
-      model: 'fake-claude',
+      model: sdkModel,
       permissionMode: 'default',
       slash_commands: ['/help'],
       output_style: 'default',
@@ -449,7 +452,7 @@ async function runSdkStreamUntilEof() {
         id: `fake-assistant-${processNonce}-${turn}`,
         type: 'message',
         role: 'assistant',
-        model: 'fake-claude',
+        model: sdkModel,
         content,
         stop_reason: 'end_turn',
         stop_sequence: null,
@@ -1371,10 +1374,10 @@ async function runSdkStreamUntilEof() {
       }
     }
 
-    if (
-      scenario === 'daemon-runtime-continuity'
-      && promptText.includes('DAEMON_RUNTIME_CONTINUITY_HOLD_')
-    ) {
+    const holdMarkerOffset = continuityScenario
+      ? promptText.indexOf('DAEMON_RUNTIME_CONTINUITY_HOLD_')
+      : -1;
+    if (holdMarkerOffset >= 0) {
       safeAppendJsonl(logPath, {
         type: 'runtime_continuity_provider_effect_entered',
         invocationId,
@@ -1382,7 +1385,8 @@ async function runSdkStreamUntilEof() {
         sessionId,
         turn,
         ts: Date.now(),
-        userTextPreview: promptText.slice(0, 800),
+        // Startup context can precede the test marker by several thousand characters.
+        userTextPreview: promptText.slice(holdMarkerOffset, holdMarkerOffset + 800),
       });
       await waitForRuntimeContinuityReleaseFile();
     }
@@ -1458,7 +1462,9 @@ async function runSdkStreamUntilEof() {
       continue;
     }
 
-    const assistant = createAssistantMessage([{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }]);
+    const reply = `FAKE_CLAUDE_OK_${turn}`;
+    const replyText = continuityScenario ? `${reply} ${fakeClaudeEchoResponseText(promptText)}` : reply;
+    const assistant = createAssistantMessage([{ type: 'text', text: replyText }]);
 
     emitSdk(assistant);
     emitSdk(createResultSuccess());

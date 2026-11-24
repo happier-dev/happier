@@ -9,16 +9,14 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
-import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
-import { decryptLegacyBase64, encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { fakeClaudeEchoResponseText, fakeClaudeFixturePath, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
-import { repoRootDir } from '../../src/testkit/paths';
-import { resolveTsxImportHookSpecifier } from '../../src/testkit/process/tsxImportHook';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { readFakeClaudeRuntimeContinuityEvidence, releaseFakeClaudeRuntimeContinuityTurn, waitForFakeClaudeRuntimeContinuityEffect } from '../../src/testkit/providers/fakeClaudeContinuity';
 import { callSessionScopedRpc, enqueueSessionPromptForScenario, waitForAssistantMessageContaining } from '../../src/testkit/providers/scenarios/sessionRuntime';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { fetchSessionV2 } from '../../src/testkit/sessions';
+import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
+import { fetchSessionMetadataV2, readDecryptedSessionMetadataV2 } from '../../src/testkit/sessionHandoffMetadata';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -42,7 +40,6 @@ describe('core e2e: armed model busy Send → Queued → delivered', () => {
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const baseUrl = server.baseUrl;
     const auth = await createTestAuth(baseUrl);
-    const secret = auth.accountSigningSeed;
     await seedCliAuthForTestAccount({ cliHome: daemonHomeDir, serverUrl: baseUrl, auth, mode: 'legacy' });
     const env: NodeJS.ProcessEnv = {
       ...process.env, CI: '1', HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
@@ -50,14 +47,9 @@ describe('core e2e: armed model busy Send → Queued → delivered', () => {
       HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(), HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
       HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: '1', HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: 'daemon-runtime-continuity',
       HAPPIER_E2E_FAKE_CLAUDE_RUNTIME_CONTINUITY_RELEASE_FILE: releaseFilePath,
+      HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'auto',
     };
-    const tsxHook = resolveTsxImportHookSpecifier();
-    if (!tsxHook) throw new Error('Missing source-entrypoint tsx hook');
-    // Exercise the moving checkout, without creating a release or source snapshot.
-    daemon = await startTestDaemon({ testDir, happyHomeDir: daemonHomeDir, env,
-      cliLaunchSpec: { command: process.execPath, args: ['--import', tsxHook, resolve(repoRootDir(), 'apps/cli/src/index.ts')],
-        cwd: repoRootDir(), env: { TSX_TSCONFIG_PATH: resolve(repoRootDir(), 'apps/cli/tsconfig.json') } },
-    });
+    daemon = await startTestDaemon({ testDir, happyHomeDir: daemonHomeDir, env });
     const spawned = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
       port: daemon.state.httpPort, path: '/spawn-session', controlToken: daemon.state.controlToken,
       body: { directory: workspaceDir, terminal: { mode: 'plain' },
@@ -66,7 +58,17 @@ describe('core e2e: armed model busy Send → Queued → delivered', () => {
     expect(spawned.data.success, JSON.stringify(spawned.data)).toBe(true);
     const sessionId = spawned.data.sessionId;
     if (!sessionId) throw new Error('Missing spawned Session');
-    const target = { baseUrl, token: auth.token, sessionId, secret };
+    const sessionAccess = {
+      baseUrl, token: auth.token, sessionId, machineKeys: [auth.accountMachineKey],
+      accountEncryptionMaterials: [{ type: 'legacy', secret: auth.accountSigningSeed }] as const,
+    };
+    const sessionContent = await readDecryptedSessionMetadataV2(sessionAccess);
+    if (!sessionContent.selectedSecret || !sessionContent.selectedUsesDataKeyVariant) {
+      throw new Error('Expected the spawned Session to have its own content key');
+    }
+    const target = {
+      baseUrl, token: auth.token, sessionId, secret: sessionContent.selectedSecret, encryptionVariant: 'dataKey' as const,
+    };
     const hold = `DAEMON_RUNTIME_CONTINUITY_HOLD_${randomUUID()}`;
     await enqueueSessionPromptForScenario({ ...target, text: hold });
     await waitForFakeClaudeRuntimeContinuityEffect({ logPath, promptMarker: hold });
@@ -82,8 +84,8 @@ describe('core e2e: armed model busy Send → Queued → delivered', () => {
 
     const localId = randomUUID();
     const text = `ARMED_MODEL_QUEUED_DELIVERED_${randomUUID()}`;
-    const ciphertext = encryptLegacyBase64({ role: 'user', content: { type: 'text', text }, localId,
-      meta: { source: 'ui', sentFrom: 'e2e' } }, secret);
+    const ciphertext = encryptDataKeyBase64({ role: 'user', content: { type: 'text', text }, localId,
+      meta: { source: 'ui', sentFrom: 'e2e' } }, target.secret);
     const admitted = await enqueuePendingQueueV2({ baseUrl, token: auth.token, sessionId, localId, ciphertext,
       requestedAction: { v: 1, kind: 'enqueue' } });
     expect(admitted.status).toBe(200);
@@ -91,12 +93,16 @@ describe('core e2e: armed model busy Send → Queued → delivered', () => {
     expect(queued.data.pending).toEqual(expect.arrayContaining([expect.objectContaining({ localId, status: 'queued' })]));
     expect((await readFakeClaudeRuntimeContinuityEvidence(logPath)).userPromptPreviews.some(prompt => prompt.includes(text))).toBe(false);
     await releaseFakeClaudeRuntimeContinuityTurn(releaseFilePath);
-    await waitForAssistantMessageContaining({ ...target, requiredSubstring: 'FAKE_CLAUDE_OK_2', timeoutMs: 120_000 });
+    // Applying the armed model can resume Claude in a fresh process with its own turn counter.
+    const deliveredPrompt = await waitForFakeClaudeUserText(logPath, prompt => prompt.includes(text));
+    await waitForAssistantMessageContaining({
+      ...target, requiredSubstring: fakeClaudeEchoResponseText(deliveredPrompt), timeoutMs: 120_000,
+    });
     await waitFor(async () => (await listPendingQueueV2({ baseUrl, token: auth.token, sessionId })).data.pending?.length === 0,
       { timeoutMs: 60_000 });
     expect((await readFakeClaudeRuntimeContinuityEvidence(logPath)).userPromptPreviews.filter(prompt => prompt.includes(text))).toHaveLength(1);
-    const session = await fetchSessionV2(baseUrl, auth.token, sessionId);
-    expect(decryptLegacyBase64(session.metadata, secret)).toMatchObject({ sessionModelsV1: {
+    const metadata = await fetchSessionMetadataV2(sessionAccess);
+    expect(metadata).toMatchObject({ sessionModelsV1: {
       currentModelId: selection.modelId, activeSelectionV1: { selection },
     } });
   });

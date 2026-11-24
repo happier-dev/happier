@@ -12,6 +12,7 @@ type FakeClaudeLogEntry = {
     turn?: unknown;
     hasUserText?: unknown;
     userTextPreview?: unknown;
+    userText?: unknown;
 };
 
 type ReadFakeClaudeSessionIdParams = {
@@ -43,6 +44,7 @@ export async function readFakeClaudeSdkInvocationCount(logPath: string): Promise
 export type FakeClaudeRuntimeContinuityEvidence = Readonly<{
     sdkInvocationCount: number;
     sdkProviderPids: readonly number[];
+    /** Full input when explicitly captured by the fixture, otherwise its bounded preview. */
     userPromptPreviews: readonly string[];
     providerEffectEntries: readonly Readonly<{
         pid: number;
@@ -67,13 +69,11 @@ export async function readFakeClaudeRuntimeContinuityEvidence(
                 ? [entry.pid]
                 : []
         )),
-        userPromptPreviews: entries.flatMap((entry) => (
-            entry.type === 'sdk_stdin'
-            && entry.hasUserText === true
-            && typeof entry.userTextPreview === 'string'
-                ? [entry.userTextPreview]
-                : []
-        )),
+        userPromptPreviews: entries.flatMap((entry) => {
+            if (entry.type !== 'sdk_stdin' || entry.hasUserText !== true) return [];
+            const text = typeof entry.userText === 'string' ? entry.userText : entry.userTextPreview;
+            return typeof text === 'string' ? [text] : [];
+        }),
         providerEffectEntries: entries.flatMap((entry) => (
             entry.type === 'runtime_continuity_provider_effect_entered'
             && typeof entry.pid === 'number'
