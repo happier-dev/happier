@@ -467,6 +467,7 @@ describe('Database Insights surfaces', () => {
   });
 
   it('shows the one diagnosed setup state with the producer’s setting when statement statistics are off', async () => {
+    const writeClipboard = vi.fn(async () => undefined);
     const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({
       ok: true, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } },
     }));
@@ -484,6 +485,7 @@ describe('Database Insights surfaces', () => {
         executeAction: daemon(() => extensionMissing),
         actionControl: actionControl.handler,
         replacePageLocation: async ({ subPath }) => subPath,
+        writeClipboard,
       },
     });
     try {
@@ -491,13 +493,13 @@ describe('Database Insights surfaces', () => {
       expect(
         await page.queryByText('See which statements cost the most'),
       ).toBeTruthy();
-      expect(
-        await page.queryByText(
-          "shared_preload_libraries = 'pg_stat_statements'",
-        ),
-      ).toBeTruthy();
+      // The setting travels by Copy (lab dbInsights/notEnabled); the page does not print it.
+      await page.press(await page.getByRole('button', { name: 'Copy the setting' }));
+      expect(writeClipboard).toHaveBeenCalledWith(expect.objectContaining({
+        value: "shared_preload_libraries = 'pg_stat_statements'",
+      }));
       for (const [title, task] of [
-        ['Ask an agent to enable pg_stat_statements', { kind: 'enable_pg_stat_statements', target: descriptor.target, stats: { reason: 'extension_missing' } }],
+        ['Ask an agent…', { kind: 'enable_pg_stat_statements', target: descriptor.target, stats: { reason: 'extension_missing' } }],
         ['Add telemetry to this app', { kind: 'add_telemetry', scope }],
       ] as const) {
         await act(async () => actionControl.press(title));

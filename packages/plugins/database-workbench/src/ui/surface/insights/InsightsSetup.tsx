@@ -3,16 +3,17 @@ import type { DatabaseDescriptorV1, DatabaseStatsObservationV1, DatabaseTargetV1
 import { DATABASE_STATS_ENABLE_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputHandoffResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
 import {
   Action,
   Button,
-  CodeBlock,
+  Divider,
   ErrorState,
   Row,
   Stack,
   SurfaceState,
   Text,
+  useHappierCopyFeedback,
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
@@ -132,8 +133,9 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
   </>;
 }
 
-function SetupTaskControl({ task, directory, title }: Readonly<{
-  task: DatabaseTaskEvidenceV1; directory?: string; title: string;
+function SetupTaskControl({ task, directory, title, accessibilityLabel, variant = 'secondary' }: Readonly<{
+  task: DatabaseTaskEvidenceV1; directory?: string; title: string; accessibilityLabel?: string;
+  variant?: 'secondary' | 'plain';
 }>) {
   const t = usePluginTranslation();
   const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
@@ -162,13 +164,16 @@ function SetupTaskControl({ task, directory, title }: Readonly<{
       });
     },
   });
-  return <><Action.Control {...control} title={title} variant="secondary" />
+  return <><Action.Control {...control} title={title} variant={variant}
+      {...(accessibilityLabel === undefined ? {} : { accessibilityLabel })} />
     {error ? <ErrorState layout="line" {...error} /> : null}
   </>;
 }
 
-export function AddTelemetrySetup({ scope }: Readonly<{
+export function AddTelemetrySetup({ scope, variant }: Readonly<{
   scope: Extract<WorkbenchLaunchInput['scope'], { kind: 'worktree' }>;
+  /** Beside the statistics setup it is the quieter second path; alone (an empty rail) it is the one action. */
+  variant?: 'secondary' | 'plain';
 }>) {
   const t = usePluginTranslation();
   const workspace = ProtocolWorkspaceAddressV1Schema.safeParse(scope.workspace);
@@ -177,7 +182,20 @@ export function AddTelemetrySetup({ scope }: Readonly<{
   return <SetupTaskControl
     task={{ kind: 'add_telemetry', sourceScope: { serverId, machineId }, scope }}
     directory={rootPath}
+    {...(variant === undefined ? {} : { variant })}
     title={t('plugins.database.insights.setup.addTelemetry', 'Add telemetry to this app')} />;
+}
+
+/** The setting travels by Copy; the setup state names it in its description rather than printing it (lab dbInsights). */
+function CopySetting({ setting }: Readonly<{ setting: string }>) {
+  const translate = usePluginTranslation();
+  const hostApi = usePluginHostApi();
+  const feedback = useHappierCopyFeedback();
+  return <Button variant="plain" size="small"
+    title={feedback.isCopied()
+      ? translate('plugins.database.insights.setup.copied', 'Copied')
+      : translate('plugins.database.insights.setup.copy', 'Copy the setting')}
+    onPress={() => { void feedback.copy(() => hostApi.writeClipboard(setting)); }} />;
 }
 
 /** One diagnosed setup state for the page and rail (D24 C). */
@@ -222,30 +240,30 @@ export function InsightsSetup(
       {...(remediation || canEnable || askForStatistics || worktree || props.onRetry
         ? {
             body: (
-              <Stack gap="small">
-                {remediation ? <CodeBlock
-                  code={remediation}
-                  copyLabel={translate(
-                    'plugins.database.insights.setup.copy',
-                    'Copy the setting',
-                  )}
-                  copiedLabel={translate(
-                    'plugins.database.insights.setup.copied',
-                    'Copied',
-                  )}
-                /> : null}
-                {canEnable || askForStatistics || props.onRetry ? <Row gap="small" wrap>
+              <Stack gap="medium">
+                {/* One row: the way to turn it on, then the setting itself, then a recheck (lab dbInsights/notEnabled). */}
+                {canEnable || askForStatistics || remediation || props.onRetry ? <Row gap="small" wrap justify="center">
                   {canEnable ? <EnableStatistics target={descriptor.target} onRetry={props.onRetry} /> : null}
                   {askForStatistics && sourceScope ? <SetupTaskControl
                     task={{ kind: 'enable_pg_stat_statements', engineId: 'postgresql', target, sourceScope,
                       stats: { request: STATEMENTS_BY_TOTAL_TIME, reason: props.observation.reason } }}
                     {...(machineWorkspace?.success ? { directory: machineWorkspace.data.rootPath } : {})}
-                    title={translate('plugins.database.insights.setup.askAgent', 'Ask an agent to enable pg_stat_statements')} /> : null}
+                    accessibilityLabel={translate('plugins.database.insights.setup.askAgentLabel', 'Ask an agent to enable pg_stat_statements')}
+                    title={translate('plugins.database.insights.setup.askAgent', 'Ask an agent…')} /> : null}
+                  {remediation ? <CopySetting setting={remediation} /> : null}
                   {props.onRetry ? <Button variant="plain" size="small" onPress={props.onRetry}
                     title={translate('plugins.database.retry', 'Try again')} /> : null}
                 </Row> : null}
-                {worktree ? <AddTelemetrySetup scope={{ kind: 'worktree', accountId: worktree.accountId,
-                  installationId: worktree.installationId, projectKey: worktree.projectKey, workspace: worktree.workspace }} /> : null}
+                {/* A second way to see what each request costs, ranked below the statistics setup. */}
+                {worktree ? <Stack gap="small">
+                  <Divider />
+                  <Stack gap="none">
+                    <Row><AddTelemetrySetup variant="plain" scope={{ kind: 'worktree', accountId: worktree.accountId,
+                      installationId: worktree.installationId, projectKey: worktree.projectKey, workspace: worktree.workspace }} /></Row>
+                    <Text tone="secondary" value={translate('plugins.database.insights.setup.telemetryWhy',
+                      'Prepares a session that sets up OpenTelemetry, so each request’s queries show here.')} />
+                  </Stack>
+                </Stack> : null}
               </Stack>
             ),
           }
