@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { reconnectCliActionAutomationsV1 } from '@/api/actionAutomations';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { logger } from '@/ui/logger';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createServer } from 'node:net';
@@ -1636,6 +1638,7 @@ describe('accepted Project Service declaration starter', () => {
         let revision = 0;
         vi.spyOn(axios, 'request').mockImplementation(async config => {
             const path = new URL(String(config.url)).pathname;
+            if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (path === '/v1/projects/execution/config/read') return { status: 200, data: content
                 ? { status: 'present', revision, content } : { status: 'absent' } };
@@ -1643,6 +1646,7 @@ describe('accepted Project Service declaration starter', () => {
             content = WorkspaceExecutionConfigMutationRequestV1Schema.parse(config.data).content;
             return { status: 200, data: { status: 'updated', revision: ++revision, cursor: revision } };
         });
+        reconnectCliActionAutomationsV1({ token: f.runtime.credentials!.token, serverHttpBaseUrl: 'https://home.example' });
         const relocate = createProjectServiceRelocationRoute({ serverBaseUrl: 'https://home.example', credentials: f.runtime.credentials!,
             projectManagedServices: sourceOwner, resolveWorkspaceSyncHandoffAdapter: () => null });
         const sourceLauncher = createLocalServiceLauncherRoutes({ feed: createLocalServiceLauncherFeed({
@@ -1694,7 +1698,7 @@ describe('accepted Project Service declaration starter', () => {
             return result;
         } });
         const settled = await operations.runner.waitForTerminal({ accountId: 'owner', machineId: f.workspace.machineId }, `remote-${outcome}`);
-        const reason = { confirmed: 'cancelled', unknown: 'stop_unconfirmed', unsupported: 'service_control_unsupported',
+        const reason = { confirmed: 'cancelled', unknown: 'outcome_unknown', unsupported: 'service_control_unsupported',
             stale: 'service_inputs_changed', primary: 'primary_only', missing: 'service_execution_unavailable' }[outcome];
         expect(result).toMatchObject({ ok: false, errorCode: reason });
         expect(old.snapshot().state).toBe(outcome === 'confirmed' ? 'stopped' : 'running');
@@ -2786,7 +2790,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     it('receives an immutable portable SOURCE, copies only during Start, and publishes actual worker custody without a finite slot', async () => {
         const h = await fixture(false, undefined, false, 'portable');
         h.publishSource(false);
-        expect(await h.routes.startTarget!(h.request, h.ingress, h.context)).toMatchObject({ status: 'denied', reasonCode: 'admission_unavailable' });
+        expect(await h.routes.startTarget!(h.request, h.ingress, h.context)).toMatchObject({ status: 'denied', reasonCode: 'access_denied' });
         expect(h.copies()).toBe(0);
         expect(h.owner.listProjectServices()).toEqual([]);
         h.publishSource(true);
