@@ -42,7 +42,7 @@ describe('playSoundEffect', () => {
             vi.spyOn(core, 'requireOptionalNativeModule').mockReturnValue({ isQuietModeActive: () => false });
         }
 
-        await playSoundEffect('sound_electro_pop1');
+        await playSoundEffect('sound_electro_pop1', 100);
         audio.listener?.({ playbackState: 'buffering' });
         expect(audio.removed).toBe(0);
 

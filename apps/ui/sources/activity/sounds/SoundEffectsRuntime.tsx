@@ -6,24 +6,20 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { createSessionSoundWatcher } from './createSessionSoundWatcher';
 import { playSoundEffect } from './playSoundEffect';
-import type { SoundEffectEvent, SoundEffectId } from './soundEffectCatalog';
+import type { SoundEffectEvent } from './soundEffectCatalog';
 
-function readSoundForEvent(event: SoundEffectEvent): SoundEffectId {
-    const localSettings = storage.getState().localSettings;
-    switch (event) {
-        case 'error':
-            return localSettings.soundEffectsErrorSound;
-        case 'attention':
-            return localSettings.soundEffectsAttentionSound;
-        case 'success':
-            return localSettings.soundEffectsSuccessSound;
-        case 'resume':
-            return localSettings.soundEffectsResumeSound;
-    }
-}
+const SOUND_SETTING_KEYS = {
+    error: 'soundEffectsErrorSound',
+    attention: 'soundEffectsAttentionSound',
+    success: 'soundEffectsSuccessSound',
+    resume: 'soundEffectsResumeSound',
+} as const;
 
 function play(event: SoundEffectEvent): void {
-    fireAndForget(playSoundEffect(readSoundForEvent(event)), { tag: `SoundEffectsRuntime.${event}` });
+    const settings = storage.getState().localSettings;
+    fireAndForget(playSoundEffect(settings[SOUND_SETTING_KEYS[event]], settings.soundEffectsVolumePercent), {
+        tag: `SoundEffectsRuntime.${event}`,
+    });
 }
 
 /**

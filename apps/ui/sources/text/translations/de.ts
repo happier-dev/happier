@@ -3488,6 +3488,8 @@ export const de: TranslationStructure = {
         },
         soundEffects: {
             title: "Soundeffekte",
+            volumeTitle: "Lautstärke",
+            none: "(kein Ton)",
             footer: "Nur auf diesem Gerät. Unter Android stumm, solange „Nicht stören“ aktiv ist oder der Klingelton auf lautlos oder Vibration steht. Unter iOS schaltet der Klingel-/Lautlos-Schalter ihn stumm.",
             enabledTitle: "Töne",
             enabledSubtitle: "Einen Ton abspielen, wenn sich der Status einer Sitzung ändert",

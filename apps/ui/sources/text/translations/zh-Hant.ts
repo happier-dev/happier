@@ -3478,6 +3478,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         soundEffects: {
             title: "音效",
+            volumeTitle: "音量",
+            none: "（無）",
             footer: "僅在此裝置上播放。在 Android 上，開啟勿擾模式或鈴聲設為靜音或震動時不會發聲。在 iOS 上，響鈴/靜音開關可將其靜音。",
             enabledTitle: "聲音",
             enabledSubtitle: "工作階段狀態變更時播放聲音",

@@ -3666,6 +3666,8 @@ export const zhHans: TranslationStructure = {
     },
     soundEffects: {
       title: "音效",
+      volumeTitle: "音量",
+      none: "（无）",
       footer: "仅在此设备上播放。在 Android 上，开启勿扰模式或铃声设为静音或振动时不会发声。在 iOS 上，响铃/静音开关可将其静音。",
       enabledTitle: "声音",
       enabledSubtitle: "会话状态变化时播放声音",

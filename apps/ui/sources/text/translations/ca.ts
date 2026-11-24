@@ -3574,6 +3574,8 @@ export const ca: TranslationStructure = {
         },
         soundEffects: {
             title: "Efectes de so",
+            volumeTitle: "Volum",
+            none: "(cap)",
             footer: "Només en aquest dispositiu. A Android, silenciat amb No molestis activat o amb el timbre en silenci o vibració. A iOS, l'interruptor de so/silenci el silencia.",
             enabledTitle: "Sons",
             enabledSubtitle: "Reprodueix un so quan una sessió canvia d'estat",

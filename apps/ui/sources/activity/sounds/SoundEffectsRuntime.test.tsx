@@ -26,12 +26,17 @@ vi.mock('react-native', async () => {
 // expo-audio is the native playback boundary; the runtime, bus, store and catalog stay real.
 const audio = vi.hoisted(() => ({
     played: [] as unknown[],
+    volumes: [] as number[],
     setAudioModeAsync: vi.fn(async () => {}),
 }));
 vi.mock('expo-audio', () => ({
     AudioModule: { setAudioModeAsync: audio.setAudioModeAsync },
     createAudioPlayer: (source: unknown) => ({
-        play: () => { audio.played.push(source); },
+        volume: 1,
+        play() {
+            audio.played.push(source);
+            audio.volumes.push(this.volume);
+        },
         remove: () => {},
         addListener: () => ({ remove() {} }),
     }),
@@ -76,6 +81,7 @@ describe('SoundEffectsRuntime', () => {
         Platform.OS = 'android';
         quietMode.active = false;
         audio.played.length = 0;
+        audio.volumes.length = 0;
         getStorage().getState().applyLocalSettings({ soundEffectsEnabled: true });
     });
 
@@ -126,6 +132,32 @@ describe('SoundEffectsRuntime', () => {
             SOUND_EFFECT_SOURCES['sound_electro_swell-taps'],
             SOUND_EFFECT_SOURCES.sound_electro_pop1,
         ]);
+        await act(async () => { screen.tree.unmount(); });
+    });
+
+    it('mutes one event independently and applies the shared volume to the other sounds', async () => {
+        const running = createSessionFixture({ latestTurnId: 'turn-1', latestTurnStatus: 'in_progress' });
+        putSession(running);
+        getStorage().getState().applyLocalSettings({ soundEffectsAttentionSound: 'none', soundEffectsVolumePercent: 35 });
+        const { SoundEffectsRuntime } = await import('./SoundEffectsRuntime');
+        const { notifyActivityAgentRequest } = await import('@/activity/notifications/runtime/activityLocalNotificationBus');
+        const screen = await renderScreen(<SoundEffectsRuntime />);
+
+        await act(async () => {
+            notifyActivityAgentRequest({ sessionId: running.id, requestId: 'r1', requestKind: 'permission', toolName: 'Bash', toolArgs: {} });
+            putSession({ ...running, latestTurnStatus: 'completed' });
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([SOUND_EFFECT_SOURCES['sound_electro_windows-ish1']]);
+        expect(audio.volumes).toEqual([0.35]);
+
+        await act(async () => {
+            getStorage().getState().applyLocalSettings({ soundEffectsVolumePercent: 0 });
+            putSession({ ...running, latestTurnId: 'turn-2' });
+            putSession({ ...running, latestTurnId: 'turn-2', latestTurnStatus: 'completed' });
+        });
+        await flushPlayback();
+        expect(audio.played).toEqual([SOUND_EFFECT_SOURCES['sound_electro_windows-ish1']]);
         await act(async () => { screen.tree.unmount(); });
     });
 

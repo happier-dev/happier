@@ -2,15 +2,17 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { playSoundEffect } from '@/activity/sounds/playSoundEffect';
-import { SOUND_EFFECT_IDS, type SoundEffectId } from '@/activity/sounds/soundEffectCatalog';
+import { NO_SOUND_EFFECT, SOUND_EFFECT_IDS, type SoundEffectChoice } from '@/activity/sounds/soundEffectCatalog';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { storage, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+
+import { SoundEffectsVolumeSlider } from './SoundEffectsVolumeSlider';
 
 type SoundSettingKey =
     | 'soundEffectsErrorSound'
@@ -19,7 +21,8 @@ type SoundSettingKey =
     | 'soundEffectsResumeSound';
 
 // Each sound is listed by its file name without the extension.
-const SOUND_MENU_ITEMS: ReadonlyArray<DropdownMenuItem> = SOUND_EFFECT_IDS.map((id) => ({ id, title: id }));
+type SoundMenuItem = DropdownMenuItem & { id: SoundEffectChoice };
+const SOUND_FILE_MENU_ITEMS: readonly SoundMenuItem[] = SOUND_EFFECT_IDS.map((id) => ({ id, title: id }));
 
 const SoundEffectPicker = React.memo(function SoundEffectPicker(props: Readonly<{
     settingKey: SoundSettingKey;
@@ -28,6 +31,7 @@ const SoundEffectPicker = React.memo(function SoundEffectPicker(props: Readonly<
     iconName: React.ComponentProps<typeof Icon>['name'];
     iconColor: string;
     disabled: boolean;
+    items: readonly SoundMenuItem[];
 }>) {
     const [selected, setSelected] = useLocalSettingMutable(props.settingKey);
     const [open, setOpen] = React.useState(false);
@@ -48,24 +52,45 @@ const SoundEffectPicker = React.memo(function SoundEffectPicker(props: Readonly<
                 subtitle: props.subtitle,
                 showSelectedSubtitle: false,
                 icon: <Icon name={props.iconName} size={29} color={props.iconColor} />,
-                itemProps: { disabled: props.disabled },
+                itemProps: { testID: `settings-notifications-sound-effect:${props.settingKey}`, disabled: props.disabled },
             }}
-            items={SOUND_MENU_ITEMS}
+            items={props.items}
             onSelect={(itemId) => {
-                const id = itemId as SoundEffectId;
+                const id = props.items.find((item) => item.id === itemId)?.id;
+                if (id === undefined) return;
                 setSelected(id);
                 setOpen(false);
                 // Let people hear their choice.
-                fireAndForget(playSoundEffect(id), { tag: 'SoundEffectsSettingsGroup.preview' });
+                const { soundEffectsVolumePercent } = storage.getState().localSettings;
+                fireAndForget(playSoundEffect(id, soundEffectsVolumePercent), { tag: 'SoundEffectsSettingsGroup.preview' });
             }}
         />
     );
 });
 
+function SoundEffectsVolumeRow({ disabled }: Readonly<{ disabled: boolean }>) {
+    const [volume, setVolume] = useLocalSettingMutable('soundEffectsVolumePercent');
+    const title = t('settingsNotifications.soundEffects.volumeTitle');
+    return (
+        <Item
+            title={title}
+            mode="info"
+            subtitleAccessory={
+                <SoundEffectsVolumeSlider label={title} value={volume} disabled={disabled} onValueChange={setVolume} />
+            }
+        />
+    );
+}
+
 /** Device-only sound effects for the red, yellow and green session states and usage-limit resumes. */
 export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSettingsGroup() {
     const { theme } = useUnistyles();
     const [enabled, setEnabled] = useLocalSettingMutable('soundEffectsEnabled');
+    const noneTitle = t('settingsNotifications.soundEffects.none');
+    const items = React.useMemo<readonly SoundMenuItem[]>(() => [
+        { id: NO_SOUND_EFFECT, title: noneTitle },
+        ...SOUND_FILE_MENU_ITEMS,
+    ], [noneTitle]);
 
     return (
         <ItemGroup
@@ -80,7 +105,9 @@ export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSetting
                 rightElement={<Switch value={enabled} onValueChange={(value) => setEnabled(Boolean(value))} />}
                 showChevron={false}
             />
+            <SoundEffectsVolumeRow disabled={!enabled} />
             <SoundEffectPicker
+                items={items}
                 settingKey="soundEffectsErrorSound"
                 title={t('common.error')}
                 subtitle={t('settingsNotifications.soundEffects.errorSubtitle')}
@@ -89,6 +116,7 @@ export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSetting
                 disabled={!enabled}
             />
             <SoundEffectPicker
+                items={items}
                 settingKey="soundEffectsAttentionSound"
                 title={t('settingsNotifications.soundEffects.attentionTitle')}
                 subtitle={t('settingsNotifications.soundEffects.attentionSubtitle')}
@@ -97,6 +125,7 @@ export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSetting
                 disabled={!enabled}
             />
             <SoundEffectPicker
+                items={items}
                 settingKey="soundEffectsSuccessSound"
                 title={t('settingsNotifications.soundEffects.successTitle')}
                 subtitle={t('settingsNotifications.soundEffects.successSubtitle')}
@@ -105,6 +134,7 @@ export const SoundEffectsSettingsGroup = React.memo(function SoundEffectsSetting
                 disabled={!enabled}
             />
             <SoundEffectPicker
+                items={items}
                 settingKey="soundEffectsResumeSound"
                 title={t('settingsNotifications.soundEffects.resumeTitle')}
                 subtitle={t('settingsNotifications.soundEffects.resumeSubtitle')}

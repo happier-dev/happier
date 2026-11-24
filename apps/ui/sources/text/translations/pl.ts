@@ -3794,6 +3794,8 @@ export const pl: TranslationStructure = {
     },
     soundEffects: {
       title: "Efekty dźwiękowe",
+      volumeTitle: "Głośność",
+      none: "(brak)",
       footer: "Tylko na tym urządzeniu. Na Androidzie wyciszone, gdy włączony jest tryb Nie przeszkadzać lub dzwonek jest wyciszony albo ustawiony na wibracje. Na iOS wycisza go przełącznik dzwonka.",
       enabledTitle: "Dźwięki",
       enabledSubtitle: "Odtwarzaj dźwięk, gdy zmienia się stan sesji",

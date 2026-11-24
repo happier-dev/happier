@@ -4117,6 +4117,8 @@ export const it: TranslationStructure = {
     },
     soundEffects: {
       title: "Effetti sonori",
+      volumeTitle: "Volume audio",
+      none: "(nessuno)",
       footer: "Solo su questo dispositivo. Su Android è silenzioso con Non disturbare attivo o con la suoneria in silenzioso o vibrazione. Su iOS lo silenzia l'interruttore suoneria/silenzioso.",
       enabledTitle: "Suoni",
       enabledSubtitle: "Riproduci un suono quando una sessione cambia stato",

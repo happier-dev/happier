@@ -3886,6 +3886,8 @@ export const pt: TranslationStructure = {
     },
     soundEffects: {
       title: "Efeitos sonoros",
+      volumeTitle: "Volume dos efeitos",
+      none: "(nenhum)",
       footer: "Apenas neste dispositivo. No Android, fica em silêncio com Não perturbar ativado ou com o toque em silêncio ou vibração. No iOS, o botão de toque/silêncio silencia-o.",
       enabledTitle: "Sons",
       enabledSubtitle: "Tocar um som quando uma sessão muda de estado",

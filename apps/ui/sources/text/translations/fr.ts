@@ -3488,6 +3488,8 @@ export const fr: TranslationStructure = {
         },
         soundEffects: {
             title: "Effets sonores",
+            volumeTitle: "Volume sonore",
+            none: "(aucun)",
             footer: "Sur cet appareil uniquement. Sur Android, silencieux lorsque Ne pas déranger est activé ou que la sonnerie est en mode silencieux ou vibreur. Sur iOS, le bouton Sonnerie/Silencieux le coupe.",
             enabledTitle: "Sons",
             enabledSubtitle: "Jouer un son quand une session change d'état",

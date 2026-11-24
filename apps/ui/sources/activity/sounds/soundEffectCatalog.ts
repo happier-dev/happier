@@ -19,6 +19,9 @@ export const SOUND_EFFECT_IDS = [
 ] as const;
 
 export type SoundEffectId = (typeof SOUND_EFFECT_IDS)[number];
+export const NO_SOUND_EFFECT = 'none';
+export type SoundEffectChoice = SoundEffectId | typeof NO_SOUND_EFFECT;
+export const DEFAULT_SOUND_EFFECT_VOLUME_PERCENT = 100;
 
 /**
  * The session changes that can play a sound: the red, yellow and green status colours, plus a
@@ -34,6 +37,6 @@ export const DEFAULT_SOUND_EFFECT_IDS: Readonly<Record<SoundEffectEvent, SoundEf
 });
 
 /** A stored choice for a sound that is no longer bundled falls back to that event's default. */
-export function soundEffectIdSchema(event: SoundEffectEvent) {
-    return z.enum(SOUND_EFFECT_IDS).catch(DEFAULT_SOUND_EFFECT_IDS[event]);
+export function soundEffectChoiceSchema(event: SoundEffectEvent) {
+    return z.enum([NO_SOUND_EFFECT, ...SOUND_EFFECT_IDS]).catch(DEFAULT_SOUND_EFFECT_IDS[event]);
 }

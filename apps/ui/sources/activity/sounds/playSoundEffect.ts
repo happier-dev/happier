@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 import { canPlaySoundEffectNow, prepareSoundEffectAudioSession } from '@/voice/runtime/voiceAudioMode';
 
-import type { SoundEffectId } from './soundEffectCatalog';
+import { NO_SOUND_EFFECT, type SoundEffectChoice } from './soundEffectCatalog';
 import { SOUND_EFFECT_SOURCES } from './soundEffectSources';
 
 type HappierQuietModeModule = Readonly<{
@@ -46,7 +46,8 @@ function isFailedPlaybackState(playbackState: string | undefined): boolean {
 }
 
 /** Plays one sound effect unless the device is in a quiet mode. */
-export async function playSoundEffect(id: SoundEffectId): Promise<void> {
+export async function playSoundEffect(id: SoundEffectChoice, volumePercent: number): Promise<void> {
+    if (id === NO_SOUND_EFFECT || volumePercent === 0) return;
     if (Platform.OS === 'android' && isAndroidQuietModeActive()) return;
     if (!(await prepareSoundEffectAudioSession())) return;
 
@@ -69,6 +70,7 @@ export async function playSoundEffect(id: SoundEffectId): Promise<void> {
 
     try {
         player = createAudioPlayer(SOUND_EFFECT_SOURCES[id]);
+        player.volume = volumePercent / 100;
         subscription = player.addListener('playbackStatusUpdate', (status) => {
             if (status.didJustFinish || isFailedPlaybackState(status.playbackState)) release();
         });

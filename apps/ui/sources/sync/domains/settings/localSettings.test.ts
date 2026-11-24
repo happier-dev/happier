@@ -4,6 +4,23 @@ import { THEME_PROFILE_MAX_OVERRIDES_PER_MODE } from '@/theme/profiles/themeProf
 import { applyLocalSettings, localSettingsDefaults, localSettingsParse } from './localSettings';
 
 describe('localSettingsParse', () => {
+    it('preserves existing sound choices and round-trips muted events and a shared volume', () => {
+        const existing = localSettingsParse({ soundEffectsEnabled: true, soundEffectsSuccessSound: 'sound_electro_pop1' });
+        expect(existing).toMatchObject({
+            soundEffectsEnabled: true,
+            soundEffectsSuccessSound: 'sound_electro_pop1',
+            soundEffectsVolumePercent: 100,
+        });
+
+        const saved = applyLocalSettings(existing, { soundEffectsErrorSound: 'none', soundEffectsVolumePercent: 0 });
+        expect(localSettingsParse(JSON.parse(JSON.stringify(saved)))).toMatchObject({
+            soundEffectsEnabled: true,
+            soundEffectsErrorSound: 'none',
+            soundEffectsSuccessSound: 'sound_electro_pop1',
+            soundEffectsVolumePercent: 0,
+        });
+    });
+
     it('defaults system tabs on, preserves the device opt-out, and catches malformed values without resetting preferences', () => {
         expect(localSettingsParse({})).toMatchObject({ systemTabBarEnabled: true });
         expect(localSettingsParse({ systemTabBarEnabled: false, themePreference: 'dark' })).toMatchObject({

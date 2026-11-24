@@ -23,7 +23,7 @@ import {
     LoadingIndicatorSpeedIdSchema,
     LoadingIndicatorStyleIdSchema,
 } from './loadingIndicatorStyleSetting';
-import { DEFAULT_SOUND_EFFECT_IDS, soundEffectIdSchema } from '@/activity/sounds/soundEffectCatalog';
+import { DEFAULT_SOUND_EFFECT_IDS, DEFAULT_SOUND_EFFECT_VOLUME_PERCENT, soundEffectChoiceSchema } from '@/activity/sounds/soundEffectCatalog';
 import {
     SESSION_LIST_FOLDER_SORT_MODE_DEFAULT_V1,
     SESSION_LIST_FOLDER_SORT_MODES_V1,
@@ -419,26 +419,32 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Play sound effects for session errors, attention requests and finished turns on this device',
         storageScope: 'local',
     },
+    soundEffectsVolumePercent: {
+        schema: z.number().int().min(0).max(100).catch(DEFAULT_SOUND_EFFECT_VOLUME_PERCENT),
+        default: DEFAULT_SOUND_EFFECT_VOLUME_PERCENT,
+        description: 'App playback volume for all sound effects on this device, from 0 to 100',
+        storageScope: 'local',
+    },
     soundEffectsErrorSound: {
-        schema: soundEffectIdSchema('error'),
+        schema: soundEffectChoiceSchema('error'),
         default: DEFAULT_SOUND_EFFECT_IDS.error,
         description: 'Sound played on this device when a session fails',
         storageScope: 'local',
     },
     soundEffectsAttentionSound: {
-        schema: soundEffectIdSchema('attention'),
+        schema: soundEffectChoiceSchema('attention'),
         default: DEFAULT_SOUND_EFFECT_IDS.attention,
         description: 'Sound played on this device when a session needs approval or input',
         storageScope: 'local',
     },
     soundEffectsSuccessSound: {
-        schema: soundEffectIdSchema('success'),
+        schema: soundEffectChoiceSchema('success'),
         default: DEFAULT_SOUND_EFFECT_IDS.success,
         description: 'Sound played on this device when a turn finishes',
         storageScope: 'local',
     },
     soundEffectsResumeSound: {
-        schema: soundEffectIdSchema('resume'),
+        schema: soundEffectChoiceSchema('resume'),
         default: DEFAULT_SOUND_EFFECT_IDS.resume,
         description: 'Sound played on this device when a session continues on its own after a usage limit',
         storageScope: 'local',

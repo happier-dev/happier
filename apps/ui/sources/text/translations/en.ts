@@ -3489,6 +3489,8 @@ export const en = {
         },
         soundEffects: {
             title: "Sound effects",
+            volumeTitle: "Volume",
+            none: "(none)",
             footer: "Plays on this device only. On Android, stays silent while Do Not Disturb is on or the ringer is set to silent or vibrate. On iOS, the Ring/Silent switch mutes it.",
             enabledTitle: "Sounds",
             enabledSubtitle: "Play a sound when a session changes status",
