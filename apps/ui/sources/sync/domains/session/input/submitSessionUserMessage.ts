@@ -110,13 +110,15 @@ function getErrorCode(error: unknown): string | undefined {
     return typeof code === 'string' && code.trim().length > 0 ? code : undefined;
 }
 
-function getSubmitSendFailure(error: unknown, fallback: string): Pick<SubmitSessionUserMessageResult, 'errorCode' | 'errorMessage'> {
+function getSubmitSendFailure(error: unknown, fallback: string): Pick<SubmitSessionUserMessageResult, 'errorCode' | 'errorMessage' | 'details'> {
     // Keep validation failures typed; the caller owns translated send-failure copy.
     if (error instanceof core.$ZodError) return { errorCode: 'invalid_parameters' };
     const errorCode = getErrorCode(error);
+    const details = error instanceof HappyError ? error.details : undefined;
     return {
         ...(errorCode ? { errorCode } : {}),
         errorMessage: getErrorMessage(error, fallback),
+        ...(details !== undefined ? { details } : {}),
     };
 }
 

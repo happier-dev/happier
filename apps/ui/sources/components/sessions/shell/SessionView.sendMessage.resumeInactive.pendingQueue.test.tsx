@@ -1,4 +1,3 @@
-import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -26,6 +25,7 @@ import type { Session, PendingMessage } from '@/sync/domains/state/storageTypes'
 import type { ResumeSessionResult } from '@/sync/ops/sessions';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installLegacyNativeMmkvBoundaryForTest } from '@/dev/testkit/harness/persistentUiState';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -247,7 +247,13 @@ const homeSends: Array<Readonly<{ input: ComposerSendInput; localId: string; mac
 const homeOrigin = 'https://session-pane.test';
 let sendHome: ExternalActionAccountHttpBoundary | undefined;
 let descriptorHome: ExternalActionAccountHttpBoundary | undefined;
-let homeSendResult: (localId: string) => SessionMessageSendResultV1 | Promise<SessionMessageSendResultV1>;
+const offlineHomeSendRefusal = {
+    errorCode: 'target_unavailable',
+    error: 'target_unavailable',
+    details: { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' },
+};
+type HomeSendResult = SessionMessageSendResultV1 | typeof offlineHomeSendRefusal;
+let homeSendResult: (localId: string) => HomeSendResult | Promise<HomeSendResult>;
 let resumeResponse: (call: RpcCall) => Promise<ResumeSessionResult>;
 let guestResumeHttp: Readonly<{ machine: ReturnType<typeof createPlainMachineRowFixture>;
     request: (input: Parameters<import('@/utils/system/runtimeFetch').RuntimeFetch>[0],
@@ -313,6 +319,7 @@ function configureSocket(socket: Socket) {
     });
 }
 
+const { readActionFailureDetails } = await import('@/dev/testkit/fixtures/actionFailureDetails');
 const { configureConnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
 const { installSessionPaneRuntimeTestHarness } = await import('../panes/sessionPaneRuntimeTestHarness');
 const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
@@ -622,6 +629,8 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
     }
 
     beforeEach(async () => {
+        // The mounted composer is iOS. Use native MMKV for its attachment receipt keys.
+        await installLegacyNativeMmkvBoundaryForTest();
         const home = {
             serverUrl: homeOrigin, serverIdentityId: runtime.serverIdentityId, accountId: 'account-a',
             machineId: 'm-target', installationId: 'owner-installation', tokenEpoch: 0,
@@ -629,13 +638,15 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         [sendHome, descriptorHome] = await Promise.all([
             createExternalActionAccountHttpBoundary({
                 ...home, actionId: SESSION_MESSAGE_SEND_ACTION_ID_V1,
+                failure: result => result === offlineHomeSendRefusal ? offlineHomeSendRefusal : null,
                 execute: async (authoredInput, { target, requestId }) => {
                     const input = SessionSendMessageInputSchema.parse(authoredInput);
                     if (!('message' in input) || !requestId) throw new Error('Expected a composer Send request');
                     // Home assigns a message identity when the authored input omits one.
                     const localId = input.localId ?? requestId;
                     homeSends.push({ input, localId, machineId: target.machineId });
-                    return SessionMessageSendResultV1Schema.parse(await homeSendResult(localId));
+                    const result = await homeSendResult(localId);
+                    return result === offlineHomeSendRefusal ? result : SessionMessageSendResultV1Schema.parse(result);
                 },
             }),
             createExternalActionAccountHttpBoundary({
@@ -1609,6 +1620,32 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect(readAgentInputLocalUiState(scope(), draftOwner)?.scrollY).toBe(12);
             expect(modalMockState.current?.spies.alert).toHaveBeenCalled();
             expect(pendingWrites()).toEqual([]);
+        } finally { await screen.unmount(); }
+    });
+
+    it('explains an offline Machine refusal before admission and keeps the unqueued draft', async () => {
+        await stoppedSession();
+        setMachineOnline(false);
+        homeSendResult = () => offlineHomeSendRefusal;
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Keep this unsent draft');
+            await send(screen);
+            await expectHomeSend({ message: 'Keep this unsent draft', requestedAction: { v: 1, kind: 'enqueue' } });
+            await waitForSubmittedDraft(screen);
+            await vi.waitFor(() => expect(modalMockState.current?.spies.alert).toHaveBeenCalled());
+            expect(readComposerText(findAgentInput(screen))).toBe('Keep this unsent draft');
+            expect(pendingWrites()).toEqual([]);
+            expect(storage.getState().sessionPending.s1.messages).toEqual([]);
+            expect(await loadPendingOutboxForSession('s1', scope())).toEqual([]);
+            const alert = modalMockState.current?.spies.alert.mock.calls.at(-1);
+            expect(alert?.slice(0, 2)).toEqual(['common.error', 'errors.machineNotAnswering']);
+            const technical = alert?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+            expect(technical?.onPress).toBeTypeOf('function');
+            await act(async () => { technical?.onPress?.(); });
+            expect(readActionFailureDetails(modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1])).toMatchObject({
+                code: 'target_unavailable', reason: 'machine_offline',
+            });
         } finally { await screen.unmount(); }
     });
 

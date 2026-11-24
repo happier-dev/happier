@@ -86,6 +86,17 @@ describe('the composer failure presenter', () => {
         expect(alert.disclosed).toEqual({ code: 'invalid_parameters', reasonCode: 'missing_machine_target', retryable: 'false' });
     });
 
+    it.each(['thrown', 'settled'] as const)('shows the Machine availability reason for a %s refusal', (delivery) => {
+        const code = 'target_unavailable';
+        const details = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' };
+        if (delivery === 'thrown') alertComposerError(new HappyError(code, false, { code, details }));
+        else alertComposerActionResultFailure({ type: 'send_failed', errorCode: code, errorMessage: code, details });
+        expect(openedAlert()).toMatchObject({
+            message: t('errors.machineNotAnswering'),
+            disclosed: { code: 'target_unavailable', reason: 'machine_offline' },
+        });
+    });
+
     it('keeps the readable message of an untyped Send failure and offers no empty details', () => {
         alertComposerError(new Error('Session is archived'));
         const alert = openedAlert();

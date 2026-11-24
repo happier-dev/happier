@@ -2,7 +2,7 @@ import type { RestartSessionRunnerResultV1 } from '@happier-dev/protocol/session
 
 import { presentApprovalFailure } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
 import { readRestartResultBodyKey } from '@/components/sessions/sessionRunner/staleSessionRunnerNoticePresentation';
-import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { alertActionFailure, readSafeFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
 import { HappyError } from '@/utils/errors/errors';
@@ -15,11 +15,9 @@ import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 
 /** A thrown Send or Action failure; the HappyError keeps the Action's `errorCode` and `details`. */
 export function alertComposerError(error: unknown): void {
-    const { reason, code } = presentApprovalFailure(
-        error,
-        getErrorMessage(error) || t('errors.failedToSendMessage'),
-        t('common.requestFailed'),
-    );
+    const fallback = getErrorMessage(error) || t('errors.failedToSendMessage');
+    const message = resolveActionExecutionErrorMessage(error, fallback, { closedCodesOnly: true });
+    const { reason, code } = presentApprovalFailure(error, message, t('common.requestFailed'));
     alertActionFailure({
         reason,
         code,
@@ -27,15 +25,14 @@ export function alertComposerError(error: unknown): void {
     });
 }
 
-/** A settled `{ ok: false }` Action result, which carries the same code and details a thrown one does. */
+/** A settled Action or Session submit refusal, with the producer's typed cause. */
 export function alertComposerActionResultFailure(result: unknown): void {
     const record = typeof result === 'object' && result !== null ? result as Readonly<Record<string, unknown>> : {};
     const fallback = t('common.requestFailed');
-    const { reason, code } = presentApprovalFailure(
-        record,
-        resolveActionExecutionFailureMessage(result, fallback) ?? fallback,
-        fallback,
-    );
+    const message = record.type === 'send_failed' || record.type === 'rejected'
+        ? resolveActionExecutionErrorMessage(record, fallback, { closedCodesOnly: true })
+        : resolveActionExecutionFailureMessage(result, fallback) ?? fallback;
+    const { reason, code } = presentApprovalFailure(record, message, fallback);
     alertActionFailure({
         reason,
         code,
