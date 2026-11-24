@@ -1559,8 +1559,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   async function settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest,
     context: ActionExecutorContext, replayAcknowledgement?: ActionExecuteResult,
   ): Promise<ActionExecuteFailure | Readonly<{ delivery: SessionInputAdmissionResultV1 }> | null> {
-    // Retired Publish history never reaches a current outcome publisher; replay refuses it the same way.
     if (isHistoricalPublishApprovalRequestV2(request)) {
+      // A saved withdrawal has no execution outcome to publish for retired Publish.
+      if (request.status === 'canceled' || request.status === 'rejected') return null;
       return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' };
     }
     if (hasDeferredApprovalSessionResult(request)) {

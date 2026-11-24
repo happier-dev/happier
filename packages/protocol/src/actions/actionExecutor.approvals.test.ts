@@ -251,7 +251,7 @@ it('retains qualified contributed identity when an approved automatic check sett
   expect(settlements).toEqual([qualifiedId]);
 });
 
-it.each(['approve', 'cancel', 'replay', 'settle'] as const)('keeps retired Publish approval history readable without executing its %s decision', async decision => {
+it.each(['approve', 'cancel', 'reject', 'replay', 'settle'] as const)('keeps retired Publish approval history readable without executing its %s decision', async decision => {
   // Historical PUBLISH-REMOVE-1106 V2 wire shape, before the combined Action and
   // its operation:publish admission were withdrawn. No current writer emits it.
   const actionArgs = { serverId: 'home', requestKey: 'historical-publish', hostMachineId: 'machine',
@@ -292,18 +292,23 @@ it.each(['approve', 'cancel', 'replay', 'settle'] as const)('keeps retired Publi
   expect(resolveApprovalExecutor(stored)).toEqual({ kind: 'unavailable', reason: 'invalid_input' });
   expect(resolveApprovalRequestApproveAdmission(stored)).toMatchObject({ status: 'unavailable', reason: 'legacy_request' });
   // A terminal deferred agent request would settle through its V2 outcome publisher; retired history never does.
-  let row: unknown = decision === 'replay'
+  let row = StoredApprovalRequestSchema.parse(decision === 'replay'
     ? { ...historical, status: 'approved', decision: { kind: 'approve', decidedAtMs: 2 }, updatedAtMs: 2 }
     : decision === 'settle' ? { ...historical, status: 'executed', updatedAtMs: 3, approval: { flow: 'deferred', result: 'required' },
       decision: { kind: 'approve', decidedAtMs: 2 }, execution: { ok: true, executedAtMs: 3, result: {} },
       executionOriginV1: { ...historical.executionOriginV1, surface: 'agent', authority: 'account_automation',
         caller: { kind: 'session', sessionId: 'requester', starterDepth: 0, turnDepth: 0 } } }
-    : historical;
+    : historical);
   const deploymentAction = vi.fn<NonNullable<ActionExecutorDeps['deploymentAction']>>();
   const approvalRequestOutcomePublication = vi.fn<NonNullable<ActionExecutorDeps['approvalRequestOutcomePublication']>>();
   const sessionSendMessage = vi.fn<NonNullable<ActionExecutorDeps['sessionSendMessage']>>();
   const executor = createExecutor({ deploymentAction, approvalRequestOutcomePublication, sessionSendMessage, approvalsGet: async () => row,
-    approvalsUpdate: async ({ request }) => { row = JSON.parse(JSON.stringify(request)); return { ok: true }; } });
+    approvalsUpdate: async ({ request }) => {
+      const transition = decideApprovalRequestTransition(row, request);
+      if (!transition.ok) return transition;
+      row = StoredApprovalRequestSchema.parse(request);
+      return { ok: true };
+    } });
   const read = await executor.execute('approval.request.get', { artifactId: 'historical-publish' }, { surface: 'cli' });
   expect(read).toMatchObject({ ok: true, result: { request: { v: 2, actionId: 'deployments.publish', actionArgs } } });
   for (const privateField of ['historical-private-token', 'externalActionExecutionAuthorization', 'originalActionEnvelope', 'externalActionInputSignature']) {
@@ -316,9 +321,13 @@ it.each(['approve', 'cancel', 'replay', 'settle'] as const)('keeps retired Publi
       ? { surface: 'cli', authority: 'present_user', runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'home' } : undefined);
   expect(approvalRequestOutcomePublication).not.toHaveBeenCalled();
   expect(sessionSendMessage).not.toHaveBeenCalled();
-  expect(result).toMatchObject(decision !== 'cancel'
-    ? { ok: false, errorCode: 'approval_stale' }
-    : { ok: true, result: { status: 'canceled' } });
+  if (decision === 'cancel' || decision === 'reject') {
+    const status = decision === 'cancel' ? 'canceled' : 'rejected';
+    expect(row.status).toBe(status);
+    expect(result).toMatchObject({ ok: true, result: { status } });
+  } else {
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+  }
   expect(deploymentAction).not.toHaveBeenCalled();
   expect(StoredApprovalRequestSchema.parse(row)).toMatchObject({ v: 2, actionId: 'deployments.publish' });
 });
