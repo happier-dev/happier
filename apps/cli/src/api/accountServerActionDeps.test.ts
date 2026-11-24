@@ -65,6 +65,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildActionExecuteResultFromRecordedApprovalExecution, buildApprovalDecisionResult, projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { decodeExternalActionHttpBodyV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
@@ -436,6 +437,51 @@ describe('Account API token HTTP adapter', () => {
     ] } });
     expect(await executor.execute('machines.managed.get', { homeId: 'srv_preset', managedId: 'retained-machine' }, context))
       .toMatchObject({ ok: true, result: { ...retained, opened: openedTeam } });
+
+    const sessionContext = { ...context, surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId: 'source-session', starterDepth: 0, turnDepth: 0 } } as const;
+    const savedInput = { homeId: 'srv_preset', id: team.id };
+    const retainedInput = { homeId: 'srv_preset', managedId: 'retained-machine' };
+    const encryptedSession = { ...sessionContext, sourceSessionEncryptionMode: 'e2ee' } as const;
+    expect(await executor.execute('machines.presets.get', savedInput, encryptedSession))
+      .toMatchObject({ ok: true, result: { opened: openedTeam } });
+    expect(await executor.execute('machines.managed.get', retainedInput, encryptedSession))
+      .toMatchObject({ ok: true, result: { opened: openedTeam } });
+
+    const plainSession = { ...sessionContext, sourceSessionEncryptionMode: 'plain' } as const;
+    for (const unprotectedSession of [plainSession, sessionContext]) {
+      expect(await executor.execute('machines.presets.get', savedInput, unprotectedSession))
+        .toEqual({ ok: true, result: { kind: 'found', preset: team } });
+      expect(await executor.execute('machines.managed.get', retainedInput, unprotectedSession))
+        .toEqual({ ok: true, result: retained });
+      expect(await executor.execute('machines.presets.list', { homeId: 'srv_preset' }, unprotectedSession))
+        .toEqual({ ok: true, result: { kind: 'listed', presets } });
+    }
+
+    for (const { actionId, actionArgs, sealed } of [
+      { actionId: 'machines.presets.get', actionArgs: savedInput, sealed: { kind: 'found', preset: team } },
+      { actionId: 'machines.managed.get', actionArgs: retainedInput, sealed: retained },
+      { actionId: 'machines.presets.list', actionArgs: { homeId: 'srv_preset' }, sealed: { kind: 'listed', presets } },
+    ] as const) {
+      const exec = await executor.execute(actionId, actionArgs, context);
+      if (!exec.ok) throw new Error(exec.error);
+      const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'executing', createdAtMs: 1, updatedAtMs: 2,
+        createdBy: { surface: 'agent', sessionId: 'source-session' }, requestedSurface: 'agent',
+        approval: { flow: 'deferred', result: 'required' }, actionId, actionArgs, summary: 'Read machine preset',
+        executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller: sessionContext.actionCaller,
+          serverId: 'route-preset', accountId: 'owner', actionId, requestId: 'preset-read', sessionId: 'source-session' },
+        decision: { kind: 'approve', decidedAtMs: 2 } });
+      const settled = projectSettledApprovalExecution({ request, actionId, exec, dispatchEffectAttempted: true, executedAtMs: 3 });
+      expect(settled.exec).toEqual(exec);
+      expect(settled.request.execution?.result).toEqual(sealed);
+
+      // A retained receipt from before the fix can still feed approval replay publication.
+      const historical = { ...settled.request, execution: { executedAtMs: 3, ok: true, result: exec.result } };
+      const decision = buildApprovalDecisionResult(historical);
+      expect(decision).toMatchObject({ ok: true, result: { execution: { result: sealed } } });
+      expect(JSON.stringify(decision)).not.toContain(content.name);
+      expect(buildActionExecuteResultFromRecordedApprovalExecution(historical)).toMatchObject({ ok: true, result: sealed });
+    }
   });
 
   it('keeps an own E2EE preset sealed with a typed failure when the host key is not the Account\'s current key', async () => {

@@ -27,6 +27,11 @@ export async function openCliMachinePresetsForRequester(
     signal?: AbortSignal;
   }>,
 ): Promise<ManagedMachinePresetOpenedContentV1[]> {
+  const sessionMode = params.context.sourceSessionEncryptionMode;
+  if (sessionMode ? sessionMode !== 'e2ee' : params.context.actionCaller?.kind === 'session') {
+    // Keep Home's sealed projection for any Session without an admitted E2EE transcript.
+    return [];
+  }
   const unavailable = (presetId: string, code: Extract<ManagedMachinePresetOpenedContentV1, { kind: 'unavailable' }>['code']) =>
     ({ kind: 'unavailable' as const, presetId, code });
   const presetId = (preset: ManagedMachinePresetV1 | ManagedOpaquePresetReadV1) =>

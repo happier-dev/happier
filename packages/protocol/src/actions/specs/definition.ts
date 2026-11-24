@@ -352,12 +352,11 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     (value) => typeof value === 'function',
   )),
   /**
-   * Host-private custody rule for one-shot results that must never become
-   * durable Approval Artifact result state. A present-user UI invocation keeps
-   * the existing blocking waiter alive and receives the result directly; if
-   * that live invocation is lost, the result is intentionally unrecoverable.
+   * Projected receipts retain the Action's observation result for replay.
+   * Live-only receipts also use that projection, but replay cannot stand in
+   * for the result delivered to the original invocation.
    */
-  approvalResultCustody: z.optional(z.literal('live_only')),
+  approvalResultCustody: z.optional(z.enum(['live_only', 'projected'])),
   /** Successful self-retirement permits only a live, value-free receipt when this Account can no longer settle history. */
   accountAuthorityRetirementStatuses: z.optional(z.readonly(z.array(z.string().check(z.minLength(1))).check(z.minLength(1)))),
   /**
@@ -467,13 +466,13 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
         path: ['approvalResultCustody'],
       });
     }
-    if (!value.projectObservationOutput) {
-      ctx.addIssue({
-        code: "custom",
-        message: 'live-only approval custody requires a safe observation projection',
-        path: ['projectObservationOutput'],
-      });
-    }
+  }
+  if (value.approvalResultCustody && !value.projectObservationOutput) {
+    ctx.addIssue({
+      code: "custom",
+      message: 'approval result custody requires a safe observation projection',
+      path: ['projectObservationOutput'],
+    });
   }
   if (value.approvalInputCustody === 'live_only') {
     if (resolveActionApprovalFlow(value.approval) !== 'blocking') {

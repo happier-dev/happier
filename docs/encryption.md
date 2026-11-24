@@ -2010,6 +2010,13 @@ recipient envelope and the CLI host opens the retained configuration through
 the same custody. The person opens the configuration captured for that
 Machine, which can differ from the current saved preset. Saved Secret bindings
 in both reads stay references.
+
+Session tools receive opened E2EE presets only when the originating Session's
+admitted transcript mode is E2EE. Plain Sessions and Sessions with unknown
+transcript custody receive the sealed Home result. Machine preset read
+approvals retain that sealed result in their receipt and publish the same
+projection on replay.
+
 The existing JSON storage carries this content, its explicit author-mode binding
 and Account recipient envelopes. Readers use that stored binding, including
 opaque setup references, rather than inferring mode from a content tag or the

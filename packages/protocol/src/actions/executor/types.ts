@@ -664,6 +664,8 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Host-admitted transcript mode of the originating Session, never supplied in Action input. */
+  sourceSessionEncryptionMode?: 'plain' | 'e2ee' | 'unknown';
   /** Local projection of effects already dispatched by the requester-side Setup batch. */
   onTeamSetupBatchProgress?: (progress: import('../../teams/setupBatchV1.js').TeamSetupBatchProgressV1) => void;
   /** App blocks from the accepted Setup Run, private to the signed native invocation. */

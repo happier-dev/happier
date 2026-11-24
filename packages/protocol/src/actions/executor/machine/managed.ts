@@ -200,7 +200,8 @@ async function openMachinePresetRead(actionId: string, result: unknown, deps: Ac
     const read = ManagedMachinePresetListResultV1Schema.safeParse(result);
     if (!read.success || read.data.kind !== 'listed') return result;
     const sealed = read.data.presets.filter(preset => preset.contentEncryptionMode === 'e2ee');
-    return sealed.length === 0 ? read.data : { ...read.data, opened: await open(sealed) };
+    const opened = sealed.length === 0 ? [] : await open(sealed);
+    return opened.length === 0 ? read.data : { ...read.data, opened };
   }
   return result;
 }

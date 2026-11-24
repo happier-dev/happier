@@ -19,7 +19,7 @@ import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/work
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionStoredContentEncryptionMode, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { resolveSessionRoleRpcOrigin } from '@/session/actions/sessionRoleRpcOrigin';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
@@ -206,7 +206,10 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     // Action admission.
     // The same owner read admits the Session's approval profile once; the executor's
     // profile reader does not read the Session again for this Action.
-    const admitted: { approvalProfile?: Readonly<{ approvalProfileId: string | null; approvalProfileTeamOrGroupDerived: boolean }> | null } = {};
+    const admitted: {
+      approvalProfile?: Readonly<{ approvalProfileId: string | null; approvalProfileTeamOrGroupDerived: boolean }> | null;
+      sessionEncryptionMode?: ActionExecutorContext['sourceSessionEncryptionMode'];
+    } = {};
     const callerRefusal = await runTracedExternalActionStage(
       operation.actionId, operation.requestId, 'session_action.caller_currentness', async (): Promise<SessionAccountActionRefusalReason | null> => {
       try {
@@ -219,6 +222,8 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           }), credentials && params.readAccountEncryptionMode ? params.readAccountEncryptionMode(authority.signal) : undefined]);
           if (!session || session.id !== authority.sessionId) return 'session_owner_missing';
           if (readSessionAccessProjectionRoleV1(session) !== 'owner') return 'session_not_owner';
+          admitted.sessionEncryptionMode = session.encryptionMode === undefined
+            ? 'unknown' : resolveSessionStoredContentEncryptionMode(session);
           if (credentials && accountEncryptionMode) {
             const metadata = tryDecryptSessionOwnerMetadataView({ credentials, accountEncryptionMode, rawSession: session });
             admitted.approvalProfile = metadata ? { approvalProfileId: resolveSessionApprovalProfileReferenceV1(metadata),
@@ -304,6 +309,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       surface: operationSurface, authority: 'account_automation', serverId: params.serverId,
       runtimeAccountId: readAccountIdFromToken(params.token) ?? undefined,
       actionCaller: caller.data,
+      sourceSessionEncryptionMode: admitted.sessionEncryptionMode,
       ...(witness.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const } : {}),
       ...(operation.executionRun ? {
         runtimeRunId: operation.executionRun.runId,

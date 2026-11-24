@@ -7,6 +7,7 @@ import { MachineSetupApplyResultV1Schema } from '../../machines/setup/machineSet
 import { ActionOperationAcceptedResultSchema } from '../actionExecutionResult.js';
 import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelV1.js';
 import { MachinePoolAudienceV1Schema } from '../../machines/pools/v1.js';
+import { readRecord } from '../../inputs/inputRecords.js';
 import { MACHINE_POOL_ACTION_IDS_V1, MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1, type MachinePoolActionIdV1 } from '../../machines/pools/actionsV1.js';
 import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1, MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '../../machines/managed/machinePresetActionsV1.js';
 import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1, MACHINE_PRESET_UPDATE_ACTION_ID_V1 } from '../../machines/managed/machinePresetActionIdsV1.js';
@@ -42,9 +43,19 @@ import {
   MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
   MANAGED_CANCEL_ACTION_ID_V1,
   MANAGED_EXEC_ACTION_ID_V1,
+  MANAGED_GET_ACTION_ID_V1,
   MANAGED_INSPECT_ACTION_ID_V1,
   MANAGED_POWER_SET_ACTION_ID_V1,
 } from '../../machines/managed/actionIdsV1.js';
+
+/** The existing Home result can be replayed without the requester's local opening. */
+const presetReadApprovalCustody = {
+  approvalResultCustody: 'projected',
+  projectObservationOutput: (result: unknown) => {
+    const { opened: _opened, ...sealed } = readRecord(result);
+    return sealed;
+  },
+} as const satisfies Pick<PreNormalizedActionSpec, 'approvalResultCustody' | 'projectObservationOutput'>;
 
 const titles: Record<ManagedMachineActionIdV1, string> = {
   'machines.provisioners.list': 'List machine provisioners',
@@ -204,6 +215,7 @@ function createManagedMachineActionSpecs() {
     inputHints: { title: titles[actionId], fields: MANAGED_MACHINE_INPUT_FIELDS[actionId] },
     inputSchema: ManagedMachineActionInputSchemasV1[actionId],
     outputSchema: ManagedMachineActionResultSchemasV1[actionId],
+    ...(actionId === MANAGED_GET_ACTION_ID_V1 ? presetReadApprovalCustody : {}),
     ...(isMachineSetupOperationActionIdV1(actionId)
       ? { completion: machineSetupCompletion(actionId) } : {}),
     ...(isManagedActionWithoutServerTransportV1(actionId) ? {} : {
@@ -256,6 +268,7 @@ export const MACHINE_PRESET_ACTION_SPECS: ActionSpecArrayConcat<readonly [
         ? 'The host adds opened content for end-to-end encrypted presets you can open with your Account key, including Team presets. Saved Secret bindings stay references.'
         : 'Preset changes affect future machines only.'}`,
       safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger', placements: [],
+      ...(read ? presetReadApprovalCustody : {}),
       bindings: { mcpToolName: `machines_presets_${verb}`, voiceClientToolName: `machines_presets_${verb}` },
       surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
       cli: { acceptsServerId: true, commands: [{ path: ['machines', 'presets', verb], visibility: 'canonical' }] },

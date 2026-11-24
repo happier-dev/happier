@@ -723,6 +723,7 @@ export function createHappierMcpServer(
       const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
       return accountExecutor.execute(actionId, input, {
         ...context,
+        sourceSessionEncryptionMode: client.getStoredContentEncryptionContext?.()?.mode ?? 'unknown',
         ...(actionInvocation ? { surface: toolSurface, authority: actionInvocation.authority, actionCaller: actionInvocation.caller } : {}),
         ...(witness?.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const, callerPermissionMode: witness.callerPermissionMode ?? null } : {}),
         ...(signal ? { signal } : {}),

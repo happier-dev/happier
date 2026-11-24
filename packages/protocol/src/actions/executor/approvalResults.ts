@@ -100,12 +100,8 @@ export function projectSettledApprovalExecution(args: Readonly<{
   // only a refusal before dispatch can be stamped false by settlement.
   const effectAttempted = !exec.ok && typeof exec.effectAttempted === 'boolean'
     ? exec.effectAttempted : args.dispatchEffectAttempted ? undefined : false;
-  // Private Artifact custody carries ordinary typed results back to a caller
-  // waiting on another host. Blocking flow alone does not make that result
-  // live-only. Only declared live-only results use the safe projection here;
-  // public reads and decisions independently apply the observation projection.
-  const persistedExec = actionId !== null
-    && getActionSpec(actionId).approvalResultCustody === 'live_only'
+  // Results with designated custody retain only their safe observation in the Artifact.
+  const persistedExec = actionId !== null && getActionSpec(actionId).approvalResultCustody
     ? projectActionExecutionObservation(actionId, exec)
     : exec;
   // Deferred replay has already read the raw arguments. Terminal history keeps
@@ -224,12 +220,15 @@ export function buildActionExecuteResultFromRecordedApprovalExecution(request: A
     ? request.execution.operationCredentialUses : undefined;
   if (request.execution.ok) {
     const actionId = ActionIdSchema.safeParse('actionId' in request ? request.actionId : undefined);
-    if (actionId.success && getActionSpec(actionId.data).approvalResultCustody === 'live_only') {
+    const custody = actionId.success ? getActionSpec(actionId.data).approvalResultCustody : undefined;
+    if (custody === 'live_only') {
       return withNotices({ ok: false, errorCode: 'approval_result_held', error: 'approval_result_held',
         ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) });
     }
-    return withNotices({ ok: true, result: request.execution.result,
-      ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) });
+    const result: ActionExecuteResult = { ok: true, result: request.execution.result,
+      ...(operationCredentialUses?.length ? { operationCredentialUses } : {}) };
+    return withNotices(custody === 'projected' && actionId.success
+      ? projectActionExecutionObservation(actionId.data, result) : result);
   }
   const failure = readApprovalExecutionFailure(request);
   return failure ? withNotices(operationCredentialUses?.length ? { ...failure, operationCredentialUses } : failure) : null;
