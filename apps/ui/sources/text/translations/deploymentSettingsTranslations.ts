@@ -1,6 +1,22 @@
 import { deploymentOperationalTranslations, type DeploymentOperationalTranslations } from './deploymentOperationalTranslations';
 import type { SupportedLanguage } from '../_all';
 
+const databaseAccessCopy = {
+  title: 'Database access',
+  inherited: 'Uses the template Environment’s database access',
+  editors: 'Who can edit database rows',
+  agents: 'Agent access',
+  openSettings: 'Open Environment settings',
+  askManager: 'Only an Environment manager can change access.',
+  off: 'Off',
+  levels: {
+    none: 'None',
+    read: 'Read',
+    readWriteAsk: 'Read and write (asks first)',
+    readWriteNoApproval: 'Read and write (no approval)',
+  },
+};
+
 /** English fallback for reviewed fleet membership, pending translation review. */
 export const fleetCopy = {
   title: 'Manage servers', add: 'Add a server', remove: 'Remove server',
@@ -114,6 +130,7 @@ export const restoreExtendedCopy = {
 
 /** Environment → Settings (Backups destination and keep counts, Checks): copy added by DEPLOY-COMPOSE-1107 lane L-D. */
 export type DeploymentSettingsTranslations = Readonly<{
+  databaseAccess: typeof databaseAccessCopy;
   fleet: typeof fleetCopy;
   moveToRepository: typeof moveToRepositoryCopy;
   previewEditor: typeof previewEditorCopy;
@@ -271,6 +288,7 @@ export const deploymentSettingsTranslations = {
     ...deploymentOperationalTranslations['en'],
     fleetIngressSuggestedBody: "Suggested from the Machines’ network information. Choose to save it; Domain setup will still check the route.",
     fleet: fleetCopy,
+    databaseAccess: databaseAccessCopy,
     moveToRepository: moveToRepositoryCopy,
     previewEditor: previewEditorCopy,
     restoreExtended: restoreExtendedCopy,

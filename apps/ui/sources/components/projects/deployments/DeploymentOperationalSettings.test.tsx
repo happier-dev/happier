@@ -40,6 +40,59 @@ const authoringSettings = settingsParse({ actionsSettingsV1: { v: 1, approvalWai
 } } });
 const authoringToken = createAccountTokenForTests('account-a', { currentAccount: true });
 
+it('saves Environment database editing and agent access in one reviewed revision update', async () => {
+  let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
+  let detail = createDeploymentEnvironmentDetailV1();
+  const writes: unknown[] = [];
+  home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings, token: authoringToken,
+    serverIdentityId: `srv_${'a'.repeat(32)}`,
+    handleRequest: async (path, init) => path.startsWith('/v1/deployments/environments/')
+      ? Response.json({ ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink) })
+      : boundary?.handle(new URL(path, context.endpointUrl), init) ?? null });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const { createDeploymentActions } = await import('./deploymentActions');
+  const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
+  const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
+  detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+    serverId: context.serverIdentityId!, dataEditorMode: 'off', dataAgentAccess: 'read',
+  }) });
+  const revision = detail.environment.revision;
+  boundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl,
+    serverIdentityId: context.serverIdentityId!, accountId: context.accountId, machineId: detail.environment.controllerMachineId,
+    actionId: 'deployments.environments.update', tokenEpoch: 0, execute: raw => {
+      const input = DeploymentActionInputSchemasV1['deployments.environments.update'].parse(raw);
+      writes.push({ expectedRevision: input.expectedRevision, patch: input.patch });
+      detail = { ...detail, environment: { ...detail.environment, revision: revision + 1,
+        dataEditorMode: input.patch?.dataEditorMode ?? detail.environment.dataEditorMode,
+        dataAgentAccess: input.patch?.dataAgentAccess ?? detail.environment.dataAgentAccess } };
+      return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision };
+    } });
+  const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
+    transport: createDeploymentReadTransport(context.accountLifetime) });
+  const onChanged = vi.fn();
+  const actions = createDeploymentActions(context.accountLifetime, detail.environment.projectSourceId);
+  const editing = { actions, serverId: home.scope.serverId, review: { pendingId: null, request() {}, open() {} }, onChanged };
+  const element = () => <ListPresentationProvider value="page"><DeploymentEnvironmentSettingsPanel
+    detail={{ ...detail, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(detail), memberVersions: {}, secretRevisions: [] }}
+    controller={controller} definitionDocument={{ document: '', change() {} }} lifetime={context.accountLifetime}
+    demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
+    focusSection="database-access" editing={editing} /></ListPresentationProvider>;
+  const section = 'project-deployments.environment.settings.database-access';
+  try {
+    const screen = await renderScreen(element());
+    expect(screen.findByTestId(`${section}.save`)?.props.disabled).toBe(true);
+    await screen.pressByTestIdAsync(`${section}.editors:managers`);
+    await screen.pressByTestIdAsync(`${section}.agents:none`);
+    expect(writes).toHaveLength(0);
+    await screen.pressByTestIdAsync(`${section}.save`);
+    await vi.waitFor(() => expect(onChanged).toHaveBeenCalledOnce());
+    expect(writes).toEqual([{ expectedRevision: revision, patch: { dataEditorMode: 'managers', dataAgentAccess: 'none' } }]);
+    await act(async () => screen.update(element()));
+    expect(screen.findByTestId(`${section}.save`)?.props.disabled).toBe(true);
+  } finally { controller.retire(); context.dispose(); }
+});
+
 it.each(['plain', 'e2ee'] as const)('saves and removes a literal candidate migration through Environment Settings and its real Action (%s)', async mode => {
   let boundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
   const writes: unknown[] = [];

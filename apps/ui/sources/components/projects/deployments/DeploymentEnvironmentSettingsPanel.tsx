@@ -1,5 +1,6 @@
 import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
 import { DeploymentMigrationSettings } from './DeploymentMigrationSettings';
+import { DeploymentDatabaseAccessSettings } from './DeploymentDatabaseAccessSettings';
 import { DeploymentRegistryCredentials } from './DeploymentRegistryCredentials';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import * as React from 'react';
@@ -508,6 +509,11 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             />
           ) : null}
         </ItemGroup>
+        <View ref={revealHost('database-access')} collapsable={false}>
+          <DeploymentDatabaseAccessSettings environment={detail.environment} lifetime={props.lifetime ?? null}
+            editing={editing} change={change} outcome={changeOutcome('database-access')}
+            environmentTitle={props.environmentTitle} />
+        </View>
         {/* Native backups copy a Machine's volumes and dumps; a platform Environment's data is its provider's (D14). */}
         {platformSource === null ? <View ref={revealHost('backups')} collapsable={false}>
           <BackupRows {...props} testID={section('backups')} />

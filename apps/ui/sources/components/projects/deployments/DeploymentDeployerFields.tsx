@@ -26,21 +26,35 @@ const principalKey = deploymentEnvironmentPrincipalKeyV1;
 const principalLeafId = (principal: Principal) =>
   principal.kind === 'account' ? principal.accountId : principal.kind === 'team' ? principal.teamId : principal.groupId;
 
-/** The same deployer controls author a draft and edit an existing Environment. Admission stays with the Action. */
-export function DeploymentDeployerFields(props: Readonly<{
-  mode: DeployerMode;
+type PeopleFields = Readonly<{
   principals: readonly Principal[];
   scope: ServerAccountScope | null;
   lifetime: ServerAccountScopeLifetime | null;
   source: ProjectSourceV1 | null;
   owner?: DeploymentEnvironmentReadDetailV1['environment']['owner'];
   editable: boolean;
+  onChangePrincipals: (principals: readonly Principal[]) => void;
+}>;
+
+/** The same deployer controls author a draft and edit an existing Environment. Admission stays with the Action. */
+export function DeploymentDeployerFields(props: PeopleFields & Readonly<{
+  mode: DeployerMode;
   disabled: boolean;
   onModeChange: (mode: DeployerMode) => void;
-  onChangePrincipals: (principals: readonly Principal[]) => void;
 }>) {
+  const candidates = useEnvironmentPrincipalCandidates(props);
+  return <>
+    {props.editable ? <DeployersChoice mode={props.mode}
+      chosenAvailable={candidates.teams.length > 0 || (props.source?.audience.length ?? 0) > 0 || props.mode === 'chosen'} disabled={props.disabled}
+      onChoose={props.onModeChange} /> : <Item title={t('projects.deployments.deployers')}
+      detail={deployersLabel(props.mode)} mode="info" />}
+    {props.mode === 'chosen' ? <EnvironmentPeople {...props} {...candidates} editable={props.editable && !props.disabled} /> : null}
+  </>;
+}
+
+function useEnvironmentPrincipalCandidates(props: PeopleFields) {
   // Source references provide the choices; the Action owns admission of a selected Account or Group.
-  const candidates = React.useMemo(() => {
+  return React.useMemo(() => {
     const owner = props.source?.owner ?? (props.source
       ? { kind: 'account' as const, accountId: props.source.createdByAccountId } : props.owner);
     const refs = [...(owner ? [owner] : []), ...(props.source?.audience.map(grant => grant.principal) ?? [])];
@@ -57,18 +71,20 @@ export function DeploymentDeployerFields(props: Readonly<{
     }
     return { teams: [...teams.values()], direct: [...direct.values()] };
   }, [props.source, props.owner, props.scope]);
-  return <>
-    {props.editable ? <DeployersChoice mode={props.mode}
-      chosenAvailable={candidates.teams.length > 0 || (props.source?.audience.length ?? 0) > 0 || props.mode === 'chosen'} disabled={props.disabled}
-      onChoose={props.onModeChange} /> : <Item title={t('projects.deployments.deployers')}
-      detail={deployersLabel(props.mode)} mode="info" />}
-    {props.mode === 'chosen' && props.scope ? <ChosenPeople
-      scope={props.scope} lifetime={props.lifetime} teams={candidates.teams} direct={candidates.direct} principals={props.principals}
-      editable={props.editable && !props.disabled}
+}
+
+export function DeploymentEnvironmentPeople(props: PeopleFields & Readonly<{ wholeTeams?: boolean }>) {
+  const candidates = useEnvironmentPrincipalCandidates(props);
+  return <EnvironmentPeople {...props} {...candidates} />;
+}
+
+function EnvironmentPeople(props: PeopleFields & Pick<React.ComponentProps<typeof ChosenPeople>, 'teams' | 'direct' | 'wholeTeams'>) {
+  return props.scope ? <ChosenPeople
+      scope={props.scope} lifetime={props.lifetime} teams={props.teams} direct={props.direct} principals={props.principals}
+      editable={props.editable} wholeTeams={props.wholeTeams}
       onAdd={principal => props.onChangePrincipals([...props.principals, principal])}
       onRemove={principal => props.onChangePrincipals(props.principals.filter(item => principalKey(item) !== principalKey(principal)))}
-    /> : null}
-  </>;
+    /> : null;
 }
 
 /**
@@ -104,6 +120,7 @@ function ChosenPeople(
     lifetime: ServerAccountScopeLifetime | null;
     teams: readonly TeamAddress[];
     direct: readonly ReturnType<typeof presentSharePrincipal>[];
+    wholeTeams?: boolean;
     principals: readonly Principal[];
     editable: boolean;
     onAdd: (principal: Principal) => void;
@@ -157,7 +174,7 @@ function ChosenPeople(
             testID={`${prefix}.${principal.kind}.${principalLeafId(principal)}`}
             icon={<Icon name={group ? 'users' : 'user-circle'} size={18} color={theme.colors.text.secondary} />}
             title={displayName}
-            subtitle={group ? t('projects.deployments.editors.chosenGroup') : undefined}
+            subtitle={principal.kind === 'team' ? t('shareSheet.team') : group ? t('projects.deployments.editors.chosenGroup') : undefined}
             mode="info"
             rightElement={props.editable ? (
               <IconButton
@@ -171,7 +188,8 @@ function ChosenPeople(
           />
         );
         const sourceGroup = principal.kind === 'group' && props.direct.some(candidate => principalKey(candidate.ref) === key) ? principal : undefined;
-        return sourceGroup ? <SourceGroupName key={key} scope={props.scope} principal={sourceGroup}>{render}</SourceGroupName> : render(name);
+        return principal.kind === 'team' ? <TeamName key={key} serverId={props.scope.serverId} teamId={principal.teamId}>{render}</TeamName>
+          : sourceGroup ? <SourceGroupName key={key} scope={props.scope} principal={sourceGroup}>{render}</SourceGroupName> : render(name);
       })}
       {props.editable ? <>
         {props.direct.map(candidate => {
@@ -192,6 +210,8 @@ function ChosenPeople(
         {props.teams.map((team, index) => <TeamDeployerPicker key={team.teamId}
           testID={index === 0 ? `${prefix}.add` : `${prefix}.add.${team.teamId}`}
           scope={props.scope} address={team} multiple={props.teams.length > 1}
+          onChooseTeam={props.wholeTeams && !props.principals.some(item => item.kind === 'team' && item.teamId === team.teamId)
+            ? () => props.onAdd({ kind: 'team', teamId: team.teamId }) : undefined}
           excludedGroupIds={props.principals.flatMap(item => item.kind === 'group' ? [item.groupId] : [])}
           onChoose={chosen => choose(chosen, team.teamId)} />)}
       </> : null}
@@ -222,16 +242,27 @@ function TeamDeployerPicker(props: Readonly<{
   multiple: boolean;
   testID: string;
   excludedGroupIds: readonly string[];
+  onChooseTeam?: () => void;
   onChoose: (principal: TeamCredentialAudiencePrincipal) => void;
 }>) {
-  const binding = useTeamBinding(props.address.serverId, props.address.teamId);
-  const name = binding.kind === 'bound' && binding.state.kind === 'ready' ? binding.state.team.name : t('shareSheet.team');
   const label = t('projects.deployments.editors.chosenAdd');
-  return <TeamCredentialAudiencePicker scope={props.scope} address={props.address} testID={props.testID}
-    excludedGroupIds={props.excludedGroupIds} excludedMemberIds={[]}
-    label={props.multiple ? `${label} · ${name}` : label} disabled={false} onChoose={props.onChoose} />;
+  return <TeamName serverId={props.address.serverId} teamId={props.address.teamId}>{name => <>
+    {props.onChooseTeam ? <Item testID={`${props.testID}.team`} title={name} subtitle={t('shareSheet.team')}
+      onPress={props.onChooseTeam} /> : null}
+    <TeamCredentialAudiencePicker scope={props.scope} address={props.address} testID={props.testID}
+      excludedGroupIds={props.excludedGroupIds} excludedMemberIds={[]}
+      label={props.multiple ? `${label} · ${name}` : label} disabled={false} onChoose={props.onChoose} />
+  </>}</TeamName>;
 }
 
+function TeamName({ serverId, teamId, children }: Readonly<{
+  serverId: string; teamId: string; children: (name: string) => React.ReactNode;
+}>) {
+  const binding = useTeamBinding(serverId, teamId);
+  return children(binding.kind === 'bound' && binding.state.kind === 'ready' ? binding.state.team.name : t('shareSheet.team'));
+}
+
+/** Who may deploy, in the words the Deployers control uses; the review reads the same words. */
 export function deployersLabel(mode: DeployerMode): string {
   switch (mode) {
     case 'managers':
