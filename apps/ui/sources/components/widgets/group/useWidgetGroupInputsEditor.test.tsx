@@ -185,6 +185,13 @@ describe('group inherited readings', () => {
       { path: 'period', title: 'Period', widget: 'text', contextMode: 'follow' },
       { path: 'calendar', title: 'Calendar', widget: 'text', contextMode: 'follow' },
       { path: 'count', title: 'Count', widget: 'integer', contextMode: 'follow' },
+      { path: 'retryLimit', title: 'Retry limit', widget: 'integer', contextMode: 'follow' },
+      { path: 'retrySetting', title: 'Retry setting', widget: 'integer', contextMode: 'follow' },
+      { path: 'priority', title: 'Priority', widget: 'select',
+        options: [{ value: 2, label: 'High' }] },
+      { path: 'route', title: 'Route', widget: 'text', contextMode: 'follow' },
+      { path: 'unknownChoice', title: 'Unknown choice', widget: 'select', contextMode: 'follow',
+        options: [{ value: 'listed', label: 'Listed' }] },
       { path: 'projects', title: 'Projects', widget: 'multiselect', contextMode: 'follow',
         options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }] },
       { path: 'basis', title: 'Cost basis', widget: 'select', contextMode: 'follow',
@@ -196,12 +203,16 @@ describe('group inherited readings', () => {
     period: { label: 'This page', value: { value: 'Today', label: 'Today' } },
     calendar: { label: 'This calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
     otherCalendar: { label: 'Other calendar', value: { value: 'Yesterday', label: 'Yesterday' } },
-    basis: { label: 'This page', value: { value: 'auto', label: 'Automatic' } },
+    basis: { label: 'This page', value: { value: 'auto', label: 'Default cost basis' } },
     projects: { label: 'This page', value: { value: [], label: 'All projects' } },
     work: { label: 'This project area', value: { value: ['one', 'two'], label: '2 projects' } },
+    retrySetting: { label: 'This page', value: { value: 1, label: '1' } },
+    periodAlias: { label: 'This page', value: { value: 'shared', label: 'Period option' } },
+    calendarAlias: { label: 'This page', value: { value: 'shared', label: 'Calendar option' } },
+    route: { label: 'This page', value: { value: 'listed', label: 'Listed' } },
   } satisfies NonNullable<WidgetSurfaceContext['slots']>;
   const follow = (slot: string) => ({ kind: 'context', slot } as const);
-  const pin = (value: string) => ({ kind: 'value', value } as const);
+  const pin = (value: string | number) => ({ kind: 'value', value } as const);
   const inherited = (value: string) => `widgetAdd.inheritedValue(value=${value},source=widgetFrame.followingGroup)`;
 
   const mount = async (children: readonly WidgetInputBindingsV1[], bindings: WidgetInputBindingsV1 = {}) => {
@@ -232,6 +243,35 @@ describe('group inherited readings', () => {
     expect(control.props.segments.map((segment: { selected: boolean }) => segment.selected)).toEqual([false, false]);
     await screen.pressByTestIdAsync('edit.submit');
     expect(setInputs).toHaveBeenCalledWith({});
+  });
+
+  it('names a draft retry limit with its number even when Priority uses the same number', async () => {
+    const { screen, setInputs } = await mount([{ retryLimit: follow('retrySetting') }], { priority: pin(2) });
+    const reading = () => screen.findByTestId('edit.field.retryLimit.input')?.props.placeholder;
+    expect(reading()).toBe(inherited('1'));
+    await act(async () => screen.changeTextByTestId('edit.field.retrySetting.input', '2'));
+    expect(reading()).toBe(inherited('2'));
+    await screen.pressByTestIdAsync('edit.submit');
+    expect(setInputs).toHaveBeenCalledWith({ priority: pin(2), retrySetting: pin(2) });
+  });
+
+  it('keeps the two bound slot labels when their raw string values are equal', async () => {
+    const { screen } = await mount([{ period: follow('periodAlias'), calendar: follow('route') }], { route: follow('calendarAlias') });
+    expect(screen.findByTestId('edit.field.period.input')?.props.placeholder).toBe(inherited('Period option'));
+    expect(screen.findByTestId('edit.field.calendar.input')?.props.placeholder).toBe(inherited('Calendar option'));
+  });
+
+  it('preserves the opening label for an unchanged group pin', async () => {
+    const { screen } = await mount([{ period: follow('priority') }], { priority: pin(2) });
+    expect(screen.findByTestId('edit.field.period.input')?.props.placeholder).toBe(inherited('High'));
+  });
+
+  it('leaves a choice unnamed when its bound draft input has no applicable label', async () => {
+    const { screen } = await mount([{ unknownChoice: follow('route') }]);
+    const reading = () => screen.findByTestId('edit.field.unknownChoice.control.trigger')?.props.accessibilityLabel;
+    expect(reading()).toBe(`Unknown choice: ${inherited('Listed')}`);
+    await act(async () => screen.changeTextByTestId('edit.field.route.input', 'opaque'));
+    expect(reading()).toBe('Unknown choice: common.choose');
   });
 
   it.each([

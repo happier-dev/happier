@@ -9307,7 +9307,10 @@ child-owned and credential fields are not group inputs. The editor and saved-gro
 Add pane send that child's definition to the ordinary options admission owner. In the
 group editor, the configured-input resolver checks each following child against
 the current draft and the opening page context. An unset field shows their
-agreed value or “Several values” if all resolve and disagree. Both readings say
+agreed value or “Several values” if all resolve and disagree. An agreed value
+uses the field's declared option label, the bound slot's opening label if the
+children agree on it, or the field's literal presentation. A value with no
+applicable label or literal presentation stays unnamed. Both readings say
 “Following group” in placeholder ink. Text and popup inputs use their existing
 placeholder. Segmented choices and other controls without that slot use the
 row’s secondary line. Saving a group input persists
