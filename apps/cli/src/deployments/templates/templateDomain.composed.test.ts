@@ -354,7 +354,7 @@ it.each(['allowed', 'denied Domain', 'occupied Caddy port', 'approved Create rep
                 const terminal = observedCreate && readActionOperationTerminalResultV1(observedCreate);
                 if (occupiedCaddy) {
                     expect(terminal).toMatchObject({ ok: false, errorCode: 'native_effect_failed', details: {
-                        kind: 'partial', phase: 'domains', environmentId: environment.environment.id,
+                        kind: 'partial', phase: 'domains', environmentId: environment.environment.id, projectSourceId: 'project',
                         failure: { step: 'native_execution', failure: { containerError: 'port_in_use' } },
                     } });
                 } else {

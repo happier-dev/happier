@@ -200,6 +200,7 @@ const savedSecrets = lazyZodSchema(() => z.array(z.strictObject({ name: id, phas
   source: DeploymentSecretBindingSourceV1Schema })));
 export const DeploymentTemplateInstantiationPartialV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('partial'), environmentId: z.optional(id), revision: z.optional(revision),
+  projectSourceId: z.optional(id),
   targetLinkId: z.optional(id), definition: z.optional(storedPin), savedSecrets,
   phase: z.enum(['generation', 'repository', 'environment', 'target', 'bindings', 'metadata', 'domains', 'deploy']), errorCode: id,
   repositoryChange: z.optional(ScmRepositoryFilesPullRequestResultV1Schema),

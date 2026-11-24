@@ -345,6 +345,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
         const savedSecrets: SavedSecrets = [];
         let phase: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['phase'] = 'generation';
         let environmentId: string | undefined; let revision: number | undefined; let targetLinkId: string | undefined;
+        let projectSourceId: string | undefined;
         let appliedDefinition: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'applied' }>['definition'] | undefined;
         let unknownSecret: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['unknownSecret'];
         let deployment: Extract<DeploymentTemplateInstantiateResultV1, { kind: 'partial' }>['deployment'];
@@ -410,6 +411,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 const parsed = parsedOutput.data;
                 if (!parsed.ok) return refuse(parsed.error);
                 environmentId = parsed.environmentId; revision = parsed.revision;
+                projectSourceId = parsed.projectSourceId;
             };
             if (input.destination.kind === 'repositoryPullRequest') {
                 phase = 'repository';
@@ -471,6 +473,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
             }
             if (environmentId === undefined) throw deploymentUnavailableError('deployment.template.instantiate.environment', 'incomplete');
             const created = await host.readEnvironment({ environmentId, context });
+            projectSourceId ??= created.environment.projectSourceId;
             targetLinkId = created.environment.runtimeTargetLinkId;
             const selectedTarget = input.target;
             if (selectedTarget && (!targetLinkId || !created.targetLinks.some(item => item.targetLink.id === targetLinkId
@@ -548,7 +551,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                     if (settled.data.domain.state === 'failed') return refuse('native_route_unavailable');
                 }
             }
-            return { kind: 'applied', environmentId: environmentId!, revision: revision!, projectSourceId: created.environment.projectSourceId,
+            return { kind: 'applied', environmentId: environmentId!, revision: revision!, projectSourceId,
                 targetLinkId, definition: appliedDefinition, savedSecrets,
                 ...(deployment ? { deployment } : {}) };
         } catch (error) {
@@ -563,6 +566,7 @@ export function createDeploymentTemplateInstantiationForHost(host: Host) {
                 requiredFact: recovery.requiredFact, remedy: recovery.remedy,
                 ...(domainFailure?.success ? { failure: domainFailure.data } : {}),
                 ...(environmentId ? { environmentId, revision } : {}), ...(targetLinkId ? { targetLinkId } : {}),
+                ...(projectSourceId ? { projectSourceId } : {}),
                 ...(deployment ? { deployment } : {}),
                 ...(repositoryChange ? { repositoryChange } : {}),
                 ...(appliedDefinition ? { definition: appliedDefinition } : {}), ...(unknownSecret ? { unknownSecret } : {}) };

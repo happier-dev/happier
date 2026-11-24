@@ -178,8 +178,11 @@ pinned Store listing for Review. Template preparation Actions return
 `registries.items.read` request in `details.nextAction`.
 
 A confirmed catalog Create on a Machine retains its terminal Action result
-through the reviewed first Deploy. If the reply is lost, the wizard observes
-the original Create by request identity. If that result still cannot be
+through the reviewed first Deploy. Once the Environment has been saved,
+terminal progress can carry its Project Source ID even when a later
+step is refused. Earlier progress can omit the Source ID. If the reply
+is lost, the wizard observes the original Create by request identity.
+If that result still cannot be
 confirmed, it links to the known Environment or Receipt when possible, or
 to Services on the selected Home, so the person can check before creating again.
 
