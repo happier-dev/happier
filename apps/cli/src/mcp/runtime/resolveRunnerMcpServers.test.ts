@@ -232,7 +232,7 @@ describe('resolveRunnerMcpServers catalog admission', () => {
       localWorkflow: kind === 'server-only-scope', machineId: 'machine-1', directory: '/tmp/repo',
       includeHappierMcpServer: false })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
   });
-  it.each(['member', 'owner'])('admits only the owner stdio profile despite an unrelated Account publication (%s)', async accountId => {
+  it.each(['member', 'owner'])('admits the requester stdio profile on an isolation-off Machine despite an unrelated Account publication (%s)', async accountId => {
     vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
     const homeId = 'srv_test-home';
     const profileId = 'test-home';
@@ -264,17 +264,19 @@ describe('resolveRunnerMcpServers catalog admission', () => {
         access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
       } } };
     });
-    const profile = resolveRunnerMcpServers({ session: requesterSession, credentials: requesterCredentials,
+    const resolve = (isolationEnabled: boolean) => resolveRunnerMcpServers({ session: requesterSession, credentials: requesterCredentials,
       accountCredentials: requesterCredentials, accountSettings: null, accountSettingsSnapshot: selected,
-      machineId: 'machine-1', directory: process.cwd(), env: processEnv, isolationEnabled: false, includeHappierMcpServer: false });
+      machineId: 'machine-1', directory: process.cwd(), env: processEnv, isolationEnabled, includeHappierMcpServer: false });
     if (accountId === 'member') {
-      await expect(profile).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
-      expect(materialReads).toBe(0);
-    } else {
-      const admitted = await profile;
-      try { expect(Object.keys(admitted.mcpServers)).toEqual(['requester_tools']); expect(materialReads).toBeGreaterThan(0); }
-      finally { await admitted.happierMcpServer.stop(); }
+      // Isolation on keeps a Use guest's stdio off the daemon, before any material read.
+      await expect(resolve(true)).rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+      expect({ materialReads, machineReads }).toEqual({ materialReads: 0, machineReads: 0 });
     }
+    // Isolation off runs the requester's own stdio where its Agent runs, a Use
+    // guest included (owner ruling 2026-11-23).
+    const admitted = await resolve(false);
+    try { expect(Object.keys(admitted.mcpServers)).toEqual(['requester_tools']); expect(materialReads).toBeGreaterThan(0); }
+    finally { await admitted.happierMcpServer.stop(); }
     expect(machineReads).toBe(1);
   });
 

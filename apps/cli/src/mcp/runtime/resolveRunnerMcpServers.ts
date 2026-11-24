@@ -315,9 +315,15 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     ...(accountCredentials ? { catalogCredentials: accountCredentials } : {}), sessionId: params.session.sessionId, machineId: params.machineId,
     serverHttpBaseUrl: params.session.getServerBinding().serverUrl,
     signal: sourceSignal }) : null;
+  // One stdio admission per resolution; later selections reuse its qualified source.
+  let stdioAdmitted = false;
+  const admitStdio = async (signal: AbortSignal | undefined) => {
+    if (stdioAdmitted) return;
+    executionSource = await assertMcpStdioExecutionSupported(executionSource!, params.isolationEnabled, signal);
+    stdioAdmitted = true;
+  };
   if (executionSource && hasResolvedExtras && !params.admittedStdio) {
-    executionSource = await assertMcpStdioExecutionSupported(executionSource, params.isolationEnabled,
-      params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
+    await admitStdio(params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
   }
   let operationContext = accountCredentials ? params.operationContext : undefined;
   const initialAccountSnapshot = managedMcpExplicitlyEmpty ? null : params.accountSettingsSnapshot;
@@ -430,8 +436,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     }));
     resolvedSelection = initialSelection;
     if (!params.admittedStdio && Object.values(initialSelection.selectedServersByName).some(server => server.enabled)) {
-      executionSource = await assertMcpStdioExecutionSupported(executionSource!, params.isolationEnabled,
-        run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
+      await admitStdio(run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
     }
     recordStartupPhase('capability_selection');
     const sharedReferences = listSelectedMcpSharedSecretReferences(initialSelection.selectedServersByName);
@@ -478,8 +483,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     }
   }
   if (resolvedSelection && Object.values(resolvedSelection.selectedServersByName).some(server => server.enabled)) {
-    if (!params.admittedStdio) executionSource = await assertMcpStdioExecutionSupported(executionSource!, params.isolationEnabled,
-      run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
+    if (!params.admittedStdio) await admitStdio(run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
     // Native config reads happen in the plugin host's filesystem, not under an
     // Agent UID. Only an admitted selected profile can request name collision
     // discovery; an empty profile needs no native host configuration.

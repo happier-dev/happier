@@ -184,10 +184,11 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
       const startedAt = nowMs(params.deps?.nowMs);
       const source = await captureMcpSource(context);
       let requesterOperation: RequesterMcpTestOperation | undefined;
+      let isolationSnapshot: HostAgentIsolationLaunchSnapshot | undefined;
       if (isHostRequesterUnrestrictedOwner(source.identity)) {
         await assertMcpStdioExecutionSupported({ kind: 'requester', identity: source.identity });
       } else {
-        const isolationSnapshot = params.deps?.agentIsolation?.read();
+        isolationSnapshot = params.deps?.agentIsolation?.read();
         if (!context || source.identity.kind === 'unknown' || !prepareRequesterTest)
           return refuseMcpExecutionSource('requester_authority_unavailable');
         requesterOperation = await prepareRequesterTest({ ingress: context,
@@ -363,8 +364,9 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
         try {
           await assertCurrent();
           const nativeProbe = requesterOperation?.nativeProbe;
+          // The held policy, not the daemon placement default: an unread policy stays unread.
           if (!nativeProbe) await assertMcpStdioExecutionSupported({ kind: 'requester', identity: source.identity },
-            requesterOperation?.placement === 'daemon' ? false : undefined);
+            requesterOperation?.placement === 'daemon' ? isolationSnapshot?.enabled : undefined);
           const probe = nativeProbe ? await nativeProbe.probe({ config: mcpConfig.config,
             selectedMaterials: mcpConfig.selectedMaterials ?? [], directory: parsed.data.directory,
             sanitizeDiagnosticText: mcpConfig.sanitizeDiagnosticText,

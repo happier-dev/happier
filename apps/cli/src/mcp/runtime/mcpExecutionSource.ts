@@ -4,7 +4,8 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
 import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { hasStoredSessionCredentialProvenance, sameStoredCredentials, type StoredCredentials } from '@/persistence';
-import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { isHostRequesterUnrestrictedOwner, isRequesterOwnWorkPlacedOnDaemonForHost, selectHostRequesterExecutionIdentity,
+  type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { readHostAccountExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationAccountCustody';
 import { logger } from '@/ui/logger';
@@ -121,7 +122,10 @@ export async function readMcpExecutionSource(input: Readonly<{
 }
 
 /** Direct servers and remote bridges both use SDK stdio, without framed stdin
- * or cross-UID child custody. Authored bridge env can also select executable code. */
+ * or cross-UID child custody. Authored bridge env can also select executable code.
+ * A requester's stdio runs where the Machine placement owner runs that
+ * requester's own work (daemon when isolation is off, any Home-admitted
+ * grantee); its custody is still qualified once. */
 export async function assertMcpStdioExecutionSupported(source: McpExecutionSource, isolationEnabled?: boolean,
   signal?: AbortSignal): Promise<McpExecutionSource> {
   signal?.throwIfAborted();
@@ -129,9 +133,10 @@ export async function assertMcpStdioExecutionSupported(source: McpExecutionSourc
   if (source.kind === 'requester') {
     if (source.identity.kind === 'unknown') return refuseMcpExecutionSource(source.identity.reason);
     if (isHostRequesterUnrestrictedOwner(source.identity)) return source;
-    if (isolationEnabled === false) {
+    if (isRequesterOwnWorkPlacedOnDaemonForHost(source.identity,
+      () => isolationEnabled === undefined ? undefined : { enabled: isolationEnabled })) {
       const qualified = await qualifyMcpExecutionSourceForHost(source, signal);
-      if (qualified.kind === 'requester' && qualified.identity.kind === 'isolated' && !qualified.identity.separationRequired) return qualified;
+      if (qualified.kind === 'requester' && qualified.identity.kind === 'isolated') return qualified;
     }
   }
   return refuseMcpExecutionSource('agent_launch_kind_unavailable');

@@ -310,11 +310,21 @@ it.each([
     const admission = readMcpExecutionSource({ credentials: child, catalogCredentials: child,
       sessionId: caller === 'misbound' ? 'another-session' : 'session', machineId: birth.machineId, serverHttpBaseUrl: origin })
       .then(source => assertMcpStdioExecutionSupported(source, false));
-    if (caller === 'owner') {
+    if (caller === 'owner' || caller === 'member') {
+      // Isolation off places the requester's own stdio where its Agent runs:
+      // a Use guest is admitted there and stays separated (owner 2026-11-23).
       await expect(admission).resolves.toMatchObject({ kind: 'requester',
-        identity: { kind: 'isolated', separationRequired: false }, hostHomeServerIdentityId: homeServerIdentityId });
-      currentHome = 'srv_replaced_home';
-      expect(await prepared.admitted.isCurrent()).toBe(false);
+        identity: { kind: 'isolated', separationRequired: caller === 'member' }, hostHomeServerIdentityId: homeServerIdentityId });
+      if (caller === 'member') {
+        const source = await admission;
+        for (const isolationEnabled of [true, undefined]) {
+          await expect(assertMcpStdioExecutionSupported(source, isolationEnabled)).rejects.toMatchObject({
+            code: 'agent_isolation_unavailable', details: { reason: 'agent_launch_kind_unavailable' } });
+        }
+      } else {
+        currentHome = 'srv_replaced_home';
+        expect(await prepared.admitted.isCurrent()).toBe(false);
+      }
     } else {
       await expect(admission).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
         details: { reason: caller === 'misbound' ? 'session_requester_unavailable' : 'agent_launch_kind_unavailable' } });

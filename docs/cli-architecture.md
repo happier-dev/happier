@@ -2325,7 +2325,9 @@ RPC uses that placement for every Home-admitted grantee's own work, Use as well
 as Manage, person or Agent (owner ruling 2026-11-23): open, files, Project
 scripts, Services and source control, including Git push and forge actions such
 as opening a pull request. `isRequesterOwnWorkPlacedOnDaemonForHost` is the one
-decision; `machineRpcAuthorization` and Project Open consume it. An unread
+decision; `machineRpcAuthorization`, Project Open and the MCP stdio admission
+(`assertMcpStdioExecutionSupported`, which starts a guest Session's own MCP
+servers) consume it. An unread
 policy, an enabled policy and an enabled-but-unavailable policy never select it,
 so Use keeps working inside isolation or keeps its typed refusal
 (`agent_isolation_unavailable`, `machine_manage_required` for source control).
