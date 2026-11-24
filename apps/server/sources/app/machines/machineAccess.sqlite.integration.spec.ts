@@ -34,6 +34,8 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { DEPLOYMENT_ACTION_IDS_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
@@ -278,6 +280,30 @@ describe('Machine current access (real SQLite)', () => {
             expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: other.machine.id, ...operation }))
                 .toEqual({ kind: 'denied', code: 'access_denied' });
         }
+    });
+
+    it('admits Can use as the carrier of a database Action on an Environment database target only', async () => {
+        // P3 M7: a chosen editor without Machine Manage writes an Environment database. The
+        // Environment owner admits the person at mint; the Machine only carries the exact Action.
+        const f = await fixture();
+        const requester = await account();
+        const stranger = await account();
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        const action = parseQualifiedPluginActionId(DATABASE_EDITS_APPLY_ACTION_ID_V1)!;
+        const environmentTarget = { kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'source',
+            environmentId: 'environment' }, deploymentId: 'deployment', targetLinkId: 'link', serviceId: 'database', database: 'app' };
+        const admit = (actorAccountId: string, target: unknown) => inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+            actorAccountId, machineId: f.machine.id, actionId: 'action.invoke',
+            envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: f.machine.id },
+                input: { action, input: { operation: 'edits.apply', target, relation: { schema: 'public', name: 'note' }, changes: [] } } },
+            authentication: { authenticationAuthority: 'present_user' },
+        }));
+        expect(await admit(requester.id, environmentTarget)).toMatchObject({ kind: 'admitted', role: 'use',
+            actorAccountId: requester.id, custodianAccountId: f.owner.id });
+        // A Machine-local database stays the Machine's own authority: Manage.
+        expect(await admit(requester.id, { kind: 'manual', associationId: 'association' }))
+            .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+        expect(await admit(stranger.id, environmentTarget)).toMatchObject({ kind: 'denied' });
     });
 
     it('admits machine-scoped plugin daemon Actions for Manage through authenticated ingress, refusing Can use', async () => {

@@ -222,6 +222,7 @@ import { DEPLOYMENT_PENDING_OPERATION_CANCEL_HTTP_PATH_V1 } from '@happier-dev/p
 import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board/mutations';
 import { SessionSystemRecordAddressSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordAddress';
 import { projectExternalActionPendingResetStartAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectExternalActionDeploymentReadEnvelopeAdmissionV1, type DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SCM_REVIEWED_MARKS_KV_PREFIX, buildScmReviewedMarksKey } from '@happier-dev/protocol/scm/reviewedMarks';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -469,6 +470,19 @@ export function projectExternalActionMachineAdmissionRefusalCause(
         errorCode: denial.requiredRole === 'manage' ? 'machine_manage_required' : denial.code };
 }
 
+/** A database Action whose target is an Environment database (its admission names `databaseTarget`). */
+function isEnvironmentDatabaseActionInvoke(input: ExternalActionExecutionMachineAdmissionInput): boolean {
+    if (input.actionId !== ACTION_INVOKE_ACTION_ID_V1) return false;
+    let admission: DeploymentReadAdmissionV1 | undefined;
+    try {
+        admission = input.envelope ? projectExternalActionDeploymentReadEnvelopeAdmissionV1({ actionId: input.actionId, envelope: input.envelope })
+            : input.executionBinding?.actionId === input.actionId ? input.executionBinding.deploymentReadAdmission : undefined;
+    } catch {
+        return false;
+    }
+    return admission !== undefined && 'databaseTarget' in admission;
+}
+
 async function resolveExternalActionExecutionMachineAccessInTx(
     reader: Tx, input: ExternalActionExecutionMachineAdmissionInput,
 ): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
@@ -559,6 +573,16 @@ async function resolveExternalActionExecutionMachineAccessInTx(
     // Exact native binding admission is mandatory even for a controller manager.
     if (input.actionId === 'machines.managed.credentials.install') return resolveManagedNativeCredentialActionMachineAdmissionInTx(reader, { ...input, actionId: input.actionId });
     if (input.actionId === MANAGED_EXEC_ACTION_ID_V1) return resolveManagedActionMachineAdmissionInTx(reader, input);
+    if (isEnvironmentDatabaseActionInvoke(input)) {
+        // P3 M7: the Environment owner admits the person for its database target at
+        // mint, and the receiving daemon runs only that exact Action and target.
+        // This Machine carries it with Use, like other stored deployment work.
+        return resolveMachineAdmissionInTx(reader, { actorAccountId: input.actorAccountId, machineId: input.machineId,
+            callerAuthority: input.callerAuthority ?? input.authentication?.authenticationAuthority
+                ?? (input.executionBinding ? readExternalActionBindingAuthority(input.executionBinding) : undefined),
+            sessionActionOrigin: input.sessionActionOrigin ?? input.executionBinding?.sessionActionOrigin,
+            executionBinding: input.executionBinding, requireOnline: input.requireOnline ?? false });
+    }
     const action = SignedRootActionIdSchema.safeParse(input.actionId);
     const spec = action.success ? getActionSpec(action.data) : null;
     const placements = spec?.executionPlacements ?? [];
