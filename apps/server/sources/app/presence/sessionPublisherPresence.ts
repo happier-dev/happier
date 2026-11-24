@@ -430,9 +430,8 @@ async function closeSessionPublisherBindingInTx(
         return { status: "rejected", reason: "unauthorized" };
     }
     // Registration or stop capture already admitted this exact publisher.
-    // Closing its lifetime must also work after the Machine grant ends.
+    // Closing its lifetime must still work after Archive or Machine grant loss.
     const runnerBindingState = await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding);
-    if (session.archivedAt !== null && !params.deletedPlacement) return { status: "rejected", reason: "archived" };
     if (
         params.authority.kind !== "legacy-heartbeat"
         && session.publisherGeneration !== params.authority.publisherGeneration
@@ -473,7 +472,7 @@ async function closeSessionPublisherBindingInTx(
                 where: {
                     id: params.binding.sessionId,
                     active: false,
-                    archivedAt: null,
+                    archivedAt: session.archivedAt,
                     lastActiveAt: session.lastActiveAt,
                     publisherGeneration: params.authority.publisherGeneration,
                     publisherGenerationLastActiveAt: session.lastActiveAt,
@@ -947,7 +946,6 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
             where: { id: params.binding.sessionId },
             select: {
                 active: true,
-                archivedAt: true,
                 lastActiveAt: true,
                 publisherGeneration: true,
                 publisherGenerationLastActiveAt: true,
@@ -963,9 +961,6 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         if (!hasInstalledCustody && !await hasCurrentSessionScopedMachineAccessInTx({ tx, ...params.binding })) {
             return { status: "rejected", reason: "machine_control_unavailable" };
         }
-        // Archive is already terminal for capture. Keep access checks above it;
-        // final-exit cleanup must neither acquire a publisher nor reactivate it.
-        if (session.archivedAt !== null) return { status: "already_inactive" };
         if (
             !session.active
             && await readMaterializedEphemeralRunnerBindingStateInTx(tx, params.binding) !== "current"

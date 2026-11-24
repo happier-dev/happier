@@ -15,6 +15,8 @@ import { eventRouter } from "@/app/events/eventRouter";
 import type { ClientConnection } from '@/app/events/eventPayloadTypes';
 import { publishSessionPublisherClose } from "./publishSessionPublisherClose";
 import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
+import { transitionSessionArchiveStateInTx } from "@/app/session/archive/transitionSessionArchiveStateInTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import {
@@ -1236,6 +1238,43 @@ describe("session publisher presence on SQLite", () => {
             runtimeActivityState: "unknown",
             runtimeActivityActiveCount: 0,
         });
+    });
+
+    it.each(["explicit Stop", "publisher close"] as const)("settles %s across archive", async (kind) => {
+        const seeded = await seed();
+        const archivedAt = new Date(seeded.fence.getTime() + 20);
+        const socket = {};
+        const presence = createSessionPublisherPresence({ now: () => new Date(seeded.fence.getTime() + 10) });
+        const registered = await presence.registerPublisher({
+            socket,
+            binding: seeded.binding,
+            completeActivitySnapshot: { state: "active", activeCount: 1 },
+        });
+        expect(registered.status).toBe("registered");
+
+        const { session: archived } = await inTx(tx => transitionSessionArchiveStateInTx({
+            tx, sessionId: seeded.binding.sessionId, wasArchived: false, archivedAt,
+        }));
+        expect(archived).toMatchObject({ active: true, archivedAt });
+
+        if (kind === "explicit Stop") {
+            const captured = await presence.captureExplicitMachineStop({ binding: seeded.binding });
+            expect.soft(captured.status).toBe("captured");
+            if (captured.status === "captured") {
+                await expect.soft(presence.finalizeExplicitMachineStop({ target: captured.target }))
+                    .resolves.toMatchObject({ status: "closed" });
+            }
+        } else {
+            await expect.soft(presence.closePublisher({ socket })).resolves.toMatchObject({ status: "closed" });
+        }
+
+        await expect.soft(db.session.findUniqueOrThrow({
+            where: { id: seeded.binding.sessionId }, select: { active: true, archivedAt: true },
+        })).resolves.toEqual({ active: false, archivedAt });
+        const { session: unarchived } = await inTx(tx => transitionSessionArchiveStateInTx({
+            tx, sessionId: seeded.binding.sessionId, wasArchived: true, archivedAt: null,
+        }));
+        expect(unarchived).toMatchObject({ active: false, archivedAt: null });
     });
 
     it("settles archived terminal capture through the machine wire without reactivating the Session", async () => {

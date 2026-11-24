@@ -2088,8 +2088,9 @@ block final-exit inventory retirement. Unreadable or replaced attachment evidenc
 still refuses retirement; Home finality, control-serviceability publication and
 Session remainder cleanup retain their existing obligations.
 
-In development source, authenticated Machine terminal capture treats an archived
-Session as `already_inactive`, without changing its archive or activity state.
+In development source, Archive can leave an active publisher in place. Stop
+capture and final runner-exit capture can still select that publisher. The
+existing fenced close clears activity while preserving the archive timestamp.
 Final runner-exit and startup-orphan settlement share the classification of
 `archived`, `not_found` and a peer's explicit `unsupported` refusal as permanent
 terminal unavailability. They release dead-runner custody without claiming
