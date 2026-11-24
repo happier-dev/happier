@@ -1,8 +1,7 @@
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { AutomationTriggerIdSchema, type AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
-import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
-import { isJsonObject, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { WorkflowIntendedTriggerV1, WorkflowTriggerAddRequestV1, WorkflowTriggerRemoveRequestV1, WorkflowTriggerSetV1, WorkflowTriggerUpdateRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -345,14 +344,7 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
             params.onAcknowledged?.({ kind: 'update', triggerId: AutomationTriggerIdSchema.parse(triggerId), ...update }, undefined, set);
         }
         // The set's own context, for every trigger at once (no trigger id).
-        const authoredContext = params.draft.context;
-        const configuration = authoredContext?.inputs?.configuration;
-        // The Environment deployment trigger can schedule its own saved Workflow.
-        const context = authoredContext?.inputs !== undefined && isJsonObject(configuration) && configuration.workflow === null
-            && projectWorkflowTriggerRows(params.set, params.draft).some(({ trigger }) =>
-                trigger.kind === 'pluginEvent' && sameStrictJsonValue(trigger.eventRef, DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded))
-            ? { ...authoredContext, inputs: { ...authoredContext.inputs, configuration: { ...configuration, workflow: params.workflow } } }
-            : authoredContext;
+        const context = params.draft.context;
         if (context !== undefined && set !== null) {
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
             set = (await params.writer.update({

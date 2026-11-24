@@ -5,6 +5,7 @@ import { isAgentStartActionV1, projectAgentStartSelectionV1, resolveActionAgentS
 import { sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import type { ActionCaller } from '../actions/executor/types.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '../actions/workflowTriggerActionIds.js';
 import { describePluginJsonSchemaValueIssues } from '../plugins/actions/jsonSchemaValidation.js';
 import { compileActionInputJsonSchema } from '../actions/actionInputJsonSchemaValidation.js';
 import { isLaunchProfileV2, type AiLaunchProfile } from '../profiles/read.js';
@@ -41,6 +42,8 @@ export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
   actionCaller?: ActionCaller;
   source: WorkflowAcceptedSnapshotV1['source']; inputs: WorkflowResolvedInputsV1;
+  /** The saved trigger target used when previewing a Run before it has a source. */
+  triggerWorkflowRef?: string;
   machineId: string; executionTarget: WorkflowRunExecutionTargetV1; workspaceTarget: WorkflowAcceptedWorkspaceTargetV1;
   metadata?: WorkflowDefinitionMetadataV1;
   origin?: WorkflowAcceptedSnapshotV1['origin'];
@@ -1026,6 +1029,12 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
           // Action engine rather than rebuilding it from the concrete carrier.
           sidecar.actionInput = frozen && sourceKey !== '$root' ? structuredClone(frozen.actionInput)
             : bindWorkflowActionInputV1(leaf.input, bindingContext, leaf.id, purpose);
+          const workflow = input.context.source.kind === 'automation'
+            ? input.context.source.definitionId : input.context.triggerWorkflowRef;
+          if (workflow !== undefined && sourceKey === '$root' && leaf.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID
+            && !Object.hasOwn(leaf.input, 'workflow') && !Object.hasOwn(leaf.input, 'target')) {
+            sidecar.actionInput.workflow = workflow;
+          }
         } catch (error) {
           if (error instanceof WorkflowMaterializationFailureV1) return { ok: false, error: error.error };
           throw error;

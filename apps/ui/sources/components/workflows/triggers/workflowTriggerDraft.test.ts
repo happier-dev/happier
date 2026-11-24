@@ -144,10 +144,10 @@ describe('workflow trigger draft', () => {
         ]);
     });
 
-    it('carries the saved Workflow id and authored configuration into the existing trigger before Arm', async () => {
+    it('keeps the authored configuration when saving an unarmed Event trigger', async () => {
         const workflow = '11111111-1111-4111-8111-111111111111';
         const configuration = {
-            workflow: null, project: PROJECT, serverId: 'home', environmentId: 'production',
+            project: PROJECT, serverId: 'home', environmentId: 'production',
             serviceName: 'api', observationDelayMs: 300_000, windowMs: 600_000, changePercent: 20,
         };
         const diagnosis = { kind: 'role', roleId: 'regression-investigator' };
@@ -168,7 +168,7 @@ describe('workflow trigger draft', () => {
 
         expect(saved.kind).toBe('saved');
         expect(calls).toEqual([['add', { workflow, project: PROJECT, trigger,
-            inputs: { configuration: { ...configuration, workflow }, diagnosis } }]]);
+            inputs: { configuration, diagnosis } }]]);
     });
 
     it('creates the set on the editor Where for a workflow without triggers', async () => {

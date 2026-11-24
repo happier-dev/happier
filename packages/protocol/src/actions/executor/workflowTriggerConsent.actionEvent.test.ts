@@ -6,8 +6,28 @@ import { prepareWorkflowApprovedOperation } from './workflowRunActions.js';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { WorkflowApprovedOperationStepV1Schema, type WorkflowApprovedOperationStepV1 } from '../approvedOperationV1.js';
 import type { WorkflowMaterializedLeafV1 } from '../../workflows/workflowDefinitionV1.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '../workflowTriggerActionIds.js';
 
 describe('Automatic Action-event consent', () => {
+  it('uses the trigger’s owning Workflow when the schedule step omits its target', async () => {
+    const workflow = 'bd7ee83d-32c2-4eb1-9d35-efcf5212ef98';
+    const project = { machineId: 'machine', directory: '/repo' };
+    const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [
+      { kind: 'action', id: 'read-schedule', actionId: 'workflow.starters.list', input: {} },
+      { kind: 'action', id: 'schedule', actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID, input: {
+        project: { kind: 'literal', value: project },
+        trigger: { kind: 'result', producer: { blockId: 'read-schedule', scope: { kind: 'current' } }, path: [] },
+      } },
+    ] });
+    const result = await consent.readWorkflowTriggerActionConsent({ definition, project, triggerId: 'firing-trigger',
+      workflowRef: workflow, context: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } },
+      resolveWorkflow: async () => { throw new Error('No child Workflow'); } });
+    expect(result.steps).toContainEqual(expect.objectContaining({
+      actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID, input: { workflow, project },
+      binding: expect.objectContaining({ kind: 'producer_result' }),
+    }));
+  });
+
   it('saves fixed shell effects with structured trigger-event stdin and environment bindings', async () => {
     const event = { kind: 'action', phase: 'before' } as const;
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], blocks: [{

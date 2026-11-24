@@ -3250,8 +3250,9 @@ traces, logs and the other choices remain independent. In unreleased 0.3 source,
 arming the saved regression Workflow with Automatic authorizes its declared
 `workflow.trigger.add` step. After a successful deployment, a read Action returns
 the once schedule from the receipt's finish time and the configured observation
-delay. The native step adds that schedule to the same Workflow. When the trigger
-fires, the Workflow compares the serving release with the previous distinct
+delay. The native step defaults to the Workflow that owns the firing trigger
+when the step omits its target. When the trigger fires, the Workflow compares
+the serving release with the previous distinct
 release. It uses the source label from the Account-opened Receipt investigation
 and anchors the earlier observation window at the first successful deployment
 of the serving release. An intervening repeat keeps that boundary. An

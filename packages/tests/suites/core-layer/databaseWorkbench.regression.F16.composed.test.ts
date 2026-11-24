@@ -276,7 +276,7 @@ it('P7-F16 a deployment schedules one check that treats a repeated release as on
     // The retained export cadence reached four seconds under runner load.
     const windowMs = 10_000;
     const armed = await account.execute(WORKFLOW_TRIGGER_ADD_ACTION_ID, { workflow: definitionId, project,
-      actionApproval: 'automatic', inputs: { configuration: { ...address, serviceName: 'checkout', workflow: definitionId,
+      actionApproval: 'automatic', inputs: { configuration: { ...address, serviceName: 'checkout',
         project, windowMs, observationDelayMs, changePercent: 50,
         measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' } },
       diagnosis: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } },

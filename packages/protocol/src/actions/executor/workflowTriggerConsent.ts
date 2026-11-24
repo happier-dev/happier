@@ -79,6 +79,7 @@ export async function readWorkflowTriggerActorConsentSteps(input: Omit<WorkflowT
 export async function materializeWorkflowTriggerActionDefinition(input: Readonly<{
   definition: WorkflowDefinitionV1; inputs: WorkflowResolvedInputsV1; project: WorkflowProjectTargetV1;
   executionTarget?: WorkflowRunExecutionTargetV1;
+  workflowRef?: string;
   resolveWorkflow(ref: string): Promise<WorkflowDefinitionV1>;
   materializer?: Pick<MaterializeWorkflowAcceptedSnapshotV1Input, 'effects' | 'roleSelection'>;
   /** A pre-guest review freezes effects; the enrolled Run decides actual target availability. */
@@ -89,6 +90,7 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
   const materialized = await materializeWorkflowDefinitionAuthorityV1({ definition: input.definition,
     ...(input.materializer?.roleSelection ? { roleSelection: input.materializer.roleSelection } : {}),
     context: { source: { kind: 'inline' }, inputs: input.inputs, machineId: input.project.machineId,
+      ...(input.workflowRef === undefined ? {} : { triggerWorkflowRef: input.workflowRef }),
       executionTarget: input.executionTarget ?? { kind: 'detached_run' },
       workspaceTarget: { project: { ...input.project, checkoutRootPath: input.project.directory } },
       authorization: { principal: { kind: 'host' } } },
@@ -120,7 +122,7 @@ export async function readWorkflowTriggerActionConsent(input: WorkflowTriggerCon
   const materializer = input.materializer;
   const { materialized, program } = await materializeWorkflowTriggerActionDefinition({ definition,
     inputs: resolveWorkflowRunStartInputsV1(definition, input.context.inputs), project: input.project,
-    resolveWorkflow: input.resolveWorkflow, deferTargetAvailability: materializer !== undefined, materializer });
+    workflowRef: input.workflowRef, resolveWorkflow: input.resolveWorkflow, deferTargetAvailability: materializer !== undefined, materializer });
   if (!materialized.ok) throw Object.assign(new Error(materialized.error.code), { code: materialized.error.code });
   const materializedLeaves = materialized.materializedLeaves;
   return { steps: projectWorkflowTriggerConsentSteps({ definition, children: program.children, materializedLeaves, deployment,

@@ -296,7 +296,7 @@ describe('Workflow approved operation private custody', () => {
       expect(storage.operations()).not.toContain('invocations.list');
     }
   });
-  it.each(['covered', 'other-workflow', 'recurring', 'edited-step', 'other-step'] as const)(
+  it.each(['covered', 'target-omitted', 'other-workflow', 'recurring', 'edited-step', 'other-step'] as const)(
     'uses Automatic consent only for the saved native once-schedule declaration (%s)', async scenario => {
       const actionId = WORKFLOW_TRIGGER_ADD_ACTION_ID;
       const workflow = 'bd7ee83d-32c2-4eb1-9d35-efcf5212ef98';
@@ -308,7 +308,8 @@ describe('Workflow approved operation private custody', () => {
       const once = { kind: 'schedule', enabled: true,
         schedule: { kind: 'once', scheduledAt: Date.UTC(2099, 0, 1) } } as const;
       const schedule = { kind: 'action', id: 'schedule', actionId, input: {
-        workflow: { kind: 'literal', value: workflow }, project: { kind: 'literal', value: project },
+        ...(scenario === 'target-omitted' ? {} : { workflow: { kind: 'literal', value: workflow } }),
+        project: { kind: 'literal', value: project },
         trigger: { kind: 'result', producer: { blockId: 'receipt', scope: { kind: 'current' } }, path: ['trigger'] },
       } };
       const original = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [
@@ -358,6 +359,10 @@ describe('Workflow approved operation private custody', () => {
           readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
         admission: { kind: 'trigger', workDepth: 0, admitLeaf: unavailable } });
       if (!materialized.ok) throw new Error(materialized.error.code);
+      if (scenario === 'target-omitted') {
+        expect(materialized.snapshot.materializedLeaves.find(leaf => leaf.blockId === 'schedule')?.actionInput)
+          .toMatchObject({ workflow, project });
+      }
       const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...snapshot(), definition: materialized.snapshot.definition,
         authoredDefinition: materialized.snapshot.authoredDefinition, source,
         materializedLeaves: materialized.snapshot.materializedLeaves, approvedOperation: operation });
@@ -396,8 +401,8 @@ describe('Workflow approved operation private custody', () => {
             execution: { kind: 'action', actionId, actionRequestId, localInputId: 'f16-step', input } }) });
         const proof = await reader({ runId, actionId, input, context: caller, phase });
         expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), input,
-          context: approvalContext, approvedOperation: proof }).required).toBe(scenario !== 'covered');
-        if (scenario === 'covered') {
+          context: approvalContext, approvedOperation: proof }).required).toBe(scenario !== 'covered' && scenario !== 'target-omitted');
+        if (scenario === 'covered' || scenario === 'target-omitted') {
           expect(proof?.steps).toEqual([{ actionId, input }]);
           const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
           expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), input,

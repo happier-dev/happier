@@ -8,16 +8,15 @@ const configured = (field: string) => ({ kind: 'input' as const, name: 'configur
 const result = (field: string) => ({ kind: 'result' as const,
     producer: { blockId: 'compare', scope: { kind: 'current' as const } }, path: [field] });
 
-/** Save once, configure its own saved Workflow ref and arm the Environment's
- * deployment-succeeded trigger. The trigger set retains authored inputs; the
- * once schedule adds no inputs or continuation. */
+/** Save once and arm the Environment's deployment-succeeded trigger. The trigger
+ * set retains authored inputs; the once schedule adds no inputs or continuation. */
 export const TELEMETRY_REGRESSION_WORKFLOW_V1: Omit<PluginWorkflowContributionV1, 'id'> = {
     title: 'Check a deployment for regressions',
     description: 'After the observation window, compare retained telemetry and start the configured diagnosis Session when the authored condition matches.',
     definition: {
         version: 1, defaults: {},
         inputs: [{ name: 'configuration', valueType: 'json', required: true,
-            description: 'This saved Workflow ref, collector project/Run placement, serverId, environmentId, serviceName, measure, windowMs, observationDelayMs and changePercent.' },
+            description: 'Collector project/Run placement, serverId, environmentId, serviceName, measure, windowMs, observationDelayMs and changePercent.' },
         { name: 'diagnosis', valueType: 'json', required: true, description: 'The Role or Agent and model to investigate a regression.' }],
         blocks: [{ kind: 'if', id: 'occurrence', name: 'After deployment or at the scheduled time',
             when: { kind: 'exists', value: { kind: 'trigger_event', event: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded, path: ['deploymentId'] } },
@@ -28,7 +27,7 @@ export const TELEMETRY_REGRESSION_WORKFLOW_V1: Omit<PluginWorkflowContributionV1
                         .map(field => [field, configured(field)])),
                         deploymentId: { kind: 'trigger_event', event: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded, path: ['deploymentId'] } } },
                 { kind: 'action', id: 'schedule', name: 'Schedule regression check', actionId: 'workflow.trigger.add',
-                    input: { workflow: configured('workflow'), project: configured('project'),
+                    input: { project: configured('project'),
                         trigger: { kind: 'result', producer: { blockId: 'schedule-input', scope: { kind: 'current' } }, path: [] } } },
             ],
             otherwise: [{ kind: 'action', id: 'compare', name: 'Compare retained windows', actionId: TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1,
