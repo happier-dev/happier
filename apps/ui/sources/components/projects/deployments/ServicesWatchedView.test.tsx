@@ -42,6 +42,8 @@ const healthCheckSummary = (id: string) => createAutomationDefinitionSummary({ i
     eventRef: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-status' }, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
     sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null }] } as never);
 
+const checkRowId = (id: string) => `services.checks.row.${id}.${healthCheckSummary(id).triggers[0]!.id}`;
+
 /** The saved Check's private definition as the Home answers it (managedOperationalInventory.test's fixture shape). */
 async function healthCheckDetail(id: string) {
   const { sealAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
@@ -132,25 +134,36 @@ it('lists saved Checks without a "haven\'t loaded" line while only their results
   const screen = await renderScreen(<InboxArtifactSourceBoundary>
     <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={NO_COUNT} />
   </InboxArtifactSourceBoundary>);
-  await vi.waitFor(() => expect(screen.getTextContent()).toContain('Check 2'));
+  await vi.waitFor(() => expect(screen.findHostByTestId(checkRowId('2'))).not.toBeNull());
   expect(screen.findHostByTestId('services.checks.coverage.partial')).toBeNull();
 });
 
-// REVIEW-2 R2: a listed family still says what it has not read, and offers its next page instead of hiding it.
-it('keeps listed Checks and offers the next page of saved automations under them (ServicesPaging), never a silent end', async () => {
-  const counts: string[] = [];
+it('shows saved Checks from the next Automation page without requiring Show more', async () => {
   const { ServicesChecksView } = await import('./ServicesChecks');
+  const [first, second] = await Promise.all(['1', '2'].map(healthCheckDetail));
+  const counts: string[] = [];
+  const nextPage = Promise.withResolvers<void>();
   await account.restore({ serverIdentityId: 'srv_services_checks_paged', machines: [], httpAnswers: {
-    'POST /v3/automations/query': { body: { automations: await Promise.all(['1'].map(healthCheckDetail)), nextCursor: 'cursor-2' } } } });
+    'POST /v3/automations/query': { select: input => {
+      const next = typeof input === 'object' && input !== null && 'cursor' in input && input.cursor === 'cursor-2';
+      return next
+        ? { body: { automations: [second], nextCursor: null }, respondAfter: nextPage.promise }
+        : { body: { automations: [first], nextCursor: 'cursor-2' } };
+    } },
+  } });
   const scope = storage.getState().settingsScope!;
   await act(async () => { storage.setState({ automations: { '1': healthCheckSummary('1') }, isDataReady: true, automationDefinitionNextCursor: 'cursor-2' }); });
   const screen = await renderScreen(<InboxArtifactSourceBoundary>
     <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={(count) => counts.push(count.parts.filter(Boolean).join(' · '))} />
   </InboxArtifactSourceBoundary>);
-  await vi.waitFor(() => expect(screen.getTextContent()).toContain('Check 1'));
-  await vi.waitFor(() => expect(screen.findHostByTestId('services.checks.paging.more')).not.toBeNull());
-  // SERVICES-ACCEPT-1116 F4: while later pages may hold more Checks, the count says at least, never an exact "1 check".
-  await vi.waitFor(() => expect(counts.at(-1)).toBe('1+ check'));
+  try {
+    await vi.waitFor(() => expect(counts.at(-1)).toBe('1+ check'));
+  } finally {
+    nextPage.resolve();
+  }
+  await vi.waitFor(() => expect(screen.findHostByTestId(checkRowId('2'))).not.toBeNull());
+  expect(screen.findHostByTestId(checkRowId('1'))).not.toBeNull();
+  expect(screen.findHostByTestId('services.checks.paging.more')).toBeNull();
 });
 
 it('says a Machine\'s watches have not loaded beside the services already listed', async () => {
