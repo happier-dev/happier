@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizePluginUiMountedContributedActionReferenceV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
@@ -252,7 +253,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             // An exception after dispatch does not establish that no effect ran.
             // Preserve a typed producer code; an untyped lost receipt is unknown.
             const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-            const execution: PluginUiActionControlExecutionV1 = { ok: false,
+            const execution = parseActionExecuteFailure(error) ?? { ok: false as const,
                 errorCode: typeof code === 'string' ? code : 'action_outcome_unknown',
                 error: typeof code === 'string' ? code : 'action_outcome_unknown' };
             complete(execution);
