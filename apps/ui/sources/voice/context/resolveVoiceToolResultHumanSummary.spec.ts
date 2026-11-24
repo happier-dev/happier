@@ -52,7 +52,7 @@ describe('resolveVoiceToolResultHumanSummary', () => {
         expect(summarize({ type: 'success', disposition: 'created', sessionId: 'new-session',
             executionTarget: { serverId: 'home', machineId: 'machine' },
             organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' },
-        })).toBe(t('newSession.sessionStartedMessage'));
+        })).toBe(t('voiceSurface.sessionCreated'));
         expect(summarize({ type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }))
             .toBe(t('session.askRecord.unsure'));
         expect(summarize({ type: 'error', code: 'cancelled', retryable: false }))
