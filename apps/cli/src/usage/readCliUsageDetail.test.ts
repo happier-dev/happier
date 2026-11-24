@@ -16,6 +16,9 @@ import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSe
 import { encodeBase64, encrypt } from '@/api/encryption';
 import { AgentStateSchema } from '@happier-dev/session-core/state';
 import { projectSessionUsageWorkEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { readCliUsageDetail } from './readCliUsageDetail';
 
 afterEach(() => vi.restoreAllMocks());
@@ -28,6 +31,13 @@ function batchResponse(body: unknown, status = 200, request?: unknown) {
             sessionIds: row.sessionIds ?? rows.map((part: SessionReadBatchResultV1) => part.sessionId) })),
     };
     return { status, headers: { 'content-type': 'application/json' }, data: Readable.from([Buffer.from(JSON.stringify(value), 'utf8')]) };
+}
+
+function twoSessionAccounting(sessionIds: string[]) {
+    return UsageAnalyticsQueryResponseSchema.parse({ v: 1, sessionIds,
+        sessionMembership: { turns: sessionIds.map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier'] })) },
+        totals: { eventCount: 2, tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
 }
 
 describe('CLI Usage Session evidence demand', () => {
@@ -200,12 +210,18 @@ describe('CLI Usage Session evidence demand', () => {
 
     it.each([
         { part: 'detail', status: 404, retained: false, cause: 'not_found' },
-        { part: 'detail', status: 403, retained: false, cause: 'forbidden' },
+        { part: 'detail', status: 403, retained: false, cause: 'forbidden', workFailure: 'auth_failed' },
         { part: 'turns', status: 404, retained: true, cause: 'not_found' },
-        { part: 'turns', status: 503, retained: false, cause: 'server_error' },
+        { part: 'turns', status: 503, retained: false, cause: 'server_error', workFailure: 'server_error' },
         { part: 'messages', status: 503, retained: true, cause: 'server_error' },
         { part: 'messages', status: 403, retained: false, cause: 'forbidden' },
-    ] as const)('preserves $part $status admission while retaining other Sessions', async ({ part, status, retained, cause }) => {
+        { part: 'detail', status: 200, retained: false, cause: 'forbidden' },
+        { part: 'detail', status: 403, retained: false, cause: 'team_authentication_required',
+            bodyError: 'team_authentication_required', workFailure: 'auth_failed' },
+        { part: 'messages', status: 503, retained: true, cause: 'team_authentication_unavailable',
+            bodyError: 'team_authentication_unavailable' },
+    ] as const)('preserves $part $status admission and Work independently ($cause)', async row => {
+        const { part, status, retained, cause } = row;
         const sessions = ['failed', 'available'].map(id => createSessionRecordFixture({ id, encryptionMode: 'plain', share: null,
             metadata: JSON.stringify({ path: '/repo', machineId: 'machine', agent: 'claude' }) }));
         const parts: SessionReadBatchResultV1[] = sessions.map(session => ({ sessionId: session.id,
@@ -214,17 +230,21 @@ describe('CLI Usage Session evidence demand', () => {
                 { turnId: 'turn', agentId: 'claude', status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 },
             ] } }, messages: { status: 200, body: { messages: [], hasMore: false } },
         }));
-        parts[0]![part] = { status, body: { error: 'unavailable' } };
+        if (status === 200) {
+            parts[0]!.detail = { status: 200, body: { session: { ...sessions[0]!, effectiveAccess: {
+                v: 1, level: 'view', sources: [{ kind: 'direct', shareId: 'share' }],
+                capabilities: { ...projectSessionAccessCapabilitiesV1({ owner: false, grants: [] }), readTranscript: false },
+            } } } };
+        } else {
+            parts[0]![part] = { status, body: { error: 'bodyError' in row ? row.bodyError : 'unavailable' } };
+        }
         vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: parts }, 200, request));
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
-            const sessionId = String(url).includes('/available') ? 'available' : 'failed';
-            const selected = parts.find(row => row.sessionId === sessionId)!;
-            return String(url).endsWith('/turns') ? { status: selected.turns!.status, data: selected.turns!.body }
-                : { status: selected.detail!.status, data: selected.detail!.body };
-        });
+        vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new RpcError('Machine offline', 'machine_offline'));
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
-            session: ['available', 'failed'], includeWorkEvidence: false });
-        const result = await readCliUsageDetail({ queries: [query], accounting: [],
+            session: ['available', 'failed'], includeWorkEvidence: true });
+        const value = twoSessionAccounting(sessions.map(session => session.id));
+        const accounting = [{ query, status: 'available' as const, value }];
+        const result = await readCliUsageDetail({ queries: [query], accounting,
             credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
             accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
             resolveHeaders: () => ({ Authorization: 'Bearer token' }),
@@ -232,8 +252,16 @@ describe('CLI Usage Session evidence demand', () => {
         expect(result.sessions.map(row => row.id).sort()).toEqual(retained ? ['available', 'failed'] : ['available']);
         expect(result.howYouWork[0]?.detail.facts?.some(fact => fact.workId === JSON.stringify(['available', 'turn']))).toBe(true);
         expect(result.howYouWork[0]).not.toHaveProperty('updateRequired');
-        const projected = resolveUsagePageAggregation({ queries: [query], nowMs: 200,
-            howYouWork: result.howYouWork, howYouWorkProgress: result.howYouWorkProgress }, bundledUsageModelPriceCatalog).results[0];
+        const projected = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], nowMs: 200,
+            accounting, work: result.work, howYouWork: result.howYouWork,
+            howYouWorkProgress: result.howYouWorkProgress }, bundledUsageModelPriceCatalog)).results[0];
+        expect.soft(projected?.accounting?.totals).toEqual(value.totals);
+        expect.soft(projected?.sources.find(source => source.source === 'work')).toMatchObject('workFailure' in row
+            ? { status: 'error', errorCode: row.workFailure, unreadSessions: { machine_unavailable: 1,
+                ...(row.workFailure === 'auth_failed' ? { not_entitled: 1 } : { failed: 1 }) } }
+            : { status: 'unknown', errorCode: 'machine_offline',
+                unreadSessions: retained ? { machine_unavailable: 2 } : { machine_unavailable: 1, failed: 1 } });
+        expect.soft(projected?.workSummary?.mergedPrCount).toBeUndefined();
         expect(projected?.howYouWork?.intervals?.agentTimeMs).toBe(part === 'messages' && retained ? 120 : 60);
         expect(projected?.sources).toContainEqual(expect.objectContaining({
             source: part === 'messages' && retained ? 'how_you_work:transcripts' : 'how_you_work:sessions',
@@ -497,13 +525,15 @@ describe('CLI Usage Session evidence demand', () => {
         { name: 'unopenable recipient envelope', key: 'AA==', cause: 'encrypted_access_needs_repair' },
         { name: 'recipient setup required', key: null, cause: 'recipient_encryption_setup_required',
             readiness: { status: 'unavailable', reason: 'encryption_setup_required' } },
+        { name: 'unopenable owner metadata', key: null, cause: 'metadata_unavailable', owner: true },
     ] as const)('reports $name beside the readable sibling’s partial activity', async row => {
         const { key, cause } = row;
         const secret = new Uint8Array(32).fill(17);
-        const metadata = encodeBase64(encrypt(secret, 'legacy', { path: '/repo', agent: 'claude' }));
+        const metadata = encodeBase64(encrypt(secret, 'legacy', { path: '/repo', machineId: 'machine', agent: 'claude' }));
+        const owner = 'owner' in row && row.owner;
         const sessions = [
-            createSessionRecordFixture({ id: 'locked', encryptionMode: 'e2ee', dataEncryptionKey: key, metadata,
-                share: { accessLevel: 'view', canApprovePermissions: false } }),
+            createSessionRecordFixture({ id: 'locked', encryptionMode: 'e2ee', dataEncryptionKey: key,
+                metadata: owner ? 'AA==' : metadata, share: owner ? null : { accessLevel: 'view', canApprovePermissions: false } }),
             createSessionRecordFixture({ id: 'available', encryptionMode: 'e2ee', metadata, share: null }),
         ];
         vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: sessions.map(session => ({
@@ -511,19 +541,28 @@ describe('CLI Usage Session evidence demand', () => {
                 body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [{ turnId: 'turn', agentId: 'claude',
                     status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] } },
         })) }, 200, request));
-        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: sessions.map(row => row.id),
-            includeTranscriptEvidence: false, includeWorkEvidence: false });
-        const result = await readCliUsageDetail({ queries: [query], accounting: [],
+        vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new RpcError('Machine offline', 'machine_offline'));
+        const sessionIds = sessions.map(session => session.id);
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: sessionIds,
+            includeTranscriptEvidence: false, includeWorkEvidence: true });
+        const value = twoSessionAccounting(sessionIds);
+        const accounting = [{ query, status: 'available' as const, value }];
+        const result = await readCliUsageDetail({ queries: [query], accounting,
             credentials: { token: 'token', encryption: { type: 'legacy', secret } },
             serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test', accountEncryptionMode: 'e2ee',
             recipientEnvelopeReadiness: 'readiness' in row ? row.readiness : undefined,
             allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {}, resolveHeaders: () => ({ Authorization: 'Bearer token' }) });
         expect(result.sessions.map(row => row.id)).toEqual(['available']);
         const answer = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], nowMs: 200,
-            howYouWork: result.howYouWork, howYouWorkProgress: result.howYouWorkProgress }, bundledUsageModelPriceCatalog));
-        expect(answer.results[0]?.howYouWork).toMatchObject({ detailStatus: 'partial', intervals: { agentTimeMs: 60 } });
-        expect(answer.results[0]?.sources).toContainEqual(expect.objectContaining({
+            accounting, work: result.work, howYouWork: result.howYouWork, howYouWorkProgress: result.howYouWorkProgress },
+        bundledUsageModelPriceCatalog)).results[0];
+        expect(answer?.howYouWork).toMatchObject({ detailStatus: 'partial', intervals: { agentTimeMs: 60 } });
+        expect(answer?.accounting?.totals).toEqual(value.totals);
+        expect(answer?.sources).toContainEqual(expect.objectContaining({
             source: 'how_you_work:sessions', status: 'partial', errorCode: cause,
+        }));
+        expect(answer?.sources).toContainEqual(expect.objectContaining({
+            source: 'work', status: 'unknown', errorCode: 'machine_offline', unreadSessions: { failed: 1, machine_unavailable: 1 },
         }));
     });
 

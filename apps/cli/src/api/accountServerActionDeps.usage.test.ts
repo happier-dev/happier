@@ -20,7 +20,7 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/proto
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { createCompactSessionListRowFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createCompactSessionListRowFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createApiSessionSocketStub, createAvailableSessionSpawnMachineSnapshot } from '@/testkit/backends/apiSessionSocketHarness';
 import { decodeExternalActionHttpBodyV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ScmPullRequestWorkEvidenceSchema, ScmWorkEvidenceReadResponseSchema } from '@happier-dev/protocol/scm';
@@ -90,6 +90,48 @@ function registerAccountingRoutes(app: FastifyInstance,
 }
 
 describe('CLI and MCP personal usage Account transport', () => {
+  it.each([
+    { state: 'absent', encryption: null },
+    { state: 'invalid', encryption: { type: 'legacy' as const, secret: new Uint8Array(1) } },
+    { state: 'inconsistent', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(3) } },
+  ])('returns the typed Account Activity refusal for $state local material without reading private evidence', async ({ encryption }) => {
+    const app = fastify();
+    const credentials = { token: 'owner-token', encryption };
+    const accounting = { ...response, contributions: [{
+      id: 'contribution', observedAtMs: 150, sessionId: 'session', turnId: 'turn', agentId: 'codex',
+      modelId: null, machineId: 'machine', projectKey: 'project', workspaceId: null, source: 'session',
+      tokens: response.totals.tokens, cost: response.totals.cost,
+    }] };
+    registerAccountingRoutes(app, async () => accounting);
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({
+      mode: 'e2ee', signingKeyFingerprint: 'signing-current', contentKeyFingerprint: 'current',
+    }));
+    const readPrivateEvidence = vi.fn(async () => ({ results: [] }));
+    app.post(USAGE_SESSION_EVIDENCE_PATH, readPrivateEvidence);
+    const origin = 'http://usage-account-crypto.test';
+    cleanup = installAxiosFastifyAdapter({ app, origin });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: credentials.token, credentials, serverId: 'home', serverHttpBaseUrl: origin,
+    }) });
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, includeQuota: false,
+      includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: true, includeWorkEvidence: true });
+    try {
+      const result = await executor.execute('usage.query', { queries: [query] }, { surface: 'cli', serverId: 'home' });
+      expect(result.ok).toBe(true);
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      expect.soft(slice.accounting?.totals).toEqual(response.totals);
+      expect.soft(slice.sources).toContainEqual(expect.objectContaining({
+        source: 'work', status: 'unknown', unreadSessions: { failed: 1 },
+      }));
+      expect.soft(slice.workSummary?.mergedPrCount).toBeUndefined();
+      expect.soft(slice.howYouWork?.intervals).toBeNull();
+      expect.soft(readPrivateEvidence).not.toHaveBeenCalled();
+      expect(slice.sources).toContainEqual(expect.objectContaining({
+        source: 'how_you_work', status: 'error', errorCode: 'account_storage_currentness_unavailable',
+      }));
+    } finally { await app.close(); }
+  });
+
   it('distinguishes a missing Session from a missing Usage operation without re-polling or retaining values', async () => {
     const app = fastify();
     let state: 'available' | 'not_found' | 'Session not found' | 'missing_operation' = 'available';

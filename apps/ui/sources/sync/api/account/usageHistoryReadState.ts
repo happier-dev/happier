@@ -1,4 +1,5 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readSessionReadBatchFailureCodeV1 } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import type { UsageHistoryReadState } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
@@ -45,13 +46,9 @@ export function readUsageHistoryFailure(error: unknown): Readonly<{
         ? error.contentAvailability
         : error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode
         : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-    const bodyCode = error instanceof SessionPartsHttpError && error.body && typeof error.body === 'object'
-        && 'code' in error.body && typeof error.body.code === 'string' ? error.body.code : undefined;
-    const bodyError = error instanceof SessionPartsHttpError && error.body && typeof error.body === 'object'
-        && 'error' in error.body && typeof error.body.error === 'string'
-        && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(error.body.error) ? error.body.error : undefined;
+    const bodyCode = error instanceof SessionPartsHttpError ? readSessionReadBatchFailureCodeV1(error.body) : undefined;
     const errorCode = error instanceof SessionPartsHttpError && error.updateRequired ? 'update_required'
-        : code ?? bodyCode ?? bodyError ?? (httpStatus === 403 ? 'forbidden' : httpStatus === 404 ? 'not_found'
+        : code ?? bodyCode ?? (httpStatus === 403 ? 'forbidden' : httpStatus === 404 ? 'not_found'
             : httpStatus !== undefined ? 'http_error' : isTransientConnectivityError(error) ? 'network_error' : 'usage_session_evidence_read_failed');
     return { errorCode, retryable: httpStatus !== 403 && httpStatus !== 404 && !isLastingCoverageReason(errorCode),
         ...(error instanceof Error ? { errorName: error instanceof SessionPartsInvalidResponseError ? 'SessionPartsInvalidResponseError' : error.name } : {}),

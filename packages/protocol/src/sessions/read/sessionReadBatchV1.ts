@@ -37,6 +37,17 @@ type SessionReadFailureV1 = {
   status: 400 | 401 | 403 | 404 | 409 | 426 | 429 | 500 | 503;
   body: { error: string; code?: string } | AnyClientUpgradeRequiredV1 | OperationUpdateRequiredV1;
 };
+
+/** Read the Home's structured cause while excluding human-readable error text. */
+export function readSessionReadBatchFailureCodeV1(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  if ('code' in body && typeof body.code === 'string') return body.code;
+  if ('error' in body && typeof body.error === 'string' && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/.test(body.error)) {
+    return body.error;
+  }
+  return undefined;
+}
+
 const SessionReadFailureV1Schema: z.ZodMiniType<SessionReadFailureV1> = lazyZodSchema(() => z.strictObject({
   status: z.union([z.literal(400), z.literal(401), z.literal(403), z.literal(404),
     z.literal(409), z.literal(426), z.literal(429), z.literal(500), z.literal(503)]),

@@ -708,6 +708,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         let accountSettings: ReturnType<typeof accountSettingsParse> | undefined;
         let accountEncryptionMode: 'plain' | 'e2ee' | null = null;
         let accountStorage: Awaited<ReturnType<typeof resolveCliAccountStorageContext>> | null = null;
+        let accountStorageErrorCode: string | undefined;
         let accountId = context.runtimeAccountId;
         try {
           const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'GET', path: '/v1/account/encryption/currentness' });
@@ -776,6 +777,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           quotaByQuery = quotaReads;
         } catch (error) {
           const code = error instanceof Error && 'code' in error ? error.code : undefined;
+          if (accountStorage === null && typeof code === 'string') accountStorageErrorCode = code;
           quota = { status: code === 'unsupported' ? 'unsupported' : 'unknown',
             errorCode: typeof code === 'string' ? code : 'usage_quota_read_failed' };
         }
@@ -816,7 +818,7 @@ export function createAccountServerActionDeps(input: Readonly<{
         }));
         accounting.push(...appAccounting);
         const detail = await readCliUsageDetail({ queries: request.queries.filter(query => !appEnvironments(query) && query.includeAccounting && (query.includeSessionEvidence || query.includeWorkEvidence)),
-          accounting, credentials, serverId, serverHttpBaseUrl, accountEncryptionMode,
+          accounting, credentials, serverId, serverHttpBaseUrl, accountEncryptionMode, accountStorageErrorCode,
           recipientEnvelopeReadiness: accountStorage?.recipientEnvelopeReadiness,
           allowPrivateRead: !context.externalActionCredential && !context.externalActionExecutionAuthorization,
           nowMs: accountingNowMs, signal: context.signal, assertCurrent: check,
