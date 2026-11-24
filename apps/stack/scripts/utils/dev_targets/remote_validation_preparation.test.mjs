@@ -641,7 +641,7 @@ test('typecheck consumers share current canonical declarations through the packa
   const check = () => spawnSync(compiler.command, [...compiler.argsPrefix, ...args], { cwd: consumer, encoding: 'utf8' });
   let emissions = 0;
   const prepare = async component => {
-    const prepared = await prepareWorkspaceTypecheckDeclarations(join(root, 'apps', component), { env });
+    const prepared = await prepareWorkspaceTypecheckDeclarations(join(root, 'apps', component), { env, workspaceImports: new Set(['@happier-dev/protocol']) });
     assert.equal(prepared.ok, true);
     emissions += prepared.declarations.filter(name => name === '@happier-dev/protocol').length;
     const result = check();
@@ -673,7 +673,7 @@ test('typecheck consumers share current canonical declarations through the packa
     { project: consumer, args: ['--noEmit', '--project', consumer] },
   ]) {
     const projects = [initial];
-    await prepareWorkspaceTypecheckDeclarations(consumer, { projects, cwd: consumer, env });
+    await prepareWorkspaceTypecheckDeclarations(consumer, { env, workspaceImports: new Set(['@happier-dev/protocol']) });
     const result = spawnSync(compiler.command, [...compiler.argsPrefix, ...projects[0].args], { cwd: consumer, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   }
@@ -683,7 +683,7 @@ test('typecheck consumers share current canonical declarations through the packa
     noEmit: false, declaration: true, emitDeclarationOnly: true, outDir: './portable',
   }, files: ['portable.ts'] }));
   const portableProjects = [{ project: portable, args: ['-p', portable] }];
-  await prepareWorkspaceTypecheckDeclarations(join(root, 'apps/ui'), { projects: portableProjects, cwd: consumer, env });
+  await prepareWorkspaceTypecheckDeclarations(join(root, 'apps/ui'), { env, workspaceImports: new Set(['@fixture/extra']) });
   const portability = spawnSync(compiler.command, [...compiler.argsPrefix, ...portableProjects[0].args], { cwd: consumer, encoding: 'utf8' });
   assert.equal(portability.status, 0, portability.stdout + portability.stderr);
   assert.doesNotMatch(readFileSync(join(consumer, 'portable/portable.d.ts'), 'utf8'), /node_modules\/\.cache|typecheck-declarations/,
@@ -698,7 +698,7 @@ test('typecheck consumers share current canonical declarations through the packa
   writeFileSync(join(extra, 'src/index.ts'), 'export const extra = true;');
   writeFileSync(join(consumer, 'consumer.ts'), 'import { makePlan } from "@happier-dev/protocol/widget"; export { makePlan };');
   const projects = [{ project: join(consumer, 'tsconfig.json'), args }];
-  await prepareWorkspaceTypecheckDeclarations(consumer, { projects, env });
+  await prepareWorkspaceTypecheckDeclarations(consumer, { env, workspaceImports: new Set(['@happier-dev/protocol']) });
   const removed = spawnSync(compiler.command, [...compiler.argsPrefix, '--noEmit', '-p', projects[0].project], { cwd: consumer, encoding: 'utf8' });
   assert.equal(removed.status, 2, 'a removed wildcard export must not remain typecheckable through cached declarations');
   assert.match(removed.stdout, /TS2307/);
@@ -827,7 +827,7 @@ test('native declaration admission waits for package-build publication before em
     try {
       await withWorkspaceBundleLock(async () => {
         terminal = Promise.all(consumers.map(consumer => prepareWorkspaceTypecheckDeclarations(consumer,
-          { env: native.env, signal: t.signal })));
+          { env: native.env, signal: t.signal, workspaceImports: new Set(['@happier-dev/protocol']) })));
         const status = await Promise.race([blocked,
           terminal.then(() => assert.fail('declaration consumers did not wait for the held lock'))]);
         assert.equal(status.activeCount, 0, 'busy producers reserve no compiler capacity');
@@ -875,7 +875,7 @@ test('declaration preparation leaves consumer admission and references untouched
     const args = ['--noEmit', '-p', project];
     return { project, authoredProject: project, authoredArgs: args, args };
   });
-  await prepareWorkspaceTypecheckDeclarations(join(root, 'apps/cli'), { projects,
+  await prepareWorkspaceTypecheckDeclarations(join(root, 'apps/cli'), { workspaceImports: new Set(),
     env: { CI: 'true', PATH: process.env.PATH } });
   const policy = project => resolveRemoteCommandPolicy(['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', project],
     { cwd: 'apps/cli', repoRoot: root });

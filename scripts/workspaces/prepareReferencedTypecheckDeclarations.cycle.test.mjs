@@ -45,11 +45,11 @@ for (const dependent of ['alpha', 'beta']) test(`consumers entering a declaratio
       outDir: 'dist', module: 'esnext', moduleResolution: 'bundler', types: [] }, include: ['src/**/*.ts'] }));
   }
   const env = { ...buildNativeAdmissionFixtureEnv(), CI: '1', HAPPIER_DEV_TARGET_EXECUTION: '',
-    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_CANONICAL_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '' };
   await withDependencyRefresh({ installDir: root, env }, async () => {});
   const prepare = async component => await prepareWorkspaceTypecheckDeclarations(fixture.path('apps', component),
-    { env, withinTypecheckAdmission: true, signal: t.signal });
+    { env, withinTypecheckAdmission: true, signal: t.signal, workspaceImports: new Set(Object.values(entries).filter(Boolean)) });
 
   const independent = packages[dependent];
   const declaration = () => readFileSync(fixture.path(`packages/${dependent}/dist/index.d.ts`), 'utf8');
@@ -93,7 +93,7 @@ test('typechecks and runtime preparation share the canonical mapped declaration 
   write('packages/example/src/index.ts', 'export const value = "original";\n');
   write('packages/example/src/retired.ts', 'export const retired = true;\n');
   const env = { ...buildNativeAdmissionFixtureEnv(), CI: '1', HAPPIER_DEV_TARGET_EXECUTION: '',
-    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_STACK_CANONICAL_HOME_DIR: fixture.root, HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '' };
   mkdirSync(fixture.path('node_modules'));
   await withDependencyRefresh({ installDir: fixture.root, env }, async () => {});
@@ -101,7 +101,7 @@ test('typechecks and runtime preparation share the canonical mapped declaration 
   const declaration = () => readFileSync(join(packageDir, 'dist/index.d.ts'), 'utf8');
   const runtime = () => ensureWorkspacePackagesBuiltByName(fixture.root, [name], { env, buildMode: 'source-dev', signal: t.signal });
   const typecheck = () => prepareWorkspaceTypecheckDeclarations(fixture.path('apps/cli'),
-    { env, withinTypecheckAdmission: true, signal: t.signal });
+    { env, withinTypecheckAdmission: true, signal: t.signal, workspaceImports: new Set([name]) });
 
   assert.deepEqual((await runtime()).built, [name]);
   assert.match(declaration(), /sourceMappingURL=index\.d\.ts\.map/);

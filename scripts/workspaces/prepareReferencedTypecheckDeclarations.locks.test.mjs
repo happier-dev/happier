@@ -40,11 +40,11 @@ test('a declaration pass takes the publication locks of only the packages it emi
       outDir: 'dist', module: 'esnext', moduleResolution: 'bundler', types: [] }, include: ['src/**/*.ts'] }));
   }
   const env = { ...buildNativeAdmissionFixtureEnv(), CI: '1', HAPPIER_DEV_TARGET_EXECUTION: '',
-    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '',
+    HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED: '', HAPPIER_STACK_HOME_DIR: root, HAPPIER_STACK_CANONICAL_HOME_DIR: root, HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_SKIP_REFRESH_DEPS: '', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '' };
   await withDependencyRefresh({ installDir: root, env }, async () => {});
   const prepare = signal => prepareWorkspaceTypecheckDeclarations(fixture.path('apps', 'cli'),
-    { env, withinTypecheckAdmission: true, signal });
+    { env, withinTypecheckAdmission: true, signal, workspaceImports: new Set(['@happier-dev/base', '@happier-dev/leaf']) });
   assert.deepEqual([...(await prepare(t.signal)).declarations].sort(), ['@happier-dev/base', '@happier-dev/leaf']);
 
   // A publisher holds the current base package's lock while only leaf changed.

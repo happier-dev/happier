@@ -1,18 +1,19 @@
 import { existsSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readTypecheckProject } from './deriveTypecheckProjects.mjs';
-import { requiresTypeScriptAdmission } from './resolveTypeScriptCliInvocation.mjs';
+import { readTypecheckProject, readWorkspaceTypecheckProjectImports } from './deriveTypecheckProjects.mjs';
+import { requiresTypeScriptAdmission, typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
 import { ensureWorkspacePackagesBuiltByName, readWorkspaceComponentDependencyGraph } from './ensureWorkspacePackagesBuilt.mjs';
 import { WorkspacePackageBuildError } from './buildInputConvergence.mjs';
 import { runCommand, exitWithCommandResult } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
+import { readWorkspaceTypecheckSources } from './workspaceSourceTypecheck.mjs';
 import { resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
 
 function workspaceDeclarationPackageNames(repoDir, graph, workspaceImports) {
   const names = [];
   for (const name of graph.closure) {
-    if (workspaceImports && !workspaceImports.has(name)) continue;
+    if (!workspaceImports.has(name)) continue;
     const dir = graph.packageDirsByName.get(name);
     if (!relative(repoDir, dir).replaceAll('\\', '/').startsWith('packages/')) continue;
     const configPath = resolve(dir, 'tsconfig.json');
@@ -40,6 +41,10 @@ export async function prepareWorkspaceTypecheckDeclarations(componentDir, {
   const started = performance.now();
   const repoDir = coerceHappyMonorepoRootFromPath(componentDir);
   const graph = await readWorkspaceComponentDependencyGraph(componentDir, { monorepoRoot: repoDir });
+  if (graph && !(workspaceImports instanceof Set)) {
+    throw Object.assign(new Error(`Cannot determine workspace declaration imports for ${componentDir}`),
+      { code: 'TYPECHECK_WORKSPACE_IMPORTS_UNAVAILABLE' });
+  }
   const names = graph ? workspaceDeclarationPackageNames(repoDir, graph, workspaceImports) : [];
   const failed = [];
   const failure = (status, projects) => ({ ok: false, failure: { step: 'declaration-emission', status, projects } });
@@ -84,8 +89,11 @@ if (process.argv[2] === '--prepare-for-typecheck' && process.argv[1]
     const started = performance.now();
     process.stderr.write(`[typecheck-preparation] starting ${JSON.stringify({ component: componentDir,
       admissionClass, at: new Date().toISOString() })}\n`);
+    const options = typecheckCompilerOptions(args.slice(1), process.cwd());
+    const sources = await readWorkspaceTypecheckSources(resolve(componentDir));
+    const workspaceImports = readWorkspaceTypecheckProjectImports(options?.configFilePath, sources, options);
     const result = await prepareWorkspaceTypecheckDeclarations(resolve(componentDir), {
-      withinTypecheckAdmission: true, signal: cancellation.signal,
+      withinTypecheckAdmission: true, signal: cancellation.signal, workspaceImports,
     });
     cancellation.signal.throwIfAborted();
     process.stderr.write(`[typecheck-preparation] ${JSON.stringify({ component: componentDir, packageBuilds: result.built?.length ?? 0,

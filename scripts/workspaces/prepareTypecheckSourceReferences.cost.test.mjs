@@ -35,7 +35,7 @@ for (const jsx of [false, true]) {
         required.push({ configPath, file });
       }
       await writeFile(configPath, JSON.stringify({ compilerOptions: { types: [] }, files, include: [] }));
-      foreignProjects.push({ configPath, files, references: [], ambientInputs: [] });
+      foreignProjects.push({ configPath, files, references: [], ambientInputs: [], workspaceImports: new Set() });
     }
     const inventory = {
       baseline: { configPath: consumer }, foreignProjects,

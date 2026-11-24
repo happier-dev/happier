@@ -22,8 +22,9 @@ test('consumer diagnostics survive an upstream declaration emission error', asyn
     'apps/cli/package.json': JSON.stringify({ name: '@fixture/cli' }),
     'apps/server/package.json': JSON.stringify({ name: '@fixture/server', dependencies: { '@fixture/upstream': 'workspace:*' } }),
     'apps/server/tsconfig.json': JSON.stringify({ compilerOptions: { noEmit: true, strict: true,
-      target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [] }, files: ['index.ts'] }),
-    'apps/server/index.ts': 'export const ownError: number = "consumer";',
+      target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [],
+      paths: { '@fixture/upstream': ['../../packages/upstream/dist/index.d.ts'] } }, files: ['index.ts'] }),
+    'apps/server/index.ts': 'export const ownError: number = "consumer";\nexport { value } from "@fixture/upstream";',
     'packages/upstream/package.json': JSON.stringify({ name: '@fixture/upstream', type: 'module', scripts: { build: buildScript },
       exports: { '.': { types: './dist/index.d.ts', 'happier-source': './src/index.ts' } } }),
     'packages/upstream/tsconfig.json': JSON.stringify({ compilerOptions: { declaration: true, strict: true,
@@ -35,7 +36,7 @@ test('consumer diagnostics survive an upstream declaration emission error', asyn
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
   }
-  const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1',
+  const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1', HAPPIER_STACK_CANONICAL_HOME_DIR: root,
     HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
   // This fixture is a local subprocess inside the admitted test, not a placed worker.
   delete env.HAPPIER_DEV_TARGET_EXECUTION;
@@ -48,7 +49,7 @@ test('consumer diagnostics survive an upstream declaration emission error', asyn
   assert.match(result.stdout, /TS4094/, 'the producer must really fail declaration emission');
   assert.match(result.stdout, /index\.ts\(1,\d+\): error TS2322:/, 'the consumer must still check its own source');
   assert.match(result.stderr, /typecheck-declaration-failure.*declaration-emission/);
-  await writeFile(join(root, 'apps/server/index.ts'), 'export const ownValue: number = 1;');
+  await writeFile(join(root, 'apps/server/index.ts'), 'export const ownValue: number = 1;\nexport { value } from "@fixture/upstream";');
   const upstreamOnly = check();
   assert.ifError(upstreamOnly.error);
   assert.notEqual(upstreamOnly.status, 0, 'a clean consumer cannot hide failed declaration preparation');
@@ -109,7 +110,7 @@ test('finite UI typecheck prepares an imported package without building unrelate
     await writeFile(join(root, path), content);
   }
   await installUiTypecheckFixtureDependencies(t, join(root, 'apps/ui'));
-  const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1',
+  const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1', HAPPIER_STACK_CANONICAL_HOME_DIR: root,
     HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
   delete env.HAPPIER_DEV_TARGET_EXECUTION;
   delete env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED;
@@ -120,4 +121,71 @@ test('finite UI typecheck prepares an imported package without building unrelate
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.doesNotMatch(result.stdout, /TS4094/);
   assert.match(await readFile(join(root, 'packages/used/dist/index.d.ts'), 'utf8'), /value = 7/);
+});
+
+test('finite UI typecheck prepares only the workspace closure of its referenced CLI declaration', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-declaration-demand-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const projects = ['foundation', 'core', 'source', 'test-components', 'test-other'];
+  const packages = ['used', 'unused', 'via-used'];
+  const compilerOptions = {
+    strict: true, target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', types: [],
+  };
+  const files = {
+    'package.json': JSON.stringify({ private: true }),
+    'pnpm-lock.yaml': "lockfileVersion: '9.0'\nimporters: {}\n",
+    'pnpm-workspace.yaml': 'packages:\n  - apps/*\n  - packages/*\n',
+    'apps/cli/package.json': JSON.stringify({ name: '@fixture/cli',
+      dependencies: { '@happier-dev/used': 'workspace:*', '@happier-dev/unused': 'workspace:*' } }),
+    'apps/cli/tsconfig.json': JSON.stringify({ compilerOptions: { ...compilerOptions, noEmit: true,
+      paths: { '@/*': ['./src/*'], '@happier-dev/used': ['../../packages/used/dist/index.d.ts'] } }, include: ['src/**/*.ts'] }),
+    'apps/cli/src/used.ts': 'import { value } from "@happier-dev/used"; export const selected: number = value;',
+    'apps/cli/src/unused.ts': 'export { value } from "@happier-dev/unused";',
+    'apps/server/package.json': JSON.stringify({ name: '@fixture/server' }),
+    'apps/ui/package.json': JSON.stringify({ name: '@fixture/ui' }),
+    'apps/ui/tsconfig.json': JSON.stringify({ compilerOptions: { ...compilerOptions, noEmit: true, paths: { '@/*': ['./src/*'] } }, include: ['src/**/*.ts'] }),
+    'apps/ui/tsconfig.test.json': JSON.stringify({ extends: './tsconfig.json', include: ['src/**/*.test.ts'] }),
+    'apps/ui/src/shared.d.ts': 'declare const widgetEnvironment: boolean;',
+    'apps/ui/src/widget.ts': 'export const widget = widgetEnvironment;',
+    'apps/ui/src/widget.test.ts': 'import { selected } from "../../cli/src/used"; export const checked: number = selected;',
+  };
+  for (const [index, name] of projects.entries()) {
+    files[`apps/ui/tsconfig.${name}.json`] = JSON.stringify({
+      extends: './tsconfig.json', files: [], include: [],
+      compilerOptions: index < 3 ? {
+        noEmit: false, composite: true, declaration: true, emitDeclarationOnly: true, rootDir: '../..',
+        disableSourceOfProjectReferenceRedirect: true, outDir: `node_modules/.cache/tsc/${name}`,
+      } : {},
+      references: projects.slice(0, Math.min(index, 3)).map(peer => ({ path: `./tsconfig.${peer}.json` })),
+    });
+  }
+  for (const name of packages) {
+    files[`packages/${name}/package.json`] = JSON.stringify({
+      name: `@happier-dev/${name}`, type: 'module', scripts: { build: buildScript },
+      ...(name === 'used' ? { dependencies: { '@happier-dev/via-used': 'workspace:*' } } : {}),
+      exports: { '.': { types: './dist/index.d.ts', 'happier-source': './src/index.ts' } },
+    });
+    files[`packages/${name}/tsconfig.json`] = JSON.stringify({
+      compilerOptions: { ...compilerOptions, declaration: true, rootDir: 'src', outDir: 'dist' }, files: ['src/index.ts'],
+    });
+    files[`packages/${name}/src/index.ts`] = name === 'used'
+      ? 'export const value = 7;' : 'export const value = "unrelated";';
+  }
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  await installUiTypecheckFixtureDependencies(t, join(root, 'apps/ui'));
+  const env = { ...buildNativeAdmissionFixtureEnv(), CI: 'true', HAPPIER_TYPECHECK_DISPATCHED: '1', HAPPIER_STACK_CANONICAL_HOME_DIR: root,
+    HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
+  delete env.HAPPIER_DEV_TARGET_EXECUTION;
+  delete env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED;
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url)),
+    '--pretty', 'false', ...projects.flatMap(name => ['-p', `tsconfig.${name}.json`])],
+  { cwd: join(root, 'apps/ui'), env, encoding: 'utf8' });
+  assert.ifError(result.error);
+  assert.match(await readFile(join(root, 'packages/used/dist/index.d.ts'), 'utf8'), /value = 7/);
+  assert.match(await readFile(join(root, 'packages/via-used/dist/index.d.ts'), 'utf8'), /value/);
+  await assert.rejects(readFile(join(root, 'packages/unused/dist/index.d.ts')), { code: 'ENOENT' });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
 });

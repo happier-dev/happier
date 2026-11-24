@@ -117,8 +117,9 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
   const sources = await readWorkspaceTypecheckSources(cwd);
   if (!sources.repoRoot) return [];
   const failures = [];
-  const preparedDeclarations = new Set();
+  const declarationImports = new Map();
   const preparedProjects = new Map();
+  const { readWorkspaceTypecheckProjectImports } = await import('./deriveTypecheckProjects.mjs');
   for (const project of projects) {
     const options = typecheckCompilerOptions(project.args, cwd);
     if (!options?.configFilePath) continue;
@@ -127,16 +128,12 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     if ((useDeclarations && Object.keys(sources.declarationPaths).length)
       || Object.keys(workspaceDeclarationPaths(options, original, sources)).length) {
       const componentDir = dirname(resolve(cwd, project.authoredProject ?? original));
-      if (!preparedDeclarations.has(componentDir)) {
-        // Declaration consumers share publication/currentness rather than
-        // silently accepting an earlier producer's output.
-        const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
-        const result = await prepareWorkspaceTypecheckDeclarations(componentDir, {
-          workspaceImports: project.workspaceImports,
-        });
-        if (!result.ok) failures.push({ component: componentDir, ...result.failure });
-        preparedDeclarations.add(componentDir);
+      const imports = declarationImports.get(componentDir) ?? new Set();
+      const selection = project.workspaceImports ?? readWorkspaceTypecheckProjectImports(original, sources, options);
+      for (const name of selection) {
+        imports.add(name);
       }
+      declarationImports.set(componentDir, imports);
     }
     const authored = ts.readConfigFile(original, ts.sys.readFile);
     if (authored.error) throw new Error(ts.flattenDiagnosticMessageText(authored.error.messageText, '\n'));
@@ -159,6 +156,12 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     });
     if (!replaced) project.args.push('--project', target);
     project.project = target;
+  }
+  for (const [componentDir, workspaceImports] of declarationImports) {
+    if (!workspaceImports.size) continue;
+    const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
+    const result = await prepareWorkspaceTypecheckDeclarations(componentDir, { workspaceImports });
+    if (!result.ok) failures.push({ component: componentDir, ...result.failure });
   }
   for (const { project, target, config } of preparedProjects.values()) {
     const references = config.references.map(reference => ({ ...reference,

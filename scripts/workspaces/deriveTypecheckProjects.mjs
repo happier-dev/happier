@@ -94,6 +94,91 @@ export function readTypecheckAmbientModules(file) {
   return { namespaces, modules, moduleDefinitions, hasOtherGlobals };
 }
 
+function workspaceImportOwners(workspaceSources) {
+  const declarationOwners = new Map(Object.entries(workspaceSources.declarationPaths)
+    .flatMap(([specifier, targets]) => targets.map(target => [resolve(target), packageNameOfSpecifier(specifier)])));
+  return (selection, specifier, file) => {
+    const name = packageNameOfSpecifier(specifier);
+    if (workspaceSources.packageNames.has(name)) selection.add(name);
+    const owner = file && declarationOwners.get(resolve(file));
+    if (owner) selection.add(owner);
+  };
+}
+
+function isTypecheckSource(resolved, allowJs) {
+  return /\.(?:json|[cm]?tsx?)$/.test(resolved.resolvedFileName)
+    || (allowJs && !resolved.isExternalLibraryImport && !/[\\/]node_modules[\\/]/.test(resolved.resolvedFileName)
+      && /\.(?:[cm]?js|jsx)$/.test(resolved.resolvedFileName));
+}
+
+function readTypecheckImportEdges(file, text, { options, moduleCache, primary, record, acceptsModule }) {
+  // The compiler follows require() only in JavaScript files. Following it in
+  // TypeScript adds roots the program never loads (Metro-only dev shims).
+  const info = ts.preProcessFile(text, true, /\.[cm]?jsx?$/.test(file));
+  const specifiers = new Set(info.importedFiles.map(({ fileName }) => fileName));
+  // TS5's lightweight preprocessor omits `export * as name from` edges.
+  // Read those declarations with its parser; retain only specifiers, not
+  // ASTs, so composite membership includes their source dependency closure.
+  if (text.includes('export') && text.includes('*')) {
+    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
+    for (const statement of source.statements) {
+      if (ts.isExportDeclaration(statement) && statement.exportClause
+        && ts.isNamespaceExport(statement.exportClause) && statement.moduleSpecifier
+        && ts.isStringLiteralLike(statement.moduleSpecifier)) specifiers.add(statement.moduleSpecifier.text);
+    }
+  }
+  const dependencies = [...specifiers].flatMap(fileName => {
+    const resolved = ts.resolveModuleName(fileName, file, options, ts.sys, moduleCache).resolvedModule;
+    record(fileName, resolved?.resolvedFileName);
+    return resolved && acceptsModule(resolved) ? [resolve(resolved.resolvedFileName)] : [];
+  });
+  for (const { fileName } of info.referencedFiles) {
+    const path = resolve(dirname(file), fileName);
+    record(fileName, path);
+    dependencies.push(path);
+  }
+  for (const { fileName } of info.typeReferenceDirectives) {
+    // A program's primary type directive wins over a dependency's secondary
+    // reference, just as in the canonical producer compiler environment.
+    const resolved = primary.has(fileName) ? primary.get(fileName)
+      : ts.resolveTypeReferenceDirective(fileName, file, options, ts.sys).resolvedTypeReferenceDirective;
+    record(fileName, resolved?.resolvedFileName);
+    if (resolved) dependencies.push(resolve(resolved.resolvedFileName));
+  }
+  return dependencies;
+}
+
+/** A single-project invocation has no partition inventory. Follow the same
+ * compiler imports from its actual roots without widening demand to its manifest. */
+export function readWorkspaceTypecheckProjectImports(configPath, workspaceSources, overrides) {
+  if (!configPath) throw Object.assign(new Error('Cannot determine workspace declaration imports without a TypeScript project'),
+    { code: 'TYPECHECK_WORKSPACE_IMPORTS_UNAVAILABLE' });
+  const { parsed } = readTypecheckProject(configPath);
+  const options = { ...parsed.options, ...overrides };
+  if (workspaceSources.repoRoot) Object.assign(options, sourceTypecheckCompilerOptions(options, configPath, workspaceSources));
+  const primary = resolveTypecheckPrimaryTypeReferences({ configPath, parsed: { options } });
+  const moduleCache = ts.createModuleResolutionCache(dirname(configPath), file => file, options);
+  const selection = new Set();
+  const note = workspaceImportOwners(workspaceSources);
+  const record = (name, file) => note(selection, name, file);
+  const files = [...parsed.fileNames];
+  for (const [name, reference] of primary) {
+    record(name, reference?.resolvedFileName);
+    if (reference) files.push(resolve(reference.resolvedFileName));
+  }
+  const seen = new Set();
+  while (files.length) {
+    const file = files.pop();
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const text = readSourceText(file);
+    if (text === undefined) continue;
+    files.push(...readTypecheckImportEdges(file, text, { options, moduleCache, primary, record,
+      acceptsModule: resolved => isTypecheckSource(resolved, options.allowJs) }));
+  }
+  return selection;
+}
+
 /** Derive source cycles, their dependency-ordered prerequisites, the source
  * remainder, and caller-selected test programs from the current graph.
  * TypeScript 5 is used only as a compiler API; checking stays with native TS7.
@@ -108,13 +193,12 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     return project;
   };
   const workspaceImports = new Set();
-  const declarationOwners = new Map(Object.entries(workspaceSources.declarationPaths)
-    .flatMap(([specifier, targets]) => targets.map(target => [target, packageNameOfSpecifier(specifier)])));
-  const recordWorkspaceImport = (specifier, resolvedFile) => {
-    const name = packageNameOfSpecifier(specifier);
-    if (workspaceSources.packageNames.has(name)) workspaceImports.add(name);
-    const owner = declarationOwners.get(resolvedFile);
-    if (owner) workspaceImports.add(owner);
+  const noteWorkspaceImport = workspaceImportOwners(workspaceSources);
+  const importsByOwner = new Map();
+  const typeImportsByOwner = new Map();
+  const recordWorkspaceImport = (selection, specifier, file) => {
+    noteWorkspaceImport(selection, specifier, file);
+    for (const name of selection) workspaceImports.add(name);
   };
   const original = readProject(resolve(packageDir, 'tsconfig.json'));
   const projects = names.map(name => readProject(resolve(packageDir, `tsconfig.${name}.json`)));
@@ -198,54 +282,28 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   const primaryTypes = context => {
     if (!primaryTypeReferences.has(context.configPath)) {
       const references = resolveTypecheckPrimaryTypeReferences(context);
-      for (const [name, reference] of references) recordWorkspaceImport(name, reference?.resolvedFileName);
+      const selected = new Set();
+      for (const [name, reference] of references) recordWorkspaceImport(selected, name, reference?.resolvedFileName);
+      typeImportsByOwner.set(context.configPath, selected);
       primaryTypeReferences.set(context.configPath, references);
     }
     return primaryTypeReferences.get(context.configPath);
   };
-  const authored = (resolved, context) => /\.(?:json|[cm]?tsx?)$/.test(resolved.resolvedFileName)
-    || (context.parsed.options.allowJs && !resolved.isExternalLibraryImport
-      && !/[\\/]node_modules[\\/]/.test(resolved.resolvedFileName)
-      && /\.(?:[cm]?js|jsx)$/.test(resolved.resolvedFileName));
   const dependenciesFor = (file, context) => {
     if (!contextualImports.has(context.configPath)) contextualImports.set(context.configPath, new Map());
     const cache = contextualImports.get(context.configPath);
     if (!cache.has(file)) {
       const text = readSource(file);
       if (text === undefined) return;
-      // The compiler follows require() only in JavaScript files. Following it in
-      // TypeScript adds roots the program never loads (Metro-only dev shims).
-      const info = ts.preProcessFile(text, true, /\.[cm]?jsx?$/.test(file));
-      const specifiers = new Set(info.importedFiles.map(({ fileName }) => fileName));
-      // TS5's lightweight preprocessor omits `export * as name from` edges.
-      // Read those declarations with its parser; retain only specifiers, not
-      // ASTs, so composite membership includes their source dependency closure.
-      if (text.includes('export') && text.includes('*')) {
-        const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
-        for (const statement of source.statements) {
-          if (ts.isExportDeclaration(statement) && statement.exportClause
-            && ts.isNamespaceExport(statement.exportClause) && statement.moduleSpecifier
-            && ts.isStringLiteralLike(statement.moduleSpecifier)) specifiers.add(statement.moduleSpecifier.text);
-        }
-      }
-      const dependencies = [...specifiers].flatMap(fileName => {
-        const resolved = ts.resolveModuleName(fileName, file, context.parsed.options, ts.sys, moduleCache(context)).resolvedModule;
-        recordWorkspaceImport(fileName, resolved?.resolvedFileName);
-        return resolved && authored(resolved, context) ? [resolve(resolved.resolvedFileName)] : [];
+      const selected = new Set();
+      const dependencies = readTypecheckImportEdges(file, text, {
+        options: context.parsed.options, moduleCache: moduleCache(context), primary: primaryTypes(context),
+        record: (specifier, path) => recordWorkspaceImport(selected, specifier, path),
+        acceptsModule: resolved => isTypecheckSource(resolved, context.parsed.options.allowJs),
       });
-      for (const { fileName } of info.referencedFiles) {
-        const path = resolve(dirname(file), fileName);
-        recordWorkspaceImport(fileName, path);
-        dependencies.push(path);
-      }
-      for (const { fileName } of info.typeReferenceDirectives) {
-        // A program's primary type directive wins over a dependency's secondary
-        // reference, just as in the canonical producer compiler environment.
-        const primary = primaryTypes(context);
-        const resolved = primary.has(fileName) ? primary.get(fileName)
-          : ts.resolveTypeReferenceDirective(fileName, file, context.parsed.options, ts.sys).resolvedTypeReferenceDirective;
-        recordWorkspaceImport(fileName, resolved?.resolvedFileName);
-        if (resolved) dependencies.push(resolve(resolved.resolvedFileName));
+      if (selected.size) {
+        if (!importsByOwner.has(context.configPath)) importsByOwner.set(context.configPath, new Map());
+        importsByOwner.get(context.configPath).set(file, selected);
       }
       cache.set(file, dependencies);
     }
@@ -453,11 +511,18 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   inventory.baseline = { configPath: originalConfigPath, fileNames: [...originalRoots] };
   inventory.sourceReferences = new Map(sourceNames.map((name, index) => [targets[index],
     results[index].files.flatMap(file => ownership.sourceReferences.get(resolve(packageDir, file)) ?? [])]));
-  inventory.foreignProjects = ownership.foreignProjects.map(project => ({ ...project,
-    ambientDependencies: contextualImports.get(project.configPath),
-    ambientInputs: project.ambientInputs.filter(file => !missingFiles.has(file)),
-    files: [...project.files].filter(file => !missingFiles.has(file)
-      && (!/[\\/]node_modules[\\/]/.test(file) || contributesAmbientTypes(file, readSource))).sort() }));
+  inventory.foreignProjects = ownership.foreignProjects.map(project => {
+    const ambientInputs = project.ambientInputs.filter(file => !missingFiles.has(file));
+    const files = [...project.files].filter(file => !missingFiles.has(file)
+      && (!/[\\/]node_modules[\\/]/.test(file) || contributesAmbientTypes(file, readSource))).sort();
+    const imports = importsByOwner.get(project.configPath);
+    const selected = new Set(typeImportsByOwner.get(project.configPath));
+    for (const file of [...files, ...ambientInputs]) {
+      for (const name of imports?.get(file) ?? []) selected.add(name);
+    }
+    return { ...project, files, ambientInputs, workspaceImports: selected,
+      ambientDependencies: contextualImports.get(project.configPath) };
+  });
   inventory.workspaceImports = workspaceImports;
   inventory.testContexts = testContexts;
   inventory.consumerPrimaryAmbientInputs = consumerPrimaryAmbientInputs;

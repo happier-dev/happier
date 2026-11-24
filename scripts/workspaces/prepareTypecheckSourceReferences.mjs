@@ -87,8 +87,13 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
   }
   const foreignProjects = new Map();
   for (const group of groups) for (const foreign of group.inventory.foreignProjects) {
+    if (!(foreign.workspaceImports instanceof Set)) {
+      throw Object.assign(new Error(`Cannot determine workspace declaration imports for ${foreign.configPath}`),
+        { code: 'TYPECHECK_WORKSPACE_IMPORTS_UNAVAILABLE' });
+    }
     const prior = foreignProjects.get(foreign.configPath);
     foreignProjects.set(foreign.configPath, prior ? { ...foreign,
+      workspaceImports: new Set([...prior.workspaceImports, ...foreign.workspaceImports]),
       files: [...new Set([...prior.files, ...foreign.files])],
       references: [...prior.references, ...foreign.references],
       ambientInputs: [...new Set([...prior.ambientInputs, ...foreign.ambientInputs])],
@@ -131,7 +136,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
       include: [], exclude: [],
     });
     const args = ['--singleThreaded', '--project', project];
-    producers.push({ project, authoredProject: foreign.configPath, args, authoredArgs: args });
+    producers.push({ project, authoredProject: foreign.configPath, args, authoredArgs: args, workspaceImports: foreign.workspaceImports });
     redirects.set(foreign.configPath, project);
     memberships.set(foreign.configPath, new Map(foreign.files.map(file => [file, project])));
     ambientInputs.set(foreign.configPath, foreign.ambientInputs ?? []);
