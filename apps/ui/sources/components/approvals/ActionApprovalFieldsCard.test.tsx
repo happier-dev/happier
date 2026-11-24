@@ -858,3 +858,45 @@ it('leads with the changed value: the Session that asked stays in Technical deta
         expect(elsewhere.getTextContent()).toContain('Checkout page review');
     }
 });
+
+it('names a plugin-contributed Action\'s Session and Machine operands like a host Action\'s, their ids in Technical details', async () => {
+    const home = await upsertServerProfile({ name: 'Approval Home', serverUrl: 'https://contributed-session-operand.test' });
+    profiles.push(home.id);
+    const sessionId = 'cmwtf8xvw00kpb5mc5l17bbqa';
+    const machineId = 'opaque-contributed-machine';
+    await act(async () => {
+        storage.setState({ settingsScope: { serverId: home.id, accountId: 'account' },
+            machineListByServerId: { [home.id]: [createMachineFixture({ id: machineId,
+                metadata: { ...createMachineFixture().metadata!, displayName: 'Studio' } })] },
+            concurrentSessionListCacheByServerId: { [home.id]: { serverName: null, listObservation: { phase: 'ready', lastSuccessAt: 1 } } } });
+        storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId: home.id,
+            metadata: { ...createSessionFixture().metadata!, name: 'Checkout page review' } })]);
+    });
+    // The stored request as the Channels plugin's session pull request binding writes it: no declared review fields.
+    const target = (input: Record<string, string>) => describeApprovalRequestFields({ kind: 'plugin_target_action', status: 'open',
+        secretInputPaths: [], input });
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+        presentation={target({ kind: 'attach', sessionId, machineId })} />);
+    expect(screen.getTextContent()).toContain('Checkout page review');
+    expect(screen.getTextContent()).toContain('Studio');
+    expect(screen.getTextContent()).not.toContain(sessionId);
+    expect(screen.getTextContent()).not.toContain(machineId);
+    await expandDisclosureAsync(screen.findAllByTestId('approvals.technical-details'));
+    expect(screen.getTextContent()).toContain(sessionId);
+    expect(screen.getTextContent()).toContain(machineId);
+
+    // A Session the viewer cannot open reads by where it lives, never by its id.
+    const hidden = 'cmw-session-not-visible';
+    const unnamed = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id}
+        presentation={target({ kind: 'attach', sessionId: hidden })} />);
+    expect(unnamed.getTextContent()).toContain(describeUnnamedApprovalSession('Approval Home'));
+    expect(unnamed.getTextContent()).not.toContain(hidden);
+
+    // A pressed contribution (`action.invoke`) with its declared review fields reads the same way.
+    const pressed = describeApprovalActionFields({ actionId: 'action.invoke',
+        actionArgs: { action: { pluginId: 'happier.channels', localId: 'session-pull-request-binding-v1' }, input: { kind: 'attach', sessionId } },
+        preview: { contributedAction: { title: 'Manage session pull request binding', fields: [{ path: 'sessionId', title: 'Session' }] } } });
+    const invoked = await renderScreen(<ActionApprovalFieldsCard anatomy="page" serverId={home.id} presentation={pressed} />);
+    expect(invoked.getTextContent()).toContain('Checkout page review');
+    expect(invoked.getTextContent()).not.toContain(sessionId);
+});

@@ -362,7 +362,21 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
     }
     return undefined;
   }
-  const leaf = field.path.split('.').at(-1);
+  const reference = describeActionSpecificApprovalReference(actionId, field, value, input)
+    ?? describeApprovalOperandReference(field.path, value, field.inputType, actionId);
+  return actionId === 'session.delete' && field.path === 'sessionId' && reference?.kind === 'session'
+    ? { ...reference, presentation: 'destructive_target' }
+    : reference;
+}
+
+/**
+ * What an operand names wherever any Action carries it, host or plugin-contributed: its declared key or
+ * declared input type, never the Action. A plugin Action's `sessionId` reads by the Session's name exactly
+ * like a host Action's.
+ */
+function describeApprovalOperandReference(path: string, value: unknown, inputType?: ActionInputFieldHint['inputType'],
+  actionId = ''): ApprovalActionReference | undefined {
+  const leaf = path.split('.').at(-1);
   // Declared target fields name an Agent and a model wherever an Action carries them.
   if (leaf === 'agentTarget') return readApprovalAgentReference(value);
   if (leaf === 'modelSelection') return readApprovalModelReference(value);
@@ -371,14 +385,24 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
     ?? readApprovalPrincipalReference(value);
   if (declared) return declared;
   if (typeof value !== 'string' || !value.trim()) return undefined;
+  const savedSecret = readApprovalSavedSecretReference(actionId, leaf, value, inputType);
+  if (savedSecret) return savedSecret;
+  // A Home identity reads by the Home's name, like a `serverId` key.
+  if (path === 'homeId') return { kind: 'home', id: value.trim() };
+  // A Machine id names a Machine on every Action (`machineId`, `executionTarget.machineId`).
+  if (leaf === 'machineId') return { kind: 'machine', id: value };
+  return inputType && 'hostType' in inputType && inputType.hostType === 'session'
+    ? { kind: 'session' as const, id: value.trim() }
+    : describeApprovalKeyReference(leaf, value);
+}
+
+/** A host Action's own reading of one of its operands, ahead of the readings every Action shares. */
+function describeActionSpecificApprovalReference(actionId: string, field: ActionInputFieldHint, value: unknown, input: unknown): ApprovalActionReference | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
   if (actionId.startsWith('machines.managed.') && field.path === 'managedId'
       && isRecord(input) && typeof input.homeId === 'string' && input.homeId.trim()) {
     return { kind: 'managedMachine', id: value.trim(), homeId: input.homeId.trim() };
   }
-  const savedSecret = readApprovalSavedSecretReference(actionId, leaf, value, field.inputType);
-  if (savedSecret) return savedSecret;
-  // A Home identity reads by the Home's name, like a `serverId` key.
-  if (field.path === 'homeId') return { kind: 'home', id: value.trim() };
   // Team-scoped references keep the Team needed by their exact authorized read.
   if (actionId.startsWith('teams.') && (field.path === 'groupId' || field.path === 'membershipId') && isRecord(input)
       && typeof input.teamId === 'string' && input.teamId.trim()) {
@@ -401,20 +425,12 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   }
   // A Project workspace Action (forget, update) acts on that accepted checkout: it reads by its folder and machine.
   if (actionId.startsWith('projects.workspace.') && field.path === 'workspaceId') return { kind: 'workspace', id: value };
-  // A Machine id names a Machine on every Action (`machineId`, `executionTarget.machineId`).
-  if (leaf === 'machineId') return { kind: 'machine', id: value };
   if ((actionId === 'skills.rules.set' || actionId === 'mcp.rules.set') && field.path === 'change.write.agentId') return { kind: 'agent', id: value };
   if (actionId.startsWith('registries.sources.') && field.path === 'sourceId') return { kind: 'registrySource', id: value };
   if (field.path === 'anchor' && isSettingsDeclarationActionIdV1(actionId)) {
     return { kind: 'setting', id: value };
   }
-  const key = field.path.split('.').at(-1);
-  const reference = field.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'session'
-    ? { kind: 'session' as const, id: value.trim() }
-    : describeApprovalKeyReference(key, value);
-  return actionId === 'session.delete' && field.path === 'sessionId' && reference?.kind === 'session'
-    ? { ...reference, presentation: 'destructive_target' }
-    : reference;
+  return undefined;
 }
 
 /** A connection being created reads by the name it is created with: beside that name operand the connection row adds nothing, and its id stays in Technical details. */
@@ -1076,8 +1092,10 @@ function describeContributedActionInvocation(actionArgs: unknown, preview: unkno
   const declared = invocation.data.input;
   const rows: ApprovalActionFieldRow[] = review ? review.fields.flatMap(field => {
     const value = field.path.split('.').reduce<unknown>((at, key) => isRecord(at) ? at[key] : undefined, declared);
-    return value === undefined || value === null ? [] : [{ kind: 'value' as const, path: `input.${field.path}`,
-      title: field.title, value: typeof value === 'string' ? value : JSON.stringify(value) }];
+    if (value === undefined || value === null) return [];
+    const reference = describeApprovalOperandReference(field.path, value);
+    return [{ kind: 'value' as const, path: `input.${field.path}`,
+      title: field.title, value: typeof value === 'string' ? value : JSON.stringify(value), ...(reference ? { reference } : {}) }];
   }) : describeUndeclaredContributedInput(declared);
   rows.push(
     { kind: 'value', path: 'action.pluginId', title: 'Plugin id', value: invocation.data.action.pluginId, technical: true },
@@ -1096,8 +1114,11 @@ function describeUndeclaredContributedInput(value: unknown, path: readonly strin
   // A list of records has no one-line reading; the raw input under Technical details carries it.
   if (value === undefined || value === null || path.length === 0 || (Array.isArray(value) && value.some(isRecord))) return [];
   const key = path[path.length - 1]!;
+  // An operand that names something (a Session, a Machine, a Team) reads by that name, its id in Technical details.
+  const reference = describeApprovalOperandReference(path.join('.'), value);
   return [{ kind: 'value', path: `input.${path.join('.')}`, title: humanizeApprovalKey(path.join('_')),
-    value: formatApprovalScalar(value), ...(/(^id|Ids?)$/.test(key) ? { technical: true as const } : {}) }];
+    value: formatApprovalScalar(value), ...(reference ? { reference }
+      : /(^id|Ids?)$/.test(key) ? { technical: true as const } : {}) }];
 }
 
 function readApprovalSelectedOptions(field: ActionInputFieldHint, values: readonly unknown[]): readonly Pick<ActionInputOption, 'label' | 'labelKey'>[] | undefined {
@@ -1590,8 +1611,9 @@ export function projectTargetActionApprovalOperandRows(
     const values: unknown[] = [];
     visitSegments(projection.input, segments, 0, values);
     const literal = formatApprovalFieldValues(values, { preserveStructuredValues: true });
+    const reference = values.length === 1 ? describeApprovalOperandReference(field.path, values[0]) : undefined;
     return literal === null ? [] : [{
-      kind: 'value', path: `input.${field.path}`, title: resolveTitle(field.title), value: literal,
+      kind: 'value', path: `input.${field.path}`, title: resolveTitle(field.title), value: literal, ...(reference ? { reference } : {}),
     }];
   });
 }
@@ -1627,8 +1649,11 @@ function describeTargetActionApprovalFields(request: TargetActionApprovalFieldsR
       // plugin operands must instead preserve whitespace, nesting and nulls.
       const literal = JSON.stringify(value);
       if (literal === undefined) return unavailable();
+      // An operand that names something reads by that name, as on a host Action; its id stays in Technical details.
+      const reference = key ? describeApprovalOperandReference(key, value) : undefined;
       rows.push({ kind: 'value', path: key ? `input.${key}` : 'input',
-        title: key ? humanizeApprovalKey(key) : 'Arguments', value: literal,
+        title: key ? humanizeApprovalKey(key) : 'Arguments', value: reference && typeof value === 'string' ? value : literal,
+        ...(reference ? { reference } : {}),
         ...(hasDeclaredFacts ? { technical: true as const } : {}) });
     }
     // Only the original admitted invocation can supply the hidden operands.
