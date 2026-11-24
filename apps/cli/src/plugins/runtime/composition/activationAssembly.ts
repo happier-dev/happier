@@ -74,6 +74,7 @@ export async function assemblePluginRuntimeActivation(input: Readonly<{
     activatedRegistry: ActivatedPluginRuntimeRegistry;
     activationRegistryLease: PluginRuntimeActivationRegistryLease;
     retainedActivationRegistryLeases: PluginRuntimeActivationRegistryLease[];
+    retainComponent(lease: PluginRuntimeActivationRegistryLease): void;
     preparedActivationRegistryLeaseOwners: ActivationRegistryLeaseOwner[];
 }>> {
     const retainedActivationRegistryLeases = [...(input.retainedLeases ?? [])];
@@ -149,6 +150,10 @@ export async function assemblePluginRuntimeActivation(input: Readonly<{
         activatedRegistry,
         activationRegistryLease: composedOwner.retain(),
         retainedActivationRegistryLeases,
+        retainComponent(lease) {
+            retainedActivationRegistryLeases.push(lease);
+            activatedRegistry.retainActivatedComponent(lease.registry);
+        },
         preparedActivationRegistryLeaseOwners,
     });
 }

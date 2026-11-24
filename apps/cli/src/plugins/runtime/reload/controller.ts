@@ -788,6 +788,11 @@ export function createPluginReloadController(params?: Readonly<{
                         + `was superseded by newer durable revision ${controller.readCurrentDurableRevision()}`,
                     );
                 }
+                const serving = activeRegistry;
+                if (serving && serving !== adoption.registry) {
+                    adoption.registry.retainLatePluginActivations?.(serving, changedPluginIds,
+                        () => createRuntimeRegistryLease(serving).release);
+                }
                 retainProjectCustody(adoption.registry);
                 previousRegistry?.fencePluginConsumers?.(changedPluginIds);
                 published = true;

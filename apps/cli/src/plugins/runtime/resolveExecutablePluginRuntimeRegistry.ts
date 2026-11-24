@@ -996,7 +996,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         }
         return source;
     };
-    let captureActivatedPluginConsumerPreparation: ((pluginId: string) => () => Promise<void>) | undefined;
+    let captureActivatedPluginConsumerPreparation: ((pluginId: string) => () => Promise<boolean>) | undefined;
     const activationParams: Omit<
         Parameters<typeof activatePluginRuntimeRegistry>[0],
         'pluginIds' | 'retainedRegistries' | 'adoptActivationComponent'
@@ -5211,11 +5211,17 @@ export async function resolveExecutablePluginRuntimeRegistry(
         // arrays. Rebuild the complete immutable action index before exposing
         // the activation result so dispatch can never observe a half-published
         // target generation or fall through to the retired legacy path.
-        await refreshDeclaredEventSubscriptionBindings();
-        committedTargetActionInvocations.refresh();
-        mergeActivatedHookHandlers();
-        refreshAgentRuntimeRegistry();
-        refreshSystemToolRegistries();
+        const refreshProjections = () => {
+            committedTargetActionInvocations.refresh();
+            mergeActivatedHookHandlers();
+            refreshAgentRuntimeRegistry();
+            refreshSystemToolRegistries();
+        };
+        // Successful bindings are installed synchronously, including when
+        // this is called at the serving-registry publication boundary.
+        const settledBindings = refreshDeclaredEventSubscriptionBindings();
+        refreshProjections();
+        if (await settledBindings) refreshProjections();
     }
 
     async function claimReleaseLessDeclaration(pluginId: string): Promise<void> {
@@ -8363,6 +8369,62 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 lease.pluginIds.size === 1 && lease.pluginIds.has(pluginId)
             ))?.retain() ?? null;
         },
+        pendingPluginActivations: activatedRegistry.pendingPluginActivations,
+        retainLatePluginActivations(serving, changedPluginIds, holdServing) {
+            const changed = new Set(changedPluginIds);
+            const activated = activatedRegistry.activatedPluginIds;
+            const failed = activatedRegistry.failedActivationPluginIds;
+            const sameServingOccurrence = (pluginId: string): boolean => {
+                if (changed.has(pluginId) || activated.has(pluginId) || failed.has(pluginId)) return false;
+                const occurrence = candidateOccurrenceIdsByPluginId.get(pluginId);
+                const custody = admittedPluginSourceCustodiesByPluginId.get(pluginId);
+                if (!occurrence || !custody || serving.readPluginOccurrenceId(pluginId) !== occurrence) return false;
+                const servingCustody = serving.readPluginSourceCustody?.(pluginId);
+                return !!servingCustody && pluginSourceCustodyEqual(custody, servingCustody);
+            };
+            const retain = (pluginId: string) => {
+                const component = serving.retainPluginActivationComponent?.(pluginId);
+                if (!component) return;
+                activationAssembly.retainComponent(component);
+                return component.registry;
+            };
+            const refreshConsumers = async (previousFacts: typeof activatedRegistry.targetActivationFacts, pluginIds: readonly string[]) => {
+                const consumerRefresh = refreshActivatedConsumersIfChanged(previousFacts);
+                const scmDiagnostics = readCurrentScmBackendDiagnostics();
+                for (const pluginId of pluginIds) refreshPluginDiagnostics(pluginId, scmDiagnostics);
+                await consumerRefresh;
+                for (const pluginId of pluginIds) await automationAssembly.refreshActivatedPlugin(pluginId);
+            };
+            const onRefreshError = (error: unknown) => logger.warn('[PLUGIN RUNTIME] Retained activation consumer refresh failed', {
+                error: projectPluginFailureText(error),
+            });
+            const previousFacts = activatedRegistry.targetActivationFacts;
+            const retained: string[] = [];
+            for (const pluginId of serving.activatedPluginIds) {
+                if (sameServingOccurrence(pluginId) && retain(pluginId)) retained.push(pluginId);
+            }
+            if (retained.length) void refreshConsumers(previousFacts, retained).catch(onRefreshError);
+
+            const pending = [...serving.pendingPluginActivations ?? []].filter(([pluginId]) => (
+                !retained.includes(pluginId) && sameServingOccurrence(pluginId)
+            ));
+            if (!pending.length) return;
+            // Until registrations are ready the serving assembly still owns
+            // their construction. Hold it until its component can be retained.
+            const release = holdServing();
+            void Promise.allSettled(pending.map(([pluginId, work]) => (
+                activatedRegistry.joinPendingPluginActivation(pluginId, async registrationsReady => {
+                    await work.registrationsReady;
+                    if (!consumerAssembly.isOccurrenceCurrent() || consumerAssembly.isPluginRetired(pluginId)) return;
+                    const facts = activatedRegistry.targetActivationFacts;
+                    const component = retain(pluginId);
+                    if (!component) return;
+                    registrationsReady();
+                    await refreshConsumers(facts, [pluginId]);
+                    return component;
+                }).catch(onRefreshError)
+            ))).then(release).catch(onRefreshError);
+        },
         ...(preparedActivationRegistryLeaseOwners.length > 0 ? {
             retainPreparedActivationRegistryComponents: () => Object.freeze(
                 preparedActivationRegistryLeaseOwners
@@ -8384,18 +8446,20 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // can emit its first Event, using the same canonical binding owner.
     captureActivatedPluginConsumerPreparation = pluginId => {
         const wasServing = declaredEventSubscriptionsPublished;
-        const assertServingCustody = () => {
+        const hasServingCustody = () => {
             // A held predecessor lease can keep the component physically alive
             // after its live subscription custody moved to the successor.
-            if (wasServing && !declaredEventSubscriptionsPublished) {
+            if (!wasServing || declaredEventSubscriptionsPublished) return true;
+            if (!isPluginConsumerCurrent(pluginId)) {
                 throw new PluginError({ code: 'plugin_generation_stale', message: 'Plugin serving generation retired during consumer preparation' });
             }
+            return false;
         };
         return async () => {
-            assertServingCustody();
+            if (!hasServingCustody()) return false;
             await refreshDeclaredEventSubscriptionBindings();
             await automationAssembly.refreshActivatedPlugin(pluginId);
-            assertServingCustody();
+            return hasServingCustody();
         };
     };
     async function startConfiguredActivation(): Promise<void> {

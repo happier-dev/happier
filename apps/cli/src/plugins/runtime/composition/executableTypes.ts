@@ -705,6 +705,13 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     currentGlobalExternalSessionsTarget?: CurrentGlobalExternalSessionsRouter;
     /** Retains one serving plugin's activation component for a successor registry. */
     retainPluginActivationComponent?(pluginId: string): PluginRuntimeActivationRegistryLease | null;
+    pendingPluginActivations?: Awaited<ReturnType<typeof activatePluginRuntimeRegistry>>['pendingPluginActivations'];
+    /** Completes the existing retention from the registry serving at publication. */
+    retainLatePluginActivations?(
+        serving: ResolvedExecutablePluginRuntimeRegistry,
+        changedPluginIds: readonly string[],
+        holdServing: () => () => Promise<void>,
+    ): void;
     /** Host-private changed-plugin activation retained across an unchanged-facts
      * durable base retry. */
     retainPreparedActivationRegistryComponents?(): readonly PluginRuntimeActivationRegistryLease[];

@@ -106,6 +106,11 @@ export type PluginActivationDemandResult = Readonly<{
     diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>;
 
+type PluginActivationWork = Readonly<{
+    registrationsReady: Promise<void>;
+    result: Promise<PluginActivationDemandResult>;
+}>;
+
 type PluginRuntimeDisposalPhase = 'target_activation' | 'runtime_disposables' | 'registered_disposables';
 type PluginRuntimeDisposalOptions = Readonly<{
     timeoutMs?: number;
@@ -168,6 +173,12 @@ export type ActivatedPluginRuntimeRegistry = ActivatedHandlerRegistry & Readonly
     activatePluginsForValidation: (
         pluginIds: readonly string[],
     ) => Promise<readonly PluginActivationDemandResult[]>;
+    retainActivatedComponent(registry: ActivatedPluginRuntimeRegistry): void;
+    pendingPluginActivations: ReadonlyMap<string, PluginActivationWork>;
+    joinPendingPluginActivation(
+        pluginId: string,
+        retain: (registrationsReady: () => void) => Promise<ActivatedPluginRuntimeRegistry | undefined>,
+    ): Promise<PluginActivationDemandResult>;
     /**
      * Records a host-owned terminal availability failure that arrives after
      * this plugin's activation fact was produced, such as readiness rejection.
@@ -280,7 +291,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         registry: ActivatedPluginRuntimeRegistry;
     }>) => void;
     /** Capture serving custody before activation, then prepare consumers before service start. */
-    captureActivatedPluginConsumerPreparation?: (pluginId: string) => (() => Promise<void>) | undefined;
+    captureActivatedPluginConsumerPreparation?: (pluginId: string) => (() => Promise<boolean>) | undefined;
     /** Same-generation lazy activation became terminally unavailable. */
     onTerminalActivationFailure?: (pluginId: string) => void;
     /** Internal recursion guard for the canonical per-plugin component composer. */
@@ -886,7 +897,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     const failedActivationPluginIds = new Set(
         targetActivationFacts.flatMap((fact) => fact.status === 'unavailable' ? [fact.pluginId] : []),
     );
-    const lazyActivationPromisesByPluginId = new Map<string, Promise<PluginActivationDemandResult>>();
+    const pendingPluginActivations = new Map<string, PluginActivationWork>();
     const lazyActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
     const projectedActivatedRegistries: ActivatedPluginRuntimeRegistry[] = [];
     const componentRegistries = (): readonly ActivatedPluginRuntimeRegistry[] => Object.freeze([
@@ -1015,38 +1026,28 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
     async function mergeActivatedRegistry(
         registry: ActivatedPluginRuntimeRegistry,
         pluginId: string,
-        prepareConsumers: (() => Promise<void>) | undefined,
+        prepareConsumers: (() => Promise<boolean>) | undefined,
+        registrationsReady: () => void,
     ): Promise<void> {
         const activated = registry.activatedPluginIds.has(pluginId);
         if (activated) {
             params.adoptActivationComponent?.(Object.freeze({ pluginId, registry }));
         }
-        targetRegistrations.push(...registry.targetRegistrations);
-        projectedActivatedRegistries.push(registry);
-        mergeHandlerMaps(registry);
-        mergeMapEntries(agentRuntimesByAgentId, registry.agentRuntimesByAgentId);
-        mergeMapEntries(scmHostingProvidersById, registry.scmHostingProvidersById);
-        mergeMapEntries(scmBackendsById, registry.scmBackendsById);
-        scmBackendRegistrations.push(...registry.scmBackendRegistrations);
-        requestInterceptors.push(...registry.requestInterceptors);
-        mergeMapEntries(systemToolDefinitionsByPluginId, registry.systemToolDefinitionsByPluginId);
-        mergeMapEntries(envAllowedNamesByPluginId, registry.envAllowedNamesByPluginId);
-        mergeMapEntries(filesystemReadAllowedPathsByPluginId, registry.filesystemReadAllowedPathsByPluginId);
-        mergeMapEntries(runtimeCapabilitiesByPluginId, registry.runtimeCapabilitiesByPluginId);
-        mergeMapEntries(eventDeclarationsByPluginId, registry.eventDeclarationsByPluginId);
-        actions.push(...registry.actions);
-        mergeDiagnosticsFromRegistry(registry, pluginId);
+        retainActivatedComponent(registry);
         if (activated) {
-            activatedPluginIds.add(pluginId);
-            await prepareConsumers?.();
-            if (backgroundServicesStarted && lifecycleState === 'active' && activatedPluginIds.has(pluginId)) {
-                registry.startAdoptedBackgroundServices();
-            }
+            registrationsReady();
+            if (await prepareConsumers?.() !== false) startActivatedComponent(pluginId, registry);
             if (!params.adoptActivationComponent) {
                 lazyActivatedRegistries.push(registry);
             }
         } else {
             failedActivationPluginIds.add(pluginId);
+        }
+    }
+
+    function startActivatedComponent(pluginId: string, registry: ActivatedPluginRuntimeRegistry): void {
+        if (backgroundServicesStarted && lifecycleState === 'active' && activatedPluginIds.has(pluginId)) {
+            registry.startAdoptedBackgroundServices();
         }
     }
 
@@ -1072,6 +1073,11 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         mergeSetEntries(retryableActivationPreparationPluginIds, registry.retryableActivationPreparationPluginIds);
     }
 
+    function retainActivatedComponent(registry: ActivatedPluginRuntimeRegistry): void {
+        projectedActivatedRegistries.push(registry);
+        mergeRetainedRegistry(registry);
+    }
+
     async function activatePluginIdForDemand(pluginId: string): Promise<PluginActivationDemandResult> {
         if (lifecycleState !== 'active') {
             appendLazyActivationUnavailableDiagnostic(pluginId);
@@ -1080,9 +1086,9 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
             };
         }
-        const existing = lazyActivationPromisesByPluginId.get(pluginId);
+        const existing = pendingPluginActivations.get(pluginId);
         if (existing) {
-            return await existing;
+            return await existing.result;
         }
         if (activatedPluginIds.has(pluginId) || failedActivationPluginIds.has(pluginId)) {
             return {
@@ -1090,7 +1096,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
             };
         }
-        const promise = (async (): Promise<PluginActivationDemandResult> => {
+        return await trackPluginActivation(pluginId, async (registrationsReady) => {
             const prepareConsumers = params.captureActivatedPluginConsumerPreparation?.(pluginId);
             const registry = await activatePluginRuntimeRegistry({
                 contributes: params.contributes,
@@ -1140,7 +1146,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                     diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
                 };
             }
-            await mergeActivatedRegistry(registry, pluginId, prepareConsumers);
+            await mergeActivatedRegistry(registry, pluginId, prepareConsumers, registrationsReady);
             if (registry.failedActivationPluginIds.has(pluginId)) {
                 params.onTerminalActivationFailure?.(pluginId);
             }
@@ -1148,13 +1154,20 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                 pluginId,
                 diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]),
             };
-        })();
-        lazyActivationPromisesByPluginId.set(pluginId, promise);
-        try {
-            return await promise;
-        } finally {
-            lazyActivationPromisesByPluginId.delete(pluginId);
-        }
+        });
+    }
+
+    function trackPluginActivation(
+        pluginId: string,
+        run: (registrationsReady: () => void) => Promise<PluginActivationDemandResult>,
+    ): Promise<PluginActivationDemandResult> {
+        const registrations = Promise.withResolvers<void>();
+        const result = run(registrations.resolve).finally(() => {
+            registrations.resolve();
+            pendingPluginActivations.delete(pluginId);
+        });
+        pendingPluginActivations.set(pluginId, { registrationsReady: registrations.promise, result });
+        return result;
     }
 
     async function activateContributionsOnDemand(
@@ -1366,6 +1379,15 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
         retryableActivationPreparationPluginIds,
         activateContributionsOnDemand,
         activatePluginsForValidation,
+        retainActivatedComponent,
+        pendingPluginActivations,
+        joinPendingPluginActivation(pluginId, retain) {
+            return trackPluginActivation(pluginId, async (registrationsReady) => {
+                const registry = await retain(registrationsReady);
+                if (registry) startActivatedComponent(pluginId, registry);
+                return { pluginId, diagnostics: Object.freeze([...(diagnosticsByPluginId[pluginId] ?? [])]) };
+            });
+        },
         recordPluginActivationFailure,
         startAdoptedBackgroundServices,
         demandBackgroundService,
