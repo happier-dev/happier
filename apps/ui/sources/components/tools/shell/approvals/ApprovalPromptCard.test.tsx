@@ -350,6 +350,27 @@ describe('ApprovalPromptCard', () => {
         });
     }
 
+    it('titles and summarises a Home group request in the tray exactly as its approval page does', async () => {
+        // Design owner ruling: the tray card reads the page's title, its summary line, then the first fact.
+        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+        const { resolveApprovalRequestTitle } = await import('@/components/approvals/approvalRequestTitle');
+        const { readApprovalPreviewSummary } = await import('@/components/approvals/actionApprovalPresentation');
+        const actionId = 'home.hub.layout.update';
+        const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: { kind: 'group_create', groupId: 'group-1',
+            instanceIds: ['widget-1'], title: 'W28 label group' } });
+        const base = localUiApprovalRequest();
+        const approval = ApprovalRequestSchema.parse({ ...base, actionId, actionArgs, summary: 'Customize Home',
+            preview: { summary: 'Customize Home.' },
+            executionOriginV1: { ...base.executionOriginV1, actionId } });
+        const pageTitle = resolveApprovalRequestTitle({ storedTitle: 'Customize Home', actionId, actionArgs,
+            status: 'open', preview: approval.preview }).title;
+        const pageSummary = readApprovalPreviewSummary(approval.preview, approval, undefined, [t('common.unavailable')]);
+        expect(pageTitle).not.toBe(getActionSpec(actionId).title);
+        const screen = await renderCard(approval, { chrome: 'inline' });
+        expect(screen.getTextContent()).toContain(pageTitle);
+        expect(screen.getTextContent()).toContain(pageSummary);
+    });
+
     it('shows the prepared Machine pet in the Session approval before allowing Add', async () => {
         const screen = await renderCard(preparedMachinePetApproval(), { chrome: 'inline' });
         expect(screen.getTextContent()).toContain('Rust Logo');
@@ -701,8 +722,11 @@ describe('ApprovalPromptCard', () => {
         // Its real disposition, and the request's own review fields.
         expect(text).toContain(`approvals.status.${status}`);
         expect(text).toContain('design-reference-public');
-        // The title says the action once; the preview that only repeats it is not a second line.
-        expect(text.match(/Sign in to MCP server/g)).toHaveLength(1);
+        // The title (the page's own rule) says the action once; a summary that only repeats it is not a second line.
+        const { resolveApprovalRequestTitle } = await import('@/components/approvals/approvalRequestTitle');
+        const title = resolveApprovalRequestTitle({ storedTitle: approval.summary, actionId: approval.actionId,
+            actionArgs: approval.actionArgs, status, preview: approval.preview }).title;
+        expect(text.split(title).length - 1).toBe(1);
     });
 
     it('keeps a declined call\'s raw output reachable behind Technical details, never beside the review', async () => {

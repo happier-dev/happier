@@ -1367,6 +1367,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                             <ScrollView
                                 testID="pendingMessages.scroll"
                                 style={{ height: clampedViewportHeightPx, maxHeight: maxHeight, marginTop: 0 }}
+                                // A track only when rows really pass the bound: the last row's action targets (their
+                                // 24 px pointer floor) reach a few pixels under it, which is not more queue to scroll to.
+                                showsVerticalScrollIndicator={effectiveScrollContentHeightPx > maxHeight}
                                 contentContainerStyle={{ paddingTop: theme.space.s6, paddingBottom: 0 }}
                                 ref={scrollRef}
                                 nestedScrollEnabled={true}

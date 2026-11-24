@@ -26,6 +26,8 @@ import { ApprovalOpenButton } from './ApprovalOpenButton';
 import { BrowserOpenApprovalProgress } from '@/components/approvals/BrowserOpenOperationStatus';
 import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { alertApprovalFailure, isApprovalReplayRouteUnavailable, useApprovalDecisionHandler, useApprovalHome } from './useApprovalDecisionHandler';
+import { readApprovalArtifactTitleInput, useApprovalRequestTitle } from '@/components/approvals/approvalRequestTitle';
+import { ApprovalPreviewSummary, ApprovalPreviewSummaryRenderScope } from '@/components/approvals/ApprovalPreviewCard';
 import { ServiceOutputDisclosure } from '@/components/sessions/localServices/ServiceOutputDisclosure';
 import { presentActionFailureOutcome, presentApprovalFailureOutcome, resolveApprovalActionTitle } from './approvalFailureOutcome';
 import { useFailedApprovalDismissal } from './failedApprovalDismissal';
@@ -119,14 +121,6 @@ function useRequesterDecisionPresentation(
         withheld: Boolean(subject && !requesterMayDecide),
         waitingText: subject ? t('detailPages.approval.requester.thread.waiting', { name: requester }) : null,
     };
-}
-
-function getPreviewSummary(preview: unknown): string | null {
-    if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
-    const summary = typeof (preview as { summary?: unknown }).summary === 'string'
-        ? (preview as { summary: string }).summary.trim()
-        : '';
-    return summary || null;
 }
 
 function resolveDeferredComputerPicker() {
@@ -255,7 +249,9 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const decisionRecorded = recordedArtifactId === props.artifact.id;
     const chrome = props.chrome ?? 'card';
     const actionTitle = React.useMemo(() => resolveApprovalActionTitle(props.approval), [props.approval]);
-    const previewSummary = React.useMemo(() => getPreviewSummary(props.approval.preview), [props.approval.preview]);
+    // The page's own title rule and presenter (`useApprovalRequestTitle`): the card and the page name a request alike.
+    const presentedTitle = useApprovalRequestTitle(readApprovalArtifactTitleInput({ header: props.artifact.header, title: null },
+        { family: 'built_in', request: props.approval }, [props.sessionId]), approvalHome.serverId ?? null);
     const bindingChoice = useEnvironmentBindingApprovalChoice({ artifactId: props.artifact.id, approval: props.approval,
         serverId: transcriptSource.serverId ?? approvalHome.serverId });
     const reviewedBindingRequest = bindingChoice.reviewRequest ?? props.approval;
@@ -441,7 +437,7 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     }
 
     // A Computer ask is asked by its one act line ("Click in Safari?"); its card starts at where.
-    const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? (computerAction ? readComputerActLine(computerAction) : actionTitle);
+    const requestTitle = projectCommandTitle ?? proposalLabels?.title ?? (computerAction ? readComputerActLine(computerAction) : presentedTitle.title || actionTitle);
     // A settled failure heads with what failed on one line, then says why and what to do in full beneath it, then
     // Details: a reason cut into the headline lost its next step in the tray and at 390 (DESIGN-ACCEPT-152 #5). The live
     // request beside it already says what the Action does, so the failure does not repeat that.
@@ -454,8 +450,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const repeatsActionName = (text: string) => sameWords(text, requestTitle);
     const cardSubtitle = failureOutcome ? (failureSummary && !repeatsActionName(failureSummary) ? failureSummary : null)
         : projectCommand || computerAction ? null
-            : !props.approval.summary ? t('approvals.untitled')
-                : sameWords(props.approval.summary.trim(), cardTitle) ? null : props.approval.summary;
+            // The page's description line: what the stored request says beyond its title.
+            : presentedTitle.detail;
     const consentWithDecision = checksDecision?.kind === 'consent' && !decisionRecorded && !requesterDecision.withheld;
     const checksCard = automaticChecks ? (
         <ApprovalAutomaticChecks checks={automaticChecks} actionTitle={actionTitle} serverId={approvalHome.serverId}
@@ -530,9 +526,13 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
             )}
         >
             {consentWithDecision ? null : checksCard}
-            {!computerAction && previewSummary && previewSummary !== cardSubtitle?.trim() && !sameWords(previewSummary, cardTitle)
-                && !settledFailure && !(failureOutcome && repeatsActionName(previewSummary)) ? (
-                <Text style={styles.previewText}>{previewSummary}</Text>
+            {/* The page's one summary sentence (the same presenter, Home layout names included), on the card's own line. */}
+            {!computerAction && !settledFailure ? (
+                <ApprovalPreviewSummaryRenderScope render={(summary) => summary === cardSubtitle?.trim() || sameWords(summary, cardTitle)
+                    || (failureOutcome && repeatsActionName(summary)) ? null
+                    : <Text style={styles.previewText}>{summary}</Text>}>
+                    <ApprovalPreviewSummary preview={props.approval.preview} request={props.approval} serverId={approvalHome.serverId} />
+                </ApprovalPreviewSummaryRenderScope>
             ) : null}
             {deliveryReceipt ? (
                 // The receipt is this settled card's news: where the result went, then why, under the title.

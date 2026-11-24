@@ -849,6 +849,18 @@ describe('PendingMessagesTranscriptBlock', () => {
         expectSendNowAction({ localId: 'p2', deliveryIntent: 'interrupt_and_send' }, 'same-session', 'home-b');
     });
 
+    it('draws no scroll track for a one-row queue whose rows fit its bound', async () => {
+        // The last row's action targets keep their 24 px floor and reach a little under it; that is not queue to scroll.
+        const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+        const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+            sessionId: 's1', pendingMessages: [{ id: 'p1', text: 'hello', displayText: undefined, createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+            discardedMessages: [] }));
+        const scroll = screen.findAll(node => node.props.testID === 'pendingMessages.scroll'
+            && 'showsVerticalScrollIndicator' in node.props)[0];
+        expect(scroll?.props.showsVerticalScrollIndicator).toBe(false);
+        await screen.unmount();
+    });
+
     it('keeps a queued row\'s actions in their band and reveals them on hover, like a committed message', async () => {
         const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
         const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {

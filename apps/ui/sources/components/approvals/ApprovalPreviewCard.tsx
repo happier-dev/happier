@@ -158,8 +158,19 @@ function HomeLayoutGroupPreview(props: Readonly<{
     return <ApprovalPreviewText summary={readApprovalPreviewSummary(props.preview, props.request, undefined, widgets)} numberOfLines={2} />;
 }
 
+/** A host that sets the request's summary sentence in its own line (the composer tray's card) draws it there. */
+export type ApprovalPreviewSummaryRender = (summary: string) => React.ReactNode;
+const ApprovalPreviewSummaryRenderContext = React.createContext<ApprovalPreviewSummaryRender | null>(null);
+
+/** Places the one summary sentence `ApprovalPreviewSummary` reads in the host's own line; the page's Request section is the default. */
+export function ApprovalPreviewSummaryRenderScope(props: Readonly<{ render: ApprovalPreviewSummaryRender; children: React.ReactNode }>) {
+    return <ApprovalPreviewSummaryRenderContext.Provider value={props.render}>{props.children}</ApprovalPreviewSummaryRenderContext.Provider>;
+}
+
 function ApprovalPreviewText(props: Readonly<{ summary: string | null; numberOfLines?: number }>) {
+    const render = React.useContext(ApprovalPreviewSummaryRenderContext);
     if (!props.summary) return null;
+    if (render) return <>{render(props.summary)}</>;
 
     return (
         <View style={styles.card}>
