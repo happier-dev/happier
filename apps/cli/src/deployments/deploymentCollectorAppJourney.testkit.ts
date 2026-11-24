@@ -162,7 +162,8 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
     }
     await initiator.accepted('machines.access.grant.set', { serverId: home.serverId, machineId,
         principal: { kind: 'team', teamId: initiator.teamId }, level: 'view' });
-    await initiator.accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId });
+    // The deploying Account's enrolled child holds the keys for this grant.
+    await initiator.accepted('machines.access.prepareKeys', { serverId: home.serverId, machineId }, machineId);
     const ids = await listCollectorContainers();
     if (ids.length !== 1) throw new Error('The collector must run in its admitted native container');
     const containerId = ids[0];
