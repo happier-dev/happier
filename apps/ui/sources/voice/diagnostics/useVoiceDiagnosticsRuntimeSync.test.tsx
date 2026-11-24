@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createMachineFixture, registerStandardCleanupTarget, renderHook, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsSettingsV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema,
@@ -12,6 +13,7 @@ import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsR
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { serverAccountScopedStorageKey } from '@/sync/domains/scope/serverAccountScope';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { addPersistedVoiceDiagnosticsMachineRevocation, readPersistedVoiceDiagnosticsMachineRevocations } from './revocationObligationPersistence';
 import { createDiagnosticsTestEvents } from './diagnosticsTestEvents';
 
@@ -124,15 +126,18 @@ function RuntimeSync(props: { voice: unknown }) {
 }
 
 function createHarness(props: { voice: unknown }) {
+  const previousMachines = storage.getState().machines;
   const machines = ['m1', 'm2', 'm3'].map(id => {
     const target = runtimeTargetsByMachineId.get(id) ?? (id === machineState.machineId ? machineState : { daemonStateVersion: 0, isOnline: false });
+    const previous = previousMachines[id];
+    // Each fixture publication is a fresh Home event, including updates in the same wall-clock tick.
+    const activeAt = Math.max(Date.now(), previous ? (readMachineActivity(previous).activeAt ?? 0) + 1 : 0);
     return createMachineFixture({ id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-      active: target.isOnline, activeAt: target.isOnline ? Date.now() : 0,
+      active: target.isOnline, activeAt, presenceProtocolVersion: 1,
       daemonStateVersion: target.daemonStateVersion,
       daemonState: { status: 'running', startedAt: target.daemonStateVersion } });
   });
-  storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-    machineListByServerId: { [scope.serverId]: machines } });
+  storage.getState().applyMachines(machines, true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
   storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse(props.voice) }, storage.getState().settings));
   return React.createElement(RuntimeSync, props);
 }
@@ -141,7 +146,7 @@ async function mountHarness(props: { voice: unknown }) {
   // Mount the actual hook while this Account's machine list is still loading.
   // Its own credential-presence subscription settles before publishing targets;
   // warming a different hook cannot settle this reader's scoped lifetime.
-  storage.setState({ machines: {}, machineListByServerId: { [scope.serverId]: [] } });
+  storage.getState().applyMachines([], true, { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
   let tree!: renderer.ReactTestRenderer;
   await act(async () => {
     tree = renderer.create(React.createElement(RuntimeSync, props));
@@ -172,8 +177,9 @@ describe('useVoiceDiagnosticsRuntimeSync', () => {
     scope = { serverId: home.homes.diagnostics!.id, accountId: 'account-a' };
     const machine = createMachineFixture({ id: 'm1', activeAt: Date.now(), daemonStateVersion: 1,
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
-    storage.setState({ machines: { m1: machine }, machineListByServerId: { [scope.serverId]: [machine] },
-      settings: { ...storage.getState().settings, voice: voiceSettingsParse({ diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } }) } });
+    await publishMachineInventoryForTest(scope, [machine]);
+    storage.setState({ settings: { ...storage.getState().settings,
+      voice: voiceSettingsParse({ diagnostics, executionMachine: { mode: 'fixed', machineId: 'm1' } }) } });
     const readiness = await renderHook(() => useMachineCliDetectionTarget('m1'));
     await waitForTestEvent(readiness.subscribe, readiness.getCurrent, value => value.isOnline);
     expect(readiness.getCurrent().isOnline).toBe(true);
