@@ -630,9 +630,8 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
         providerConfig: readVoiceProviderSettingsConfig(voice, providerId),
       });
     },
-    getRealtimeClientToolDefinitions({ exposure, sessionMetadata }) {
-      const scope = sessionMetadata === undefined ? undefined : { sessionMetadata };
-      const enabledSpecs = resolveEnabledVoiceToolActionSpecsFromState(storage.getState(), scope);
+    getRealtimeClientToolDefinitions({ exposure }) {
+      const enabledSpecs = resolveEnabledVoiceToolActionSpecsFromState(storage.getState());
       // An attached Agent session already owns cross-session, machine, server,
       // activity, and transcript discovery through its canonical tools. Its
       // realtime surface receives only the current-UI tools the Voice
@@ -657,7 +656,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
           parameters: createRealtimeClientToolParameters(resolveActionCatalogSurfaceProjection(spec, 'voice').inputSchema),
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
-            if (!isVoiceActionAvailableInState(storage.getState(), spec.id as ActionId, scope)) {
+            if (!isVoiceActionAvailableInState(storage.getState(), spec.id as ActionId)) {
               throw new Error('voice_action_unavailable');
             }
             if (!isReadOnly) throw directVoiceEffectExecutionUnavailable();
@@ -696,7 +695,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             if (!admitted.ok) throw new Error('invalid_parameters');
             const target = resolveVoiceActionExecution(admitted.arguments);
             if (!target) throw new Error('invalid_parameters');
-            if (!isVoiceActionAvailableInState(storage.getState(), target.spec.id as ActionId, scope)) {
+            if (!isVoiceActionAvailableInState(storage.getState(), target.spec.id as ActionId)) {
               throw new Error('voice_action_unavailable');
             }
             if (!isVoiceSdkSafeActionSpec(target.spec)) throw directVoiceEffectExecutionUnavailable();

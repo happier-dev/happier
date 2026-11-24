@@ -56,7 +56,7 @@ const { createDefaultActionExecutor, executeDefaultActionInCapturedAccount } = a
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
-  it('withholds Memory Save discovery and dispatch for a bound Session with Memory off', async () => {
+  it('lets Voice find Memory Save and hear the bound Session’s typed refusal with Memory off', async () => {
     const serverId = await home.addHome({ name: 'Voice Memory policy', serverUrl: 'https://voice-memory-policy.test',
       accountId: 'alice', currentAccount: true });
     const session = createSessionFixture({ id: 'voice-memory-target', serverId });
@@ -69,6 +69,9 @@ describe('Voice Action reference catalog', () => {
       resolveCurrentSessionAddress: async () => ({ serverId, sessionId: session.id }) });
     const discover = (id: string) => handlers.action_execute!({ actionId: 'action.spec.get', input: { id } })
       .then(raw => JSON.parse(raw));
+    const search = async () => JSON.parse(await handlers.action_execute!({
+      actionId: 'action.spec.search', input: { query: 'memory.remember' },
+    }));
     const save = handlers.action_execute!({ actionId: 'memory.remember',
       input: { scope: 'account', text: 'Keep the silver compass.' } },
     { serverId, effectId: 'voice-save-with-memory-off', turnOrigin: 'person' }).then(raw => JSON.parse(raw));
@@ -83,11 +86,15 @@ describe('Voice Action reference catalog', () => {
     const { resolveSpokenActionOutcome } = await import('@/voice/context/spokenActionOutcome');
     expect(resolveSpokenActionOutcome({ t: 'action_execute', args: { actionId: 'memory.remember' }, result: projected }))
       .toBe(t('memoryContext.session.memoryOff'));
-    expect(writeDiscovery).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    expect(writeDiscovery).toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'session_memory_off' } });
     expect(await discover('memory.read')).toMatchObject({ ok: true });
     expect(home.artifacts(serverId).list()).toEqual([]);
     setMemory(true);
     expect(await discover('memory.remember')).toMatchObject({ ok: true });
+    const available = await search();
+    expect(available.result.actionSpecs).toContainEqual(expect.objectContaining({ id: 'memory.remember' }));
+    setMemory(false);
+    expect((await search()).result.actionSpecs).toContainEqual(expect.objectContaining({ id: 'memory.remember' }));
   });
 
   it('reads the bound child’s real failed turn through the canonical Voice status tool', async () => {

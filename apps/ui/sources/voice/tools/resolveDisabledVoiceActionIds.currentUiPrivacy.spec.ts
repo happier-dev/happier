@@ -38,26 +38,6 @@ function enabledVoiceActionIds(state: Parameters<typeof resolveEnabledVoiceToolA
 }
 
 describe('voice Action catalog current-UI privacy', () => {
-  it('uses the admitted Session memory choice for offered write tools while global Voice keeps its own availability', () => {
-    const state = stateWithCurrentUiContextMode('automatic');
-    const off = { sessionMetadata: { work: { memoryEnabled: false } } };
-    const on = { sessionMetadata: { work: { memoryEnabled: true } } };
-    const writes = ['memory.remember', 'memory.update', 'memory.forget'] as const;
-    expect(resolveDisabledVoiceActionIdsFromState(state, off)).toEqual(expect.arrayContaining([...writes]));
-    const offEnabled = resolveEnabledVoiceToolActionSpecsFromState(state, off).map(spec => spec.id);
-    const onEnabled = resolveEnabledVoiceToolActionSpecsFromState(state, on).map(spec => spec.id);
-    const globalEnabled = enabledVoiceActionIds(state);
-    const onDisabled = resolveDisabledVoiceActionIdsFromState(state, on);
-    const globalDisabled = resolveDisabledVoiceActionIdsFromState(state);
-    for (const actionId of writes) {
-      expect(offEnabled).not.toContain(actionId);
-      expect(onDisabled).not.toContain(actionId);
-      expect(globalDisabled).not.toContain(actionId);
-      expect(onEnabled).toContain(actionId);
-      expect(globalEnabled).toContain(actionId);
-    }
-    expect(offEnabled).toContain('memory.read');
-  });
   it('withholds current-UI Action specs from the next Local Voice attempt when sharing is off', () => {
     const state = stateWithCurrentUiContextMode('off');
     const enabledIds = enabledVoiceActionIds(state);

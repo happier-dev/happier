@@ -1098,7 +1098,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   };
 
   function resolveAvailabilityForContext(spec: ActionSpec | ActionDefinitionSummaryV1, ctx: ActionExecutorContext,
-    hostInternal = false): ActionSurfaceAvailability | null {
+    hostInternal = false, purpose?: 'catalog_search'): ActionSurfaceAvailability | null {
     ctx = actionPolicyContext(spec.id, ctx);
     const surface = parseActionSurfaceKey(ctx.surface);
     if (!surface) return null;
@@ -1109,7 +1109,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       settings: readAvailabilitySettings(spec.id, ctx),
       callerSurface: ctx.callerSurface,
       isActionEnabled: (id) => policyAllowsAction(id, ctx),
-      ...(isMemoryWriteActionV1(spec.id) ? { sessionMemoryEnabled: deps.readSessionMemoryEnabled?.(ctx) } : {}),
+      // Voice can find the Action, then receive the bound Session's refusal
+      // from an exact lookup or invocation and explain it to the person.
+      ...(isMemoryWriteActionV1(spec.id) && !(surface === 'voice' && purpose === 'catalog_search')
+        ? { sessionMemoryEnabled: deps.readSessionMemoryEnabled?.(ctx) } : {}),
       ...(hostInternal ? { hostInternal: true, placement: ctx.placement } : {}),
     });
   }
@@ -6369,7 +6372,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 limit: data.limit === null || typeof data.limit === 'number' ? data.limit : undefined,
                 isActionEnabled: (id) => !credentialScopeFailure(id, discoveryContext, undefined, true)
                   && (purpose === 'automation' ? isHostInternalActionEnabled(getActionSpec(id), discoveryContext)
-                    : isActionEnabled(getActionSpec(id), discoveryContext)),
+                    : resolveAvailabilityForContext(getActionSpec(id), discoveryContext, false, 'catalog_search')?.available === true),
                 additionalDefinitions: listContributedActionDefinitions().filter((definition) => (
                   isContributedActionDefinitionEnabled(definition, discoveryContext)
                 )),

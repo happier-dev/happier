@@ -662,7 +662,6 @@ export function createExternalProtocol(
             const voice = voiceSettingsParse(readVoiceSettingsInput(host.getSettings()));
             const tools = Object.freeze([...host.getRealtimeClientToolDefinitions({
               exposure: 'voice_assistant',
-              ...(snapshot.sessionMetadata ? { sessionMetadata: snapshot.sessionMetadata } : {}),
             })]);
             const serverId = snapshot.targetSessionAddress?.serverId ?? snapshot.voiceHomeServerId;
             if (!serverId || !snapshot.voiceHomeServerId) return { kind: 'declined' as const, code: 'voice_account_operation_unavailable' };
