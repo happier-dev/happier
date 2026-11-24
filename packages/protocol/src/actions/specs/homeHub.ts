@@ -9,8 +9,8 @@ import { WidgetSizeV1Schema } from '../../widgets/widgetPresentationV1.js';
 import { WidgetLayoutGroupV1Schema } from '../../widgets/widgetLayoutItemV1.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 
-export const HOME_HUB_LAYOUT_ACTION_IDS = ['home.hub.layout.get', 'home.hub.layout.update', 'home.reachNudge.dismiss'] as const;
-export const HOME_HUB_LAYOUT_UPDATE_ACTION_ID = HOME_HUB_LAYOUT_ACTION_IDS[1];
+export const HOME_HUB_LAYOUT_UPDATE_ACTION_ID = 'home.hub.layout.update';
+export const HOME_HUB_LAYOUT_ACTION_IDS = ['home.hub.layout.get', HOME_HUB_LAYOUT_UPDATE_ACTION_ID, 'home.reachNudge.dismiss'] as const;
 const HOME_LAYOUT_TITLE = 'Customize Home';
 export type HomeHubLayoutActionId = typeof HOME_HUB_LAYOUT_ACTION_IDS[number];
 
