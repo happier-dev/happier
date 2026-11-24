@@ -39,7 +39,27 @@ export async function readBoundedResponseBody(params: Readonly<{
 
     const reader = params.response.body?.getReader();
     if (!reader) {
-        throw new BoundedResponseBodyError('body_missing');
+        // RN's global Response (including Home RPC replies) has buffered bytes
+        // but no stream. Expo HTTP and browser responses keep the streaming path.
+        if (params.response.body === null || typeof params.response.arrayBuffer !== 'function') {
+            throw new BoundedResponseBodyError('body_missing');
+        }
+        if (params.signal?.aborted) {
+            throw new BoundedResponseBodyError('aborted');
+        }
+        let bytes: Uint8Array;
+        try {
+            bytes = new Uint8Array(await params.response.arrayBuffer());
+        } catch {
+            throw new BoundedResponseBodyError(params.signal?.aborted ? 'aborted' : 'read_failed');
+        }
+        if (params.signal?.aborted) {
+            throw new BoundedResponseBodyError('aborted');
+        }
+        if (bytes.byteLength > maxBytes) {
+            throw new BoundedResponseBodyError('body_too_large');
+        }
+        return bytes;
     }
 
     let buffer = new Uint8Array(Math.min(declaredContentLength ?? 16 * 1024, maxBytes));
