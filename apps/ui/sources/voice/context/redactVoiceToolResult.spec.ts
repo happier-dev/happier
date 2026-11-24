@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
 import { projectSessionActivityCompatibilityV1 } from '@happier-dev/protocol/sessions/awareness/action';
@@ -64,6 +65,28 @@ describe('redactVoiceToolResultValue', () => {
     const execution = redactVoiceActionExecutionResultForProvider(toolName,
       { ...receipt, voiceApprovalGuidance: undefined }, SHARE_ALL);
     expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution }).execution).toEqual(receipt);
+  });
+
+  it('asks the person for the missing Workflow choice before retrying the refused Action', () => {
+    const action = getActionSpec(WORKFLOW_RUN_START_ACTION_ID_V1);
+    const toolName = action.bindings!.voiceClientToolName!;
+    const choice = 'Choose a value for the required Workflow input "reviewers".';
+    const receipt = {
+      ok: false as const, errorCode: 'invalid_input', error: choice, effectAttempted: false,
+      details: { issues: [{ code: 'missing_reference', path: '/inputs/reviewers', message: choice, severity: 'error' }] },
+    };
+    const prefs = { ...SHARE_ALL, shareFilePaths: false };
+    const execution = redactVoiceActionExecutionResultForProvider(toolName, receipt, prefs);
+
+    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution }).execution).toMatchObject({
+      ok: false, errorCode: 'invalid_input', effectAttempted: false, error: expect.stringContaining(choice),
+      details: { issues: [{ code: 'missing_reference', path: '<path_redacted>' }] },
+    });
+    expect(execution).toMatchObject({
+      error: expect.stringMatching(/ask the person.*wait.*before.*tool call/i),
+    });
+    expect(redactVoiceToolResultForProvider(action.id, { ...receipt, error: undefined, errorMessage: 'invalid_input' }, prefs))
+      .toMatchObject({ errorCode: 'invalid_input', errorMessage: expect.stringMatching(/reviewers.*ask the person.*wait.*before.*tool call/i) });
   });
 
   it('delivers only closed approval guidance in the provider Action result', () => {

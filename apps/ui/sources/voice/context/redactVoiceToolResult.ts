@@ -1,4 +1,4 @@
-import { SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { projectSpokenSpawnModelChoices } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionInputOptionSchema } from '@happier-dev/protocol/actions/actionInputHints';
 import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
@@ -9,6 +9,7 @@ import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessPr
 import { SessionActivityCompatibilityResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginUiHostApiErrorCodeV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { VoiceAttemptFailureKindSchema, VoiceAttemptRecoveryActionSchema } from '@happier-dev/protocol/voice/attemptPresentation';
+import { WorkflowValidationIssueV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { ConnectedServiceCredentialHealthStatusV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import {
@@ -57,6 +58,7 @@ const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
 ).trim();
 const SPAWN_SESSION_TOOL_NAME = getActionSpec(SESSION_SPAWN_NEW_ACTION_ID_V1).bindings?.voiceClientToolName;
+const WORKFLOW_RUN_START_TOOL_NAME = getActionSpec(WORKFLOW_RUN_START_ACTION_ID_V1).bindings?.voiceClientToolName;
 const MODEL_LIST_ACTION_ID = 'agents.models.list';
 const MODEL_LIST_TOOL_NAME = getActionSpec(MODEL_LIST_ACTION_ID).bindings?.voiceClientToolName;
 const OPTIONS_ACTION_ID = 'action.options.resolve';
@@ -528,6 +530,19 @@ export function redactVoiceToolResultForProvider(
   }
   if (toolName === MODEL_LIST_TOOL_NAME || toolName === MODEL_LIST_ACTION_ID) {
     return projectModelList(value, prefs);
+  }
+  if (toolName === WORKFLOW_RUN_START_TOOL_NAME || toolName === WORKFLOW_RUN_START_ACTION_ID_V1) {
+    const result = readResultRecord(value);
+    const { issues } = readResultRecord(result.details);
+    if (result.ok === false && result.errorCode === 'invalid_input' && Array.isArray(issues)) {
+      for (const issue of issues) {
+        const parsed = WorkflowValidationIssueV1Schema.safeParse(issue);
+        if (!parsed.success || parsed.data.code !== 'missing_reference' || !parsed.data.path.startsWith('/inputs/')) continue;
+        const message = `${parsed.data.message} Ask the person to choose it and wait for their answer before making another tool call for this request.`;
+        value = typeof result.error === 'string' ? { ...result, error: message } : { ...result, errorMessage: message };
+        break;
+      }
+    }
   }
   return redactVoiceToolResultValueWithClassification(
     ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : projectVoiceAttemptForProvider(value),
