@@ -245,7 +245,7 @@ describe('Metric widget', () => {
       okAnswer({ errorRate: 0.051 }),
     );
     await vi.waitFor(async () => {
-      await expect(page.getByText('5.1%')).resolves.toBeDefined();
+      await expect(page.getByRole('group', { name: 'Error rate: 5.1%' })).resolves.toBeDefined();
     });
     const metrics = calls.find(
       (call) => call.localId === 'capture/metrics/read',
@@ -276,9 +276,10 @@ describe('Metric widget: route, comparison and Show', () => {
       }),
     );
     await vi.waitFor(async () => {
-      await expect(page.getByText('was 188 ms before the last deploy')).resolves.toBeDefined();
+      await expect(page.getByRole('group', {
+        name: 'p95 request time: 412 ms, was 188 ms before the last deploy',
+      })).resolves.toBeDefined();
     });
-    await expect(page.getByText('412 ms')).resolves.toBeDefined();
     const routeMeasure = { kind: 'route', routes: [CHECKOUT], statistic: 'p95' };
     // The route's own service answers both reads, with the same measure.
     expect(calls.find((call) => call.localId === 'capture/metrics/read')!.input).toMatchObject({
@@ -295,9 +296,8 @@ describe('Metric widget: route, comparison and Show', () => {
       const { page } = await mount(renderMetric,
         { environment: ENVIRONMENT, metric: 'p95', route: CHECKOUT }, comparing(compare));
       await vi.waitFor(async () => {
-        await expect(page.getByText('412 ms')).resolves.toBeDefined();
+        await expect(page.getByRole('group', { name: 'p95 request time: 412 ms' })).resolves.toBeDefined();
       });
-      await expect(page.queryByText('was 188 ms before the last deploy')).resolves.toBeUndefined();
     }
   });
 
@@ -322,7 +322,7 @@ describe('Metric widget: route, comparison and Show', () => {
     await vi.waitFor(async () => {
       await expect(page.queryByText('Waiting for traffic')).resolves.toBeUndefined();
     });
-    await expect(page.queryByText('412 ms')).resolves.toBeUndefined();
+    await expect(page.queryByRole('group', { name: 'p95 request time: 412 ms' })).resolves.toBeUndefined();
   });
 });
 
@@ -340,7 +340,7 @@ describe('Slowest routes widget', () => {
 
   it('reads every page of the window\'s routes before it ranks them, and nothing else from the collector', async () => {
     const cursor = { serviceName: 'billing-api/Production', method: 'POST', route: '/cart' };
-    const { calls } = await mount(renderSlowestRoutes, { environment: ENVIRONMENT }, (localId, input) => {
+    const { calls } = await mount(renderSlowestRoutes, { environment: ENVIRONMENT }, (localId, input): JsonValue => {
       if (localId !== 'capture/endpoints/list') return okAnswer({})(localId, input);
       const page = input.page as { before?: unknown };
       return page.before === undefined
