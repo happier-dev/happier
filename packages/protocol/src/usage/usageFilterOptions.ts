@@ -1,7 +1,7 @@
 import type { UsageAnalyticsBreakdownDimension, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import type { UsageQueryResultSlice } from './resolveUsagePageAggregation.js';
 import type { ProjectListGroupV1, ProjectListOrganizationV1 } from '../projects/projectListProjectionV1.js';
-import { isEarlierProjectBaselineRefV1, resolveWorkspacePathBasenameV1 } from '../workspaces/workspaceRefResolutionV1.js';
+import { isEarlierProjectBaselineRefV1, qualifyCollidingProjectTitlesV1, resolveWorkspacePathBasenameV1 } from '../workspaces/workspaceRefResolutionV1.js';
 
 export type UsageScopeFilterField = 'sources' | 'agents' | 'machines' | 'projects';
 export const usageScopeFilterDimensions = {
@@ -27,6 +27,7 @@ export function agentIdFromEngineKey(key: string): string {
 type UsageProjectOptionFact = Readonly<{
   label?: string | null;
   checkoutPathLabel?: string;
+  baselineMachineId?: string;
   rootPath?: string;
   machineIds?: readonly string[];
 }>;
@@ -51,6 +52,7 @@ export function projectUsageOptionFacts(groups: readonly ProjectListGroupV1[],
     facts.set(key, { label: facts.get(key)?.label ?? (baseline.label?.trim() || undefined),
       checkoutPathLabel: resolveWorkspacePathBasenameV1(baseline.rootPath) || baseline.rootPath,
       rootPath: baseline.rootPath,
+      baselineMachineId: baseline.machineId,
       machineIds: [...machineIds] });
   }
   return facts;
@@ -88,68 +90,33 @@ export function readUsageProjectScopeMachines(slices: readonly UsageQueryResultS
 type UsageProjectOptionNames = Readonly<{
   machineNames?: Readonly<Record<string, string>>;
   projectFacts?: UsageProjectOptionFacts;
-  projectMachines?: ReturnType<typeof readUsageProjectScopeMachines>;
 }>;
+
+/** One title index for Work, the toolbar and the options Action. Checkout facts never add filter membership. */
+export function resolveUsageProjectTitles(labels: ReadonlyMap<string, string>,
+  options: UsageProjectOptionNames = {}): ReadonlyMap<string, string | null> {
+  const facts = new Map<string, { title: string | null; rootPath?: string; machineName?: string }>();
+  const add = (key: string, fallback: string) => {
+    const fact = options.projectFacts?.get(key);
+    const base = (fact?.label ?? fallback).trim();
+    const checkout = fact?.label == null ? fact?.checkoutPathLabel ?? '' : '';
+    const title = hasUsageProjectOptionName(key, base) ? base
+      : hasUsageProjectOptionName(key, checkout) ? checkout : null;
+    facts.set(key, { title, rootPath: fact?.rootPath,
+      machineName: fact?.baselineMachineId ? options.machineNames?.[fact.baselineMachineId] : undefined });
+  };
+  for (const [key, label] of labels) add(key, label);
+  // A date/window filter can remove a choice but cannot rename a known Project.
+  for (const key of options.projectFacts?.keys() ?? []) if (!facts.has(key)) add(key, key);
+  return qualifyCollidingProjectTitlesV1(facts, { compact: true });
+}
 
 /** A null title is the toolbar's unnamed group. Its underlying accounting keys remain usable in Actions. */
 export function readUsageProjectOptionTitles(slices: readonly UsageQueryResultSlice[], selected: readonly string[] = [],
   anchorOf?: (key: string) => string, options: UsageProjectOptionNames = {}): ReadonlyMap<string, string | null> {
   const labels = readUsageScopeLabels(slices, 'projects', selected, anchorOf);
-  const titles = new Map<string, string | null>();
-  const groups = new Map<string, string[]>();
-  for (const [key, accountingLabel] of labels) {
-    const fact = options.projectFacts?.get(key);
-    const base = fact?.label ?? accountingLabel.trim();
-    const fallback = fact?.label == null ? fact?.checkoutPathLabel ?? '' : '';
-    const label = hasUsageProjectOptionName(key, base) ? base
-      : hasUsageProjectOptionName(key, fallback) ? fallback : null;
-    titles.set(key, label);
-    if (label === null) continue;
-    const keys = groups.get(label);
-    if (keys) keys.push(key);
-    else groups.set(label, [key]);
-  }
-  const machines = options.projectMachines ?? readUsageProjectScopeMachines(slices, anchorOf, options.projectFacts);
-  const alternatives = new Map<string, string[]>();
-  for (const [label, keys] of groups) {
-    if (keys.length < 2) continue;
-    const places = keys.map(key => {
-      const ids = machines.get(key) ?? [];
-      const names = ids.flatMap(id => options.machineNames?.[id] || []).sort();
-      const machine = names.length > 0 && names.length === ids.length ? names.join(', ') : '';
-      const path = options.projectFacts?.get(key)?.rootPath?.replace(/[\\/]+$/, '') ?? '';
-      const parent = resolveWorkspacePathBasenameV1(path.slice(0, Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))));
-      return { key, machine, path, parent };
-    });
-    const machineCounts = new Map<string, number>();
-    const parentCounts = new Map<string | null, number>();
-    for (const { machine, parent } of places) {
-      machineCounts.set(machine, (machineCounts.get(machine) ?? 0) + 1);
-      parentCounts.set(parent, (parentCounts.get(parent) ?? 0) + 1);
-    }
-    for (const { key, machine, path, parent } of places) {
-      const suffixes = [machineCounts.get(machine) === 1 ? machine : '',
-        parent && parentCounts.get(parent) === 1 ? parent : '', path];
-      const [place, ...fallbacks] = [...new Set(suffixes.filter(Boolean))];
-      if (place) titles.set(key, `${label} · ${place}`);
-      if (fallbacks.length) alternatives.set(key, fallbacks.map(place => `${label} · ${place}`));
-    }
-  }
-
-  // A Machine name can match a folder name or a title in another group.
-  while (alternatives.size > 0) {
-    const counts = new Map<string, number>();
-    for (const title of titles.values()) if (title !== null) counts.set(title, (counts.get(title) ?? 0) + 1);
-    let advanced = false;
-    for (const [key, remaining] of alternatives) {
-      if (counts.get(titles.get(key)!) === 1) continue;
-      titles.set(key, remaining.shift()!);
-      if (!remaining.length) alternatives.delete(key);
-      advanced = true;
-    }
-    if (!advanced) break;
-  }
-  return titles;
+  const titles = resolveUsageProjectTitles(labels, options);
+  return new Map([...labels.keys()].map(key => [key, titles.get(key) ?? null]));
 }
 
 /**

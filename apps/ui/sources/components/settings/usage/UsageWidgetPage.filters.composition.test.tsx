@@ -482,7 +482,7 @@ describe('mounted Usage page scope commands', () => {
                 if (request.path === '/v2/usage/query') return Response.json(value);
                 if (request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
                     const serverId = home!.homes.a!.id;
-                    const rows = [[projectKeys[1], build, '/work/Dev/tmp'], [projectKeys[2], build, '/work/Other/tmp'], ['app', dev, '/work/repo']]
+                    const rows = [[projectKeys[0], dev, '/work/tmp'], [projectKeys[1], build, '/work/Dev/tmp'], [projectKeys[2], build, '/work/Other/tmp'], ['app', dev, '/work/repo']]
                         .map(([projectKey, machineId, rootPath]) => {
                             const ref = WorkspaceRefV1Schema.parse({ id: `checkout-${projectKey}`, projectKey, serverId, machineId, rootPath, createdAtMs: 1 });
                             const key = { kind: 'workspace-ref' as const, serverId, id: ref.id };
@@ -506,7 +506,7 @@ describe('mounted Usage page scope commands', () => {
         const chip = () => screen.findAllByType(SelectionListFilterChip).map(node => node.props.filter).find(filter => filter.id === 'projects')!;
         await waitForHomeGovernance(() => {
             expect(chip().options).toHaveLength(projectKeys.length + 1);
-            expect(getStorage().getState().projectAccountRows?.workspaceRefs).toHaveLength(3);
+            expect(getStorage().getState().projectAccountRows?.workspaceRefs).toHaveLength(4);
             expect(getStorage().getState().machines[dev]?.metadata?.displayName).toBe('Dev');
         });
         await screen.pressByTestIdAsync(chip().testID);

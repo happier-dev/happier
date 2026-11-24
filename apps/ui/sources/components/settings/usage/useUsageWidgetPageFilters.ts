@@ -2,20 +2,16 @@ import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { projectUsageOptionFacts, readUsageProjectOptionTitles, readUsageProjectScopeMachines,
+import { readUsageProjectOptionTitles, readUsageProjectScopeMachines,
     readUsageScopeOptions, usageUnnamedProjectTitle } from '@happier-dev/protocol/usage/usageFilterOptions';
-import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { useAllMachines } from '@/sync/domains/state/storage';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
-import { selectProjectChoiceMachineNames } from '@/sync/domains/machines/identity/projectChoiceMachineNames';
 import { t } from '@/text';
 import type { UsageWidgetPageContextState } from './useUsageWidgetPageContext';
 import { toggleUsageScopeSelection } from './usageWidgetPageContext';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
-import { readUsageCoverageGaps, useUsageProjectAnchorOf, usageMachinePlace, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
-import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
-import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { readUsageCoverageGaps, useUsageProjectAnchorOf, useUsageProjectChoiceMachineNames, useUsageProjectOptionFacts, usageMachinePlace, usageAgentTitle, usageSourceTitle, usageCoverageDescription } from './widgets/usageBodyKit';
 import { useUsageWidgetBatchInventorySelection } from './widgets/usageWidgetBatch';
 import { readUsageAppCallsEnvironmentIds, usageAppCallsSourceId } from '@/sync/domains/usage/usageAppCallsSource';
 import type { UsageAppEnvironment } from '@/sync/api/account/usageAppCallsAccounting';
@@ -176,14 +172,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
     // Usage stamped by a checkout before it joined a Project is offered under that Project (owner 11-08).
     const projectAnchorOf = useUsageProjectAnchorOf(serverId);
     const { scope, setScope } = page;
-    const projectRows = useProjectAccountRows();
-    const projectFacts = React.useMemo(() => {
-        if (sessionScoped || !projectRows || projectRows.status === 'locked' || projectRows.status === 'refused'
-            || !areServerProfileIdentifiersEquivalent(projectRows.scope.serverId, serverId)) return undefined;
-        const projection = projectProjectListV1({ serverId, workspaceRefs: projectRows.workspaceRefs,
-            organizations: projectRows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
-        return projectUsageOptionFacts([...projection.projectGroups, ...projection.hiddenProjectGroups], projectRows.organizations);
-    }, [projectRows, serverId, sessionScoped]);
+    const projectFacts = useUsageProjectOptionFacts(serverId, !sessionScoped);
     const selectMachineIds = React.useCallback((inventory: UsageQueryResultSlice | null) => sessionScoped ? []
         : [...new Set([...readUsageScopeOptions(inventory ? [inventory] : fallbackSlices, 'machines', scope.machines).keys(),
             ...[...readUsageProjectScopeMachines(inventory ? [inventory] : fallbackSlices, projectAnchorOf.resolve, projectFacts).values()].flat()])],
@@ -197,8 +186,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
         return Object.fromEntries(resolveMachineDisplayNames([...machines,
             ...referencedMachineIds.filter(id => !listed.has(id)).map(id => ({ id, absence: 'unlisted' as const }))]));
     }, [referencedMachineIds, sessionScoped]));
-    const projectMachineNames = useAllMachines(React.useCallback(machines => sessionScoped ? {} :
-        Object.fromEntries(selectProjectChoiceMachineNames(machines)), [sessionScoped]));
+    const projectMachineNames = useUsageProjectChoiceMachineNames(!sessionScoped);
     const retained = React.useRef<Readonly<{ setScope: typeof setScope; filters: readonly UsageWidgetPageFilter[] }> | null>(null);
     const selectFilters = React.useCallback((inventory: UsageQueryResultSlice | null, optionsPending: boolean): readonly UsageWidgetPageFilter[] => {
         const slices = inventory ? [inventory] : fallbackSlices;
@@ -212,7 +200,7 @@ export function useUsageWidgetPageFilters(page: UsageWidgetPageContextState, fal
             if (field === 'projects') {
                 const projectMachines = readUsageProjectScopeMachines(slices, projectAnchorOf.resolve, projectFacts);
                 const titles = readUsageProjectOptionTitles(slices, scopeSelected, projectAnchorOf.resolve,
-                    { projectFacts, projectMachines, machineNames: projectMachineNames });
+                    { projectFacts, machineNames: projectMachineNames });
                 const groupId = (anchor: string) => titles.get(anchor) == null ? UNNAMED_PROJECT_OPTION : anchor;
                 const groups = new Map<string, Set<string>>();
                 for (const key of titles.keys()) {

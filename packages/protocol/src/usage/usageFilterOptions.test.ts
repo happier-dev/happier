@@ -20,7 +20,7 @@ const entry = (key: string, label?: string) => ({
 });
 
 describe('readUsageScopeOptions Projects (owner 11-08)', () => {
-  it('qualifies colliding Projects by Machine or checkout place and preserves titles without a collision witness', () => {
+  it('qualifies colliding Projects by Machine or checkout place and uses the shared fallback when human places coincide', () => {
     const slices = [{ accounting: {
       scopeKeys: [{ dimension: 'project', keys: ['a', 'b', 'c', 'd', 'e', 'f', 'g'],
         projectMachines: [
@@ -32,11 +32,13 @@ describe('readUsageScopeOptions Projects (owner 11-08)', () => {
     } }] as unknown as UsageQueryResultSlice[];
     expect([...readUsageScopeOptions(slices, 'projects', [], undefined, {
       machineNames: { laptop: 'Laptop', desktop: 'Desktop' },
-      projectFacts: new Map([['c', { rootPath: '/work/first/tmp' }], ['d', { rootPath: 'C:\\work\\second\\tmp' }]]),
+      projectFacts: new Map([['a', { baselineMachineId: 'laptop' }], ['b', { baselineMachineId: 'desktop' }],
+        ['c', { baselineMachineId: 'laptop', rootPath: '/work/first/tmp' }],
+        ['d', { baselineMachineId: 'laptop', rootPath: 'C:\\work\\second\\tmp' }]]),
     })]).toEqual([
       ['a', 'happier · Laptop'], ['b', 'happier · Desktop'],
       ['c', 'tmp · first'], ['d', 'tmp · second'],
-      ['e', 'docs'], ['f', 'unknown place'], ['g', 'unknown place'],
+      ['e', 'docs'], ['f', 'unknown place · 1'], ['g', 'unknown place · 2'],
     ]);
   });
 
@@ -68,7 +70,9 @@ describe('readUsageScopeOptions Projects (owner 11-08)', () => {
     } }] as unknown as UsageQueryResultSlice[];
     const options = readUsageScopeOptions(slices, 'projects', [], undefined, {
       machineNames: { dev: 'Dev', build: 'Build' },
-      projectFacts: new Map([['b', { rootPath: '/work/Dev/tmp' }], ['c', { rootPath: '/work/Other/tmp' }]]),
+      projectFacts: new Map([['a', { baselineMachineId: 'dev' }],
+        ['b', { baselineMachineId: 'build', rootPath: '/work/Dev/tmp' }],
+        ['c', { baselineMachineId: 'build', rootPath: '/work/Other/tmp' }]]),
     });
     expect([...options.values()]).toEqual(['tmp · Dev', 'tmp · /work/Dev/tmp', 'tmp · Other']);
   });

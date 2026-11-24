@@ -49,12 +49,12 @@ import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeMo
 export { usageSourceTitle, usageAgentTitle, usageDimensionLabel } from '@/sync/domains/usage/usageLabels';
 import { useUsageWidgetPageHasCoverageDetail, useUsageWidgetPageNothingRecorded } from './usageWidgetBatch';
 import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
-import { useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { useAllMachines, useWorkspaceRefs } from '@/sync/domains/state/storage';
+import { selectProjectChoiceMachineNames } from '@/sync/domains/machines/identity/projectChoiceMachineNames';
 import { createProjectAnchorOfKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { resolveWorkspaceRefDisplayNames } from '@/components/projects/resolveWorkspaceRefDisplayName';
-import { readProjectBaselineRef } from '@/sync/domains/workspaces/projectGroupDisplay';
+import { projectUsageOptionFacts, resolveUsageProjectTitles } from '@happier-dev/protocol/usage/usageFilterOptions';
 import { useUsageDisclosureCommand, useUsageRetryCommand } from './usageMountedControls';
 import { isWidgetResourceQuietRefresh } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -152,6 +152,22 @@ export function useUsageProjectAnchorOf(serverId: string): Readonly<{ joinedKey:
 type UsageProjectNameFact = Readonly<{ key: string; label?: string; machineIds?: readonly string[] }>;
 const NO_PROJECT_NAME_FACTS: readonly UsageProjectNameFact[] = [];
 
+export function useUsageProjectOptionFacts(serverId: string, enabled = true) {
+  const rows = useProjectAccountRows();
+  return React.useMemo(() => {
+    if (!enabled || !rows || rows.status === 'locked' || rows.status === 'refused'
+      || !areServerProfileIdentifiersEquivalent(rows.scope.serverId, serverId)) return undefined;
+    const { projectGroups, hiddenProjectGroups } = projectProjectListV1({ serverId, workspaceRefs: rows.workspaceRefs,
+      organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
+    return projectUsageOptionFacts([...projectGroups, ...hiddenProjectGroups], rows.organizations);
+  }, [rows, serverId, enabled]);
+}
+
+export function useUsageProjectChoiceMachineNames(enabled = true) {
+  return useAllMachines(React.useCallback(machines => enabled
+    ? Object.fromEntries(selectProjectChoiceMachineNames(machines)) : {}, [enabled]));
+}
+
 /** Names and checkout context stay in the opened Account projection; accounting carries Project anchors. */
 export function useUsageProjectNames(serverId: string, fallbacks: readonly UsageProjectNameFact[] = NO_PROJECT_NAME_FACTS): Readonly<{
   labels: ReadonlyMap<string, string>;
@@ -159,50 +175,22 @@ export function useUsageProjectNames(serverId: string, fallbacks: readonly Usage
   label: (key: string | null) => string;
   displayKey: (key: string | null) => string | null;
 }> {
-  const rows = useProjectAccountRows();
+  const projectFacts = useUsageProjectOptionFacts(serverId);
+  const machineNames = useUsageProjectChoiceMachineNames();
   return React.useMemo(() => {
+    const titles = resolveUsageProjectTitles(new Map(fallbacks.map(row => [row.key, row.label ?? row.key])),
+      { projectFacts, machineNames });
     const labels = new Map<string, string>();
+    for (const [key, title] of titles) if (title !== null) labels.set(key, title);
     const machineIds = new Map<string, readonly string[]>();
-    const name = (key: string, label: string | undefined) => {
-      const display = label?.trim();
-      // Protected rows can retain an opaque identity as their label too. Decide
-      // human readability once for the ledger and every Project filter choice.
-      if (display && display !== key && !/^[a-f\d]{32,}$/i.test(display)) labels.set(key, display);
-      else labels.delete(key);
-    };
-    for (const row of fallbacks) {
-      name(row.key, row.label);
-      if (row.machineIds) machineIds.set(row.key, row.machineIds);
-    }
-    if (rows && rows.status !== 'locked' && rows.status !== 'refused'
-      && areServerProfileIdentifiersEquivalent(rows.scope.serverId, serverId)) {
-      const projection = projectProjectListV1({ serverId, workspaceRefs: rows.workspaceRefs,
-        organizations: rows.organizations, normalizeServerId: resolveServerProfileScopeIdForIdentifier });
-      const groups = [...projection.projectGroups, ...projection.hiddenProjectGroups];
-      const organizationLabels = new Map<string, string | undefined>();
-      for (const row of rows.organizations) {
-        if (!organizationLabels.has(row.key.projectKey)) organizationLabels.set(row.key.projectKey, row.value.label);
-      }
-      const baselines = groups.flatMap(group => {
-        const key = group.projectKey.projectKey;
-        const baseline = readProjectBaselineRef(group.items, group.projectKey);
-        const label = organizationLabels.get(key);
-        machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...group.items.flatMap(ref => ref.machineId === undefined ? [] : [ref.machineId])])]);
-        return baseline ? [{ key, ref: { ...baseline, ...(label ? { label } : {}) } }] : [];
-      });
-      const displayNames = resolveWorkspaceRefDisplayNames(baselines.map(({ ref }) => ref));
-      baselines.forEach(({ key }, index) => name(key, displayNames[index]));
-      const projectKeys = new Set(groups.map(group => group.projectKey.projectKey));
-      // Native keys retain their producing CLI namespace, admitted by this
-      // opened Account snapshot. It supplies names, never routing authority.
-      for (const row of rows.organizations) {
-        if (!projectKeys.has(row.key.projectKey)) name(row.key.projectKey, row.value.label);
-      }
+    for (const row of fallbacks) if (row.machineIds) machineIds.set(row.key, row.machineIds);
+    for (const [key, fact] of projectFacts ?? []) {
+      if (fact.machineIds) machineIds.set(key, [...new Set([...(machineIds.get(key) ?? []), ...fact.machineIds])]);
     }
     return { labels, machineIds, displayKey: (key: string | null) => usageProjectDisplayKey(key, labels),
       label: (key: string | null) => key === null
       ? t('usage.board.work.unknownProject') : labels.get(key) ?? t('usage.board.work.unknownProject') };
-  }, [rows, serverId, fallbacks]);
+  }, [projectFacts, machineNames, fallbacks]);
 }
 
 /** Preserve the Machine owner's collision-aware names wherever Work/Project context is shown. */

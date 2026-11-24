@@ -1,5 +1,5 @@
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { isEarlierProjectBaselineRefV1, projectWorkspaceRefV1, resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isEarlierProjectBaselineRefV1, projectWorkspaceRefV1, qualifyCollidingProjectTitlesV1, resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { ProjectOrganizationRow } from './projectAccountRows';
 
@@ -67,31 +67,14 @@ export function buildProjectGroupDisplayIndex(
         result.set(key, { project, baseline: previous?.baseline ?? null, title,
             hasCustomLabel: row.value.label !== undefined });
     }
-    const byTitle = new Map<string, Array<[string, ProjectGroupDisplay]>>();
-    for (const [key, display] of result) {
-        if (!display.title) continue;
-        const matches = byTitle.get(display.title);
-        if (matches) matches.push([key, display]);
-        else byTitle.set(display.title, [[key, display]]);
-    }
-    for (const [title, matches] of byTitle) {
-        if (matches.length < 2) continue;
-        const candidates = matches.map(([key, display]) => {
-            const machineId = display.baseline?.machineId;
-            const machine = machineId === undefined ? undefined : machineNames?.[machineId];
-            const path = display.baseline?.rootPath;
-            return { key, display, details: [machine, path, machine && path ? `${machine} · ${path}` : undefined] };
-        });
-        const counts = new Map<string, number>();
-        for (const { details } of candidates) {
-            for (const detail of new Set(details)) if (detail) counts.set(detail, (counts.get(detail) ?? 0) + 1);
-        }
-        // If two Projects have the same human facts, use a stable ordinal without printing their identities.
-        candidates.sort((left, right) => left.key.localeCompare(right.key));
-        for (const [index, { key, display, details }] of candidates.entries()) {
-            const detail = details.find(candidate => candidate && counts.get(candidate) === 1) ?? String(index + 1);
-            result.set(key, { ...display, title: `${title} · ${detail}` });
-        }
+    const titles = qualifyCollidingProjectTitlesV1(new Map([...result].map(([key, display]) => {
+        const baseline = display.baseline;
+        return [key, { title: display.title, rootPath: baseline?.rootPath,
+            machineName: baseline?.machineId === undefined ? undefined : machineNames?.[baseline.machineId] }];
+    })));
+    for (const [key, title] of titles) {
+        const display = result.get(key)!;
+        if (title !== display.title) result.set(key, { ...display, title });
     }
     return result;
 }

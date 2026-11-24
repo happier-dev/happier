@@ -652,7 +652,7 @@ describe('Work and Coach widget bodies', () => {
     expect(first.length).toBeGreaterThan(t('session.untitled').length);
     await hook.unmount();
   });
-  it('keeps same-folder Projects on same-hostname Machines distinct with the canonical Machine labels (R138)', async () => {
+  it('J-B39 keeps same-folder Projects distinct in visible and accessible ledger titles (R138)', async () => {
     const { resolveMachineDisplayNames } = await import('@/utils/sessions/machineDisplayNames');
     const { WorkspaceRefV1Schema } = await import('@/sync/domains/workspaces/workspaceRefModel');
     const previous = storage.getState();
@@ -682,7 +682,7 @@ describe('Work and Coach widget bodies', () => {
       const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId), { wrapper: Wrapper });
       const { projectLabel, projectPlace, sessionLabel, summary } = hook.getCurrent();
       expect(summary?.projects.map(row => [row.projectKey, row.amount])).toEqual(projectKeys.map(key => [key, 3]));
-      expect(projectLabel(projectKeys[0]!)).toBe(projectLabel(projectKeys[1]!));
+      expect(projectKeys.map(projectLabel)).toEqual(machines.map(machine => `happier · ${names.get(machine.id)}`));
       for (const [index, machine] of machines.entries()) {
         expect(projectPlace(projectKeys[index]!)).toBe(names.get(machine.id));
         expect(sessionLabel(`session-${index}`)).toContain(names.get(machine.id)!);
@@ -691,6 +691,12 @@ describe('Work and Coach widget bodies', () => {
       const ledger = hook.tree.root.findByType(HappierDataRows);
       expect(ledger.props.rowIds).toEqual(projectKeys);
       for (const [index, machine] of machines.entries()) expect(ledger.props.rows[index][2]).toContain(names.get(machine.id)!);
+      for (const [index, key] of projectKeys.entries()) {
+        const title = projectLabel(key);
+        expect(ledger.props.rows[index][0]).toBe(title);
+        const toggle = hook.tree.root.findAllByProps({ testID: `same-folder-ledger.project.${key}.toggle` });
+        expect(toggle.some(node => node.props.accessibilityLabel === `${title} · ${projectPlace(key)}`)).toBe(true);
+      }
       const text = JSON.stringify(ledger.props.rows);
       for (const key of [...projectKeys, ...machines.map(machine => machine.id)]) expect(text).not.toContain(key);
       await hook.unmount();
@@ -733,7 +739,7 @@ describe('Work and Coach widget bodies', () => {
     expect(summary?.projects.map(row => [row.projectKey, row.amount])).toEqual([
       ['tmp-a', 3], ['tmp-b', 3], ['lone-key', 3],
     ]);
-    expect([projectLabel('tmp-a'), projectLabel('tmp-b'), projectLabel('lone-key')]).toEqual(['tmp', 'tmp', 'solo']);
+    expect([projectLabel('tmp-a'), projectLabel('tmp-b'), projectLabel('lone-key')]).toEqual(['tmp · 1', 'tmp · 2', 'solo']);
     expect(projectPlace('tmp-a')).not.toBe('');
     expect(projectPlace('tmp-a')).not.toBe(projectPlace('tmp-b'));
     expect(projectPlace('lone-key')).not.toBe('');
@@ -771,7 +777,7 @@ describe('Work and Coach widget bodies', () => {
       const names = keys.map(key => hook.getCurrent().projectLabel(key));
       expect(names[0]).toContain('customer');
       expect(names[1]).toContain('personal');
-      expect(names.slice(2)).toEqual(['happier', 'happier']);
+      expect(names.slice(2)).toEqual(['happier · 3', 'happier · 4']);
       for (const key of keys) expect(names.join(' ')).not.toContain(key);
       expect(hook.getCurrent().summary?.projects.map(row => row.projectKey).sort()).toEqual([...keys].sort());
       await hook.unmount();
@@ -916,47 +922,119 @@ describe('Work and Coach widget bodies', () => {
     // The Coach's own view lists freely: nothing is held there.
     expect(await heldRoom('large')).toBe(0);
   });
-  it('keeps the Project baseline name in Work and its option inventory as worktree order changes', async () => {
-    const { projectProjectListV1 } = await import('@happier-dev/protocol/workspaces');
+  it.each([
+    'baseline Machines, shared Work Machine',
+    'different checkout parents',
+    'same exact checkout',
+    'three indistinguishable places',
+    'nine worktrees',
+    'explicit organization title',
+    'unnamed Project',
+    'literal title collides with a generated title',
+  ])('J-B39 keeps Work and the options projector in agreement for %s', async scenario => {
+    const { createProjectAnchorOfKeyV1, projectProjectListV1, resolveWorkspaceRefV1 } =
+      await import('@happier-dev/protocol/workspaces');
     const { projectUsageOptionFacts, readUsageProjectOptionTitles, readUsageScopeOptions } =
       await import('@happier-dev/protocol/usage/usageFilterOptions');
     const { useUsageProjectNames } = await import('./usageBodyKit');
     const previous = storage.getState();
     const scope = { serverId: actionHome!.homes.work!.id, accountId: 'work-account' };
-    const checkout = (id: string, projectKey: string, rootPath: string, createdAtMs: number) =>
-      ({ id, projectKey, rootPath, createdAtMs, serverId: scope.serverId, machineId: 'dev' });
-    const baseline = checkout('baseline', 'grouped', '/customer/repo', 1);
-    const first = checkout('first', 'grouped', '/worktrees/usage-outcome-06', 2);
-    const second = checkout('second', 'grouped', '/worktrees/usage-outcome-09', 3);
-    const single = checkout('untouched', 'single', '/work/solo', 1);
-    const twin = checkout('same-folder', 'twin', '/personal/repo', 1);
-    const unnamed = checkout('private', 'unnamed', `/work/${'f'.repeat(64)}`, 1);
-    const keys = ['grouped', 'single', 'twin', 'unnamed'];
-    const expected = ['repo · customer', 'solo', 'repo · personal', 'No project name'];
-    const inventory: typeof slice = { ...slice, accounting: { ...slice.accounting!,
-      scopeKeys: [{ dimension: 'project', keys }] } };
+    const checkout = (id: string, projectKey: string, rootPath: string, createdAtMs = 1, machineId = 'work') =>
+      ({ id, projectKey, rootPath, createdAtMs, serverId: scope.serverId, machineId });
+    const baseline = checkout('one', 'a', '/workspace/repo', 1, 'first-box');
+    const second = checkout('two', 'b', '/workspace/repo', 1, 'second-box');
+    const worktrees = [checkout('one-worktree', 'a', '/worktrees/one', 2), checkout('two-worktree', 'b', '/worktrees/two', 2)];
+    const organization = (projectKey: string, label: string) => ({
+      key: { kind: 'project-organization' as const, serverId: scope.serverId, projectKey }, revision: 1, value: { label },
+    });
+    let refs = [baseline, second, ...worktrees];
+    let organizations: ReturnType<typeof organization>[] = [];
+    let expected = ['repo · First box', 'repo · Second box'];
+    let keys = ['a', 'b'];
+    let machineNames: Record<string, string> = { 'first-box': 'First box', 'second-box': 'Second box', work: 'Work box' };
+
+    switch (scenario) {
+      case 'different checkout parents':
+        refs = [checkout('one', 'a', '/customer/repo'), checkout('two', 'b', '/personal/repo')];
+        expected = ['repo · customer', 'repo · personal'];
+        break;
+      case 'same exact checkout': {
+        const repeated = resolveWorkspaceRefV1([baseline], {
+          serverId: scope.serverId, machineId: baseline.machineId, rootPath: baseline.rootPath + '/',
+        });
+        expect(repeated.kind).toBe('resolved');
+        if (repeated.kind !== 'resolved') throw new Error('Exact checkout was not reused');
+        expect(repeated.ref.id).toBe(baseline.id);
+        refs = [repeated.ref];
+        keys = ['a', repeated.ref.id];
+        expected = ['repo'];
+        break;
+      }
+      case 'three indistinguishable places':
+        refs = [baseline, second, checkout('three', 'c', '/workspace/repo', 1, 'offline-box')];
+        keys = ['a', 'b', 'c'];
+        expected = ['repo · 1', 'repo · 2', 'repo · 3'];
+        machineNames = { work: 'Work box' };
+        break;
+      case 'nine worktrees':
+        refs = [baseline, ...Array.from({ length: 9 }, (_, i) => ({
+          ...checkout(`worktree-${i}`, 'a', `/worktrees/usage-outcome-${i + 1}`, i + 2),
+          lastOpenedAtMs: i + 100,
+        }))];
+        keys = ['a'];
+        expected = ['repo'];
+        break;
+      case 'explicit organization title':
+        organizations = [organization('b', 'Main operations')];
+        expected = ['repo', 'Main operations'];
+        break;
+      case 'unnamed Project':
+        refs = [checkout('private', 'a', `/work/${'f'.repeat(64)}`)];
+        keys = ['a'];
+        expected = ['No project name'];
+        break;
+      case 'literal title collides with a generated title':
+        organizations = [organization('c', 'repo · First box')];
+        keys = ['a', 'b', 'c'];
+        expected = ['repo · 1', 'repo · Second box', 'repo · First box'];
+        break;
+    }
+    const machines = Object.entries(machineNames).map(([id, displayName]) => {
+      const row = createMachineFixture({ id });
+      return { ...row, metadata: row.metadata && { ...row.metadata, host: displayName, displayName } };
+    });
+    const inventory: typeof slice = { ...slice, accounting: { ...slice.accounting!, breakdowns: undefined, scopeKeys: [{
+      dimension: 'project', keys, projectMachines: keys.map(key => ({ key, machineIds: ['work'] })),
+    }] } };
     const hook = await renderBareHook(() => useUsageProjectNames(scope.serverId));
     try {
-      for (const worktrees of [
-        [{ ...first, lastOpenedAtMs: 10 }, second, baseline],
-        [baseline, first, { ...second, lastOpenedAtMs: 11 }],
-      ]) {
-        const workspaceRefs = [...worktrees, single, twin, unnamed];
-        await act(async () => storage.setState({ profileScope: scope, projectAccountRows: { scope,
-          status: 'ready', coverage: 'complete', workspaceRefs, relationships: [], revisionsByPhysicalKey: {}, organizations: [] } }));
-        const { projectGroups } = projectProjectListV1({ ...scope, workspaceRefs });
-        const optionFacts = { projectFacts: projectUsageOptionFacts(projectGroups, []) };
-        const picker = readUsageProjectOptionTitles([inventory], [], undefined, optionFacts);
-        const optionsAction = readUsageScopeOptions([inventory], 'projects', [], undefined, optionFacts);
+      for (const workspaceRefs of [refs, [...refs].reverse()]) {
+        await act(async () => {
+          storage.getState().applyMachines(machines);
+          storage.setState({ profileScope: scope, projectAccountRows: { scope, status: 'ready', coverage: 'complete',
+            workspaceRefs, relationships: [], revisionsByPhysicalKey: {}, organizations } });
+        });
+        const { projectGroups, hiddenProjectGroups } = projectProjectListV1({ ...scope, workspaceRefs, organizations });
+        const options = { projectFacts: projectUsageOptionFacts([...projectGroups, ...hiddenProjectGroups], organizations), machineNames };
+        const anchorOf = createProjectAnchorOfKeyV1(workspaceRefs);
+        const picker = readUsageProjectOptionTitles([inventory], [], key => anchorOf(scope.serverId, key), options);
+        const action = readUsageScopeOptions([inventory], 'projects', [], key => anchorOf(scope.serverId, key), options);
+        const projectedKeys = [...new Set(keys.map(key => anchorOf(scope.serverId, key)))];
 
-        expect.soft(keys.map(id => hook.getCurrent().label(id))).toEqual(expected);
-        expect.soft(keys.map(id => picker.get(id))).toEqual([...expected.slice(0, 3), null]);
-        expect.soft(keys.map(id => optionsAction.get(id))).toEqual(expected);
-        expect([...hook.getCurrent().labels.keys()].sort()).toEqual(['grouped', 'single', 'twin']);
+        expect.soft(projectedKeys.map(id => hook.getCurrent().label(id))).toEqual(expected);
+        expect.soft(projectedKeys.map(id => picker.get(id))).toEqual(expected.map(title => title === 'No project name' ? null : title));
+        expect.soft([...action]).toEqual(projectedKeys.map((key, index) => [key, expected[index]]));
+        expect.soft(new Set(action.values()).size).toBe(projectedKeys.length);
+        if (scenario === 'baseline Machines, shared Work Machine') {
+          const scoped = { ...inventory, accounting: { ...inventory.accounting!,
+            scopeKeys: [{ dimension: 'project' as const, keys: ['a'] }] } };
+          expect.soft([...readUsageScopeOptions([scoped], 'projects', [], undefined, options)])
+            .toEqual([['a', expected[0]]]);
+        }
       }
     } finally {
       await hook.unmount();
-      storage.setState({ profileScope: previous.profileScope, projectAccountRows: previous.projectAccountRows });
+      storage.setState(previous, true);
     }
   });
   it('keeps managed Project names without inventing a Machine identity', async () => {
@@ -1016,8 +1094,8 @@ describe('Work and Coach widget bodies', () => {
       expect(screen.getTextContent()).toContain('Human project');
       const { useUsageProjectNames } = await import('./usageBodyKit');
       const labels = await renderHook(() => useUsageProjectNames(scope.serverId));
-      expect(labels.getCurrent().labels.get(rowKey.projectKey)).toBe('Human project');
-      expect(labels.getCurrent().labels.get(twinKey.projectKey)).toBe('Human project');
+      expect(labels.getCurrent().labels.get(rowKey.projectKey)).toBe('Human project · 1');
+      expect(labels.getCurrent().labels.get(twinKey.projectKey)).toBe('Human project · 2');
       await labels.unmount();
       expect(screen.getTextContent()).not.toContain(opaque);
       const hook = await renderHook(() => useUsageWork(workSlice, query, scope.serverId));

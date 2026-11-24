@@ -36,6 +36,98 @@ export function isEarlierProjectBaselineRefV1(candidate: WorkspaceRefV1, current
     || candidate.createdAtMs === current.createdAtMs && candidate.id.localeCompare(current.id) < 0;
 }
 
+type ProjectDisplayTitleFactsV1 = Readonly<{
+  title: string | null;
+  machineName?: string;
+  rootPath?: string | null;
+}>;
+
+// Compact titles must agree across hosts even when the system locales differ.
+function compareProjectTitleKeys(left: string, right: string): number {
+  return left === right ? 0 : left < right ? -1 : 1;
+}
+
+/**
+ * Qualify only colliding Project titles using the baseline Machine and checkout.
+ * Compact lists prefer a short parent when it distinguishes the Projects, and
+ * also resolve collisions between generated titles and other final readings.
+ */
+export function qualifyCollidingProjectTitlesV1(
+  facts: ReadonlyMap<string, ProjectDisplayTitleFactsV1>,
+  { compact = false }: Readonly<{ compact?: boolean }> = {},
+): ReadonlyMap<string, string | null> {
+  const titles = new Map<string, string | null>();
+  const byTitle = new Map<string, string[]>();
+  for (const [key, { title }] of facts) {
+    titles.set(key, title);
+    if (!title) continue;
+    const matches = byTitle.get(title);
+    if (matches) matches.push(key);
+    else byTitle.set(title, [key]);
+  }
+
+  let qualified = false;
+  const compareKeys = compact ? compareProjectTitleKeys : (left: string, right: string) => left.localeCompare(right);
+  for (const [title, keys] of byTitle) {
+    if (keys.length < 2) continue;
+    qualified = true;
+    const counts = new Map<string, number>();
+    const parentCounts = new Map<string, number>();
+    const candidates = keys.map(key => {
+      const { machineName: machine, rootPath } = facts.get(key)!;
+      const path = compact ? rootPath?.replace(/[\\/]+$/, '') ?? '' : rootPath;
+      const details = [machine, path, machine && path ? `${machine} · ${path}` : undefined];
+      for (const detail of new Set(details)) if (detail) counts.set(detail, (counts.get(detail) ?? 0) + 1);
+      const root = compact ? path ?? '' : '';
+      const parentEnd = Math.max(root.lastIndexOf('/'), root.lastIndexOf('\\'));
+      const parent = parentEnd > 0 ? resolveWorkspacePathBasenameV1(root.slice(0, parentEnd)) : null;
+      if (parent) parentCounts.set(parent, (parentCounts.get(parent) ?? 0) + 1);
+      return { key, details, parent };
+    });
+    // If human facts coincide, assign a stable ordinal without printing the Project identities.
+    candidates.sort((left, right) => compareKeys(left.key, right.key));
+    for (const [index, { key, details, parent }] of candidates.entries()) {
+      const [machine, ...paths] = details;
+      const uniqueParent = parent && parentCounts.get(parent) === 1 && !counts.has(parent);
+      const qualifier = machine && counts.get(machine) === 1 ? machine
+        : uniqueParent ? parent : paths.find(candidate => candidate && counts.get(candidate) === 1) ?? String(index + 1);
+      titles.set(key, `${title} · ${qualifier}`);
+    }
+  }
+
+  if (compact && qualified) {
+    // Reserve every final reading first. A literal title takes precedence
+    // when a generated reading in another group happens to spell it.
+    const byFinalTitle = new Map<string, string[]>();
+    for (const [key, title] of titles) {
+      if (!title) continue;
+      const matches = byFinalTitle.get(title);
+      if (matches) matches.push(key);
+      else byFinalTitle.set(title, [key]);
+    }
+    const occupied = new Set(byFinalTitle.keys());
+    const nextOrdinal = new Map<string, number>();
+    for (const [title, keys] of [...byFinalTitle].filter(([, keys]) => keys.length > 1)
+      .sort(([left], [right]) => compareKeys(left, right))) {
+      keys.sort((left, right) => Number(facts.get(right)?.title === title) - Number(facts.get(left)?.title === title)
+        || compareKeys(left, right));
+      for (const key of keys.slice(1)) {
+        const base = facts.get(key)!.title!;
+        let ordinal = nextOrdinal.get(base) ?? 1;
+        let candidate = `${base} · ${ordinal}`;
+        while (occupied.has(candidate)) {
+          ordinal += 1;
+          candidate = `${base} · ${ordinal}`;
+        }
+        nextOrdinal.set(base, ordinal + 1);
+        occupied.add(candidate);
+        titles.set(key, candidate);
+      }
+    }
+  }
+  return titles;
+}
+
 /** Comparable target-platform spelling only; never expands a remote home on this machine. */
 export function normalizeWorkspaceRootPathV1(value: unknown, platform?: 'win32' | 'posix' | null): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;

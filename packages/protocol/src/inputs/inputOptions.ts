@@ -43,7 +43,7 @@ import { resolveSessionControlTarget } from '../actions/executor/sessionScope.js
 import { buildUsageScopeInventoryQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
-import { readUsageProjectScopeMachines, readUsageScopeOptions, type UsageProjectOptionFacts } from '../usage/usageFilterOptions.js';
+import { readUsageScopeOptions, type UsageProjectOptionFacts } from '../usage/usageFilterOptions.js';
 import { isMachineRpcTimeoutError, readRpcErrorCode } from '../rpc/errors.js';
 import { SAVED_HEALTH_CHECKS_OPTIONS_SOURCE_ID_V1, resolveSavedHealthCheckOptionsV1 } from './savedHealthCheckOptions.js';
 import { resolveMachineSetupSoftwareOptions } from './machineSetupSoftwareOptions.js';
@@ -456,9 +456,9 @@ export async function resolveInputOptions(params: Readonly<{
         anchorOf = key => resolve(projectHome, key);
       }
     }
-    const projectMachines = usageField === 'projects' ? readUsageProjectScopeMachines(batch.results, anchorOf, projectFacts) : undefined;
+    const needsBaselineMachineNames = projectFacts && Array.from(projectFacts.values()).some(fact => fact.baselineMachineId);
     const machineNames: Record<string, string> = Object.create(null);
-    if (deps.machinesList && (usageField === 'machines' || (serverId && projectMachines?.size))) {
+    if (deps.machinesList && (usageField === 'machines' || (serverId && needsBaselineMachineNames))) {
       if (!serverId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
       const machines = await deps.machinesList({ serverId, purpose: 'input' }, ctx).catch(error => {
         if (usageField === 'projects' && readRpcErrorCode(error) === 'machine_inventory_unavailable') return null;
@@ -474,7 +474,7 @@ export async function resolveInputOptions(params: Readonly<{
         if (id && label && (usageField === 'machines' || (label !== id && machine.named !== false))) machineNames[id] = label;
       }
     }
-    const labels = readUsageScopeOptions(batch.results, usageField, selected, anchorOf, { projectFacts, projectMachines, machineNames });
+    const labels = readUsageScopeOptions(batch.results, usageField, selected, anchorOf, { projectFacts, machineNames });
     if (usageField === 'machines') for (const key of labels.keys()) {
       if (machineNames[key]) labels.set(key, machineNames[key]);
     }
