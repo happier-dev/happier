@@ -704,11 +704,18 @@ test.describe('ui e2e: automations authoring', () => {
         const savedTrigger = page.locator('[data-testid^="workflow-editor-trigger:saved:"][data-testid$="-starts"]');
         await expect(savedTrigger).toHaveCount(1);
         const sets = await readTriggers();
-        expect(sets.flatMap(set => set.triggers)).toMatchObject([{ kind: 'pluginEvent', filter }]);
+        expect(sets).toHaveLength(1);
+        const set = sets[0]!;
+        expect(set.triggers).toMatchObject([{ kind: 'pluginEvent', eventRef: event.event.identity }]);
+        const detail = await invokeP04Action(context, 'f2-saved-trigger', 'workflow.trigger.list', {
+            automationId: set.automationId, triggerId: set.triggers[0]!.id,
+        });
+        expect(detail.ok).toBe(true);
+        expect(WorkflowTriggerListResultV1Schema.parse(detail.data).triggerDefinition?.definition.filter).toEqual(filter);
         const saved = await invokeP04Action(context, 'f2-saved', 'workflow.definition.get', { definitionId });
         expect(WorkflowDefinitionGetResultV1Schema.parse(saved.data).metadata.title).toBe(renamed);
         const readRuns = async () => {
-            const response = await invokeP04Action(context, 'f2-runs', 'workflow.run.list', { automationId: sets[0]!.automationId });
+            const response = await invokeP04Action(context, 'f2-runs', 'workflow.run.list', { automationId: set.automationId });
             expect(response.ok).toBe(true);
             return WorkflowRunListResultV1Schema.parse(response.data).runs;
         };
