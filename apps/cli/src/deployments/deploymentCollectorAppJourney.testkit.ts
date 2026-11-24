@@ -13,6 +13,7 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptResultV1Schema
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DeploymentAppMachineAssociationV1Schema } from '@happier-dev/protocol/machines/enrollmentV1';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { readDeploymentDomainArtifactV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../../../../packages/cli-common/src/systemTasks/executors/enrollMachineFlowExecutor';
 import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
@@ -205,7 +206,39 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
             });
             if (!domain.ok || domain.domain.state === 'failed') throw new Error('The selected collector must expose the normal telemetry Domain');
             console.info('F14 telemetry Domain accepted', { state: domain.domain.state });
-            domains.set(monitoredId, { id, hostname, revision: domain.domain.revision });
+            let verifiedRevision = domain.domain.revision;
+            if (!existing) {
+                const store = createCredentialedAccountArtifactStore(context.credentials);
+                const assertPrivateBinding = async (header: typeof domain.domain) => {
+                    const capture = header.placements?.find(item => item.desired && item.listener === 'privateOrigin');
+                    if (!capture) throw new Error('F14 requires a desired private collector placement');
+                    const artifact = await runWithServerHttpBaseUrl(home.baseUrl, () => store.read(capture.content.contentArtifactId));
+                    const retained = readDeploymentDomainArtifactV1(capture.content, artifact);
+                    if (!retained.ok) throw new Error(`Collector Domain content unavailable: ${retained.error}`);
+                    const bindings = retained.content.privatePlacementBindings ?? [];
+                    const matches = bindings.some(binding => binding.machineId === capture.placement.machineId
+                        && binding.installationId === capture.placement.installationId
+                        && binding.nativeServer === capture.placement.nativeServer && binding.dockerEngineId === capture.dockerEngineId);
+                    expect(matches, 'The protected Domain must retain its exact private collector placement').toBe(true);
+                    return bindings.length;
+                };
+                const afterAdd = await assertPrivateBinding(domain.domain);
+                console.info('F14 collector Add retained the private binding', { bindingCount: afterAdd });
+                const verified = DeploymentDomainMutationResultV1Schema.parse(await context.accepted('deployments.domains.verify', {
+                    serverId: home.serverId, environmentId: monitoredId, domainId: id,
+                    expectedRevision: domain.revision, expectedDomainRevision: domain.domain.revision, requestKey: randomUUID(),
+                }));
+                if (!verified.ok) throw new Error(`The collector Domain Verify refused: ${verified.error}`);
+                expect(verified.domain.state).toBe('active');
+                expect(verified.domain.networkExposure?.some(({ listener, observation }) =>
+                    listener === 'privateOrigin' && observation.kind === 'ready'
+                    && observation.listeners.some(item => item.endpoints.some(endpoint => endpoint.audience === 'privateNetwork')))).toBe(true);
+                const afterVerify = await assertPrivateBinding(verified.domain);
+                expect(afterVerify).toBe(afterAdd);
+                console.info('F14 collector Domain Verify active with a private listener', { bindingCount: afterVerify });
+                verifiedRevision = verified.domain.revision;
+            }
+            domains.set(monitoredId, { id, hostname, revision: verifiedRevision });
         },
     };
 };

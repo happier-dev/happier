@@ -18,10 +18,12 @@ import { inspectBuiltinTailscaleAccessProvider } from '../../../../packages/cli-
 import { projectMachineReachabilityObservation, reachabilityPostureField } from '@/machines/reachability/readMachineReachability';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DoctorSnapshotDaemonStatusSchema } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
 import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/accessActionIdsV1';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MachineAdminAccessInspectResultV1Schema, MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
@@ -446,26 +448,15 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 if (!daemon.publishDaemonState) throw new Error('F14 requires the real Machine daemon-state publisher');
                 // Observe the configured host through the canonical native
                 // provider. This fixture never joins or creates a network.
-                const nativeNetwork = await inspectBuiltinTailscaleAccessProvider({ signal: lifetime.signal }, {
-                    runCommand: async request => {
-                        try {
-                            const result = await execute(request.command, [...request.args], {
-                                env: request.env, signal: request.signal, timeout: request.timeoutMs,
-                            });
-                            return { command: request.command, args: request.args, exitCode: 0, ...result };
-                        } catch (error) {
-                            if (!error || typeof error !== 'object' || !('code' in error) || typeof error.code !== 'number') throw error;
-                            return { command: request.command, args: request.args, exitCode: error.code,
-                                stdout: 'stdout' in error && typeof error.stdout === 'string' ? error.stdout : '',
-                                stderr: 'stderr' in error && typeof error.stderr === 'string' ? error.stderr : '' };
-                        }
-                    },
-                });
+                const nativeNetwork = await inspectBuiltinTailscaleAccessProvider({ signal: lifetime.signal });
                 if (nativeNetwork.kind !== 'confirmed' || nativeNetwork.facts.privateNetwork?.state !== 'ready') {
                     throw new Error(`F14 host private network unavailable: ${nativeNetwork.kind === 'confirmed'
                         ? nativeNetwork.facts.state : nativeNetwork.code}`);
                 }
                 const privateNetwork = nativeNetwork.facts.privateNetwork;
+                if (!privateNetwork.interfaceName || !privateNetwork.sourceRanges.length) {
+                    throw new Error('F14 requires a Tailscale interface and source ranges on the workload Machine');
+                }
                 await daemon.publishDaemonState(state => ({ ...(state ?? { status: 'running' }),
                     reachability: projectMachineReachabilityObservation(state?.reachability, {
                         revision: 0,
@@ -663,6 +654,27 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         serverId: home.serverId, environmentId: selectedEnvironmentId }));
                     if (!result.ok) throw new Error(result.error);
                     return result;
+                };
+                const deleteReviewedEnvironment = async ({ environment }: EnvironmentDetail) => {
+                    const actionId = DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1;
+                    const input = { serverId: home.serverId, environmentId: environment.id,
+                        expectedRevision: environment.revision, requestKey: randomUUID(), detachKeepRunning: true };
+                    // Delete is Account-placed. Use the original Account executor
+                    // without the Machine target used for native workload Actions.
+                    const accountExecutor = createCliActionExecutorFromCredentials({
+                        credentials, readCredentials: async () => credentials, serverId: home.serverId,
+                        serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
+                    });
+                    const context = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+                        runtimeAccountId: home.accountId, serverId: home.serverId, serverIdentityId: home.serverId,
+                        actionRequestId: randomUUID() } as const;
+                    const offer = await accountExecutor.execute(actionId, input, context);
+                    if (!offer.ok) throw new Error(`F14 Environment Delete approval unavailable: ${offer.errorCode}`);
+                    const approval = ActionApprovalRequestCreatedResultSchema.parse(offer.result);
+                    expect(approval.actionId).toBe(actionId);
+                    const deleted = await support.settlePublicApproval(invoke, offer);
+                    expect(deleted).toMatchObject({ ok: true, result: { ok: true, detached: true } });
+                    console.info('F14 reviewed Environment Delete settled');
                 };
                 const containersByEnvironment = new Map<string, string>();
                 const deploy = async (selectedEnvironmentId = environmentId) => {
@@ -1009,7 +1021,6 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     const current = await readEnvironment();
                     await accepted('deployments.environments.telemetry.set', { serverId: home.serverId, environmentId,
                         expectedRevision: current.environment.revision, collector: { machineId }, confirmDelete: true });
-                    await secondCollector.prepareEnvironment(environmentId);
                 };
                 const localPartitions = async () => {
                     const runtime = localCaptureBackground.readRuntime();
@@ -1017,6 +1028,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                     return runtime.store.listPartitions();
                 };
                 await selectCollector(secondCollector.machineId);
+                await secondCollector.prepareEnvironment(environmentId);
                 await vi.waitFor(async () => expect(await localPartitions()).not.toContain(telemetryPartition(environmentId)));
                 // The old collector still admits B. A's token cannot mutate B
                 // after A has moved away, even with forged resource labels.
@@ -1025,10 +1037,86 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const listMovedQueries = () => listQueries(captureSource, secondCollector.machineId);
                 expect(await listMovedQueries()).toEqual([]);
                 const movedAppUrl = await deploy();
+                // The move publishes a new Artifact. An ordinary keyholder open
+                // prepares its existing Source audience before the teammate reads.
+                if (encryptionMode === 'e2ee') {
+                    const movedEnvironment = await readEnvironment();
+                    expect(await runWithServerHttpBaseUrl(home.baseUrl, () =>
+                        ownerArtifacts.readHeader(movedEnvironment.environment.contentArtifactId))).not.toBeNull();
+                }
+                const connectLimaWorkloadPeer = async () => {
+                    const workload = containersByEnvironment.get(environmentId);
+                    if (!workload) throw new Error('F14 private ingest requires the running workload');
+                    const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+                        serverId: home.serverId, environmentId });
+                    const listed = await execute('docker', ['network', 'ls', '--quiet',
+                        '--filter', `label=com.docker.compose.project=${identity.projectName}`,
+                        '--filter', 'label=com.docker.compose.network=default']);
+                    const networks = listed.stdout.trim().split('\n').filter(Boolean);
+                    expect(networks).toHaveLength(1);
+                    const [network] = networks;
+                    if (!network) throw new Error('F14 workload must have its own Compose network');
+                    const control = 'dbw-f14-headscale';
+                    const controlImage = await execute('docker', ['inspect', '--format', '{{.Config.Image}}', control]);
+                    expect(controlImage.stdout.trim()).toBe('headscale/headscale:0.28.0');
+                    await execute('docker', ['network', 'connect', '--alias', control, network, control]);
+                    let controlAttached = true;
+                    let peer: string | undefined;
+                    const release = async () => {
+                        if (peer) {
+                            await execute('docker', ['container', 'rm', '--force', peer]);
+                            peer = undefined;
+                        }
+                        if (controlAttached) {
+                            await execute('docker', ['network', 'disconnect', network, control]);
+                            controlAttached = false;
+                        }
+                    };
+                    cleanup.push(release);
+                    const started = await execute('docker', ['run', '--detach', '--network', `container:${workload}`,
+                        '--cap-add', 'NET_ADMIN', '--device', '/dev/net/tun',
+                        '--mount', 'type=bind,src=/usr/bin/tailscale,dst=/usr/bin/tailscale,readonly',
+                        '--mount', 'type=bind,src=/usr/sbin/tailscaled,dst=/usr/sbin/tailscaled,readonly',
+                        image, '/usr/sbin/tailscaled', '--state=mem:', '--port=0']);
+                    peer = z.string().regex(/^[a-f0-9]{64}$/u).parse(started.stdout.trim());
+                    await vi.waitFor(async () => {
+                        await execute('docker', ['exec', peer!, 'test', '-S', '/run/tailscale/tailscaled.sock']);
+                    });
+                    try {
+                        const issued = await execute('docker', ['exec', control, 'headscale', 'preauthkeys', 'create',
+                            '--user', '1', '--ephemeral', '--expiration', '15m', '--output', 'json']);
+                        const key = z.object({ key: z.string().min(1) }).parse(JSON.parse(issued.stdout)).key;
+                        const join = execute('docker', ['exec', '-i', peer, 'sh', '-ec', [
+                            'umask 077',
+                            'key=/run/f14-peer-key',
+                            'trap "unlink $key" EXIT',
+                            'cat >"$key"',
+                            `tailscale up --auth-key="file:$key" --login-server=http://${control}:8080 ` +
+                                '--hostname=f14-workload-peer --accept-dns=false --netfilter-mode=off --timeout=40s',
+                        ].join('\n')]);
+                        join.child.stdin!.end(key);
+                        await join;
+                    } catch {
+                        throw new Error('F14 could not enroll the workload in the disposable guest tailnet');
+                    }
+                    const peerAddress = await execute('docker', ['exec', peer, 'tailscale', 'ip', '-4']);
+                    expect(peerAddress.stdout.trim().length > 0 && !privateNetwork.addresses.includes(peerAddress.stdout.trim())).toBe(true);
+                    console.info('F14 moved workload joined the private network through a separate native peer');
+                    return release;
+                };
+                const releaseMovedPeer = limaGuest ? await connectLimaWorkloadPeer() : undefined;
+                const movedIngest = await readIngestClient(environmentId);
+                const endpoint = new URL(movedIngest.endpoint);
+                const destinationAddress = endpoint.hostname.replace(/^\[|\]$/gu, '');
+                expect(endpoint.protocol).toBe('http:');
+                expect(privateNetwork.addresses.includes(destinationAddress),
+                    'The delivered SDK endpoint must address the native private network').toBe(true);
+                expect((await movedIngest.send({ authorization: 'missing' })).status).toBe(401);
                 // M2's receiver runs in its own deployed daemon. The original
                 // process's inspector cannot attribute work performed there.
                 const movedMeasurement = await measureRequests(movedAppUrl, false);
                 expect(movedMeasurement.sdk.exportedRecords).toBeGreaterThanOrEqual(8);
+                console.info('F14 private OTLP ingest confirmed', { exportedRecords: movedMeasurement.sdk.exportedRecords });
                 const movedQueries = await listMovedQueries();
                 expect(movedQueries).toHaveLength(6);
                 expect(movedQueries.some(query => queries.items.some(previous => previous.id === query.id))).toBe(false);
@@ -1082,6 +1170,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 // Change the assignment while its old collector is offline.
                 // Reconnecting then selecting it again must not resurrect its
                 // old partition. Read through the admitted source each time.
+                await releaseMovedPeer?.();
                 await secondCollector.stop();
                 await selectCollector(home.machineId);
                 await secondCollector.start();
@@ -1143,9 +1232,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const deleteControl = await reenabledClient.send();
                 expect(deleteControl.status).toBe(200);
                 expect((await listQueries()).some(query => query.traceId === deleteControl.traceId)).toBe(true);
-                const beforeDelete = await readEnvironment();
-                await accepted('deployments.environments.delete', { serverId: home.serverId, environmentId,
-                    expectedRevision: beforeDelete.environment.revision, requestKey: randomUUID(), detachKeepRunning: true });
+                await deleteReviewedEnvironment(await readEnvironment());
                 await assertSourceUnavailable();
                 await vi.waitFor(async () => expect(await partitions()).not.toContain(telemetryPartition(environmentId)));
                 expect((await reenabledClient.send()).status).toBe(401);
