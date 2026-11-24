@@ -6,6 +6,7 @@ import nacl from 'tweetnacl';
 import { beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1, ProviderBrokerActionOpenResponseV3Schema, type ProviderBrokerActionOpenRequestV3 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ApiClient } from '@/api/api';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
@@ -155,6 +156,13 @@ describe('two-Account Team provisioner managed entry point', () => {
     featuresRoutes(app);
     changesRoutes(app);
     registerManagedMachineRoutes(app);
+    const sessionBoundPath = '/test/session-bound-action';
+    if (role === 'check' && brokerRealm) {
+      app.post(sessionBoundPath, {
+        preHandler: app.authenticate,
+        config: { restrictedCredentialBinding: { scope: 'session', session: 'body.consumer.sessionId' } },
+      }, async () => ({ ok: true }));
+    }
     const presence = startTeamCredentialActionSocketPresence(app);
     closeTransport = async () => { try { await presence.close(); } finally { await app.close(); } };
     const materialRequests: unknown[] = [];
@@ -246,6 +254,7 @@ describe('two-Account Team provisioner managed entry point', () => {
       onTestFinished(native.dispose);
       let accountCompositions = 0;
       let brokerAdmissions = 0;
+      let firstBrokerOpen: ProviderBrokerActionOpenRequestV3 | undefined;
       let brokerExecute: Parameters<typeof resolveAccountExecutionRuntime>[0]['executeTeamCredentialBrokerAction'];
       let brokerHost: ReturnType<typeof readHostSelection> | undefined;
       if (brokerRealm) {
@@ -277,8 +286,11 @@ describe('two-Account Team provisioner managed entry point', () => {
         brokerExecute = createTeamCredentialBrokerActionPurposeExecutor({ initiatorMachineId: shared.machine.id,
           openTunnel: createProviderBrokerMachineCarrierTunnelOpen({ accountId: shared.recipient.id,
             localMachineId: shared.machine.id, runtime: source, resolveTrustRoots: () => trustRoots }),
-          openBroker: (request, signal, requestHeaders) => runWithServerHttpBaseUrl(
-            serverUrl, () => requesterApi.openTeamCredentialProviderBroker(request, { signal, requestHeaders })),
+          openBroker: (request, signal, requestHeaders) => {
+            firstBrokerOpen ??= request;
+            return runWithServerHttpBaseUrl(
+              serverUrl, () => requesterApi.openTeamCredentialProviderBroker(request, { signal, requestHeaders }));
+          },
         });
         const custodianHome = join(happyHomeDir, 'custodian');
         const reload = createPluginReloadController({ happyHomeDir: custodianHome });
@@ -423,6 +435,30 @@ describe('two-Account Team provisioner managed entry point', () => {
         purpose: { consumer: { pluginId: manifest.id, localId: role }, purpose: 'cloud-api' } } });
       expect(JSON.stringify(outcome)).not.toContain('shared-token');
       expect(authorization.binding.accountId).toBe(shared.recipient.id);
+      if (role === 'check' && brokerRealm) {
+        if (!firstBrokerOpen) throw new Error('Check did not send a broker Open');
+        const url = PROVIDER_BROKER_OPEN_HTTP_PATH_V1;
+        const unsigned = await app.inject({ method: 'POST', url, payload: firstBrokerOpen,
+          headers: { authorization: `Bearer ${credentials.token}` } });
+        expect(unsigned.statusCode).toBe(200);
+        expect(ProviderBrokerActionOpenResponseV3Schema.parse(unsigned.json()))
+          .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+
+        const payload = { ...firstBrokerOpen, consumer: { ...firstBrokerOpen.consumer, operationId: crypto.randomUUID() } };
+        const headers = createExternalActionAuthorizedRequestHeaders({ authorization, target: authorization.binding.target,
+          installationId, privateKey: signing.secretKey, effectActionId: rootActionId, method: 'POST', path: url, body: payload });
+        const wrongOperation = await app.inject({ method: 'POST', url, headers, payload });
+        expect(wrongOperation.statusCode).toBe(401);
+        expect(wrongOperation.json()).toMatchObject({ authorizationRefusal: 'managed_machine_purpose' });
+
+        const sessionBoundHeaders = createExternalActionAuthorizedRequestHeaders({ authorization, target: authorization.binding.target,
+          installationId, privateKey: signing.secretKey, effectActionId: rootActionId, method: 'POST',
+          path: sessionBoundPath, body: firstBrokerOpen });
+        const wrongRoute = await app.inject({ method: 'POST', url: sessionBoundPath, headers: sessionBoundHeaders, payload: firstBrokerOpen });
+        expect(wrongRoute.statusCode).toBe(401);
+        expect(wrongRoute.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+        expect(brokerAdmissions).toBe(1);
+      }
       await db.teamCredentialResource.update({ where: { id: shared.resource.id }, data: { memberGrants: { deleteMany: {} } } });
       const effectsBeforeRevocation = provider.request.mock.calls.length;
       await expect(invoke()).rejects.toMatchObject({ code: brokerRealm ? 'resource_forbidden' : role === 'options'

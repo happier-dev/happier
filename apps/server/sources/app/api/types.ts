@@ -188,6 +188,8 @@ declare module 'fastify' {
         /** Exact HTTP read scope proven by this controller's accepted receipt. */
         externalActionAcceptedDeploymentRead?: NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['read'];
         externalActionPlatformMaterialAdmission?: NonNullable<VerifiedExternalActionExecutionRequest['acceptedDeploymentReceipt']>['platformMaterial'];
+        externalActionActionMaterialAdmission?: VerifiedExternalActionExecutionRequest['actionMaterialAdmission'];
+        externalActionActionBrokerAdmission?: VerifiedExternalActionExecutionRequest['actionBrokerAdmission'];
         externalActionRegistryAppUpdateRead?: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'];
         /** Exact metadata and admitted preparation capability; conveys no ordinary Source edit authority. */
         externalActionDeploymentSourceRead?: VerifiedExternalActionExecutionRequest['deploymentPreparationSourceRead'];

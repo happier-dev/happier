@@ -11,6 +11,7 @@ import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invoc
 import { ACCOUNT_DIRECTORY_ERROR_CODES_V1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
+import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import {
     isRestrictedAuthTokenDeniedForRoute,
@@ -189,8 +190,11 @@ export function enableAuthentication(app: Fastify) {
             const routeSessionIds = sessionBinding?.scope === 'session'
                 && isExternalActionSessionRoutePurposeAllowed(request, effectActionId)
                 ? readRestrictedCredentialRouteSessionIds(request, sessionBinding) : [];
-            if (routeSessionIds === null) return refuseExecution('verification_purpose');
-            const [routeSessionId, ...additionalSessionIds] = routeSessionIds;
+            if (routeSessionIds === null
+                && (request.routeOptions?.url !== PROVIDER_BROKER_OPEN_HTTP_PATH_V1 || request.body?.v !== 3)) {
+                return refuseExecution('verification_purpose');
+            }
+            const [routeSessionId, ...additionalSessionIds] = routeSessionIds ?? [];
             const proof = {
                 onRefusal: (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure) => {
                     // The innermost owner refuses first; an enclosing carrier refusal must not mask its cause.
@@ -234,6 +238,10 @@ export function enableAuthentication(app: Fastify) {
                 })
                 : await verifyExternalActionDomainExecutionRequest({ ...proof, resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
             if (!verified) return refuseExecution();
+            // A sessionless V3 Open must carry the verifier's finite Action admission.
+            if (routeSessionIds === null && !verified.actionBrokerAdmission) {
+                return refuseExecution('verification_purpose');
+            }
             const verificationPurpose = authorizationCurrentnessActionId !== null
                 ? ExternalActionExecutionAuthorizationVerifyRequestV1Schema.safeParse(request.body) : null;
             if (verificationPurpose?.success && verificationPurpose.data.nativePurpose && !verified.machineNpmProfileAdmission) {
@@ -270,6 +278,8 @@ export function enableAuthentication(app: Fastify) {
             request.externalActionDeploymentChildArtifactRead = verified.deploymentChildArtifactRead;
             request.externalActionAcceptedDeploymentRead = verified.acceptedDeploymentReceipt?.read;
             request.externalActionPlatformMaterialAdmission = verified.acceptedDeploymentReceipt?.platformMaterial;
+            request.externalActionActionMaterialAdmission = verified.actionMaterialAdmission;
+            request.externalActionActionBrokerAdmission = verified.actionBrokerAdmission;
             request.externalActionRegistryAppUpdateRead = verified.registryAppUpdateRead;
             request.externalActionDeploymentSourceRead = verified.deploymentPreparationSourceRead;
             const reviewedEnvironmentId = verified.createPreparationAdmission?.child?.environmentId
