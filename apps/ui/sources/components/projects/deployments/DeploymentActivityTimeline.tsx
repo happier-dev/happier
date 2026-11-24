@@ -25,6 +25,7 @@ import {
   deploymentHistoryLead,
   deploymentReceiptTitle,
   deploymentRevisionLabel,
+  deploymentSettledReceiptState,
   deploymentStateLabel,
   deploymentWorkStatus,
 } from './deploymentPresentation';
@@ -122,7 +123,8 @@ function activityContent(
   const version = receipt.source
     ? deploymentRevisionLabel(receipt.source)
     : null;
-  const settled = receipt.state === 'succeeded';
+  const state = deploymentSettledReceiptState(receipt.state);
+  const settled = state === 'succeeded';
   const sentence =
     byYou && settled && version ? youDid(receipt.operation, version) : null;
   const lead = deploymentHistoryLead(receipt, receipt.failure);
@@ -158,7 +160,7 @@ function activityContent(
         {byYou ? `${t('projects.deployments.overviewStatus.activityYou')} · ` : actorName ? `${actorName} · ` : null}
         {receipt.source
           ? deploymentReceiptTitle(receipt, version)
-          : (receipt.title ?? deploymentStateLabel(receipt.state))}
+          : (receipt.title ?? deploymentStateLabel(state))}
       </Text>
     ),
     time: (

@@ -2383,16 +2383,20 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
-  it('shows the live deploy first in Recent activity using one history read', async () => {
+  it.each(['degraded', 'passing', 'deploying'] as const)('uses one history read for Recent activity and current health (%s)', async phase => {
     const base = environmentDetailForHome();
     const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
     if (!servingId) throw new Error('Expected a serving receipt in the fixture');
-    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
-    const earlier = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-attempt', state: 'succeeded' }) });
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: phase === 'degraded' ? 'succeeded' : 'running_unverified', requestedAtMs: 4, startedAtMs: 5, settledAtMs: 6 }) });
+    const earlier = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-attempt', state: 'running_unverified', requestedAtMs: 1, startedAtMs: 2, settledAtMs: 3 }) });
+    const deploying = createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id: 'working-attempt', state: 'running', requestedAtMs: 7, startedAtMs: 8, settledAtMs: undefined }),
+    });
     const listHistory = vi.fn();
-    const { controller, detail } = controllerFor({ receipt: serving, history: [serving, earlier], onListHistory: listHistory, detail: { ...base, healthAggregate: {
+    const { controller, detail } = controllerFor({ receipt: serving, history: phase === 'deploying' ? [deploying, serving, earlier] : [serving, earlier], onListHistory: listHistory, detail: { ...base, healthAggregate: {
       v: 1, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
-      protection: base.environment.protection, status: 'degraded', n: 3, down: 1, degraded: 0, unknown: 0,
+      protection: base.environment.protection, status: phase === 'passing' ? 'up' : phase === 'deploying' ? 'down' : 'degraded',
+      n: 3, down: phase === 'passing' ? 0 : phase === 'deploying' ? 3 : 1, degraded: 0, unknown: 0,
       members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false,
     } } });
     try {
@@ -2400,12 +2404,16 @@ describe('Project deployments page', () => {
         environmentId={detail.environment.id} demand={shown} accountId="account-owner" serverId={scope.serverId}
         phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} />);
       expect(screen.findByTestId('project-deployments.environment.facts.health')).not.toBeNull();
-      expect(screen.getTextContent()).toContain('2 of 3 servers healthy');
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.receipt.row.earlier-attempt')).not.toBeNull());
+      const healthFact = screen.findByTestId('project-deployments.environment.facts.health');
+      const healthWord = phase === 'degraded' ? '2 of 3 servers healthy' : phase === 'passing' ? 'Passing' : 'Deploying';
+      expect(healthFact?.findAll(node => node.props.children === healthWord).length).toBeGreaterThan(0);
+      expect(screen.findByTestId('session-list-attention-indicator-deployment-earlier-attempt-running_unverified')).toBeNull();
       const recentRowIds = screen.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith('project-deployments.receipt.row.') && typeof node.props.onPress === 'function')
         .map(row => row.props.testID);
-      expect([...new Set(recentRowIds)].slice(0, 2)).toEqual([
+      expect([...new Set(recentRowIds)].slice(0, phase === 'deploying' ? 3 : 2)).toEqual([
+        ...(phase === 'deploying' ? ['project-deployments.receipt.row.working-attempt'] : []),
         `project-deployments.receipt.row.${servingId}`,
         'project-deployments.receipt.row.earlier-attempt',
       ]);

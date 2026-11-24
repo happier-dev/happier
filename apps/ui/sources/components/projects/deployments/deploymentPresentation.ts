@@ -83,8 +83,14 @@ export function readDeploymentPromotionTarget(
     ? { kind: 'ownServer' as const } : null;
 }
 
+/** Historical rows describe the completed operation. Current health is read from the active runtime. */
+export function deploymentSettledReceiptState(state: ReceiptState): ReceiptState {
+  return state === 'running_unverified' ? 'succeeded' : state;
+}
+
 /** A receipt's state through the one Work status owner: the glyph and tone every Work row uses. */
-export function deploymentWorkStatus(state: ReceiptState): WorkStatusPresentation {
+export function deploymentWorkStatus(receiptState: ReceiptState): WorkStatusPresentation {
+  const state = deploymentSettledReceiptState(receiptState);
   return resolveWorkStatusTone({ kind: 'deployment', facts: { state, word: deploymentStateLabel(state) } });
 }
 
@@ -204,7 +210,7 @@ export function deploymentHistoryLead(
   if (receipt.state === 'outcome_unknown' && failure?.code === 'deployment_activation_not_observed') {
     return deploymentStateNotice(receipt.state, failure);
   }
-  return deploymentRailState(receipt.state);
+  return deploymentRailState(deploymentSettledReceiptState(receipt.state));
 }
 
 /** The receipt page's title: what the receipt's operation did to which version, in the receipt's own state. */
@@ -223,7 +229,7 @@ export function deploymentReceiptTitle(
   receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
   sha: string | null,
 ): string {
-  if (sha === null) return deploymentStateLabel(receipt.state);
+  if (sha === null) return deploymentStateLabel(deploymentSettledReceiptState(receipt.state));
   switch (receipt.state) {
     case 'queued':
       return t('projects.deployments.headlineQueued', { sha });
@@ -436,7 +442,11 @@ export function deploymentDeployAvailability(
 export function deploymentHealthFact(
   health: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status' | 'n' | 'down' | 'degraded'> | undefined,
   servingState?: ReceiptState,
+  latestState?: ReceiptState,
 ): Readonly<{ value: string; tone?: 'danger' | 'attention' }> {
+  // A rollout can withdraw the departing runtime's observations before the new version has any.
+  // The latest receipt owns that interval; stale or missing coverage must not diagnose the new version.
+  if (latestState === 'queued' || latestState === 'running') return { value: deploymentStateLabel(latestState) };
   if (!health || health.status === 'unknown') {
     return { value: deploymentEnvironmentVerificationPending(servingState, health?.status)
       ? t('projects.deployments.review.noHealthCheck') : t('projects.deployments.healthNotChecked') };

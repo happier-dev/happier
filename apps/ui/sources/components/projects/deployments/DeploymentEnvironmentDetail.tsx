@@ -90,6 +90,7 @@ import {
   deploymentOperationLabel,
   readDeploymentPromotionTarget,
   deploymentSourceLabel,
+  deploymentSettledReceiptState,
   deploymentStateLabel,
   deploymentStateNotice,
   deploymentWorkStatus,
@@ -1190,7 +1191,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     <FactStrip
                       testID="project-deployments.environment.facts"
                       layout="columns" narrow={props.phone}
-                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state)}
+                      facts={overviewFacts(detail, services.length, activeReceipt.facts.retainedPreviousCount ?? null, activeReceipt.deployment.state, latest?.state)}
                     />
                   </ItemGroup>
                 </>
@@ -1235,7 +1236,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               {!activeReceipt && activeId && active.snapshot.status !== 'unavailable' ? (
                 <ItemGroup header="none" surface="none" style={styles.factsGroup}>
                   <FactStrip testID="project-deployments.environment.facts" layout="columns" narrow={props.phone}
-                    facts={overviewPendingFacts(detail)} />
+                    facts={overviewPendingFacts(detail, latest?.state)} />
                 </ItemGroup>
               ) : null}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
@@ -1800,8 +1801,8 @@ function deploymentServices(content: DeploymentContentV1): readonly DeploymentSe
  * The same strip while the serving receipt reads: what the Environment read knows, and a quiet "—" in the cells the
  * receipt fills (its services, what is kept), so a phone's two-per-row strip keeps its rows when the receipt answers.
  */
-function overviewPendingFacts(detail: DeploymentEnvironmentDetailV1): FactStripFact[] {
-  const facts = overviewFacts(detail, 0, null);
+function overviewPendingFacts(detail: DeploymentEnvironmentDetailV1, latestState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
+  const facts = overviewFacts(detail, 0, null, undefined, latestState);
   const pending = (key: string, label: string): FactStripFact => ({ key, label, value: '—' });
   return [facts[0]!, pending('services', t('projects.deployments.servicesTitle')), ...facts.slice(1),
     ...(detail.content.retainPreviousDeployments > 0 ? [pending('kept', t('projects.deployments.keptForRollback'))] : [])];
@@ -1809,13 +1810,13 @@ function overviewPendingFacts(detail: DeploymentEnvironmentDetailV1): FactStripF
 
 /** The four headline facts under the serving version (lab `fc-facts`): health, services, rollout, rollback. */
 function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, kept: number | null,
-  servingState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
+  servingState?: DeploymentReceiptHeaderV1['state'], latestState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
   const health = detail.healthAggregate;
   const facts: FactStripFact[] = [{
     key: 'health',
     testID: 'project-deployments.environment.facts.health',
     label: t('projects.deployments.healthTitle'),
-    ...deploymentHealthFact(health, servingState),
+    ...deploymentHealthFact(health, servingState, latestState),
   }];
   if (serviceCount > 0) {
     facts.push({ key: 'services', label: t('projects.deployments.servicesTitle'),
@@ -1893,14 +1894,12 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   const age = props.historyAsOfMs === undefined
     ? formatRelativeTime(receiptAtMs)
     : formatDayGroupedAge(receiptAtMs, props.historyAsOfMs);
-  // A settled success says nothing; trouble and work in progress lead the facts line in their tone. "Running, not
-  // verified" is about what serves now, so only the live row says it; a superseded run reads as the run it was (D17).
-  const settledPast = !props.live && receipt.state === 'running_unverified';
+  // A settled success says nothing; trouble and work in progress lead the facts line in their tone.
   const headerOnly = receipt.contentArtifactId === null;
-  const lead = receipt.title && !settledPast ? deploymentHistoryLead(receipt, receipt.failure) : null;
+  const lead = receipt.title ? deploymentHistoryLead(receipt, receipt.failure) : null;
   const actor = headerOnly && receipt.requestedByAccountId === null ? t('projects.deployments.receipt.removedPerson') : props.actor;
   const facts = actor ? [actor] : [];
-  if (headerOnly) facts.unshift(deploymentStateLabel(receipt.state));
+  if (headerOnly) facts.unshift(deploymentStateLabel(deploymentSettledReceiptState(receipt.state)));
   // A phone keeps the title's width: duration and age join the facts line instead of a right column.
   if (props.phone) facts.push(...(duration !== null ? [formatElapsedDuration(duration)] : []), age);
   // A failed or running deploy shows where it is or stopped (dHist): the compact strip with its caption. A settled
@@ -1912,14 +1911,14 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
       testID={`project-deployments.receipt.row.${receipt.id}`}
       leftElement={
         <WorkStatusGlyph
-          status={deploymentWorkStatus(settledPast ? 'succeeded' : receipt.state)}
+          status={deploymentWorkStatus(receipt.state)}
           testIDSuffix={`deployment-${receipt.id}`}
         />
       }
       // The receipt's own title names what was deployed; without one its state is the title.
       // What the operation did to which version ("Rolled back to 302cf72"), so same-revision rows read apart.
       title={receipt.source ? deploymentReceiptTitle(receipt, deploymentRevisionLabel(receipt.source))
-        : receipt.title ?? (headerOnly ? deploymentOperationLabel(receipt.operation) : deploymentStateLabel(receipt.state))}
+        : receipt.title ?? (headerOnly ? deploymentOperationLabel(receipt.operation) : deploymentReceiptTitle(receipt, null))}
       accessibilityRole="button"
       titleAccessory={
         props.live ? (
