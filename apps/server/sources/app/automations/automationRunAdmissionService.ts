@@ -12,7 +12,6 @@ import { type AutomationConversationScopedTriggerRefV1 } from '@happier-dev/prot
 
 import { afterTx, type Tx } from "@/storage/inTx";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { getSessionReviewProjectionIdForRun, invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { classifyMachinePresenceAtInstant } from "@/app/presence/machinePresenceAtInstant";
@@ -47,6 +46,7 @@ import {
 import {
     emitAutomationRunTransition,
     emitAutomationRunUpdatedToMachineOnly,
+    markAutomationRunSummaryChangedTx,
 } from "./automationChangePublisher";
 
 export type AutomationRunAdmissionIneligibleReason =
@@ -537,10 +537,9 @@ async function insertPreparedAutomationRunTx(params: Readonly<{
         run = projected;
     }
     await invalidateSessionReviewProjectionForRunInTx(params.tx, run);
-    const cursor = await markAccountChanged(params.tx, {
+    const cursor = await markAutomationRunSummaryChangedTx(params.tx, {
         accountId: params.accountId,
-        kind: "automation",
-        entityId: request.automationId,
+        automationId: request.automationId,
     });
     if (missed) await params.tx.automationRunEvent.create({ data: {
         runId: run.id, ts: request.now, type: "run_missed", payload: { errorCode: missedReason },

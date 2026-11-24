@@ -6,6 +6,7 @@ import { isProviderAccountUsageChangeEntityIdV1 } from '@happier-dev/protocol/ch
 import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
+    isAutomationDefinitionChangeV1,
     ChangeKindSchema,
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1,
@@ -1124,8 +1125,7 @@ export function planSessionReadinessWake(changeKinds: readonly string[] | undefi
     return { sessionIds: changes.sessionIds.length ? entityIds : [], machineIds: changes.machineIds.length ? entityIds : [] };
 }
 
-/** The scheduler's event-source status row: it changes no trigger, definition or summary. */
-export const AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID = 'automation-source-status';
+export { AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID } from '@happier-dev/protocol/changes';
 
 /**
  * Private trigger projections consume definitions, their sources and access, never Machine liveness or Run receipts.
@@ -1133,7 +1133,7 @@ export const AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID = 'automation-source-stat
  * cannot change one; rows without kind hints stay conservative.
  */
 export function plannedChangesAffectWorkflowTriggers(planned: PlannedChangeActions): boolean {
-    if (planned.invalidate.automations || planned.invalidate.settings || planned.invalidate.profile
+    if (planned.changes.some(isAutomationDefinitionChangeV1) || planned.invalidate.settings || planned.invalidate.profile
         || plannedArtifactChangesMayBeKind(planned, WORKFLOW_DEFINITION_ARTIFACT_KIND)
         || planned.invalidate.savedSecretResources || planned.unsupportedChanges.length > 0) return true;
     return planned.changes.some(change => {
@@ -1162,9 +1162,9 @@ export function plannedChangesAffectWorkflowDefinitions(planned: PlannedChangeAc
     // A saved definition is a `workflow-definition.v1` Artifact: Runs, Discussions and documents are not.
     if (plannedArtifactChangesMayBeKind(planned, WORKFLOW_DEFINITION_ARTIFACT_KIND) || planned.invalidate.savedSecretResources
         || planned.unsupportedChanges.length > 0) return true;
-    if (planned.changes.some(change => change.kind === 'automation' && change.entityId !== AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID)) return true;
+    if (planned.changes.some(isAutomationDefinitionChangeV1)) return true;
     return plannedChangesAffectWorkflowTriggers({ ...planned, invalidate: { ...planned.invalidate,
-        automations: false, settings: false, profile: false, artifacts: false } });
+        settings: false, profile: false, artifacts: false } });
 }
 
 /** Precise unrelated kinds cannot change saved definitions, triggers or access. */
@@ -1178,8 +1178,7 @@ export function accountChangeKindsAffectWorkflowDefinitions(changeKinds: readonl
  * carries its triggers' Automation ids, so the library re-reads only the rows that show them.
  */
 export function plannedWorkflowDefinitionAutomationIds(planned: PlannedChangeActions): readonly string[] | undefined {
-    const ids = planned.changes.flatMap(change => change.kind === 'automation'
-        && change.entityId !== AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID ? [change.entityId] : []);
+    const ids = planned.changes.filter(isAutomationDefinitionChangeV1).map(change => change.entityId);
     if (ids.length === 0 || plannedChangesAffectWorkflowDefinitions({ ...planned,
         changes: planned.changes.filter(change => change.kind !== 'automation'),
         invalidate: { ...planned.invalidate, automations: false } })) return undefined;

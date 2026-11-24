@@ -176,6 +176,9 @@ it('recovers every changed automation when three recovery batches overlap', asyn
   const args = { actionId, input: { command: 'printf recovered' }, context: { defaultSessionMachineId: 'machine' } };
   expect(await port.select(args)).toMatchObject({ status: 'ready', after: [] });
 
+  await port.refreshChanges(automationIds.map(id => ({ kind: 'automation', entityId: `automation-run-summary:${id}` })));
+  expect(reads, 'Run summaries do not reread the Action trigger index').toEqual([]);
+
   const recoveries = automationIds.map(entityId => port.refreshChanges([{ kind: 'automation', entityId }]));
   expect(reads).toEqual([['first']]);
   releaseFirstRead();

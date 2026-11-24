@@ -372,6 +372,18 @@ it('keeps private Session evidence live while accounting follows the coalesced c
 });
 
 describe('planSyncActionsFromChanges', () => {
+    it('recovers Automation Run summaries without refreshing saved trigger definitions', () => {
+        const run = buildChange({ cursor: 1, kind: 'automation', entityId: 'automation-run-summary:auto-1' });
+        const plan = planSyncActionsFromChanges([run]);
+        expect(plan.invalidate.automations).toBe(true);
+        expect(changePlanner.plannedChangesAffectWorkflowTriggers(plan)).toBe(false);
+        expect(changePlanner.plannedChangesAffectWorkflowDefinitions(plan)).toBe(false);
+        const mixed = planSyncActionsFromChanges([run,
+            buildChange({ cursor: 2, kind: 'automation', entityId: 'auto-2' })]);
+        expect(changePlanner.plannedChangesAffectWorkflowTriggers(mixed)).toBe(true);
+        expect(changePlanner.plannedWorkflowDefinitionAutomationIds(mixed)).toEqual(['auto-2']);
+    });
+
     it('refreshes Coach evidence for its KV key while leaving unrelated KV and accounting alone', () => {
         const plan = (keys: string[]) => planSyncActionsFromChanges([{ kind: 'kv', entityId: 'self', cursor: 1, changedAt: 1,
             hint: { keys } }]);

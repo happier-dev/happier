@@ -1054,6 +1054,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         client.onConnectedServicesProjection(async () => {});
         const notified = vi.fn();
         client.onAutomationEventSourcesInvalidated(notified);
+        const workInvalidated = vi.fn();
+        client.onAutomationWorkInvalidated(workInvalidated);
         const sync = (reason: 'live' | 'reconnect') => (
             client as unknown as { syncChangesOnConnect(options: { reason: 'live' | 'reconnect' }): Promise<void> }
         ).syncChangesOnConnect({ reason });
@@ -1062,7 +1064,16 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         changes = [{ cursor: 1, kind: 'automation', entityId: 'automation-source-status', changedAt: 1, hint: null }];
         await sync('live');
         expect(notified).not.toHaveBeenCalled();
-        changes = [{ cursor: 1, kind: 'automation', entityId: 'automation-a', changedAt: 1, hint: null }];
+        const runSummaries: ChangeEntry[] = ['a', 'b', 'c'].map(id => ({
+            cursor: 1, kind: 'automation', entityId: `automation-run-summary:automation-${id}`, changedAt: 1, hint: null,
+        }));
+        for (const summary of runSummaries) {
+            changes = [summary];
+            await sync('live');
+        }
+        expect(notified, 'three Run summary changes require zero catalog refreshes').not.toHaveBeenCalled();
+        expect(workInvalidated).toHaveBeenCalledTimes(runSummaries.length);
+        changes = [...runSummaries, { cursor: 1, kind: 'automation', entityId: 'automation-a', changedAt: 1, hint: null }];
         await sync('live');
         expect(notified).toHaveBeenCalledTimes(1);
         expect(notified).toHaveBeenLastCalledWith({});

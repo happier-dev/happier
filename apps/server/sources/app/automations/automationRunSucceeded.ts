@@ -2,7 +2,7 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { afterTx, type Tx } from "@/storage/inTx";
 
-import { emitAutomationRunTransition } from "./automationChangePublisher";
+import { emitAutomationRunTransition, markAutomationRunSummaryChangedTx } from "./automationChangePublisher";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import { decodeAutomationRunCause, projectAutomationOriginRun } from "./automationRunCauseCodec";
 import { advanceAutomationScheduleCursorAfterTerminalRunTx } from "./automationRunQueueService";
@@ -136,10 +136,9 @@ export async function applyAutomationRunTerminalEffectsTx(params: Readonly<{
             accountId: params.accountId, kind: "account", entityId: `workflow-run:${run.id}`,
         });
     }
-    const cursor = await markAccountChanged(params.tx, {
+    const cursor = await markAutomationRunSummaryChangedTx(params.tx, {
         accountId: params.accountId,
-        kind: "automation",
-        entityId: run.automationId,
+        automationId: run.automationId,
     });
     afterTx(params.tx, () => {
         emitAutomationRunTransition({

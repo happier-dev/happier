@@ -8,6 +8,7 @@ import { logger } from '@/utils/logging/log';
 import { withWebLatencyTrace } from '@/utils/webLatencyTrace';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAutomationActionRoutes } from '@/app/api/routes/automations/registerAutomationActionRoutes';
+import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { getWorkflowPublicationAudienceInTx } from '@/app/workflows/workflowPublicationAudience';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { admitAutomationRunsTx } from './automationRunAdmissionService';
@@ -47,7 +48,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         accountId = account.id;
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId, metadata: '{}' } });
-        const triggers = [];
+        const triggers: { automationId: string; triggerId: string; triggerRevision: number }[] = [];
         for (const name of ['First', 'Second', 'Third']) {
             const automation = await db.automation.create({ data: {
                 accountId, name, enabled: true, templateVersion: 1,
@@ -77,6 +78,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
         const admit = () => withWebLatencyTrace(randomUUID(), () => app.inject({ method: 'POST', url: route,
             headers: { 'x-test-user-id': account.id }, payload }));
         try {
+            const editedAutomationId = triggers[0]!.automationId;
+            const definitionCursor = await inTx(tx => markAccountChanged(tx, {
+                accountId: account.id, kind: 'automation', entityId: editedAutomationId,
+            }));
             const original = await admit();
             expect(original.statusCode, original.body).toBe(200);
             const inserted = original.json().results;
@@ -84,6 +89,16 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Automation batc
                 kind: 'admitted', automationId, triggerId, runId: expect.any(String),
             })));
             expect(phases.filter(phase => phase === 'db.AutomationRun.findMany'), 'one retained occurrence read for the batch').toHaveLength(1);
+            const changes = await db.accountChange.findMany({
+                where: { accountId, kind: 'automation' }, orderBy: { cursor: 'asc' },
+                select: { entityId: true, cursor: true },
+            });
+            expect(changes, 'three Run summaries preserve an unconsumed definition edit').toEqual([
+                { entityId: editedAutomationId, cursor: definitionCursor.resolveCursor() },
+                ...triggers.map(({ automationId }) => ({
+                    entityId: `automation-run-summary:${automationId}`, cursor: expect.any(Number),
+                })),
+            ]);
 
             await db.automationTrigger.updateMany({ where: { id: { in: triggers.map(trigger => trigger.triggerId) } },
                 data: { enabled: false, revision: { increment: 1 } } });

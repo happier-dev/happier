@@ -1,3 +1,6 @@
+import { buildAutomationRunSummaryChangeEntityIdV1 } from '@happier-dev/protocol/changes';
+import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
+import type { Tx } from '@/storage/inTx';
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, type UpdatePayload } from "@/app/events/eventRouter";
 import type { AutomationRunStateChangedHostEventV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
@@ -14,6 +17,17 @@ import type {
 import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 import { projectAutomationRunState } from "./automationTypes";
 import { emitAutomationReplyHandoffWake } from "./automationScheduleWake";
+
+export function markAutomationRunSummaryChangedTx(tx: Tx, params: Readonly<{
+    accountId: string;
+    automationId: string;
+}>): Promise<AccountChangePublication> {
+    return markAccountChanged(tx, {
+        accountId: params.accountId,
+        kind: 'automation',
+        entityId: buildAutomationRunSummaryChangeEntityIdV1(params.automationId),
+    });
+}
 
 export function emitAutomationUpsert(params: {
     accountId: string;

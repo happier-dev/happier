@@ -25,7 +25,7 @@ import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execut
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultPublisherHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
-import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, isChangesPageFull, readConnectedServicesAccountChangeV1, readPushedAccountChangesPageV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID, changeRowsAlreadyHeld, isAutomationDefinitionChangeV1, isChangesPageFull, readConnectedServicesAccountChangeV1, readPushedAccountChangesPageV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -7325,8 +7325,9 @@ export class ApiMachineClient {
                     const recordId = readProviderAccountUsageRefreshRecordIdV1(change);
                     return recordId === null ? [] : [recordId];
                 }))];
-                const hasAutomationSourceChange = changes.some(change => change.kind === 'automation'
-                    && change.entityId !== 'automation-source-status');
+                const hasAutomationWorkChange = changes.some(change => change.kind === 'automation'
+                    && change.entityId !== AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID);
+                const hasAutomationSourceChange = changes.some(isAutomationDefinitionChangeV1);
                 const webhookAdmissionPluginIds = [...new Set(changes.flatMap(change => {
                     const parsed = PluginDomainChangeEntrySchema.safeParse(change);
                     return parsed.success && (parsed.data.hint.pluginDomain === 'webhook'
@@ -7668,7 +7669,7 @@ export class ApiMachineClient {
                 this.accountEncryptionCurrentness?.consumeOwnedFeedPage({ after, changes, nextCursor });
                 after = nextCursor;
                 consumedPage = true;
-                if (hasAutomationSourceChange || (opts.reason !== 'live' && workflowRunIds.length > 0)) {
+                if (hasAutomationWorkChange || (opts.reason !== 'live' && workflowRunIds.length > 0)) {
                     automationWorkRunIds = null;
                 } else if (automationWorkRunIds !== null) {
                     for (const runId of workflowRunIds) automationWorkRunIds.add(runId);

@@ -68,6 +68,7 @@ import {
     emitAutomationAssignmentUpdated,
     emitAutomationDelete,
     emitAutomationRunUpdated,
+    markAutomationRunSummaryChangedTx,
 } from "./automationChangePublisher";
 import { assertAutomationAssignmentLiveness, automationAssignmentsMatch, replaceAutomationAssignmentsTx } from "./automationAssignmentService";
 import { admitAutomationDeploymentEnvironmentInTx, admitAutomationDeploymentMutationInTx, lockAutomationDeploymentEnvironmentInTx } from './automationDeploymentEnvironment';
@@ -2528,7 +2529,7 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
         });
         if (!run) throw new AutomationAccountEncryptionMigrationConflictError();
         if (candidate.item.origin.kind === "automation") {
-            const cursor = await markAutomationChangedTx(params.tx, {
+            const cursor = await markAutomationRunSummaryChangedTx(params.tx, {
                 accountId: params.accountId,
                 automationId: candidate.item.origin.automationId,
             });

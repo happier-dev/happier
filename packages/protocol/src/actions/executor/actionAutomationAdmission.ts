@@ -12,7 +12,7 @@ import { ActionAutomationTriggerReferenceV1Schema, ActionAutomationConsentRefere
   ActionAutomationIndexV1Schema, ActionAutomationIndexChangeV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1,
   type ActionAutomationIndexSelectionV1 } from '../../automations/automationActionTriggerV1.js';
 import type { ChangeEntry } from '../../changes/index.js';
-import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1 } from '../../changes/index.js';
+import { artifactKindsMayIncludeKindV1, isAutomationDefinitionChangeV1, readArtifactKindsChangeHintV1 } from '../../changes/index.js';
 import { WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from '../../artifacts/artifactKindV1.js';
 import type { ActionAutomationRunV1, ActionAutomationConsentReviewV1 } from '../../approvals/approvalAutomaticChecks.js';
 import type { WorkflowFinalResultV1, WorkflowRunStateV1 } from '../../workflows/workflowProgressV1.js';
@@ -421,7 +421,7 @@ export function createActionAutomationPortV1(options: Readonly<{
       const refresh = options.refresh;
       if (!refresh || state === 'unloaded' || state === 'unavailable' || state === 'ready' && loading === undefined) return;
       const selection: ActionAutomationIndexSelectionV1 = {
-        automationIds: [...new Set(changes.filter(change => change.kind === 'automation').map(change => change.entityId))],
+        automationIds: [...new Set(changes.filter(isAutomationDefinitionChangeV1).map(change => change.entityId))],
         workflowDefinitionIds: [...new Set(changes.filter(change => change.kind === 'artifact'
           && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), [WORKFLOW_DEFINITION_ARTIFACT_KIND_V1]))
           .map(change => change.entityId))],

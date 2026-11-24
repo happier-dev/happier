@@ -15,7 +15,7 @@ import { parseWorkflowStoredContentEnvelopeV1, validateWorkflowStoredEnvelopeOut
 import { parseAutomationRunExecutionRecipeV1, validateAutomationRunExecutionRecipeOuterV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 
-import { emitAutomationRunTransition, emitAutomationRunUpdatedToMachineOnly } from "./automationChangePublisher";
+import { emitAutomationRunTransition, emitAutomationRunUpdatedToMachineOnly, markAutomationRunSummaryChangedTx } from "./automationChangePublisher";
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
 import { AUTOMATION_RUN_TERMINAL_STATES } from "./automationTypes";
 import { leasedAutomationRunClaimWhere, readAutomationRunClaimEligibilityWhereInTx } from './automationRunClaimEligibility';
@@ -1048,10 +1048,9 @@ export async function claimAutomationRun(params: {
                 });
             } else {
                 assertAutomationClaimRun(run);
-                cursor = await markAccountChanged(tx, {
+                cursor = await markAutomationRunSummaryChangedTx(tx, {
                     accountId: params.accountId,
-                    kind: "automation",
-                    entityId: run.automationId,
+                    automationId: run.automationId,
                 });
             }
             const accountCurrentness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);

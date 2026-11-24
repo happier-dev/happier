@@ -5,7 +5,6 @@ import { nextAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/auto
 import { type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { Prisma } from "@prisma/client";
 
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
     acquireAccountEncryptionTransitionFenceInTx,
 } from "@/app/encryption/accountEncryptionTransition";
@@ -13,7 +12,7 @@ import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 
 import { resolveClaimLeaseExpiresAt } from "./automationClaimService";
-import { emitAutomationRunUpdated } from "./automationChangePublisher";
+import { emitAutomationRunUpdated, markAutomationRunSummaryChangedTx } from "./automationChangePublisher";
 import {
     automationAccountCurrentnessSelect,
     deriveAutomationAccountCurrentnessWitness,
@@ -300,10 +299,9 @@ async function publishAutomationRunMutationTx(
     tx: Tx,
     run: AutomationRunItem,
 ): Promise<void> {
-    const cursor = await markAccountChanged(tx, {
+    const cursor = await markAutomationRunSummaryChangedTx(tx, {
         accountId: run.accountId,
-        kind: "automation",
-        entityId: run.automationId,
+        automationId: run.automationId,
     });
     afterTx(tx, () => {
         emitAutomationRunUpdated({ accountId: run.accountId, run, cursor: cursor.resolveCursor() });

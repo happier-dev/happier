@@ -82,6 +82,20 @@ export const ChangeKindSchema = lazyZodSchema(() => z.enum([
 
 export type ChangeKind = z.infer<typeof ChangeKindSchema>;
 
+export const AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID = 'automation-source-status';
+const AUTOMATION_RUN_SUMMARY_CHANGE_PREFIX_V1 = 'automation-run-summary:';
+
+export function buildAutomationRunSummaryChangeEntityIdV1(automationId: string): string {
+  return AUTOMATION_RUN_SUMMARY_CHANGE_PREFIX_V1 + automationId;
+}
+
+/** Run summaries occupy a separate coalescing key so they cannot overwrite a pending definition edit. */
+export function isAutomationDefinitionChangeV1(change: Readonly<{ kind: string; entityId: string }>): boolean {
+  return change.kind === 'automation'
+    && change.entityId !== AUTOMATION_SOURCE_STATUS_CHANGE_ENTITY_ID
+    && !change.entityId.startsWith(AUTOMATION_RUN_SUMMARY_CHANGE_PREFIX_V1);
+}
+
 /** Only an exact settings-version fact can exclude Account currentness/access changes. */
 export function readAccountSettingsVersionChangeV1(
   change: Readonly<{ kind: string; entityId: string; hint?: unknown }>,

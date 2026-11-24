@@ -2,7 +2,6 @@ import { encodeStoredText } from '@/storage/storedContent';
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
 import { AutomationRunResultStoredV1Schema, validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1, type AutomationRunResultStoredV1 } from '@happier-dev/protocol/automations/event';
 import { parseAutomationRunExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
@@ -14,7 +13,7 @@ import { acquireWorkflowPublicationLocksInTx } from "@/app/workflows/acquireWork
 import { readMachineAvailabilityStateInTx } from "@/app/machines/machineStateGuards";
 import { cancelWorkflowRunTx, WorkflowRunServiceError } from "@/app/workflows/workflowRunService";
 
-import { emitAutomationRunTransition } from "./automationChangePublisher";
+import { emitAutomationRunTransition, markAutomationRunSummaryChangedTx } from "./automationChangePublisher";
 import { fetchAutomationAccountCurrentnessWitnessTx } from "./automationAccountCurrentness";
 import { automationRunItemSelect } from "./automationPersistenceSelect";
 import {
@@ -113,10 +112,9 @@ async function fetchRunForAccount(params: {
 
 async function markRunAutomationChanged(params: { tx: Tx; accountId: string; run: AutomationRunItem }) {
     await invalidateSessionReviewProjectionForRunInTx(params.tx, params.run);
-    return await markAccountChanged(params.tx, {
+    return await markAutomationRunSummaryChangedTx(params.tx, {
         accountId: params.accountId,
-        kind: "automation",
-        entityId: params.run.automationId,
+        automationId: params.run.automationId,
     });
 }
 
