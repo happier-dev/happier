@@ -40,3 +40,13 @@ it('retains HTTP refusal cause and correlation through the Session issuer projec
         ...(code === 'target_not_local' ? { details: { phase: 'target_installation' } } : {}) });
   }
 });
+
+it('names Manage on the Machine, not a reconnect, when Home refused the Machine admission for it', () => {
+  // Home's Machine admission owner refused a Use grantee an Action that needs Manage.
+  const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } as const;
+  const result = projectSessionActionIssuerRefusal({ ok: false, phase: 'mint', requiredFact: 'home_minted_authorization',
+    code: 'credential_scope_denied', requestId: 'mint-request', failureCause });
+
+  expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', requestId: 'mint-request', failureCause,
+    details: { reason: 'machine_manage_required', requiredFact: 'machine_manage_role', remedy: 'request_machine_manage_access' } });
+});

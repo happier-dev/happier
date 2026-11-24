@@ -25,6 +25,18 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
     ...(refusal.details === undefined ? {} : { details: refusal.details }),
     failureCause: refusal.failureCause ?? projectActionFailureCauseV1({ code: refusal.code }, phase),
   };
+  // Home's Machine admission named the Manage requirement. Reconnecting cannot
+  // grant Manage, so the reason and remedy follow that typed cause; the remedy
+  // is the Machine availability diagnostic's existing Manage remedy.
+  if (refusal.failureCause && !('kind' in refusal.failureCause)
+    && refusal.failureCause.errorCode === 'machine_manage_required') {
+    const errorCode = refusal.code ?? 'action_forbidden';
+    return { ok: false, errorCode, error: errorCode,
+      ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
+      details: { reason: refusal.failureCause.errorCode, phase, requiredFact: 'machine_manage_role',
+        remedy: 'request_machine_manage_access' },
+      failureCause: refusal.failureCause };
+  }
   const ownerDetails = refusal.details && typeof refusal.details === 'object' ? refusal.details : {};
   const requiredFact = 'requiredFact' in ownerDetails && typeof ownerDetails.requiredFact === 'string'
     ? ownerDetails.requiredFact : refusal.requiredFact;

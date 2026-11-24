@@ -51,7 +51,7 @@ import { isExternalActionConnectedAccountInventoryHttpPurpose } from './external
 import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
 import * as z from 'zod/mini';
 import type { ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactTemplateAcceptedVersionInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
@@ -166,7 +166,7 @@ import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from
 import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { isManagedPresetAcquireInputV1, ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
+import { isMachineAdmissionDenialAfterAccess, resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
 import { ManagedMachineError, hasBoundManagedLifecycle, requireCurrentManagedMachineInTx, sameManagedInput, readManagedMachineInTx, readManagedAdmissionState, readManagedEnrollmentAccountId, projectManagedMachine,
     readMachineDevcontainerWorkspaceSyncRouteInTx, readMachineDevcontainerWorkspaceSyncEndpointInTx } from '@/app/machines/managed/managedRows';
 import { resolveManagedGuestActivityAdmissionInTx } from '@/app/machines/managed/managedGuestActivity';
@@ -453,6 +453,19 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(
     return isExternalActionHomeRelayAccountEligible({ accountId: input.actorAccountId,
         custodianAccountId: admission.custodianAccountId, sessionActionOrigin: origin })
         ? admission : { kind: 'denied', code: 'access_denied' };
+}
+
+/**
+ * The typed cause a Machine admission refusal shows its requester. None when the
+ * requester has no access to that Machine, so the refusal stays identical to a
+ * missing Machine; `machine_unavailable` keeps its own unavailability result.
+ */
+export function projectExternalActionMachineAdmissionRefusalCause(
+    denial: Extract<MachineAdmission, { kind: 'denied' }>,
+): ActionFailureCauseV1 | undefined {
+    if (!isMachineAdmissionDenialAfterAccess(denial)) return undefined;
+    return { phase: 'execution_authorization', errorClass: 'Error', httpStatus: null,
+        errorCode: denial.requiredRole === 'manage' ? 'machine_manage_required' : denial.code };
 }
 
 async function resolveExternalActionExecutionMachineAccessInTx(

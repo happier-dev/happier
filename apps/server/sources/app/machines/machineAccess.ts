@@ -697,6 +697,15 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
         ...(input.purpose === 'workflow' ? { availability: 'available' as const } : {}) };
 }
 export async function resolveMachineAdmission(input: MachineAdmissionInput): Promise<MachineAdmission> { return inTx(tx => resolveMachineAdmissionInTx(tx, input)); }
+/**
+ * Whether a denial was decided after the actor's own access to the Machine was
+ * found. Admission reaches a plain `access_denied` (no grant, or a missing
+ * Machine) and `machine_unavailable` without that access, so their codes tell a
+ * requester nothing; every other denial follows a found grant and may be shown.
+ */
+export function isMachineAdmissionDenialAfterAccess(denial: Extract<MachineAdmission, { kind: 'denied' }>): boolean {
+    return denial.code === 'access_denied' ? denial.requiredRole === 'manage' : denial.code !== 'machine_unavailable';
+}
 
 export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): Promise<MachineAccessGrantsListResultV1> {
     const row = await readFactsInTx(tx, input.machineId);

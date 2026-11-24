@@ -30,6 +30,7 @@ import { verifyCurrentExternalActionPrincipal, hasCurrentExternalActionSessionSo
     projectExternalActionBoundPrincipal, isOriginalAccountHandoffAction,
     readCurrentExternalActionHandoffBindingInTx,
     resolveExternalActionExecutionMachineAdmissionInTx, readAdmittedFiniteOperationPrincipal,
+    projectExternalActionMachineAdmissionRefusalCause,
     projectExternalActionMintInput, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import {
@@ -121,6 +122,8 @@ export type ExternalActionForwardRpcCall = typeof forwardRpcCall;
 type MachineResolution =
     | "available"
     | "not_owned"
+    /** A grant holder's refusal; the admission owner decided its cause may be shown. */
+    | Readonly<{ kind: 'not_owned'; failureCause: ActionFailureCauseV1 }>
     | "unavailable"
     | Readonly<{ kind: 'unavailable'; diagnostic: MachineAvailabilityDiagnosticV1 }>
     | "external_action_update_required"
@@ -436,7 +439,9 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
                     sessionActionOrigin: params.sessionActionOrigin, requireOnline: false });
         if (!admission || admission.kind !== 'admitted') {
             if (admission?.diagnostic) return { kind: 'unavailable', diagnostic: admission.diagnostic };
-            return admission?.code === 'machine_unavailable' ? 'unavailable' : 'not_owned';
+            if (admission?.code === 'machine_unavailable') return 'unavailable';
+            const failureCause = admission && projectExternalActionMachineAdmissionRefusalCause(admission);
+            return failureCause ? { kind: 'not_owned', failureCause } : 'not_owned';
         }
         if (admission.custodianAccountId !== machine.accountId || admission.installationId !== machine.installationId) return 'unavailable';
         const diagnostic = readMachineOnlineAvailabilityDiagnostic(machine, params.requireOnline ?? true);
@@ -773,7 +778,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 authentication: { authenticationAuthority: request.principal.authority,
                     authenticationEvidence: 'authentication' in request.principal ? request.principal.authentication.evidence : undefined } });
             if (admission && admission.kind !== 'admitted') return createPlacementError({ code: 'credential_scope_denied',
-                refusalBranch: 'managed_machine_not_authorized', requestId: request.envelope.requestId, machineId });
+                refusalBranch: 'managed_machine_not_authorized', requestId: request.envelope.requestId, machineId,
+                failureCause: projectExternalActionMachineAdmissionRefusalCause(admission) });
             if (admission) {
                 const { kind: _kind, ...nativeAdmission } = admission;
                 capturedMachineAdmission = nativeAdmission;
@@ -875,7 +881,10 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 requestId: request.envelope.requestId, machineId, phaseFailure: machine });
         }
         const availability = typeof machine.value === 'string' ? machine.value : machine.value.kind;
-        const machineAvailabilityDiagnostic = typeof machine.value === 'string' ? undefined : machine.value.diagnostic;
+        const machineAvailabilityDiagnostic = typeof machine.value !== 'string' && machine.value.kind === 'unavailable'
+            ? machine.value.diagnostic : undefined;
+        const admissionRefusalCause = typeof machine.value !== 'string' && machine.value.kind === 'not_owned'
+            ? machine.value.failureCause : undefined;
         if (availability !== "available") {
             if (managedAdmission && availability === 'unavailable') {
                 return request.envelope.v === 1
@@ -901,6 +910,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 code: target.kind === 'machine' && availability === 'not_owned' ? 'target_not_local' : 'target_unavailable',
                 refusalBranch: availability === 'not_owned' ? 'machine_not_owned' : 'machine_unavailable',
                 requestId: request.envelope.requestId, machineId, availability, machineAvailabilityDiagnostic,
+                failureCause: admissionRefusalCause,
             });
         }
         if (options.signal?.aborted) {

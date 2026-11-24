@@ -65,6 +65,7 @@ import { verifyCurrentExternalActionPrincipal, verifyCurrentExternalActionPrinci
     isExternalActionAuthorizationBoundToEnvelope, projectExternalActionBoundPrincipal,
     readExternalActionSessionProposalSurface, hasCurrentExternalActionWorkflowOriginInTx,
     verifyWorkflowExternalActionRequesterAuthorization,
+    projectExternalActionMachineAdmissionRefusalCause,
     projectExternalActionMintInput, type WorkflowExternalActionAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { ManagedMachineError, hasBoundManagedLifecycle, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedCreationSetup, projectManagedMachine, requireCurrentManagedMachineInTx, readManagedMachineInTx, sameManagedInput, readManagedController, type StoredManagedMachine } from '@/app/machines/managed/managedRows';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
@@ -866,14 +867,12 @@ export function registerExternalActionRoutes(
             if (!admission || admission.kind !== 'admitted') {
                 app.log.warn({ event: 'external_action_machine_admission_refused',
                     actionId: actionId.data, reasonCode: admission?.code ?? 'machine_unavailable' });
+                const failureCause = admission ? projectExternalActionMachineAdmissionRefusalCause(admission) : undefined;
                 if (admission?.requiredRole === 'manage' && !admission.diagnostic) return sendExternalActionHttpError(reply,
                     'credential_scope_denied', body.data.envelope.requestId, undefined, undefined, undefined, undefined,
-                    { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null });
+                    failureCause);
                 return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId,
-                    undefined, undefined, undefined, admission?.diagnostic,
-                    admission?.code === 'unsupported_operation'
-                        ? { phase: 'execution_authorization', errorClass: 'Error', errorCode: admission.code, httpStatus: null }
-                        : undefined);
+                    undefined, undefined, undefined, admission?.diagnostic, failureCause);
             }
             const machine = requesterOperationRead ? null : await db.machine.findFirst({
                 where: { id: receivingMachineId, accountId: admission.custodianAccountId,
