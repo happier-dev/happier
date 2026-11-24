@@ -85,7 +85,6 @@ describe("composed saved Workflow start admission", () => {
         registerAccountEncryptionRoutes(app);
         registerExternalActionRoutes(app);
         const agentTarget = { kind: "agent" as const, identity: { pluginId: "external.workflow-test", localId: "agent" } };
-        const engine = { agentTarget };
         const document = { text: "Return the requested value.", references: [], attachments: [] };
         const childId = randomUUID();
         const sourceId = randomUUID();
@@ -95,17 +94,17 @@ describe("composed saved Workflow start admission", () => {
             if (!result.valid || !result.normalizedDefinition) throw new Error(JSON.stringify(result.issues));
             return result.normalizedDefinition;
         };
-        const child = normalize({ version: 1, defaults: { engine }, blocks: [{ kind: "step", id: "child-reply", document, result: { kind: "text" } }],
+        const child = normalize({ version: 1, defaults: { agentTarget }, blocks: [{ kind: "step", id: "child-reply", document, result: { kind: "text" } }],
             finalOutput: { kind: "result", producer: { blockId: "child-reply", scope: { kind: "current" } }, path: [] } });
         // R63's authored kinds, binding topology, role and mixed target classes.
-        const definition = normalize({ version: 1, inputs: [], defaults: { engine, permissionMode: "default" },
+        const definition = normalize({ version: 1, inputs: [], defaults: { agentTarget, permissionMode: "default" },
             roles: [{ roleId: "verifier", name: "Verifier", engine: { agentTargetKey: "agent:external.workflow-test/agent", modelId: "small" }, runsAs: { kind: "session" }, instructions: "Verify the supplied item." }],
             blocks: [
                 { kind: "step", id: "named-ready", document, result: { kind: "json", schema: { type: "object", properties: { ready: { type: "boolean" } }, required: ["ready"], additionalProperties: false } } },
                 { kind: "if", id: "if-ready", when: { kind: "exists", value: { kind: "result", producer: { blockId: "named-ready", scope: { kind: "current" } }, path: ["ready"] } },
                     then: [{ kind: "step", id: "if-reply", document, result: { kind: "text" } }], otherwise: [] },
                 { kind: "loop", id: "parallel-items", repetition: { kind: "items", items: { kind: "literal", value: ["alpha", "beta"] }, execution: "parallel", failurePolicy: "fail_stop" },
-                    body: [{ kind: "step", id: "item-reply", document, input: [{ kind: "item", field: "value" }], execution: { engine: { role: "verifier" } }, result: { kind: "text" } }] },
+                    body: [{ kind: "step", id: "item-reply", document, input: [{ kind: "item", field: "value" }], execution: { roleId: "verifier" }, result: { kind: "text" } }] },
                 { kind: "action", id: "list-triggers", actionId: "workflow.trigger.list", input: { workflow: { kind: "literal", value: childId } } },
                 { kind: "workflow", id: "nested-child", workflowRef: childId, input: {} },
                 { kind: "step", id: "background-reply", document, execution: { agentTarget, executionTarget: { kind: "detached_run" }, conversation: { kind: "fresh" } }, result: { kind: "text" } },
