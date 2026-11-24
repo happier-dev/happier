@@ -16,6 +16,7 @@ import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/or
 import { resetSessionSurfaceVisibilityForTests, getSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { CurtainProbe, startTestLaunchCurtain } from '@/dev/testkit/harness/launchCurtainHarness';
 import { SessionDestinationBody } from './SessionDestinationBody';
+import SessionDetailsRouteEntry from '@/app/(app)/session/[id]/details';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -61,6 +62,10 @@ vi.mock('socket.io-client', async (importOriginal) =>
 installDisconnectedServerSocketBoundary();
 
 const viewport = vi.hoisted(() => ({ width: 1400, height: 900, followNavigation: false }));
+const expoLocation = vi.hoisted(() => ({
+    pathname: '/session/focused', params: {} as Record<string, string>,
+    replace: (_href: unknown) => {},
+}));
 
 // Native SDK/navigation boundaries only; Session, hydration, pane and activation owners stay real.
 vi.mock('react-native', async () => {
@@ -69,7 +74,8 @@ vi.mock('react-native', async () => {
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ pathname: '/session/focused' }).module;
+    return createExpoRouterMock({ pathname: () => expoLocation.pathname, params: () => expoLocation.params,
+        router: { replace: href => expoLocation.replace(href) } }).module;
 });
 vi.mock('@react-navigation/native', async () => {
     const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
@@ -115,6 +121,9 @@ afterEach(async () => {
     viewport.width = 1400;
     viewport.height = 900;
     viewport.followNavigation = false;
+    expoLocation.pathname = '/session/focused';
+    expoLocation.params = {};
+    expoLocation.replace = () => {};
     await standardCleanup();
 });
 const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-shell' })).toString('base64url')}.signature` };
@@ -169,6 +178,89 @@ function WorkspaceSessionDestination(props: Readonly<{ id: string; serverId: str
 }
 
 describe('bare Session Details address', () => {
+    it('opens docked Details on the first unqualified Session link after sign-in', async () => {
+        viewport.width = 1440;
+        viewport.followNavigation = true;
+        expoLocation.pathname = '/';
+        const id = 'after-sign-in-details';
+        const parentPath = `/session/${id}`;
+        const href = `${parentPath}/details`;
+        const location = new URL('https://shell.test/');
+        const history = {
+            state: null as unknown,
+            replaceState(state: unknown, _unused: string, url?: string | URL | null) {
+                history.state = state;
+                if (url) location.href = new URL(url, location.href).href;
+            },
+            pushState(state: unknown, unused: string, url?: string | URL | null) {
+                history.replaceState(state, unused, url);
+            },
+            go() {},
+        };
+        vi.stubGlobal('window', Object.assign(new EventTarget(), { history, location,
+            sessionStorage: { getItem: () => 'details-sign-in' } }));
+        expoLocation.replace = next => {
+            if (typeof next !== 'string') throw new Error('Expected a Session pathname');
+            history.replaceState(history.state, '', next);
+            expoLocation.pathname = location.pathname;
+            expoLocation.params = { id, ...Object.fromEntries(location.searchParams) };
+        };
+
+        function ExpoScene() {
+            return expoLocation.pathname === href ? <SessionDetailsRouteEntry /> : null;
+        }
+
+        function ActiveSession() {
+            const workspace = useOptionalWorkspaceNavigation();
+            if (!workspace?.active) return null;
+            const group = workspace.state.groups[workspace.state.focusedGroupId];
+            const tab = workspace.state.tabs[group.activeTabId];
+            if (tab.target.kind !== 'session') return null;
+            const pathname = tab.target.params.workspacePathname ?? parentPath;
+            return <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={pathname} focused visible
+                navigation={workspace.navigationForTab(tab.id)}>
+                <SessionDestinationBody />
+            </DestinationInstanceHost>;
+        }
+
+        const tree = (signedIn: boolean) => <InjectedAuthProvider credentials={signedIn ? credentials : null}>
+            <AppPaneProvider>
+                <WorkspaceAppShellProvider>
+                    {signedIn ? <ExpoScene /> : null}
+                    <ActiveSession />
+                </WorkspaceAppShellProvider>
+            </AppPaneProvider>
+        </InjectedAuthProvider>;
+        const screen = await renderScreen(tree(false));
+        try {
+            expect(screen.findAllByType(SessionView)).toHaveLength(0);
+            await withSessionFixture(async serverId => {
+                // The URL becomes available with the sign-in projection, before the workspace takes
+                // over Expo's leaf. Session metadata may already be present while the pane is still cold.
+                storage.getState().applySessions([createSessionFixture({ id, serverId, active: true })]);
+                storage.setState({ isDataReady: false });
+                location.pathname = href;
+                expoLocation.pathname = href;
+                expoLocation.params = { id };
+                await screen.update(tree(true));
+                await act(async () => { storage.setState({ isDataReady: true }); });
+                await vi.waitFor(() => {
+                    const view = screen.findAllByType(SessionView)[0];
+                    expect(view?.props.routeHydrationState).toMatchObject({ kind: 'available', serverId });
+                });
+                const details = screen.findHostByTestId('multi-pane-details-docked');
+                expect({ pathname: location.pathname, docked: details !== null }).toEqual({ pathname: href, docked: true });
+                const selected = details!.findAll(node => typeof node.type === 'string'
+                    && node.props.accessibilityRole === 'tab' && node.props.accessibilityState?.selected);
+                expect(selected.map(tab => tab.props.accessibilityLabel))
+                    .toEqual([t('session.detailsPanel.openTabA11y', { title: t('files.toolbar.review') })]);
+            });
+        } finally {
+            await screen.unmount();
+            vi.unstubAllGlobals();
+        }
+    });
+
     it.each([1440, 390])('opens the Details pane with a selected tab on a cold %ipx visit and keeps the warm selection', async width => {
         viewport.width = width;
         viewport.followNavigation = true;

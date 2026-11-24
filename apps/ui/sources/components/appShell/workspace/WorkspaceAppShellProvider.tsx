@@ -95,8 +95,11 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     if (!restoring && resolveDesktopWindowContext().role === 'secondary') {
         return <AppWindowWorkspace catalog={catalog} browserRecord={props.browserWindow}>{props.children}</AppWindowWorkspace>;
     }
+    // Reserve the workspace route during the sign-in commit as well as Account restore.
+    // An Expo leaf can otherwise act on an empty pane before the retained host opens it.
+    const deferred = pendingFirstAccount || (hasWorkspace && presentation === null);
     return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
-        entry={presentation === 'entry'} deferred={pendingFirstAccount} restoreRetainedHome={restoreRetainedHome}
+        entry={presentation === 'entry'} deferred={deferred} restoreRetainedHome={restoreRetainedHome}
         waitForLaunchBody={Platform.OS === 'web' && !restoring && presentation !== 'entry'} catalog={catalog}>
         {restoring
             ? <HomeReachabilityGate variant="pane" onUnavailable={revealHomeRetryAfterPaint}>
