@@ -48,6 +48,8 @@ export type VoicePcmCaptureSnapshot = Readonly<{
 export type VoicePcmCapture = Readonly<{
   acquire: (request: VoicePcmCaptureSubscriberRequest) => Promise<VoicePcmCaptureLease>;
   waitForDrain: () => Promise<void>;
+  /** Retry failed acquisition cleanup without stopping any admitted subscriber. */
+  releaseUnusedCapture: () => Promise<void>;
   getSnapshot: () => VoicePcmCaptureSnapshot;
   dispose: () => Promise<void>;
 }>;
@@ -531,6 +533,12 @@ export function createVoicePcmCapture(options: Readonly<{
 
   return {
     acquire,
+    releaseUnusedCapture: () => serialize(async () => {
+      if (subscribers.size !== 0) return;
+      if (streamId || pendingStopStreamId || audioSessionLease || frameSubscription || terminalSubscription) {
+        await stopNativeCapture();
+      }
+    }),
     waitForDrain: async () => {
       await Promise.all([...subscribers.values()].map((subscriber) => subscriber.tail.catch(() => undefined)));
     },

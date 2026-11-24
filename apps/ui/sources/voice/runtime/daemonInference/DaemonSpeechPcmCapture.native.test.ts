@@ -115,6 +115,24 @@ describe('daemon native PCM through the shared capture owner', () => {
     expect(harness.nativeModule.stop).toHaveBeenCalledTimes(1);
     expect(teardown).not.toHaveBeenCalled();
   });
+  it('reports a failed abort retirement and retains the physical lease for retry', async () => {
+    const lifetime = new AbortController();
+    const { capture, options } = createCapture({ signal: lifetime.signal });
+    await capture.start();
+    let allowStop = false;
+    harness.nativeModule.stop.mockImplementation(async () => {
+      if (!allowStop) throw new Error('native_stop_failed');
+    });
+    try {
+      lifetime.abort();
+      await expect(capture.stop()).rejects.toThrow('native_stop_failed');
+      expect(options.onError).toHaveBeenCalledWith(expect.objectContaining({ reason: 'native_stop_failed' }));
+      allowStop = true;
+      await capture.stop();
+      expect(harness.capture.getSnapshot().subscriberCount).toBe(0);
+    } finally { allowStop = true; await capture.stop(); harness.nativeModule.stop.mockImplementation(async () => {}); }
+  });
+
   it('reports native acquisition failure without retaining a half-open lease', async () => {
     vi.mocked(harness.nativeModule.start).mockRejectedValueOnce(new Error('native_start_failed'));
     const { capture, options } = createCapture(); await capture.start();
@@ -123,6 +141,36 @@ describe('daemon native PCM through the shared capture owner', () => {
     expect(harness.capture.getSnapshot().subscriberCount).toBe(0);
     expect(harness.coordinator.getSnapshot().leaseCount).toBe(0);
   });
+  it('retains failed acquisition rollback until the native capture stop is acknowledged', async () => {
+    const configure = harness.nativeModule.configureAudioSession.getMockImplementation();
+    harness.nativeModule.configureAudioSession.mockImplementation(async ({ generation }) => ({
+      generation, aecAvailable: true, aecActive: false, route: 'speaker',
+    }));
+    harness.nativeModule.start.mockImplementationOnce(async () => ({ streamId: 'unretired-daemon-start' }));
+    let allowStop = false;
+    harness.nativeModule.stop.mockImplementation(async () => {
+      if (!allowStop) throw new Error('native_stop_failed');
+    });
+    const { capture } = createCapture({ capturePurpose: 'conversation' });
+    try {
+      await expect(capture.start()).rejects.toThrow('native_stop_failed');
+      expect(harness.nativeModule.stop).toHaveBeenCalledWith({ streamId: 'unretired-daemon-start' });
+      await expect(capture.stop()).rejects.toThrow('native_stop_failed');
+      allowStop = true;
+      await capture.stop();
+      const fresh = createCapture();
+      await fresh.capture.start();
+      expect(fresh.capture.isActive()).toBe(true);
+      await fresh.capture.stop();
+    } finally {
+      allowStop = true;
+      await capture.stop().catch(() => {});
+      await harness.capture.releaseUnusedCapture();
+      harness.nativeModule.stop.mockImplementation(async () => {});
+      if (configure) harness.nativeModule.configureAudioSession.mockImplementation(configure);
+    }
+  });
+
   it('reports subscriber failure and actual queued-frame overflow as terminal capture errors', async () => {
     const failed = createCapture({ onChunk: async () => { throw new Error('consumer_failed'); } });
     await failed.capture.start(); harness.emit();

@@ -7,7 +7,8 @@ import {
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
 
-import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { classifyVoiceMachineError, createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
+import { readSafeVoiceRuntimeFailureCode, recordVoiceRuntimeFailure } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { resolveVoicePcmCaptureAudioSession } from '@/voice/runtime/nativePcmAudioSession';
 import type { MicSession } from '@/voice/runtime/mic/MicSession';
 
@@ -61,6 +62,7 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
   let audioStarted = false;
   let capture: VoicePcmCapture | null = null;
   let lease: VoicePcmCaptureLease | null = null;
+  let pendingLease: Promise<VoicePcmCaptureLease> | null = null;
   let stopPromise: Promise<void> | null = null;
   let finishPromise: Promise<void> | null = null;
   let unlinkAbort = (): void => {};
@@ -75,9 +77,10 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
       active = false;
       unlinkAbort();
       unlinkAbort = (): void => {};
-      const currentLease = lease;
-      lease = null;
-      await currentLease?.release().catch(() => {});
+      const currentLease = lease ?? await pendingLease?.catch(() => null);
+      if (currentLease) await currentLease.release();
+      else await capture?.releaseUnusedCapture();
+      if (lease === currentLease) lease = null;
     })().finally(() => {
       stopPromise = null;
     });
@@ -91,20 +94,27 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
     finishPromise = (async () => {
       try {
         await currentLease.finish();
+        if (lease === currentLease) lease = null;
       } finally {
         active = false;
         unlinkAbort();
         unlinkAbort = (): void => {};
-        if (lease === currentLease) lease = null;
       }
     })().finally(() => { finishPromise = null; });
     return finishPromise;
   };
 
+  const reportStopFailure = (error: unknown): void => {
+    const failure = classifyVoiceMachineError(error, { kind: 'provider_error' });
+    recordVoiceRuntimeFailure('daemon_streaming_stt', 'provider_error', failure.kind,
+      readSafeVoiceRuntimeFailureCode(error) ?? failure.kind);
+    options.onError?.(failure);
+  };
+
   const failAndStop = (reason: string): void => {
     if (!active) return;
     reportError(reason);
-    void stop();
+    void stop().catch(reportStopFailure);
   };
 
   const handleFrame = async (event: AudioStreamFrameEvent): Promise<void> => {
@@ -126,7 +136,7 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
       return;
     }
     if (options.signal) {
-      const abort = (): void => { void stop(); };
+      const abort = (): void => { void stop().catch(reportStopFailure); };
       options.signal.addEventListener('abort', abort, { once: true });
       unlinkAbort = () => options.signal?.removeEventListener('abort', abort);
     }
@@ -138,7 +148,7 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
         return;
       }
       active = true;
-      lease = await capture.acquire({
+      const acquiring = capture.acquire({
         ownerId: 'daemon-streaming-stt',
         format: { sampleRate: TARGET_SAMPLE_RATE, channels: TARGET_CHANNELS, frameMs: FRAME_MS },
         audioSession: resolveVoicePcmCaptureAudioSession(options.capturePurpose ?? 'dictation'),
@@ -148,6 +158,12 @@ export function createDaemonSpeechPcmCapture(options: DaemonSpeechPcmCaptureOpti
         onDroppedFrames: () => failAndStop('daemon_streaming_stt_pcm_backpressure'),
         onError: () => failAndStop('daemon_streaming_stt_pcm_chunk_failed'),
       });
+      pendingLease = acquiring;
+      try {
+        lease = await acquiring;
+      } finally {
+        if (pendingLease === acquiring) pendingLease = null;
+      }
       if (options.signal?.aborted) await stop();
     } catch {
       active = false;

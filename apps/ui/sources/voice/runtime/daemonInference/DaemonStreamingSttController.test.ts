@@ -13,7 +13,17 @@ import {
 } from '@happier-dev/protocol/daemon/voiceInference';
 import { installSessionOpsNetworkBoundary, type SessionOpsRpcRequest } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { SttStartParams } from '@/voice/input/sttController';
+import { createNativeVoicePcmCaptureHarness } from '@/dev/testkit/harness/nativeVoicePcmCapture';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
+
+// The new call-lifetime keeper crosses the actual native PCM owner too;
+// only Expo's installed native SDK is substituted.
+const nativeAudio = createNativeVoicePcmCaptureHarness();
+vi.mock('expo-modules-core', async original => {
+  const actual = await original<typeof import('expo-modules-core')>();
+  return { ...actual, requireOptionalNativeModule: (name: string) => name === 'HappierAudioStreamNative'
+    ? nativeAudio.nativeModule : actual.requireOptionalNativeModule(name) };
+});
 
 // Install the physical transport before importing its runtime consumers.
 const network = await installSessionOpsNetworkBoundary();
@@ -26,6 +36,10 @@ const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/a
 const { installVoiceWebRtcBrowserBoundary, TestVoiceAudioContext } = await import('@/dev/testkit/harness/voiceWebRtcHarness');
 const { createDaemonStreamingSttController } = await import('./DaemonStreamingSttController');
 const { createWebDaemonSpeechPcmCapture } = await import('./WebDaemonSpeechPcmCapture.web');
+const { createDaemonSpeechPcmCapture: createNativeDaemonSpeechPcmCapture } = await import('./DaemonSpeechPcmCapture.native');
+const { createNativeMicSession } = await import('../mic/NativeMicSession');
+const { getSharedVoicePcmCapture, getSharedVoiceAudioSessionCoordinator } = await import('@happier-dev/audio-stream-native');
+const { log } = await import('@/log');
 const { createLocalVoiceCaptureOwner } = await import('../input/LocalVoiceCaptureOwner');
 const { voiceConversationRuntimeMachine } = await import('../machine/VoiceConversationRuntimeMachine');
 const { confirmVoiceCaptureStarted, surfaceRecoverableVoiceCaptureError } = await import('../machine/voiceConversationRuntimeHelpers');
@@ -169,9 +183,61 @@ afterEach(async () => {
   resetServerFeaturesClientForTests();
   vi.useRealTimers();
 });
-afterAll(() => network.dispose());
+afterAll(async () => {
+  await network.dispose();
+  await getSharedVoiceAudioSessionCoordinator()?.dispose();
+  await nativeAudio.coordinator.dispose();
+});
 
 describe('createDaemonStreamingSttController with actual capture and daemon client', () => {
+  it('reports a call-signal-only physical stop failure and keeps strict discard retryable', async () => {
+    const call = new AbortController();
+    const attempt = new AbortController();
+    const mic = createNativeMicSession({ ensurePermission: async () => {} });
+    const runtime = createDaemonStreamingSttController({
+      getSettings: () => storage.getState().settings,
+      createPcmCapture: createNativeDaemonSpeechPcmCapture,
+    });
+    activeController = runtime;
+    const params = startParams({ micSession: mic, signal: attempt.signal, callSignal: call.signal,
+      capturePurpose: 'conversation' });
+    const capture = getSharedVoicePcmCapture();
+    if (!capture) throw new Error('Installed native PCM boundary missing');
+    const stop = nativeAudio.nativeModule.stop;
+    const originalStop = stop.getMockImplementation();
+    if (!originalStop) throw new Error('Native PCM stop boundary missing');
+    let allowStop = false;
+    const stopEntered = createDeferred<void>();
+    try {
+      await runtime.start(params);
+      expect(capture.getSnapshot().subscriberCount).toBe(1);
+      log.clear();
+      stop.mockImplementation(async args => {
+        stopEntered.resolve();
+        if (!allowStop) throw new Error('private native stop failure');
+        await originalStop(args);
+      });
+      call.abort();
+      await stopEntered.promise;
+      expect(attempt.signal.aborted).toBe(false);
+      await vi.waitFor(() => expect(log.getLogs().some(entry => entry.includes('[voiceRuntimeFailure]')
+        && entry.includes('"providerId":"daemon_streaming_stt"')
+        && entry.includes('"outcome":"provider_error"'))).toBe(true));
+      expect(log.getLogs().join('\n')).not.toContain('private native stop failure');
+      expect(runtime.hasUnretiredInput()).toBe(true);
+      await expect(runtime.discardInput()).rejects.toThrow('private native stop failure');
+      allowStop = true;
+      await runtime.discardInput();
+      expect(runtime.hasUnretiredInput()).toBe(false);
+      expect(capture.getSnapshot()).toMatchObject({ streamId: null, subscriberCount: 0 });
+    } finally {
+      allowStop = true;
+      await runtime.discardInput();
+      await mic.teardown();
+      stop.mockImplementation(originalStop);
+    }
+  });
+
   it('publishes mute immediately and fences a pending unmute when the buffered capture ends', async () => {
     const runtime = controller();
     const params = startParams();
