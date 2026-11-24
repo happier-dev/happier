@@ -79,7 +79,7 @@ function createMemoryActionSpecs() {
     id: 'memory.search', executionPlacement: 'machine', approval: {result: 'required'},
     title: 'Search memory',
     sideEffectClass: 'read',
-    description: 'Search the selected daemon memory index by global, Session, or qualified Project scope. Project search requires explicit support from that daemon and never falls back to global search.',
+    description: 'Search the selected daemon memory index by global, Session, or qualified Project scope. In Voice, omit query.scope to search the bound Session’s Project. Supply global scope for cross-Session search. Project search requires explicit support from that daemon and never falls back to global search.',
     safety: 'safe',
     placements: ['voice_panel', 'command_palette'],
     prompting: { voiceHotPath: true },
@@ -117,7 +117,7 @@ function createMemoryActionSpecs() {
       ],
     },
     examples: {
-      voice: { argsExample: '{"machineId":"{{machineId}}","query":{"v":1,"query":"openclaw","scope":{"type":"global"},"mode":"hints"}}' },
+      voice: { argsExample: '{"machineId":"{{machineId}}","query":{"v":1,"query":"openclaw","mode":"hints"}}' },
       mcp: { argsExample: '{"machineId":"{{machineId}}","query":{"v":1,"query":"openclaw","scope":{"type":"global"},"mode":"hints"}}' },
     },
     surfaces: {
@@ -130,6 +130,13 @@ function createMemoryActionSpecs() {
       },
     outputSchema: MemorySearchResultV1Schema,
     inputSchema: MemorySearchInputSchema,
+    surfaceBindings: { voice: {
+      inputSchema: lazyZodSchema(() => z.looseObject({
+        ...MemorySearchInputSchema.shape,
+        // The App fills scope before the Action validates the complete query.
+        query: z.partial(z.looseObject(MemorySearchQueryV1Schema.shape), { scope: true }),
+      })),
+    } },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'search.settings.get', approval: {result: 'required'}, title: 'Read Search settings',

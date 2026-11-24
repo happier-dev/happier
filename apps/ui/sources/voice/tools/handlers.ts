@@ -10,6 +10,7 @@ import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import {
   PluginUiJsonValueV1Schema,
   type PluginUiJsonValueV1,
@@ -18,6 +19,10 @@ import {
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { readCurrentProjectAccountRows, readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import { readStoredSessionMessages } from "@happier-dev/session-core/messages";
 import {
   listPendingSessionRequests,
@@ -91,6 +96,24 @@ function resolveVoiceActionRequestId(context: VoiceToolInvocationContext | undef
 function asPlainObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function resolveBoundMemoryProject(state: ReturnType<typeof storage.getState>, address: SessionAddress) {
+  const session = resolveVoiceContextSessionFromState(address, state);
+  if (!session) return null;
+  const rows = readCurrentProjectAccountRows(state);
+  const census = admitProjectWorkspaceCensusForSubject({
+    subject: { kind: 'session', ownerAccountId: session.ownerAccountId, access: session.access, accessLevel: session.accessLevel },
+    rowServerId: address.serverId, censusServerId: rows?.scope.serverId, viewerAccountId: rows?.scope.accountId,
+    workspaceRefs: readProjectAccountWorkspaceRefs(state), sessionProjectKeyResolver: rows?.sessionProjectKeyResolver,
+  });
+  const metadata = census.workspaceRefs && readVoiceSessionOwnerMetadataFromState(state, address);
+  if (!metadata) return null;
+  const lookup = { ...metadata, machineId: resolveSessionMachineId(metadata) };
+  const project = census.sessionProjectKeyResolver
+    ? census.sessionProjectKeyResolver(lookup, address.serverId)
+    : resolveSessionProjectKeyV1(lookup, address.serverId, census.workspaceRefs, workspaceRefResolutionContextV1());
+  return project.kind === 'resolved' ? project.projectKey : null;
 }
 
 type VoiceActionInvocationInput = Readonly<{
@@ -420,13 +443,27 @@ export function createVoiceToolHandlers(
       : null;
     const defaultTarget = input && input.sessionId === undefined && !hasNaturalSessionReference
       && getActionSpec(actionId).sessionTarget?.field === 'sessionId' ? currentAddress : null;
+    const memoryQuery = actionId === 'memory.search' ? asPlainObject(input?.query) : null;
+    const useBoundMemoryProject = memoryQuery !== null && memoryQuery.scope === undefined;
     const serverId = boundAddress?.serverId ?? defaultTarget?.serverId
+      ?? (useBoundMemoryProject ? currentAddress?.serverId : null)
       ?? ctx?.serverId ?? capturedTargetServerId ?? (
       !hasNaturalSessionReference ? deps.currentSessionAddress?.serverId ?? deps.currentServerId : null
     ) ?? (actionId === 'session.list' ? getActiveServerSnapshot().serverId : null);
     let actionInput = boundAddress ? { ...input, returnToSessionId: boundAddress.sessionId }
       : useAwareness ? { ...input, view: 'awareness' }
         : defaultTarget ? { ...input, sessionId: defaultTarget.sessionId } : parameters;
+    if (useBoundMemoryProject) {
+      const projectRef = currentAddress
+        && (!ctx?.serverId || areServerProfileIdentifiersEquivalent(ctx.serverId, currentAddress.serverId))
+        ? resolveBoundMemoryProject(storage.getState(), currentAddress) : null;
+      if (!projectRef) {
+        return serializeVoiceActionExecuteResult(actionId, {
+          ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+        }, { canonicalResult });
+      }
+      actionInput = { ...input, query: { ...memoryQuery, scope: { type: 'project', projectRef } } };
+    }
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
     }

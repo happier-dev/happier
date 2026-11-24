@@ -9919,6 +9919,10 @@ The CLI invocation is
 `happier actions invoke memory.search --input-json '<input>'`. Session-bound tools
 retain the current Session machine default, and standalone calls use explicit
 machine/Home routing through shared Action admission and settings policy.
+Voice calls asking about the bound Session's Project can omit `query.scope`.
+The App resolves the qualified Project from the opened Account's workspace
+census and returns `target_unavailable` if it cannot establish the association.
+Explicit scopes retain their existing meaning.
 
 Project search uses `scope: {type: 'project', projectRef: {serverId, projectKey}}`
 on that same Action. The exact daemon must advertise `projectSearchSupported: true`;

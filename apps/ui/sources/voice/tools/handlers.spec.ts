@@ -3048,6 +3048,58 @@ describe('voice tool handlers', () => {
       .toEqual({ ok: true, ...result });
   });
 
+  it('searches the bound Project for the witnessed Memory query and preserves explicit global scope', async () => {
+    const featureToggles = { ...account.settings.featureToggles, 'memory.search': true };
+    account.replaceSettings(settingsParse({ ...account.settings, featureToggles }));
+    const machineId = 'm1'; // Reachable fixture Machine for the witnessed operation.
+    const projectKey = '5d4b5c32-119c-4ae2-92d4-e303c2d25f12';
+    const workspaceId = 'cobalt-checkout';
+    const session = createSessionFixture({ id: 'cobalt-session', serverId: homeA,
+      metadata: { machineId, path: '/repo/cobalt', host: 'fixture', workspaceId, projectId: projectKey } });
+    storage.getState().applySessions([session]);
+    storage.setState({ projectAccountRows: {
+      scope: { serverId: homeA, accountId: 'account-a' }, status: 'ready', coverage: 'complete',
+      workspaceRefs: [{ id: workspaceId, projectKey, serverId: homeA, machineId, rootPath: '/repo/cobalt', createdAtMs: 1 }],
+      relationships: [], organizations: [], revisionsByPhysicalKey: {},
+    } });
+    const scope = { type: 'project', projectRef: { serverId: homeA, projectKey } };
+    const hit = { type: 'artifact', ref: { kind: 'doc', serverId: homeA, artifactId: '2de33b82-9168-4f10-8156-ae732baabbee' },
+      revision: { headerVersion: 1, bodyVersion: 1 }, location: 'archive', factId: '7031825b-ea37-4aa3-b808-2d3230234ac1',
+      summary: 'COBALT TELESCOPE', score: 0.9 };
+    const { MemorySearchQueryV1Schema } = await import('@happier-dev/protocol/memory/memorySearch');
+    daemonRpc.mockImplementation(async request => {
+      expect(request.sessionId).toBe(machineId);
+      if (request.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return {
+        v: 1, enabled: true, indexMode: 'deep', hintsIndexReady: true, deepIndexReady: true, activeIndexReady: true,
+        embeddingsEnabled: false, embeddingsMode: 'disabled', embeddingsPresetId: null, embeddingsProviderKind: null,
+        embeddingsModelId: null, embeddingsRuntimeState: 'unavailable', embeddingsUsingFallback: false,
+        tier1DbPath: null, deepDbPath: null, tier1DbBytes: null, deepDbBytes: null,
+        projectSearchSupported: true, documentSearchSupported: true,
+      };
+      expect(request.method).toBe(RPC_METHODS.DAEMON_MEMORY_SEARCH);
+      const query = MemorySearchQueryV1Schema.parse(request.payload);
+      expect(query).toMatchObject({ query: 'COBALT TELESCOPE', mode: 'hints' });
+      if (query.scope.type === 'global') return { v: 1, ok: true, hits: [] };
+      expect(query).toMatchObject({ scope, corpora: ['sessions', 'documents'] });
+      return { v: 1, ok: true, hits: [hit], documents: { state: 'ready' }, project: { state: 'ready' } };
+    });
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => session.id,
+      currentSessionAddress: { serverId: homeA, sessionId: session.id }, currentServerId: homeA });
+    const query = { v: 1 as const, query: 'COBALT TELESCOPE', mode: 'hints' as const };
+    const search = async (input: unknown) => JSON.parse(await tools.action_execute!({ actionId: 'memory.search', input }));
+    expect(await search({ machineId, query: { ...query, scope: { type: 'global' } } }))
+      .toMatchObject({ ok: true, result: { hits: [] } });
+    const bound = await search({ machineId, query });
+    expect(bound, JSON.stringify(bound)).toMatchObject({ ok: true, result: { hits: [hit] } });
+    const { decodeVoiceToolInput } = await import('./voiceActionExecution');
+    expect(decodeVoiceToolInput('memorySearch', { machineId, query })).toMatchObject({ ok: true });
+    const foreignHome = JSON.parse(await tools.action_execute!({ actionId: 'memory.search', input: { machineId, query } }, { serverId: homeB }));
+    expect(foreignHome).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    storage.setState({ projectAccountRows: null });
+    expect(await search({ machineId, query })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(daemonRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)).toHaveLength(2);
+  });
+
   it.each(['session_stop', 'action_execute'] as const)(
     'carries the daemon Stop refusal through the real Voice front door (%s)', async toolName => {
       const previous = daemonRpc.getMockImplementation();
