@@ -2677,12 +2677,17 @@ describe('workflow trigger Automation composition', () => {
     expect(afterRemoval.pullRequestLinks).toEqual([{ provider: 'github', ...selected, url: 'https://github.com/happier-dev/happier/pull/42' }]);
   });
 
-  it.each(['binding', 'projection'] as const)('returns each committed PR revision when %s fails', async phase => {
+  it.each(['binding', 'wrapped binding', 'uncoded binding', 'projection'] as const)('returns each committed PR revision when %s fails', async phase => {
     const { deps, rows, executor } = fixture();
     const pullRequest = { repository: 'happier-dev/happier', number: 42 };
-    const errorCode = phase === 'binding' ? 'target_unavailable' : 'content_unavailable';
+    const errorCode = phase === 'wrapped binding' ? 'github_credential_unavailable'
+      : phase === 'uncoded binding' ? 'action_failed'
+      : phase === 'binding' ? 'target_unavailable' : 'content_unavailable';
     const details = { code: errorCode };
     const refusal = Object.assign(new Error(errorCode), { ok: false as const, code: errorCode, errorCode, error: errorCode, details });
+    const bindingFailure = phase === 'wrapped binding' ? new Error('dispatch threw', { cause: refusal })
+      : phase === 'uncoded binding' ? new Error('private dispatch information')
+      : Object.assign(new Error(errorCode), { code: errorCode, details });
     let writes = 0;
     const bindingOperations: string[] = [];
     const actions = createWorkflowTriggerActions({ ...deps,
@@ -2696,7 +2701,7 @@ describe('workflow trigger Automation composition', () => {
         return deps.openPullRequestTrigger!(...args);
       },
       pullRequests: { listLinks: async () => [],
-        attach: async ({ triggerRevision }) => { bindingOperations.push(`attach:${triggerRevision}`); throw refusal; },
+        attach: async ({ triggerRevision }) => { bindingOperations.push(`attach:${triggerRevision}`); throw bindingFailure; },
         removeTrigger: async () => { bindingOperations.push('remove'); throw refusal; },
       },
     });
@@ -2714,10 +2719,14 @@ describe('workflow trigger Automation composition', () => {
     const expectReceipt = (result: unknown, revision: number, triggerRevision: number) => {
       expect(result).toMatchObject({ ok: true, result: {
         set: { automationId, revision }, triggerId, triggerRevision,
-        postWriteFailure: { ok: false, errorCode, details },
+        postWriteFailure: { ok: false, errorCode, ...(phase !== 'uncoded binding' ? { details } : {}) },
       } });
     };
     expectReceipt(added, 1, 0);
+    if (phase === 'uncoded binding') {
+      expect(JSON.stringify(added)).not.toContain('private dispatch information');
+      return;
+    }
     if (phase === 'projection') return;
     for (const enabled of [false, true]) {
       const expectedRevision = enabled ? 2 : 1;

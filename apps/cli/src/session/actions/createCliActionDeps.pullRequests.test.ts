@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCliActionDeps } from './createCliActionDeps';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { AutomationConversationActionInputSchemasV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { getAutomationDefinition } from '@/api/automations';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createManifestTargetedContributionsService } from '@happier-dev/cli-common/plugins/registration';
@@ -10,6 +14,8 @@ import { TRIAGE_PLUGIN } from '@happier-dev/plugins-triage/manifest';
 import { GITHUB_PLUGIN } from '@happier-dev/plugins-scm-github/manifest';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { parseActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import { WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -26,11 +32,11 @@ import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_RECORD_KIN
 import { runConversationCheckpointedPollForInvocation } from '../../../../../packages/plugins/channels/src/ingress';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
 
-const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), rpc: vi.fn() }));
+const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), rpc: vi.fn() }));
 // Only authenticated HTTP and Machine RPC are replaced; Session routing and Actions stay real.
 vi.mock('axios', async original => {
   const actual = await original<typeof import('axios')>();
-  return { ...actual, default: { ...actual.default, get: boundary.get, post: boundary.post, isAxiosError: () => false } };
+  return { ...actual, default: { ...actual.default, get: boundary.get, post: boundary.post, request: boundary.request, isAxiosError: () => false } };
 });
 vi.mock('@/session/transport/rpc/machineRpc', async (original) => ({
   ...await original<typeof import('@/session/transport/rpc/machineRpc')>(), callMachineRpc: boundary.rpc, callExactMachineRpc: boundary.rpc,
@@ -40,7 +46,7 @@ const pullRequest = { provider: { id: 'github', kind: 'github', displayName: 'Gi
   number: 42, title: 'Fix', url: 'https://github.com/acme/widgets/pull/42', baseBranch: 'main', headBranch: 'fix', state: 'open' };
 describe('CLI session pull request binding', () => {
   beforeEach(() => {
-    boundary.get.mockReset(); boundary.post.mockReset(); boundary.rpc.mockReset();
+    boundary.get.mockReset(); boundary.post.mockReset(); boundary.request.mockReset(); boundary.rpc.mockReset();
     boundary.post.mockImplementation(async (url: string) => {
       if (url.endsWith('/v3/automations/query')) return { status: 200, data: { automations: [], nextCursor: null } };
       if (url.endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
@@ -176,10 +182,17 @@ describe('CLI session pull request binding', () => {
       effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied'] as const)(
-    'composes native open in a Team Session with a fresh repository and %s binding authority', async (authority) => {
+  it.each(['current', 'first poll settles', 'provider retired', 'connection changed', 'comments permission denied', 'connected workflow trigger', 'unconnected workflow trigger'] as const)(
+    'composes PR attachment in a Team Session with a fresh repository (%s)', async (authority) => {
+    const workflowTrigger = authority === 'connected workflow trigger' || authority === 'unconnected workflow trigger';
+    const accountId = 'original-account';
+    const token = workflowTrigger ? `fixture.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` : 'token';
     const ordinaryRead = boundary.get.getMockImplementation()!;
     boundary.get.mockImplementation(async (url: string) => {
+      if (workflowTrigger && url.endsWith('/v1/machines/session-machine')) return { status: 200, data: { machine: {
+        id: 'session-machine', kind: 'persistent', metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        access: { custodian: { accountId, displayName: 'Fixture owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      } } };
       const response = await ordinaryRead(url);
       if (url.endsWith(`/v2/sessions/${sessionId}`)) {
         const metadata = JSON.parse(response.data.session.metadata);
@@ -196,10 +209,13 @@ describe('CLI session pull request binding', () => {
     const linkRequestId = 'pr-link-request';
     const warn = vi.fn<PluginServices['logger']['warn']>();
     let providerRetired = false;
+    let credentialConnected = true;
+    let providerRefusal: { code: string; firstFrame: ReturnType<typeof readUnexpectedActionErrorDiagnosticV1>['stackFrames'][number] | undefined } | undefined;
     let channelsContext: PluginInvocationContext | undefined;
     let firstPollSettled = false;
     let instances: WidgetInstanceV1[] = [];
     let adds = 0;
+    let savedRow: ReturnType<typeof AutomationDefinitionDetailSchema.parse> | undefined;
     const hostBoundary: PluginActionsHostExecutor = { async execute(actionId, rawInput, context) {
       if (actionId === 'account.profile.get' || actionId === 'widgets.catalog.list'
         || actionId === 'widgets.item.list' || actionId === 'widgets.item.add') {
@@ -260,6 +276,17 @@ describe('CLI session pull request binding', () => {
         instances.push(input.instance); adds++;
         return { ok: true, result: { ref: { surface: widgetSurface, instanceId: input.instance.id }, instance: input.instance } };
       }
+      if (actionId === 'automation.conversation.target.verify') {
+        const input = AutomationConversationActionInputSchemasV1[actionId].parse(rawInput);
+        const trigger = savedRow?.triggers[0];
+        if (!savedRow || !trigger) throw new Error('Expected a committed Automation trigger to verify');
+        expect(context?.actionCaller).toMatchObject({ kind: 'plugin', pluginId: CHANNELS_MANIFEST.id });
+        expect(input).toMatchObject({ automationId: savedRow.id, scopedTrigger: {
+          sessionId: savedRow.scopeSessionId, triggerId: trigger.id, triggerRevision: trigger.revision,
+          triggerKind: trigger.kind, pullRequest: { repository: 'acme/widgets', number: 42 },
+        } });
+        return { ok: true, result: { kind: 'verified' } };
+      }
       throw new Error(`Unexpected external host Action ${actionId}`);
     } };
     const http = createPluginHttpFixture({ request: async request => {
@@ -317,7 +344,18 @@ describe('CLI session pull request binding', () => {
         return manifest.contributes.actions.flatMap(definition => {
           const handler = kit.registration('actions', definition.id);
           return handler ? [{ pluginId: manifest.id, pluginVersion: manifest.version, occurrenceId, sourceCustody,
-            localId: definition.id, definition: { ...definition, inputSchema: definition.inputSchema ?? undefined }, handler }] : [];
+            localId: definition.id, definition: { ...definition, inputSchema: definition.inputSchema ?? undefined },
+            handler: async (input: JsonValue, context: PluginInvocationContext) => {
+              try { return await handler(input, context); }
+              catch (error) {
+                const refusal = readPluginActionError(error);
+                if (kit === provider && refusal && !providerRefusal) {
+                  providerRefusal = { code: refusal.code, firstFrame: readUnexpectedActionErrorDiagnosticV1(error).stackFrames[0] };
+                }
+                throw error;
+              }
+            },
+          }] : [];
         });
       }),
       readCurrentPluginOccurrenceId: pluginId => declarations.find(row => row.manifest.id === pluginId)?.occurrenceId ?? null,
@@ -339,7 +377,8 @@ describe('CLI session pull request binding', () => {
             return state;
           } } } as unknown as PluginServices['storage'],
           connectedAccounts: { getBinding: async () => ({ account: credentialRef }),
-            materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer fixture-token' } }) } as unknown as PluginServices['connectedAccounts'],
+            materialize: async () => ({ kind: 'httpHeaders', headers: credentialConnected ? { authorization: 'Bearer fixture-token' } : {} }),
+          } as unknown as PluginServices['connectedAccounts'],
           settings: { forScope: () => ({ snapshot: async () => ({ scope: { kind: 'account' as const }, revision: '1', values: {} }),
             get: async () => null, describe: () => [], watch: () => ({ dispose() {} }),
             set: async () => { throw new Error('No Settings writes'); }, reset: async () => { throw new Error('No Settings writes'); } }) },
@@ -381,8 +420,18 @@ describe('CLI session pull request binding', () => {
       attaches++;
       return invokeCore('session-pull-request-binding-v1', input);
     });
-    const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null }, sessionId, mode: 'plain', ctx: null,
+    const deps = createCliActionDeps({ token, credentials: { token, encryption: null }, sessionId, mode: 'plain', ctx: null,
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features: FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {} }) }),
+      ...(workflowTrigger ? { invokeContributedAction: async ({ action, input, context }) => {
+        expect(action).toEqual({ pluginId: CHANNELS_MANIFEST.id, localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
+        expect(context).toMatchObject({ surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId });
+        const binding = SessionPullRequestBindingInputV1Schema.parse(input);
+        expect(binding).toMatchObject({ kind: 'attach', target: { triggerKind: 'prComment' } });
+        expect(binding).not.toHaveProperty('credentialRef');
+        attaches++;
+        const result = await invokeCore(action.localId, binding);
+        return parseActionExecuteFailure(result) ?? { ok: true as const, result };
+      } } : {}),
     });
     const open = () => deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo', base: { kind: 'branch', name: 'main' } },
       context: { surface: 'cli', actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
@@ -390,6 +439,65 @@ describe('CLI session pull request binding', () => {
       executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
     });
     try {
+      if (workflowTrigger) {
+        const qualified = { kind: 'attach', sessionId, pullRequest: { repository: 'acme/widgets', number: 42 },
+          credentialRef, expectedRepositoryId: '77' } as const;
+        expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified)).toMatchObject({ kind: 'attached' });
+
+        boundary.request.mockImplementation(async ({ url, method, data }: { url: string; method: string; data: unknown }) => {
+          if (method === 'GET' && savedRow && url.endsWith(`/v3/automations/${savedRow.id}`)) {
+            return { status: 200, data: structuredClone(savedRow) };
+          }
+          if (method !== 'POST' || !url.endsWith('/v3/automations') || savedRow) throw new Error('Unexpected Automation request');
+          const input = AutomationDefinitionCreateRequestSchema.parse(data);
+          savedRow = AutomationDefinitionDetailSchema.parse({
+            id: input.automationId, name: input.name, description: input.description ?? null, enabled: input.enabled,
+            targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+            workflowDefinitionId: null, scopeSessionId: sessionId, executionRecipe: input.executionRecipe,
+            assignments: input.assignments?.map(assignment => ({ ...assignment, enabled: assignment.enabled ?? true,
+              priority: assignment.priority ?? 0, updatedAt: 1 })) ?? [],
+            triggers: input.triggers.map(({ triggerId, trigger }) => {
+              if (trigger.kind !== 'prComment') throw new Error('Expected a PR comment trigger');
+              // Home stores a scope-bound envelope even for plaintext PR selectors.
+              const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
+                : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                  binding: { v: 1, automationId: input.automationId, triggerId, triggerRevision: 0, triggerKind: trigger.kind },
+                  definition: { kind: trigger.kind, pullRequest: trigger.pullRequest },
+                });
+              return { kind: trigger.kind, enabled: trigger.enabled, id: triggerId, revision: 0,
+                createdAt: 1, updatedAt: 1, sourceSessionId: input.scopeSessionId, triggerDefinitionEnvelope: JSON.stringify(envelope) };
+            }),
+          });
+          return { status: 200, data: structuredClone(savedRow) };
+        });
+        credentialConnected = authority === 'connected workflow trigger';
+        const receipt = await deps.workflowAction!({
+          actionId: 'workflow.trigger.add',
+          input: { lifetimeSession: { sessionId }, project: { machineId: 'session-machine', directory: '/repo' },
+            target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify',
+              actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Ready' } } }] } },
+            trigger: { kind: 'prComment', enabled: true, pullRequest: qualified.pullRequest } },
+          context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
+        });
+        expect(receipt).toMatchObject({ set: { revision: 1 }, triggerRevision: 0 });
+        if (!savedRow) throw new Error('Expected a committed Automation');
+        const saved = await getAutomationDefinition({ token, automationId: savedRow.id });
+        expect(saved).toMatchObject({ templateVersion: 1, triggers: [{ kind: 'prComment', revision: 0 }] });
+        expect(saved?.triggers).toHaveLength(1);
+        expect(receipt).toMatchObject({ set: { automationId: savedRow.id, revision: 1 },
+          triggerId: saved?.triggers[0]?.id, triggerRevision: 0 });
+        if (credentialConnected) {
+          expect(receipt).not.toHaveProperty('postWriteFailure');
+          expect(attaches).toBe(1);
+        } else {
+          expect(receipt).toMatchObject({ postWriteFailure: { ok: false, errorCode: 'github_credential_unavailable' } });
+          expect(providerRefusal).toMatchObject({ code: 'github_credential_unavailable',
+            firstFrame: { file: expect.stringMatching(/githubApiClient[.]ts$/u) } });
+          expect(await invokeCore(SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, qualified))
+            .toMatchObject({ ok: false, errorCode: 'github_credential_unavailable' });
+        }
+        return;
+      }
       if (authority !== 'current' && authority !== 'first poll settles') {
         const cause = authority === 'provider retired' ? 'channels_pr_link_provider_not_ready' : 'channels_pr_link_connection_not_ready';
         expect(await open()).toMatchObject({ success: true, pullRequest, result: 'created',

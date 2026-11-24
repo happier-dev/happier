@@ -1912,7 +1912,11 @@ describe('UI Workflow Action front door', () => {
             await act(async () => { h.account.dispose(); await connection?.dispose(); storage.setState(previousState); });
         }
     });
-    it.each(['prComment', 'ciFailed'] as const)('creates a scoped %s trigger from the pull request chosen in the trigger editor', async (kind) => {
+    it.each([
+        { kind: 'prComment', connected: true },
+        { kind: 'ciFailed', connected: true },
+        { kind: 'prComment', connected: false },
+    ] as const)('saves a scoped $kind trigger from the editor (connected: $connected)', async ({ kind, connected }) => {
         const previousState = storage.getState();
         const h = await createHarness('plain', { identity: true, credentialKind: 'account' });
         const sessionId = 'session-pr-form';
@@ -1925,7 +1929,11 @@ describe('UI Workflow Action front door', () => {
             const workflowRequest = runtimeFetch.getMockImplementation();
             if (!workflowRequest || !h.account.serverIdentityId) throw new Error('Expected the current Workflow Home boundary');
             const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-channels/manifest');
+            const credentialRefusal = { errorCode: 'github_credential_unavailable',
+                error: 'The selected GitHub Connected Account could not materialize API authorization.',
+                details: { code: 'github_credential_unavailable', retryable: false } };
             const externalAction = await createExternalActionAccountHttpBoundary({
+                failure: result => result === credentialRefusal ? credentialRefusal : null,
                 serverUrl: h.home.serverUrl, serverIdentityId: h.account.serverIdentityId, accountId,
                 machineId: 'machine-a', actionId: 'action.invoke', tokenEpoch: 0,
                 execute: (raw) => {
@@ -1939,6 +1947,7 @@ describe('UI Workflow Action front door', () => {
                     let output: unknown;
                     if (input.kind === 'attach') {
                         attachments.push(SessionPullRequestBindingInputV1Schema.parse(input));
+                        if (!connected) return credentialRefusal;
                         output = { kind: 'attached', bindingId: 'binding-pr-form' };
                     } else if (input.kind === 'removeTrigger') output = { kind: 'removed' };
                     else if (input.kind === 'get') output = { kind: 'ready', sessionId: input.sessionId, bindings: pullRequestLinks.map((link, index) => ({
@@ -1997,8 +2006,17 @@ describe('UI Workflow Action front door', () => {
             const trigger = buildTriggerDefinition({ when: chosen, enabled: true, sessionId });
             const target = buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review this pull request' });
             if (!trigger || !target) throw new Error('Expected a complete PR trigger');
-            await act(async () => { await addWorkflowTrigger({ target, trigger, inputs: {}, lifetimeSession: { sessionId } },
-                { context: { externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } }); });
+            const options = { context: { externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a' } } };
+            const receipt = await addWorkflowTrigger({ target, trigger, inputs: {}, lifetimeSession: { sessionId } }, options);
+            if (connected) {
+                expect(receipt.postWriteFailure).toBeUndefined();
+            } else {
+                expect(receipt.postWriteFailure).toMatchObject({ ok: false, ...credentialRefusal });
+            }
+            expect(receipt).toMatchObject({ set: { revision: 1 }, triggerRevision: 0 });
+            const saved = await listWorkflowTriggerPage({ lifetimeSession: { sessionId } }, options);
+            expect(saved.sets).toMatchObject([{ automationId: receipt.set.automationId, revision: 1,
+                triggers: [{ id: receipt.triggerId, revision: 0 }] }]);
             expect([...h.automationRows.values()]).toEqual([expect.objectContaining({
                 scopeSessionId: sessionId, triggers: [expect.objectContaining({ kind, sourceSessionId: sessionId, enabled: true })],
             })]);

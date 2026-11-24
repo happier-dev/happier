@@ -10867,6 +10867,8 @@ and the selected trigger revision when present. A failed follow-up appears in
 the optional `postWriteFailure` Action failure envelope on that receipt.
 A projection failure can leave the set's private details unavailable. A failed
 Channels binding change leaves the saved trigger revision available for recovery.
+The receipt carries the binding Action’s typed refusal when available. An
+unclassified binding exception returns a generic Action failure.
 Older strict 0.3 readers require matching source for this result field.
 
 Development FIN placement: `workflow.trigger.*` Actions own Account trigger data,

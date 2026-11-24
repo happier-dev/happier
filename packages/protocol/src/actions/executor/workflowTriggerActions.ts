@@ -74,7 +74,8 @@ import { ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../../mac
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import type { ManagedMachineV1 } from '../../machines/managed/managedMachineV1.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
-import { parseActionExecuteFailure } from '../actionExecutionResult.js';
+import { parseActionExecuteFailure, projectActionExecuteFailure } from '../actionExecutionResult.js';
+import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 import type { WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import type { WorkflowApprovedOperationV1 } from '../../actions/approvedOperationV1.js';
@@ -321,14 +322,28 @@ function refuseInput(code: NonNullable<NonNullable<Extract<WorkflowActionFailure
 function unresolvedWriteReceipt(cause: unknown): never {
   throw Object.assign(new Error('workflow_outcome_unresolved', { cause }), { code: 'workflow_outcome_unresolved' });
 }
+const PR_BINDING_FAILURE_PHASE = 'workflow.trigger.pr_binding';
+
 function withPostWriteFailure(receipt: WorkflowTriggerWriteResult, cause: unknown, phase: string): WorkflowTriggerWriteResult {
   const { automationNotices, ...failure } = parseActionExecuteFailure(cause)
-    ?? normalizeWorkflowActionThrownError(cause, undefined, false, phase);
+    ?? (phase === PR_BINDING_FAILURE_PHASE
+      ? projectPrBindingThrownError(cause)
+      : normalizeWorkflowActionThrownError(cause, undefined, false, phase));
   return {
     ...receipt,
     postWriteFailure: { ...failure, ...(automationNotices && { automationNotices: [...automationNotices] }) },
   };
 }
+function projectPrBindingThrownError(cause: unknown) {
+  const failure = normalizeActionExecutorThrownError(cause, PR_BINDING_FAILURE_PHASE);
+  if (failure.errorCode !== 'action_failed') return projectActionExecuteFailure({ ok: false, ...failure });
+  // Session resolution also raises host-authored Workflow refusals before dispatch.
+  const workflowFailure = normalizeWorkflowActionThrownError(cause, undefined, false, PR_BINDING_FAILURE_PHASE);
+  if (workflowFailure.errorCode !== 'storage_unavailable') return workflowFailure;
+  // An uncoded binding exception supplies no storage diagnosis. Its raw text is private.
+  return projectActionExecuteFailure({ ok: false, ...failure, error: failure.errorCode });
+}
+
 /** Shared host-routing predicate for trigger operations that consume Agent-start authority. */
 export function isWorkflowTriggerAgentCallerV1(caller?: Caller) {
   return caller?.surface === 'agent' || caller?.actionCaller?.kind === 'session' || caller?.actionCaller?.kind === 'workflowRun'
@@ -1715,7 +1730,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         } else {
           await attachPullRequest(row.scopeSessionId, result, caller);
         }
-      } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
+      } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
       return result;
     },
     remove: async (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => {
@@ -1727,7 +1742,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         try {
           if (row.scopeSessionId && row.triggers.some(item => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed')))
             await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
-        } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
+        } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
         return result;
       }
       const admission = caller?.workflowTriggerMutationAdmission;
@@ -1779,7 +1794,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         { sessionId, onComplete, project: authorized.project, authority: authorized.authority });
       try {
         await attachPullRequest(sessionId, result, caller);
-      } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
+      } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
       return result;
     },
     sessionRemove: async (raw: SessionTriggerRemoveRequestV1, caller?: Caller) => {
@@ -1794,7 +1809,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (row.triggers.some((item) => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed'))) {
           await deps.pullRequests?.removeTrigger({ sessionId: input.sessionId, triggerId: input.triggerId }, caller);
         }
-      } catch (cause) { return withPostWriteFailure(result, cause, 'workflow.trigger.prBinding'); }
+      } catch (cause) { return withPostWriteFailure(result, cause, PR_BINDING_FAILURE_PHASE); }
       return result;
     },
   };
