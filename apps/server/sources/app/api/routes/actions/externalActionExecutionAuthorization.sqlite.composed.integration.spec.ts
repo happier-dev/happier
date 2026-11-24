@@ -12074,6 +12074,22 @@ describe("external Action execution authorization", () => {
             expect(await db.accessKey.count({ where: { accountId: fixture.account.id, machineId: fixture.machine.id, sessionId: session.id } })).toBe(1);
             expect((await app.inject({ method: 'POST', url: mutationPath, headers: mutationHeaders, payload: mutationBody })).statusCode).toBe(401);
             expect(await db.userKVStore.findUniqueOrThrow({ where: { accountId_key: { accountId: fixture.account.id, key: physicalKey } } })).toEqual(requesterRow);
+            const mintRequest = (credential: string, installationProof = proof) => app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${credential}` }, payload: { ...request, installationProof } });
+            const withdrawn = await mintRequest(token);
+            expect(withdrawn.statusCode).toBe(403);
+            const outsiderToken = await auth.createToken(ungranted.id, undefined, { kind: 'account', authority: 'present_user' });
+            const outsiderProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                payload: { version: 1, accountId: ungranted.id, ...sessionActionSource,
+                    externalActionOrigin: { homeId, actionId, requestId: origin.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
+            const outsider = await mintRequest(outsiderToken, outsiderProof);
+            expect(outsider.statusCode).toBe(403);
+            expect(outsider.json()).toEqual({ error: 'credential_scope_denied', requestId: origin.requestId });
+            expect(withdrawn.json()).toEqual({ ...outsider.json(), failureCause: {
+                phase: 'session.authorization.mint', errorClass: 'HttpStatusError', errorCode: 'access_removed', httpStatus: 403,
+            } });
             await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: fixture.machine.id,
                 principal: { kind: 'account', accountId: fixture.account.id }, level }));
             await db.accessKey.deleteMany({ where: { accountId: fixture.account.id, machineId: fixture.machine.id, sessionId: session.id } });

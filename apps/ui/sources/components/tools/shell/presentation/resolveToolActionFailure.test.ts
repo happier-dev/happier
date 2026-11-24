@@ -29,6 +29,17 @@ describe('resolveToolActionFailure', () => {
         expect(resolveToolErrorSummary(tool)).toBe('Refused');
     });
 
+    it('shows withdrawn Machine access for the issuer’s typed refusal', async () => {
+        const { t } = await import('@/text');
+        const tool = actionCall('computer.control.status', { ok: false, errorCode: 'credential_scope_denied',
+            error: 'credential_scope_denied', details: { reason: 'access_removed' },
+            failureCause: { phase: 'session.authorization.mint', errorClass: 'HttpStatusError',
+                errorCode: 'access_removed', httpStatus: 403 } });
+        expect(resolveToolActionFailure(tool)).toMatchObject({ outcome: 'refused',
+            code: 'credential_scope_denied', cause: 'access_removed',
+            summary: t('session.accessWithdrawnBody', { machine: t('machine.thisMachineInSentence') }) });
+    });
+
     it('explains the Machine admission owner Manage refusal', () => {
         const tool = actionCall('action.invoke', { ok: false, errorCode: 'credential_scope_denied',
             error: 'credential_scope_denied', failureCause: { phase: 'execution_authorization',

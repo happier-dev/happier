@@ -27,6 +27,11 @@ export function projectSessionActionIssuerRefusal(refusal: ExternalActionIssuerR
     ...(refusal.details === undefined ? {} : { details: refusal.details }),
     failureCause,
   };
+  if (failureCause.phase === 'session.authorization.mint' && failureCause.errorCode === 'access_removed') {
+    return { ok: false, errorCode, error: errorCode,
+      ...(refusal.requestId === undefined ? {} : { requestId: refusal.requestId }),
+      details: { reason: failureCause.errorCode }, failureCause };
+  }
   // Home's Machine admission named the Manage requirement. Reconnecting cannot
   // grant Manage, so the reason and remedy follow that typed cause; the remedy
   // is the Machine availability diagnostic's existing Manage remedy.

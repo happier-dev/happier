@@ -54,7 +54,7 @@ import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machi
 import { getActionSpec, isPluginProvenanceOnlyActionId, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SessionRequesterHandoffBootstrapRpcRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { hasCurrentSessionActionRpcSourceBinding } from '@/app/api/socket/sessionScopedBinding';
+import { readCurrentSessionActionRpcSourceBinding } from '@/app/api/socket/sessionScopedBinding';
 import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthority';
 import { inTx } from '@/storage/inTx';
 import { readCurrentManagedFiniteWakeCustodyInTx } from '@/app/machines/managed/managedWake';
@@ -96,7 +96,7 @@ async function readInstalledSessionRequestPrincipal(
     actionId: string,
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>,
     principal: ExternalActionServerPrincipalV1,
-): Promise<Extract<ExternalActionServerPrincipalV1, { sessionActionOrigin: unknown }> | null> {
+): Promise<Extract<ExternalActionServerPrincipalV1, { sessionActionOrigin: unknown }> | 'access_removed' | null> {
     const origin = body.sessionActionOrigin;
     const source = body.sessionActionSource;
     if (!origin || !source || !body.installationProof || !('authentication' in principal)) return null;
@@ -111,10 +111,11 @@ async function readInstalledSessionRequestPrincipal(
                 externalActionOrigin: { homeId: await getOrCreateServerIdentityId(), actionId,
                     requestId: body.envelope.requestId!,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope), origin } } })) return null;
-    let sourceCurrent = await hasCurrentSessionActionRpcSourceBinding({ accountId: principal.accountId, ...source,
+    const sourceState = await readCurrentSessionActionRpcSourceBinding({ accountId: principal.accountId, ...source,
             sourceSessionId: origin.caller.sessionId,
             ...(body.envelope.target?.kind === 'session' ? { targetSessionId: body.envelope.target.sessionId } : {}),
             resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
+    let sourceCurrent = sourceState === 'available';
     if (!sourceCurrent && actionId === 'machines.managed.credentials.install') {
         try {
             const projection = readExternalActionManagedRecoveryAdmission(actionId, body.envelope);
@@ -129,9 +130,10 @@ async function readInstalledSessionRequestPrincipal(
             throw error;
         }
     }
-    if (!sourceCurrent) return null;
     const authority = narrowCredentialAuthority(principal.authority, 'account_automation');
-    return authority === 'account_automation' ? { ...principal, authority, sessionActionOrigin: origin } : null;
+    if (authority !== 'account_automation') return null;
+    if (!sourceCurrent) return sourceState === 'access_removed' ? sourceState : null;
+    return { ...principal, authority, sessionActionOrigin: origin };
 }
 
 /** FIN provenance is signed by its assigned executor, then read from Home's Run. */
@@ -757,7 +759,15 @@ export function registerExternalActionRoutes(
                 }
             }
             if (body.data.sessionActionOrigin) {
-                principal = await readInstalledSessionRequestPrincipal(app, actionId.data, body.data, principal);
+                const installedPrincipal = await readInstalledSessionRequestPrincipal(app, actionId.data, body.data, principal);
+                if (installedPrincipal === 'access_removed') {
+                    return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId,
+                        undefined, undefined, undefined, undefined, {
+                            phase: 'session.authorization.mint', errorClass: 'HttpStatusError',
+                            errorCode: installedPrincipal, httpStatus: 403,
+                        });
+                }
+                principal = installedPrincipal;
                 if (!principal) {
                     return sendExternalActionHttpError(reply, 'credential_scope_denied', body.data.envelope.requestId);
                 }
@@ -1148,7 +1158,8 @@ export function registerExternalActionRoutes(
                 principal = null;
                 refusal = 'verification_purpose';
             } else if (principal && wrapped.success && wrapped.data.sessionActionOrigin) {
-                principal = await readInstalledSessionRequestPrincipal(app, actionId.data, wrapped.data, principal);
+                const installedPrincipal = await readInstalledSessionRequestPrincipal(app, actionId.data, wrapped.data, principal);
+                principal = installedPrincipal === 'access_removed' ? null : installedPrincipal;
             }
             if (!principal) return sendExternalActionCredentialScopeRefusal(reply, request, refusal);
             const envelope = wrapped.success && (admittedRoot || continuation || wrapped.data.sessionActionOrigin || wrapped.data.workflowActionOrigin)

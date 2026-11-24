@@ -38,7 +38,7 @@ export type SessionMachineAccessKeyRow = Readonly<{
     updatedAt: Date;
 }>;
 
-export type SessionMachineBindingState = "available" | "missing";
+export type SessionMachineBindingState = "available" | "missing" | "access_removed";
 
 export type CreateSessionMachineAccessKeyResult =
     | Readonly<{ ok: true; created: boolean; accessKey: SessionMachineAccessKeyRow }>
@@ -63,9 +63,9 @@ export interface SessionMachineBindingFacts {
 export async function readSessionMachineBindingStateInTx(
     tx: Tx,
     binding: SessionMachineAccessKeyBinding,
-    currentFacts?: SessionMachineBindingFacts,
+    retainedAccessKeyFacts?: SessionMachineBindingFacts,
 ): Promise<SessionMachineBindingState> {
-    const facts = currentFacts ?? await (async () => {
+    const facts = retainedAccessKeyFacts ?? await (async () => {
         const [session, machine] = await Promise.all([
             tx.session.findFirst({
                 where: { id: binding.sessionId, accountId: binding.accountId },
@@ -90,7 +90,7 @@ export async function readSessionMachineBindingStateInTx(
         }, select: { machineId: true } });
         if (activeAssignment) return 'available';
     }
-    return readRequesterMachineAvailabilityInTx(tx, binding, facts.machine);
+    return readRequesterMachineAvailabilityInTx(tx, binding, facts.machine, retainedAccessKeyFacts !== undefined);
 }
 
 /** Only the uninstalled owned predecessor tuple predates C41 installation admission. */
@@ -98,6 +98,7 @@ async function readRequesterMachineAvailabilityInTx(
     tx: Tx,
     binding: SessionMachineAccessKeyBinding,
     machine: MachineAdmissionFacts | null,
+    hasRetainedAccessKey: boolean,
 ): Promise<SessionMachineBindingState> {
     if (machine?.accountId === binding.accountId && machine.installationId === null) {
         return classifyMachineAvailabilityState(machine) === "available" ? "available" : "missing";
@@ -105,7 +106,10 @@ async function readRequesterMachineAvailabilityInTx(
     const admission = await resolveMachineAdmissionFromFactsInTx(tx, machine, {
         actorAccountId: binding.accountId, machineId: binding.machineId,
     });
-    return admission.kind === "admitted" ? "available" : "missing";
+    if (admission.kind === "admitted") return "available";
+    // The exact retained key proves this Account previously had access for its Session.
+    if (hasRetainedAccessKey && machine && admission.code === "access_denied") return "access_removed";
+    return "missing";
 }
 
 export async function readSessionMachineAccessKeyInTx(

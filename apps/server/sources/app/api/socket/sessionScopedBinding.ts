@@ -6,7 +6,7 @@ import { observeSessionScopedBindingStage } from "@/app/monitoring/metrics/sessi
 import { db } from "@/storage/db";
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Tx } from "@/storage/inTx";
-import { readSessionMachineBindingStateInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
+import { readSessionMachineBindingStateInTx, type SessionMachineBindingState } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { buildMachineAdmissionFactsSelect, projectActiveMachineAdmissionFromFacts } from '@/app/machines/machineAccess';
@@ -114,8 +114,7 @@ export async function hasCurrentMachineAccessForSessionInTx(params: Readonly<{
     return false;
 }
 
-/** Revalidates the exact machine/session access relationship inside the caller's transaction. */
-export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<{
+type SessionScopedMachineBinding = Readonly<{
     tx: Tx;
     accountId: string;
     machineId: string;
@@ -123,25 +122,31 @@ export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<
     /** Prepared append already holds its Account/Session/resource parents. */
     lockAuthority?: boolean;
     currentFacts?: CurrentSessionScopedMachineAccessFacts;
-}>): Promise<boolean> {
+}>;
+
+async function readCurrentSessionScopedMachineAccessStateInTx(params: SessionScopedMachineBinding): Promise<SessionMachineBindingState> {
     if (params.lockAuthority && resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         const machines = await params.tx.$queryRawUnsafe<Array<{ id: string }>>('SELECT "id" FROM "Machine" WHERE "id" = $1 FOR SHARE', params.machineId);
-        if (machines.length === 0) return false;
+        if (machines.length === 0) return "missing";
         const keys = await params.tx.$queryRawUnsafe<Array<{ accountId: string }>>(
             'SELECT "accountId" FROM "AccessKey" WHERE "accountId" = $1 AND "machineId" = $2 AND "sessionId" = $3 FOR SHARE',
             params.accountId, params.machineId, params.sessionId,
         );
         // An absent lookup does not lock a future tuple. Do not borrow a key
         // created after this authority read from the unlocked ordinary reread.
-        if (keys.length === 0) return false;
+        if (keys.length === 0) return "missing";
     }
     const accessKey = !params.lockAuthority && params.currentFacts !== undefined
         ? params.currentFacts
         : await readCurrentSessionScopedMachineAccessFactsInTx(params);
-    return accessKey !== null
-        && accessKey.session.accountId === params.accountId
-        && classifyMachineAvailabilityState(accessKey.machine) === "available"
-        && await readSessionMachineBindingStateInTx(params.tx, params, accessKey) === "available";
+    if (!accessKey || accessKey.session.accountId !== params.accountId
+        || classifyMachineAvailabilityState(accessKey.machine) !== "available") return "missing";
+    return readSessionMachineBindingStateInTx(params.tx, params, accessKey);
+}
+
+/** Revalidates the exact machine/session access relationship inside the caller's transaction. */
+export async function hasCurrentSessionScopedMachineAccessInTx(params: SessionScopedMachineBinding): Promise<boolean> {
+    return await readCurrentSessionScopedMachineAccessStateInTx(params) === "available";
 }
 
 type SessionActionRpcSourceBinding = Readonly<{
@@ -155,31 +160,43 @@ type SessionActionRpcSourceBinding = Readonly<{
 }>;
 
 /** Current persisted half of the already-admitted publisher source proof. */
-export async function hasCurrentSessionActionRpcSourceBindingInTx(tx: Tx, params: SessionActionRpcSourceBinding): Promise<boolean> {
+async function readCurrentSessionActionRpcSourceBindingInTx(tx: Tx, params: SessionActionRpcSourceBinding): Promise<SessionMachineBindingState> {
     const machine = await tx.machine.findUnique({ where: { id: params.machineId }, select: {
         installationId: true, kind: true, revokedAt: true, replacedByMachineId: true,
     } });
     if (classifyMachineAvailabilityState(machine) !== 'available'
-        || machine?.kind === 'ephemeral_session_runner' || machine?.installationId !== params.installationId
-        || !await hasCurrentSessionScopedMachineAccessInTx({ tx, accountId: params.accountId,
-            machineId: params.machineId, sessionId: params.sourceSessionId, lockAuthority: params.lockAuthority })) return false;
+        || machine?.kind === 'ephemeral_session_runner' || machine?.installationId !== params.installationId) return "missing";
+    const state = await readCurrentSessionScopedMachineAccessStateInTx({ tx, accountId: params.accountId,
+        machineId: params.machineId, sessionId: params.sourceSessionId, lockAuthority: params.lockAuthority });
+    if (state !== "available") return state;
     if (params.targetSessionId && params.targetSessionId !== params.sourceSessionId) {
         const target = await tx.session.findUnique({ where: { id: params.targetSessionId }, select: { accountId: true } });
-        if (target?.accountId !== params.accountId) return false;
+        if (target?.accountId !== params.accountId) return "missing";
     }
-    return true;
+    return "available";
 }
 
-/** The installed daemon may attest original Session facts only while it hosts that Account's Session. */
-export async function hasCurrentSessionActionRpcSourceBinding(params: SessionActionRpcSourceBinding & Readonly<{
+export async function hasCurrentSessionActionRpcSourceBindingInTx(tx: Tx, params: SessionActionRpcSourceBinding): Promise<boolean> {
+    return await readCurrentSessionActionRpcSourceBindingInTx(tx, params) === "available";
+}
+
+type InstalledSessionActionRpcSource = SessionActionRpcSourceBinding & Readonly<{
     resolveCurrentSessionMachine?: (input: Readonly<{ accountId: string; sessionId: string }>) => Promise<string | null>;
-}>): Promise<boolean> {
-    if (!params.resolveCurrentSessionMachine) return false;
-    if (!await hasCurrentSessionActionRpcSourceBindingInTx(db, params)) return false;
+}>;
+
+/** The installed daemon may attest original Session facts only while it hosts that Account's Session. */
+export async function readCurrentSessionActionRpcSourceBinding(params: InstalledSessionActionRpcSource): Promise<SessionMachineBindingState> {
+    if (!params.resolveCurrentSessionMachine) return "missing";
+    const state = await readCurrentSessionActionRpcSourceBindingInTx(db, params);
+    if (state !== "available") return state;
     try {
-        return await params.resolveCurrentSessionMachine({ accountId: params.accountId, sessionId: params.sourceSessionId }) === params.machineId
-            && await hasCurrentSessionActionRpcSourceBindingInTx(db, params);
-    } catch { return false; }
+        if (await params.resolveCurrentSessionMachine({ accountId: params.accountId, sessionId: params.sourceSessionId }) !== params.machineId) return "missing";
+        return await readCurrentSessionActionRpcSourceBindingInTx(db, params);
+    } catch { return "missing"; }
+}
+
+export async function hasCurrentSessionActionRpcSourceBinding(params: InstalledSessionActionRpcSource): Promise<boolean> {
+    return await readCurrentSessionActionRpcSourceBinding(params) === "available";
 }
 
 function normalizeNonEmptyString(value: unknown): string | null {

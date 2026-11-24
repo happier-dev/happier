@@ -80,6 +80,17 @@ describe('Session Action issuer refusal projection', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', details });
   });
 
+  it('carries Home’s access removal cause without Account reconnect advice', () => {
+    const failureCause = { phase: 'session.authorization.mint', errorClass: 'HttpStatusError',
+      errorCode: 'access_removed', httpStatus: 403 } as const;
+    const result = projectSessionActionIssuerRefusal({
+      ok: false, phase: 'mint', requiredFact: 'home_minted_authorization',
+      code: 'credential_scope_denied', requestId: 'mint-request', failureCause,
+    });
+    expect(result).toEqual({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+      requestId: 'mint-request', failureCause, details: { reason: 'access_removed' } });
+  });
+
   it('keeps an absent issuer decision classified as forbidden', () => {
     expect(projectSessionActionIssuerRefusal({
       ok: false, phase: 'mint', requiredFact: 'home_minted_authorization',
