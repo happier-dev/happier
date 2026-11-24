@@ -65,7 +65,13 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
    controller.abort();
    return unavailable(error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed');
   }
-  if (lease.failures.length) { await lease.release(); controller.abort(); return unavailable(lease.failures[0]!.code); }
+  const failedBinding = lease.failures[0];
+  const warning = failedBinding && unavailable(failedBinding.code);
+  if (warning && !lease.endpoint && Object.keys(lease.replacements).length === 0) {
+   await lease.release();
+   controller.abort();
+   return warning;
+  }
   const defaults: Record<string, string> = {};
   if (localOtlp && lease.endpoint) {
    defaults.OTEL_EXPORTER_OTLP_ENDPOINT = lease.endpoint;
@@ -73,6 +79,7 @@ export function createLocalCaptureContribution(options: LocalCaptureContribution
    if (environment.OTEL_SERVICE_NAME === undefined && input.serviceName) defaults.OTEL_SERVICE_NAME = input.serviceName;
    if (environment.OTEL_RESOURCE_ATTRIBUTES === undefined) defaults.OTEL_RESOURCE_ATTRIBUTES = `happier.worktree.id=${input.workspace.id}`;
   }
-  return { kind: 'replace', replacements: lease.replacements, defaults, async release() { controller.abort(); await lease.release(); } };
+  return { kind: 'replace', replacements: lease.replacements, defaults, ...(warning ? { warning } : {}),
+   async release() { controller.abort(); await lease.release(); } };
  } };
 }

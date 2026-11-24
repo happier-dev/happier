@@ -127,7 +127,8 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
                 releases.push(() => release.call(contribution));
             }
             if (contribution.kind !== 'replace') continue;
-            if (service.kind === 'unchanged') service = { kind: 'ready' };
+            if (contribution.warning) service = contribution.warning;
+            else if (service.kind === 'unchanged') service = { kind: 'ready' };
             for (const [name, value] of Object.entries(contribution.defaults ?? {})) {
                 if (!secretNames.has(identity(name)) && !originalKeys.has(identity(name))) defaults[name] = value;
             }

@@ -153,9 +153,10 @@ it('carries listener demand privately to the contribution without allocating bef
 });
 
 
-it('shares one lazy original snapshot, excludes secret names, and retains prepared service cleanup through launch', async () => {
+it('applies a working replacement and retains its warning and cleanup through launch', async () => {
     const selected = await workspace();
     await writeFile(join(selected.rootPath, '.env'), 'URL=original-file\nTOKEN=private-token\n');
+    const warning = { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'EADDRINUSE' } as const;
     let released = false;
     const result = await prepareProjectLaunchEnvironment({ workspace: selected, originalEnvironment: { TOKEN: 'host-token' },
         requirements: [{ name: 'TOKEN', kind: 'secret', required: false }],
@@ -167,10 +168,12 @@ it('shares one lazy original snapshot, excludes secret names, and retains prepar
                 await writeFile(join(selected.rootPath, '.env'), 'URL=changed-later\n');
                 expect((await input.readEnvironment(['URL'])).projectedEnvironment).toEqual({ URL: 'original-file' });
                 return [{ contribution: { pluginId: 'capture', localId: 'proxy' }, result: { kind: 'replace',
-                    replacements: { URL: 'local-proxy', TOKEN: 'cannot-replace-secret' }, async release() { released = true; } } }];
+                    replacements: { URL: 'local-proxy', TOKEN: 'cannot-replace-secret' }, warning,
+                    async release() { released = true; } } }];
             } } });
     if (result.kind !== 'prepared') throw new Error('Expected private launch preparation');
     expect(result.launchInput.environment).toEqual({ URL: 'local-proxy' });
+    expect(result.launchInput.service).toEqual(warning);
     expect(released).toBe(false);
     await result.launchInput.releaseServiceEnvironment?.();
     expect(released).toBe(true);

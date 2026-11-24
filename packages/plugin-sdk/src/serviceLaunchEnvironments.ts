@@ -35,14 +35,21 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     /** References supplied by discovery for this exact admitted launch. They contain no connection values. */
     readWorktreeDatabaseMembers?(): Promise<readonly PluginWorktreeDatabaseMemberV1[]>;
 }>;
+type UnavailableServiceLaunchEnvironmentV1 = Readonly<{
+    kind: 'unavailable';
+    code: 'service_launch_environment_unavailable' | 'service_launch_environment_failed';
+    reason?: string;
+}>;
 export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{
     kind: 'unchanged';
     worktreeDatabaseMembers?: readonly PluginWorktreeDatabaseMemberV1[];
     /** Optional cleanup for an observation that does not change the launch. */
     release?(): Promise<void>;
 }>
-    | Readonly<{ kind: 'unavailable'; code: 'service_launch_environment_unavailable' | 'service_launch_environment_failed'; reason?: string }>
+    | UnavailableServiceLaunchEnvironmentV1
     | Readonly<{ kind: 'replace'; replacements?: Readonly<Record<string, string>>; defaults?: Readonly<Record<string, string>>;
+        /** A failed part of a contribution whose other bindings remain usable. */
+        warning?: UnavailableServiceLaunchEnvironmentV1;
         release(): Promise<void> }>;
 export type PluginServiceLaunchEnvironmentRuntimeV1 = Readonly<{
     /** The host makes discovery output available to other contributors in this preparation. */

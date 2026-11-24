@@ -63,27 +63,43 @@ describe('local capture SDK launch contribution', () => {
    expect(await contribution.prepare({ ...original, async requestListenerPorts() { return { kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'port_selection_failed' }; } })).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'port_selection_failed' });
   } finally { await occupied.close(); f.close(); }
  });
- it('releases the PostgreSQL listener when the next listener cannot bind', async () => {
+ it('keeps PostgreSQL forwarding with a typed warning when the OTLP listener cannot bind', async () => {
   const f = createCaptureSqliteFixture();
   const runtime = createCaptureRuntime({ database: f.db, normalizeStatement: createPostgresqlObservationNormalizer(), publish: () => {} });
+  const upstream = await listener();
   const slot = await listener();
   const occupied = await listener();
   await slot.close();
   const contribution = createLocalCaptureContribution({ environmentNames: ['DATABASE_URL'], readEnabled: () => true,
    acquireLocalCapture: options => bindLocalCapture({ ...options, runtime }) });
   const rebound = createServer();
+  let release: (() => Promise<void>) | undefined;
   try {
-   const result = await contribution.prepare({ ...input({ DATABASE_URL: 'postgres://127.0.0.1/db' }),
+   const result = await contribution.prepare({ ...input({ DATABASE_URL: `postgres://127.0.0.1:${upstream.port}/db` }),
     async requestListenerPorts(keys) {
      return { kind: 'ready', assignment: { ports: [], listenerPorts: Object.fromEntries(keys.map(key =>
       [key, key === 'otlp' ? occupied.port : slot.port])) } };
     } });
-   expect(result).toEqual({ kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'EADDRINUSE' });
+   expect(result.kind).toBe('replace');
+   if (result.kind !== 'replace') throw new Error('Expected the working PostgreSQL listener');
+   release = result.release;
+   expect(result).toMatchObject({ replacements: { DATABASE_URL: `postgres://127.0.0.1:${slot.port}/db` },
+    defaults: {}, warning: { kind: 'unavailable', code: 'service_launch_environment_unavailable', reason: 'EADDRINUSE' } });
+   const client = createConnection(slot.port, '127.0.0.1');
+   try {
+    await once(client, 'connect');
+    const response = once(client, 'data');
+    client.write('relay-ok');
+    expect((await response)[0].toString()).toBe('relay-ok');
+   } finally { client.destroy(); }
+   await release();
    rebound.listen(slot.port, '127.0.0.1');
    await once(rebound, 'listening');
   } finally {
    if (rebound.listening) await new Promise<void>(resolve => rebound.close(() => resolve()));
+   await release?.();
    await occupied.close();
+   await upstream.close();
    f.close();
   }
  });

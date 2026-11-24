@@ -76,6 +76,9 @@ composition and supplies one lazy declared-name dotenv snapshot; contributions
 receive original values rather than another contribution's rewritten upstream.
 Successful contribution cleanup stays with the actual service process lifetime.
 Unavailable capture leaves the ordinary service usable with a visible diagnostic.
+A replacement may include the same typed warning when a sibling listener fails.
+The host applies the available bindings, keeps their lease for the service
+lifetime, and projects the warning on that service.
 
 The required `physicalRootIdentity` is the execution source's physical root in
 the worktree-port owner's canonical comparison form. Retain it verbatim: the
