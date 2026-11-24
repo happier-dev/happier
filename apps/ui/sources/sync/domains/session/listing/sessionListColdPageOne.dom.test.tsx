@@ -19,6 +19,7 @@ import {
 } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -85,6 +86,11 @@ const QUERY_PAGE = {
 
 let advertiseOrdinaryPage = false;
 const listReads: string[] = [];
+let heldBoot: Readonly<{
+    cursor: ReturnType<typeof createDeferred<void>>;
+    firstPage: ReturnType<typeof createDeferred<void>>;
+    replacement: ReturnType<typeof createDeferred<void>>;
+}> | null = null;
 
 /** The server's rule: an ordinary row identical to the query row of the same Session is sent once. */
 function carryOrdinaryPage() {
@@ -108,7 +114,10 @@ async function respond(url: Parameters<typeof fetch>[0], init?: RequestInit) {
     if (target.pathname === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
         content: { t: 'plain', v: {} }, version: 1,
     }));
-    if (target.pathname === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+    if (target.pathname === '/v2/cursor') {
+        await heldBoot?.cursor.promise;
+        return Response.json({ cursor: 0, changesFloor: 0 });
+    }
     if (target.pathname === '/v2/session-organization') return Response.json(SessionOrganizationSnapshotResponseSchema.parse({
         snapshot: { schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION, version: 0, pins: [], folders: [],
             folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [] },
@@ -121,6 +130,7 @@ async function respond(url: Parameters<typeof fetch>[0], init?: RequestInit) {
         const body = JSON.parse(String(init?.body)) as { cursor?: string; ordinaryPage?: unknown };
         if (body.cursor) throw new Error('Cold load must not page the query');
         listReads.push(body.ordinaryPage ? 'POST /v2/sessions/query+ordinary' : 'POST /v2/sessions/query');
+        if (heldBoot) await (listReads.length === 1 ? heldBoot.firstPage : heldBoot.replacement).promise;
         return Response.json(body.ordinaryPage ? carryOrdinaryPage() : QUERY_PAGE);
     }
     if (target.pathname === '/v2/sessions') {
@@ -137,12 +147,16 @@ type ColdLoadResult = Readonly<{
     activityMembership: readonly string[] | undefined;
     frontier: unknown;
     rows: Record<string, unknown>;
+    visibleQueryPageCommits: readonly string[];
 }>;
 
 let dispose: (() => Promise<void>) | null = null;
 
 /** The app's cold load on one Home: Sync's restore plus the personal list a mounted Activity surface reads. */
-async function coldLoad(advertise: boolean): Promise<ColdLoadResult> {
+async function coldLoad(advertise: boolean, holdResponses = false): Promise<ColdLoadResult> {
+    const boot = holdResponses ? { cursor: createDeferred<void>(), firstPage: createDeferred<void>(),
+        replacement: createDeferred<void>() } : null;
+    heldBoot = boot;
     advertiseOrdinaryPage = advertise;
     homeUrl = `https://cold-page-one-${++coldLoads}.test`;
     listReads.length = 0;
@@ -167,12 +181,23 @@ async function coldLoad(advertise: boolean): Promise<ColdLoadResult> {
     document.body.appendChild(container);
     const root = createRoot(container);
     const membership: { current: ActivityPersonalSessionMembership | null } = { current: null };
+    const visibleQueryPageCommits: string[] = [];
     function Observer() {
         membership.current = useActivityPersonalSessionMembership();
-        return null;
+        return <ul>{membership.current.membershipByServerId[serverId]?.map(id => <li key={id}>{id}</li>)}</ul>;
+    }
+    function onCommit() {
+        const phase = membership.current?.statesByServerId[serverId]?.phase;
+        if (phase && container.querySelector('li')) visibleQueryPageCommits.push(phase);
     }
     dispose = async () => {
-        await act(async () => root.unmount());
+        await act(async () => {
+            root.unmount();
+            boot?.cursor.resolve();
+            boot?.firstPage.resolve();
+            boot?.replacement.resolve();
+        });
+        heldBoot = null;
         container.remove();
         actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
         await connection.dispose();
@@ -181,11 +206,28 @@ async function coldLoad(advertise: boolean): Promise<ColdLoadResult> {
         dispose = null;
     };
     await act(async () => root.render(
-        <ActivityPersonalSessionMembershipProvider enabled><Observer /></ActivityPersonalSessionMembershipProvider>,
+        <React.Profiler id="cold-session-list" onRender={onCommit}>
+            <ActivityPersonalSessionMembershipProvider enabled><Observer /></ActivityPersonalSessionMembershipProvider>
+        </React.Profiler>,
     ));
+    if (boot) {
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(membership.current?.statesByServerId[serverId]).toMatchObject({ phase: 'loading' });
+            expect(storage.getState().isDataReady).toBe(false);
+            expect(listReads).toHaveLength(0);
+        });
+        await act(async () => boot.cursor.resolve());
+        await vi.waitFor(() => expect(listReads).toEqual(['POST /v2/sessions/query+ordinary']));
+        await act(async () => boot.firstPage.resolve());
+    }
     await vi.waitFor(async () => {
         await act(async () => {});
-        expect(membership.current?.statesByServerId[serverId]).toMatchObject({ phase: 'ready' });
+        if (boot) {
+            expect(Array.from(container.querySelectorAll('li'), row => row.textContent)).toEqual(QUERY_PAGE.sessions.map(row => row.id));
+        } else {
+            expect(membership.current?.statesByServerId[serverId]).toMatchObject({ phase: 'ready' });
+        }
         expect(storage.getState().ordinarySessionListMembershipByServerId[serverId]?.length).toBeGreaterThan(0);
         expect(sync.readOrdinarySessionListLifecycle().fetchInFlight).toBe(false);
     });
@@ -193,6 +235,7 @@ async function coldLoad(advertise: boolean): Promise<ColdLoadResult> {
     const rows = storage.getState().sessionListRowsByServerId[serverId] ?? {};
     const result: ColdLoadResult = {
         listReads: [...listReads],
+        visibleQueryPageCommits,
         ordinaryMembership: storage.getState().ordinarySessionListMembershipByServerId[serverId],
         activityMembership: membership.current?.membershipByServerId[serverId],
         frontier: sync.readOrdinarySessionListLifecycle().frontier,
@@ -215,6 +258,19 @@ describe('cold Session-list page one', () => {
     it('reads own and Team-shared page one once on a Home that carries the ordinary page', async () => {
         const after = await coldLoad(true);
         expect(after.listReads).toEqual(['POST /v2/sessions/query+ordinary']);
+    });
+
+    it('shows the first page without a replacement when cold cursor capture overlaps query admission', async () => {
+        const observed = await coldLoad(true, true);
+        expect({
+            reads: observed.listReads,
+            firstVisiblePhase: observed.visibleQueryPageCommits[0],
+            refreshingCommits: observed.visibleQueryPageCommits.filter(phase => phase === 'refreshing').length,
+        }).toEqual({
+            reads: ['POST /v2/sessions/query+ordinary'],
+            firstVisiblePhase: 'ready',
+            refreshingCommits: 0,
+        });
     });
 
     it('leaves every membership, row, access fact and frontier exactly as the two reads did', async () => {

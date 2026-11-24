@@ -8831,8 +8831,11 @@ class Sync {
               if (!isCurrent()) return;
               if (!embedScope) {
                   const refreshedServerId = this.getAppliedTransportTarget()?.serverId ?? '';
-                  // Capturing the initial cursor does not consume any changed Usage inputs.
-                  if (refreshedServerId) publishHomeAccountChange(refreshedServerId, undefined, { usageQueryAffects: false });
+                  // The initial cursor is a baseline. Session reads already wait for it.
+                  if (refreshedServerId) publishHomeAccountChange(refreshedServerId, undefined, {
+                      usageQueryAffects: false,
+                      sessionListQueryAffects: false,
+                  });
               }
           })();
           if (embedScope) {
