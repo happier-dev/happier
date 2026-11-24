@@ -20,6 +20,7 @@ import { createAccountScopedCryptoMaterialSnapshotV1, resolveAccountContentSecre
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { ActionExecutorContext, JsonValue } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionOperationProgressV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
@@ -874,7 +875,9 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
         // A guest may have committed enrollment while Home cannot be read.
         // Unavailable confirmation never proves that the guest effect failed.
         if (enrollmentLifetime && enrollmentAttempted && !params.options.signal?.aborted && isRetryableHomeOperationError(error)) {
-            throw new ManagedMachineControllerError('action_outcome_unknown');
+            throw new ManagedMachineControllerError('action_outcome_unknown', undefined,
+                error instanceof ManagedMachineControllerError ? error.details : undefined,
+                projectActionFailureCauseV1(error, 'ssh.auth.wait'), error);
         }
         throw error;
     } finally { params.client.setHomeOperationRetry(); }

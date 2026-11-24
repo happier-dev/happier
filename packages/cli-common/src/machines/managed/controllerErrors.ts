@@ -81,6 +81,12 @@ export class ManagedMachineControllerError extends Error {
             ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }) };
         return new this(failure.errorCode, undefined, details, failureCause, cause);
     }
+
+    /** A settled child response can identify why its effect remains unconfirmed. */
+    static fromChildResultFailure(phase: ActionId, errorCode: string, causeCode = errorCode): ManagedMachineControllerError {
+        return this.fromActionFailure({ ok: false, errorCode, error: errorCode,
+            failureCause: { phase, errorClass: 'ManagedMachineControllerError', errorCode: causeCode, httpStatus: null } }, phase);
+    }
 }
 
 /** Preserve only canonical schema paths/codes or the closed native PluginError diagnostic. */

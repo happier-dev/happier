@@ -15,7 +15,9 @@ export async function applyManagedMachineEnrollmentIsolation(params: Readonly<{
     const { target, policy, dispatch } = params;
     const preview = MachineAgentIsolationPreviewResultV1Schema.safeParse(await dispatch({ actionId: 'machines.agentIsolation.preview',
         input: { ...target, ...policy } }));
-    if (!preview.success) throw new ManagedMachineControllerError('action_outcome_unknown');
+    if (!preview.success) {
+        throw ManagedMachineControllerError.fromChildResultFailure('machines.agentIsolation.preview', 'action_outcome_unknown', 'invalid_action_output');
+    }
     if (preview.data.kind === 'unavailable') throw new ManagedMachineControllerError(preview.data.status.code, undefined, {
         kind: 'managedAgentIsolation', phase: 'machines.agentIsolation.preview',
         status: projectMachineAgentIsolationUnavailableStatusV1(preview.data),
@@ -28,8 +30,10 @@ export async function applyManagedMachineEnrollmentIsolation(params: Readonly<{
         ...target, ...policy, expectedMetadataVersion: preview.data.metadataVersion,
         expectedPolicy: preview.data.policy, expectedPlanDigest: preview.data.plan.planDigest,
     } }));
-    if (!result.success) throw new ManagedMachineControllerError('action_outcome_unknown');
-    if (result.data.kind === 'failed') throw new ManagedMachineControllerError(result.data.code);
+    if (!result.success) {
+        throw ManagedMachineControllerError.fromChildResultFailure('machines.agentIsolation.set', 'action_outcome_unknown', 'invalid_action_output');
+    }
+    if (result.data.kind === 'failed') throw ManagedMachineControllerError.fromChildResultFailure('machines.agentIsolation.set', result.data.code);
     if (result.data.kind === 'plan_changed' || result.data.kind === 'conflict') {
         const current = result.data.kind === 'plan_changed' ? result.data.current : result.data;
         throw new ManagedMachineControllerError(result.data.kind, undefined, {

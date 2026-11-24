@@ -535,9 +535,13 @@ describe('creation environment stage', () => {
     it.each([
         { action: 'machines.managed.acquire', outcome: 'applied', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'outcomeUnknown', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'adminMalformed', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'adminApproval', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'isolationApproval', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'previewRefusal', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'previewMalformed', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'isolationMalformed', storedEnabled: false },
+        { action: 'machines.managed.acquire', outcome: 'isolationUnknown', storedEnabled: false },
         { action: 'machines.managed.acquire', outcome: 'isolationUnavailable', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: false },
         { action: 'machines.managed.bootstrap.retry', outcome: 'applied', storedEnabled: true },
@@ -574,6 +578,7 @@ describe('creation environment stage', () => {
                     execution: { ok: true, result: outcome === 'adminApproval'
                         ? { kind: 'approval_request_created', artifactId: 'admin-approval', actionId: 'machines.setup.adminAccess.set' }
                         : outcome === 'outcomeUnknown' ? { status: 'outcomeUnknown' }
+                        : outcome === 'adminMalformed' ? { status: 'accepted' }
                         : { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 2 } } } };
             }
             if (String(url).endsWith('/v1/actions/machines.agentIsolation.preview')) {
@@ -584,6 +589,8 @@ describe('creation environment stage', () => {
                 if (outcome === 'previewRefusal') return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview',
                     requestId: childRequestId, execution: { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_NATIVE_MESSAGE',
                         details: { token: 'PRIVATE_TOKEN' } } } };
+                if (outcome === 'previewMalformed') return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview',
+                    requestId: childRequestId, execution: { ok: true, result: {} } } };
                 if (outcome === 'isolationUnavailable') return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.preview',
                     requestId: childRequestId, execution: { ok: true, result: {
                         kind: 'unavailable', status: { kind: 'unavailable', code: 'provisioning_unavailable' },
@@ -602,10 +609,12 @@ describe('creation environment stage', () => {
                 if (carrier.envelope.v === 1) isolationInputs.push(carrier.envelope.input);
                 isolationWritten = true;
                 return { status: 200, data: { v: 1, actionId: 'machines.agentIsolation.set', requestId: childRequestId, execution: { ok: true, result: outcome === 'isolationApproval'
-                    ? { kind: 'approval_request_created', artifactId: 'isolation-approval', actionId: 'machines.agentIsolation.set' } : {
-                    kind: 'accepted', operationId: 'isolation-operation', metadataVersion: 3,
-                    status: { kind: 'applying', phase: 'runtime_replacement' },
-                } } } };
+                    ? { kind: 'approval_request_created', artifactId: 'isolation-approval', actionId: 'machines.agentIsolation.set' }
+                    : outcome === 'isolationMalformed' ? { kind: 'unexpected' }
+                        : outcome === 'isolationUnknown' ? { kind: 'failed', code: 'outcome_unknown' } : {
+                            kind: 'accepted', operationId: 'isolation-operation', metadataVersion: 3,
+                            status: { kind: 'applying', phase: 'runtime_replacement' },
+                        } } } };
             }
             if (String(url).endsWith('/actions/get')) return { status: 200, data: retained };
             // Enrollment completes before the next bootstrap boundary; the
@@ -651,12 +660,26 @@ describe('creation environment stage', () => {
             await execution.catch(error => expect(JSON.stringify(error)).not.toMatch(/PRIVATE_/));
             expect(phases.at(-1)).toBe('machines.agentIsolation.preview');
         }
-        else await expect(execution).rejects.toMatchObject({ code: outcome === 'adminApproval' || outcome === 'isolationApproval' ? 'approval_context_unavailable' : 'action_outcome_unknown' });
+        else if (outcome === 'adminApproval' || outcome === 'isolationApproval') {
+            await expect(execution).rejects.toMatchObject({ code: 'approval_context_unavailable' });
+        } else {
+            const phase = outcome === 'outcomeUnknown' || outcome === 'adminMalformed' ? 'machines.setup.adminAccess.set'
+                : outcome === 'previewMalformed' ? 'machines.agentIsolation.preview' : 'machines.agentIsolation.set';
+            await expect(execution).rejects.toMatchObject({
+                code: outcome === 'isolationUnknown' ? 'outcome_unknown' : 'action_outcome_unknown',
+                failureCause: {
+                    phase,
+                    errorCode: outcome === 'outcomeUnknown' ? 'action_outcome_unknown'
+                        : outcome === 'isolationUnknown' ? 'outcome_unknown' : 'invalid_action_output',
+                },
+            });
+        }
         expect(policyWritten).toBe(!isRetry || freshEnrollment);
         expect(post.mock.calls.some(([url]) => String(url).endsWith('/v1/actions/machines.roles.set'))).toBe(false);
         // ISO-UPDATE-1111: retained Update/Inspect must not replay creation policy.
         if (!initializesPolicy) expect(isolationInputs).toEqual([]);
-        expect(isolationWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'isolationUnavailable');
+        expect(isolationWritten).toBe(initializesPolicy && outcome !== 'outcomeUnknown' && outcome !== 'adminMalformed'
+            && outcome !== 'adminApproval' && outcome !== 'previewRefusal' && outcome !== 'previewMalformed' && outcome !== 'isolationUnavailable');
         for (const requestedPolicy of isolationInputs) {
             // OWNER-RULINGS 2026-11-07: creation children carry the dedicated member default.
             expect(requestedPolicy).toMatchObject({ enabled: true, memberProvisioning: 'linuxUsersV1' });
@@ -1009,7 +1032,9 @@ esac
             await work;
             const found = await operations.handlers.getV2({ operationId: `controller-home-${scenario}`, waitForTerminal: true });
             expect(found, JSON.stringify(found.kind === 'found' ? found.operation.error : found)).toMatchObject({ kind: 'found', operation: scenario === 'expire'
-                ? { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' } } : { state: 'succeeded' } });
+                ? { state: 'running', observation: { kind: 'outcome_uncertain', code: 'action_outcome_unknown' },
+                    error: { failureCause: { phase: 'managed.controller.current', errorCode: 'database_connection_unavailable', httpStatus: 503 } } }
+                : { state: 'succeeded' } });
             expect(unavailableReads).toBe(scenario === 'expire' ? 2 : scenario === 'recover' || scenario === 'install-recover' ? 1 : 0);
             if (scenario === 'expire' && found.kind === 'found') expect(found.operation.settledAt).toBeUndefined();
             expect(retained.enrolledMachineId).toBe('enrolled-guest');

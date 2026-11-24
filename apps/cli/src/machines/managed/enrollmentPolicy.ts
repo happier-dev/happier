@@ -51,7 +51,8 @@ async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisit
     if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.setup.adminAccess.set');
     const result = MachineAdminAccessMutationResultV1Schema.safeParse(execution.result);
     if (!result.success || result.data.status === 'outcomeUnknown') {
-        throw new ManagedMachineControllerError('action_outcome_unknown');
+        throw ManagedMachineControllerError.fromChildResultFailure('machines.setup.adminAccess.set', 'action_outcome_unknown',
+            result.success ? 'action_outcome_unknown' : 'invalid_action_output');
     }
     if (!['applied', 'satisfied', 'unchanged'].includes(result.data.status)
         || !('policy' in result.data) || !MachineAdminAccessFieldV1.equal(result.data.policy, policy)) {
