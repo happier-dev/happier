@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { serializeAutomationStoredDefinitionExecutionRecipeV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
+import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { applySessionTurnMutation as applySessionTurnMutationWithAuthentication } from "@/app/session/sessionWriteService";
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv } from "@/storage/prisma";
@@ -215,12 +216,14 @@ async function createSessionLifecycleRaceFixture(label: string) {
         mutation: { v: 1, sessionId, mutationId: `begin-${suffix}`, action: "begin", turnId, observedAt: Date.now() - 1_000 },
     });
     if (!begun.ok || !begun.didApply) throw new Error(`${label} source turn did not begin`);
+    const serverId = await getOrCreateServerIdentityId();
     return {
         suffix,
         accountId,
         sessionId,
         turnId,
         automationId,
+        serverId,
         cleanup: async () => {
             await db.automationRun.deleteMany({ where: { accountId } }).catch(() => {});
             await db.automationTrigger.deleteMany({ where: { automation: { accountId } } }).catch(() => {});
@@ -235,7 +238,7 @@ async function createSessionLifecycleRaceFixture(label: string) {
 export async function proveSessionLifecycleRegistrationSettlementRace(
 ): Promise<SessionLifecycleRegistrationSettlementRaceEvidence> {
     const fixture = await createSessionLifecycleRaceFixture("race");
-    const { suffix, accountId, sessionId, turnId, automationId } = fixture;
+    const { suffix, accountId, sessionId, turnId, automationId, serverId } = fixture;
 
     const barrier = installCanonicalRaceBarrier({ accountId, sessionId, turnId });
     try {
@@ -246,12 +249,14 @@ export async function proveSessionLifecycleRegistrationSettlementRace(
             trigger: {
                 kind: "sessionLifecycle",
                 enabled: true,
-                sourceSessionId: sessionId,
+                subject: { kind: "session", serverId, sessionId },
                 events: ["parentTurnCompleted"],
                 policy: { kind: "currentTurn", sourceTurnId: turnId },
             },
         });
-        await barrier.registrationWitnessed;
+        await Promise.race([barrier.registrationWitnessed, registration.then(() => {
+            throw new Error("Registration completed without reading the source turn");
+        })]);
         const settlement = applySessionTurnMutation({
             actorUserId: accountId,
             mutation: { v: 1, sessionId, mutationId: `complete-${suffix}`, action: "complete", turnId, observedAt: Date.now() },
@@ -332,7 +337,7 @@ export async function proveSessionLifecycleRegistrationSettlementRace(
 export async function proveSessionLifecycleSettlementBeforeRegistration(
 ): Promise<SessionLifecycleRegistrationSettlementRaceEvidence> {
     const fixture = await createSessionLifecycleRaceFixture("completion-first");
-    const { suffix, accountId, sessionId, turnId, automationId } = fixture;
+    const { suffix, accountId, sessionId, turnId, automationId, serverId } = fixture;
     try {
         const settled = await applySessionTurnMutation({
             actorUserId: accountId,
@@ -346,7 +351,7 @@ export async function proveSessionLifecycleSettlementBeforeRegistration(
             trigger: {
                 kind: "sessionLifecycle",
                 enabled: true,
-                sourceSessionId: sessionId,
+                subject: { kind: "session", serverId, sessionId },
                 events: ["parentTurnCompleted"],
                 policy: { kind: "currentTurn", sourceTurnId: turnId },
             },
