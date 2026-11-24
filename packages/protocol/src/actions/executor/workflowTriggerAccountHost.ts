@@ -30,6 +30,7 @@ import {
   AutomationPullRequestTriggerSchema,
   AutomationSessionLifecycleTriggerSchema,
   projectAutomationSessionLifecycleStructuralTrigger,
+  type AutomationTriggerDefinition,
   type AutomationTriggerDefinitionInput,
 } from '../../automations/automationTriggerDefinition.js';
 import {
@@ -78,7 +79,11 @@ import { DeploymentEnvironmentGetResultV1Schema } from '../../deployments/deploy
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
-import { isHealthCheckEventSourceV1 } from '../../deployments/healthCheckSourceV1.js';
+import {
+  createSavedHealthTransitionSourceInstanceIdV1,
+  isHealthCheckEventSourceV1,
+  SavedHealthTransitionSourceV1Schema,
+} from '../../deployments/healthCheckSourceV1.js';
 import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
 import { AutomationActionTriggerSchema, AutomationActionTriggerDefinitionEnvelopeV1Schema, projectAutomationActionTriggerStructuralV1, type AutomationActionTrigger } from '../../automations/automationActionTriggerV1.js';
 import { unavailableActionAutomationMatchingV1 } from './actionAutomationAdmission.js';
@@ -88,6 +93,20 @@ import { parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinition
 
 function unavailable(code = 'content_unavailable', details?: unknown): never {
   throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
+}
+
+function bindSavedHealthTransitionHome<T extends AutomationTriggerDefinition>(trigger: T): T {
+  if (trigger.kind !== 'pluginEvent' || 'triggerDefinitionEnvelope' in trigger || !trigger.subject
+    || !isHealthCheckEventSourceV1(trigger)) return trigger;
+  const selected = SavedHealthTransitionSourceV1Schema.safeParse(trigger.sourceConfig);
+  if (!selected.success || selected.data.serverId === trigger.subject.serverId) return trigger;
+  // The watcher reads this Account's saved transitions. Its emitted subject must use the Link's portable Home.
+  const sourceConfig = { ...selected.data, serverId: trigger.subject.serverId };
+  return {
+    ...trigger,
+    sourceConfig,
+    sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(trigger.eventRef.localId, sourceConfig),
+  };
 }
 
 export type WorkflowTriggerAccountHostParams = Readonly<{
@@ -824,10 +843,12 @@ if (trigger.kind === 'sessionLifecycle') {
         const observationDisplay = input.observationOnly
           ? { name: input.name, description: input.description ?? null }
           : null;
-        const triggers = input.triggers.map((item) => current ? { ...item,
-          trigger: observationDisplay
-            ? prepareObservationTrigger(input.automationId, item.triggerId, 0, item.trigger, observationDisplay, current)
-            : item.trigger } : item);
+        const triggers = input.triggers.map(item => {
+          const trigger = bindSavedHealthTransitionHome(item.trigger);
+          return { ...item, trigger: current && observationDisplay
+            ? prepareObservationTrigger(input.automationId, item.triggerId, 0, trigger, observationDisplay, current)
+            : trigger };
+        });
         const environment = input.observationOnly?.deploymentEnvironment;
         const requested = triggers.length === 1 ? triggers[0]!.trigger : undefined;
         const reuse = current && environment && requested?.kind === 'pluginEvent' && !('triggerDefinitionEnvelope' in requested)
@@ -868,8 +889,12 @@ if (trigger.kind === 'sessionLifecycle') {
           await params.automations.create(await sealCreatePrivateDisplay({ ...input, triggers: privateTriggers }), beforeWrite, signal),
         ), beforeWrite, signal);
       },
-      reconcile: async (automationId, input, row, beforeWrite, signal) => {
-        if (!row || row.id !== automationId || row.templateVersion !== input.expectedTemplateVersion) unavailable('currentness_conflict');
+      reconcile: async (automationId, request, row, beforeWrite, signal) => {
+        if (!row || row.id !== automationId || row.templateVersion !== request.expectedTemplateVersion) unavailable('currentness_conflict');
+        const input: AutomationDefinitionReconcileRequest = { ...request, triggers: request.triggers.map(item => {
+          if (item.kind === 'new') return { ...item, trigger: bindSavedHealthTransitionHome(item.trigger) };
+          return item.trigger === undefined ? item : { ...item, trigger: bindSavedHealthTransitionHome(item.trigger) };
+        }) };
         const needsPrivateWrite = input.triggers.some((item) => item.kind === 'new'
           ? isPrivateTrigger(item.trigger)
           : (item.trigger !== undefined && isPrivateTrigger(item.trigger)) || (item.enabled !== undefined && row.triggers.some((trigger) => trigger.id === item.triggerId && isPrivateTrigger(trigger))));

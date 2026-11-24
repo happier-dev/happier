@@ -24,7 +24,7 @@ import { AutomationPullRequestTriggerSchema, AutomationSessionLifecycleTriggerSc
 import { initialAutomationSessionLifecycleRemainingOccurrences } from '../../automations/automationSessionLifecycle.js';
 import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
 import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema } from '../../automations/automationTriggerDefinition.js';
-import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
+import { createAutomationPluginEventTriggerDefinitionV1, openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../actionIds.js';
@@ -34,11 +34,13 @@ import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readWor
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { SessionInitialTriggerAdmissionV1Schema } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
-import { createAccountHealthCheckSourceReaderV1, createAccountWorkflowTriggerActions } from './workflowTriggerAccountHost.js';
+import { createAccountHealthCheckSourceReaderV1, createAccountWorkflowTriggerActions, readAccountStoredPluginEventTriggerV1 } from './workflowTriggerAccountHost.js';
 import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphertext } from '../../crypto/accountScopedCipher.js';
 import { isAvailableE2eeAutomationAccountEncryptionV1, type AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
 import { AutomationSourceSelectorIdV1Schema } from '../../automations/automationOccurrenceV1.js';
 import { DeploymentEnvironmentHeaderV1Schema, DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
+import { createSavedHealthTransitionSourceInstanceIdV1 } from '../../deployments/healthCheckSourceV1.js';
 
 import type { ArtifactRevisionProvenanceV1, ArtifactSavedByV1 } from '../../artifacts/artifactBinaryV1.js';
 import { createNightlyBackupsWorkflowV1 } from '../../workflows/builtins/backupExamples.js';
@@ -260,9 +262,7 @@ function fixture(savedDefinition = definition) {
                   binding: { v: 1, automationId: input.automationId, triggerId: AutomationTriggerIdSchema.parse(value.triggerId),
                     triggerRevision: 0, triggerKind: 'pluginEvent', eventRef: value.trigger.eventRef,
                     sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000001') },
-                  definition: { v: 1, ...(value.trigger.automationDisplay === undefined ? {} : { automationDisplay: value.trigger.automationDisplay }),
-                    sourceInstanceId: value.trigger.sourceInstanceId, sourceConfig: value.trigger.sourceConfig,
-                    displayLabel: value.trigger.displayLabel, filter: value.trigger.filter, maximumObservationAgeMs: value.trigger.maximumObservationAgeMs } })) })
+                  definition: createAutomationPluginEventTriggerDefinitionV1(value.trigger) })) })
             : value.trigger.kind === 'sessionLifecycle'
             ? lifecycleDetail(input.automationId, value.triggerId, value.trigger)
             : value.trigger.kind === 'action'
@@ -332,9 +332,7 @@ function fixture(savedDefinition = definition) {
                 : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
                   binding: { v: 1, automationId: id, triggerId: old.id, triggerRevision: revision,
                     triggerKind: 'pluginEvent', eventRef: value.eventRef, sourceSelectorId },
-                  definition: { v: 1, ...(value.automationDisplay === undefined ? {} : { automationDisplay: value.automationDisplay }),
-                    sourceInstanceId: value.sourceInstanceId, sourceConfig: value.sourceConfig,
-                    displayLabel: value.displayLabel, filter: value.filter, maximumObservationAgeMs: value.maximumObservationAgeMs } })) });
+                  definition: createAutomationPluginEventTriggerDefinitionV1(value) })) });
           }
           return { ...old, ...(item.enabled === undefined ? {} : { enabled: item.enabled }),
             ...(item.enabled === undefined && item.trigger === undefined ? {} : { revision: old.revision + 1 }) };
@@ -1300,6 +1298,39 @@ const deploymentEventTrigger = { kind: 'pluginEvent' as const, enabled: true,
   filter: null, maximumObservationAgeMs: null };
 
 describe('Account source watcher assignment', () => {
+  it.each(['plain', 'e2ee'] as const)('saves and edits a %s exact Health Link using the subject Home', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    const host = createAccountWorkflowTriggerActions({ automations: f.deps.automations, resolveEncryption: async () => encryption,
+      randomBytes: length => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      resolveWorkflowTeamIds: f.deps.resolveWorkflowTeamIds, newId: () => crypto.randomUUID() });
+    const subject = { kind: 'healthCheck' as const, serverId: 'portable-home', sourceInstanceId: 'health:api', checkId: 'ready' };
+    const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
+    const draft = (observingSince: number) => {
+      const sourceConfig = { v: 1 as const, serverId: 'env_local', nativeSourceInstanceId: subject.sourceInstanceId, observingSince };
+      return { ...deploymentEventTrigger, eventRef, subject, sourceConfig,
+        sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(eventRef.localId, sourceConfig),
+        observationTransport: { kind: 'checkpointedPull' as const, watcherMaterializationRef: {
+          pluginId: eventRef.pluginId, machineId: project.machineId, materializationId: 'services' } } };
+    };
+    const saved = await host.add({ workflow, project, trigger: draft(100) });
+    const assertStoredSource = (observingSince: number) => {
+      const canonical = { ...draft(observingSince).sourceConfig, serverId: subject.serverId };
+      const stored = readAccountStoredPluginEventTriggerV1(f.rows.get(saved.set.automationId)!, saved.triggerId!, encryption);
+      expect.soft(stored.definition).toMatchObject({ subject, sourceConfig: canonical,
+        sourceInstanceId: createSavedHealthTransitionSourceInstanceIdV1(eventRef.localId, canonical) });
+    };
+    assertStoredSource(100);
+    const { enabled, ...replacement } = draft(200);
+    await host.update({ automationId: saved.set.automationId, triggerId: saved.triggerId,
+      expectedRevision: saved.set.revision, patch: { enabled, trigger: replacement } });
+    assertStoredSource(200);
+  });
+
   it.each(['plain', 'e2ee'] as const)('enrolls %s health observations for failure and recovery and rebinds encrypted updates', async mode => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
