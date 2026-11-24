@@ -7993,6 +7993,22 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const approveRefusal = decision === 'approve' && existing.v === 2 && existing.status === 'open'
           && !existing.requesterConfirmation ? deps.approvalRequestApproveRefusal?.({ request: existing }) : null;
         if (approveRefusal) return approveRefusal;
+        // The exact daemon can record and spend this decision after Home accepts
+        // dispatch, even if the deciding app closes. Keep the Ask open until
+        // that owner receives the decision, so an interrupted send is retryable.
+        if (decision === 'approve' && existing.v === 2 && existing.status === 'open'
+          && existing.approval?.flow === 'deferred' && !existing.requesterConfirmation
+          && !isHistoricalPublishApprovalRequestV2(existing)
+          && ctx.surface === 'ui' && isPresentUserHostInvocation(ctx) && deps.approvalRequestApprovedReplay) {
+          const requestId = normalizeId(ctx.actionRequestId) || existing.executionOriginV1.requestId;
+          const forwarded = await deps.approvalRequestApprovedReplay({
+            artifactId, request: existing, decision, requestId, context: ctx,
+            ...(triggerConsent ? { triggerConsent } : {}),
+            ...(data.narrowedInput === undefined ? {} : { narrowedInput: projectNativeJsonValueForTransport(data.narrowedInput) }),
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+          if (forwarded !== null) return forwarded;
+        }
         if (decision === 'approve' && existing.v === 2 && existing.status === 'open' && existing.automaticChecks) {
           const settled = await approveApprovalAutomaticChecks(artifactId, existing, ctx, {
             ...(triggerConsent ? { triggerConsent } : {}),

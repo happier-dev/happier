@@ -4606,9 +4606,10 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalRequestApprovedReplay).toHaveBeenCalledOnce();
   });
 
-  it.each(['deferred', 'blocking'] as const)('persists the present-user decision before delegating exact-daemon replay with %s custody', async flow => {
+  it.each(['deferred', 'blocking'] as const)('delegates the present-user decision at the correct Artifact stage with %s custody', async flow => {
     let storedRequest = ApprovalRequestV2Schema.parse({ ...createApprovalRequest('open'),
       approval: { flow, result: 'required' } });
+    const statusAtDispatch = flow === 'deferred' ? 'open' : 'approved';
     const coordinator = createBlockingApprovalCoordinator();
     const pending = flow === 'blocking' ? coordinator.waitForDecision({ artifactId: 'a1', request: storedRequest }) : null;
     void pending?.catch(() => {});
@@ -4619,10 +4620,9 @@ describe('createActionExecutor (approvals)', () => {
     });
     const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-1' }));
     const approvalRequestApprovedReplay = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
-      expect(request).toMatchObject({
-        status: 'approved',
-        decision: { kind: 'approve' },
-      });
+      expect(request.status).toBe(statusAtDispatch);
+      if (flow === 'deferred') expect(request.decision).toBeUndefined();
+      else expect(request.decision).toMatchObject({ kind: 'approve' });
       expect(storedRequest).toEqual(request);
       return {
         ok: true as const,
@@ -4647,13 +4647,11 @@ describe('createActionExecutor (approvals)', () => {
         result: { ok: true, status: 'executed' },
       });
 
-      expect(approvalsUpdate).toHaveBeenCalledTimes(1);
+      expect(approvalsUpdate).toHaveBeenCalledTimes(flow === 'deferred' ? 0 : 1);
       expect(approvalRequestApprovedReplay).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         artifactId: 'a1',
-        request: expect.objectContaining({
-          status: 'approved',
-          decision: expect.objectContaining({ kind: 'approve' }),
-        }),
+        request: expect.objectContaining({ status: statusAtDispatch }),
+        ...(flow === 'deferred' ? { decision: 'approve' } : {}),
         context: expect.objectContaining({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }),
         requestId: 'request-1',
       }));

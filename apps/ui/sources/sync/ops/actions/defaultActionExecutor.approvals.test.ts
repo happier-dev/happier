@@ -2010,7 +2010,7 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(outgoing).toEqual([]);
         expect(homes.requestsFor('/v1/teams/invitations/create')).toEqual([]);
     });
-    it('stores the refusal when the Home cannot route an approved Machine Action', async () => {
+    it('keeps a deferred Ask open when Home cannot route its decision to the Machine', async () => {
         const artifactId = 'missing-origin-machine';
         await seedApproval(artifactId, ApprovalRequestV2Schema.parse({
             v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, summary: 'Review original Machine read',
@@ -2025,9 +2025,11 @@ describe('createDefaultActionExecutor approvals', () => {
 
         const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
 
-        const receipt = { status: 'failed', execution: { ok: false, errorCode: 'access_denied', effectAttempted: false } };
-        expect(persistedApproval(artifactId)).toMatchObject(receipt);
-        expect(result).toMatchObject({ ok: true, result: receipt });
+        expect(result).toMatchObject({ ok: false, errorCode: 'access_denied' });
+        const stillOpen = persistedApproval(artifactId);
+        expect(stillOpen.status).toBe('open');
+        expect(stillOpen.decision).toBeUndefined();
+        expect(stillOpen.execution).toBeUndefined();
         expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
     });
     it('lets the origin daemon admit an approval whose requester Account differs from the deciding app', async () => {
@@ -2154,8 +2156,10 @@ describe('createDefaultActionExecutor approvals', () => {
                 execution: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' } } };
             expect(admitted.data).toEqual({ artifactId: 'foreign-native-approval', decision: 'approve',
                 serverIdentityId: 'srv_approval_home', originServerId: homeId });
-            expect(persistedApproval('foreign-native-approval')).toMatchObject({ status: 'approved', executionOriginV1: {
+            const pending = persistedApproval('foreign-native-approval');
+            expect(pending).toMatchObject({ status: 'open', executionOriginV1: {
                 requestId: 'original-native-request', externalActionExecutionAuthorization: originalRoot } });
+            expect(pending.decision).toBeUndefined();
             expect(JSON.stringify(carried)).not.toContain(credential);
             return { body: { v: 1, actionId: 'approval.request.decide', requestId: decisionRequestId,
                 execution: { ok: true, result: nativeResult } } };

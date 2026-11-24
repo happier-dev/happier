@@ -92,6 +92,113 @@ describe('present-user UI approval origin at the Action host', () => {
         },
     );
 
+    it.each(['unmount', 'lost transport', 'double dispatch', 'decline', 'withdraw'] as const)(
+        'keeps a deferred CLI request actionable until daemon decision admission (%s)', async scenario => {
+            const serverIdentityId = 'srv_deferred_cli';
+            const serverId = await harness.addHome({
+                name: 'Approval Home', serverUrl: 'https://deferred-cli.test',
+                accountId: 'alice', serverIdentityId, currentAccount: true,
+            });
+            const machineId = 'cli-origin-machine';
+            await installOwnMachineApprovalReplayBoundary({ harness, serverId, accountId: 'alice', machineId });
+            const actionId = 'paths.list_recent';
+            const request = ApprovalRequestV2Schema.parse({
+                v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, summary: 'Review a Machine read',
+                createdBy: { surface: 'cli' }, requestedSurface: 'cli', approval: { flow: 'deferred', result: 'required' },
+                actionId, actionArgs: { machineId, limit: 10 },
+                executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+                    serverId: 'cli-local-home', serverIdentityId, accountId: 'alice',
+                    machineId, actionId, requestId: 'cli-deferred-machine-read' },
+            });
+            const { captureLazyActionAccountContext } = await import('./actionAccountContext');
+            const account = await captureLazyActionAccountContext(serverId);
+            const header = buildApprovalRequestArtifactHeaderV1(request);
+            let artifactId: string;
+            try { artifactId = await account.createArtifact(header, JSON.stringify(request)); }
+            finally { account.dispose(); }
+            const readStored = () => ApprovalRequestV2Schema.parse(
+                JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId) ?? 'null'));
+            const { useApprovalDecisionHandler } = await import('@/components/tools/shell/approvals/useApprovalDecisionHandler');
+            const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifactId, header }, request, '', serverId));
+            const path = '/v1/actions/approval.request.decide';
+            const dispatchStatuses: string[] = [];
+            let effects = 0;
+            const { approvalArtifactBodyMatchesHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+            const { writeApprovalRequestArtifact } = await import('./approvalArtifactWriter');
+            const receive = async (input: unknown) => {
+                const daemon = await captureLazyActionAccountContext(serverId);
+                const read = (id: string) => daemon.fetchArtifact(id);
+                try {
+                    const receiver = createActionExecutor({
+                        approvalsGet: async ({ artifactId }) => {
+                            const artifact = await read(artifactId);
+                            if (!artifact?.header || typeof artifact.body !== 'string') return null;
+                            const match = approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body);
+                            return match?.family === 'built_in' ? match.request : null;
+                        },
+                        approvalsUpdate: async ({ artifactId, request, expectedStatus }) => writeApprovalRequestArtifact({
+                            artifactId, request, expectedStatus, read,
+                            write: (basis, header, body) => daemon.updateArtifact(artifactId, header, body, basis),
+                        }),
+                        isApprovalExecutionOriginCurrent: async ({ origin }) => origin.machineId === machineId,
+                        pathsListRecent: async () => { effects++; return []; },
+                    });
+                    return await receiver.execute('approval.request.decide', input, {
+                        surface: 'ui', authority: 'present_user', serverId, serverIdentityId, runtimeAccountId: 'alice',
+                    });
+                } finally { daemon.dispose(); }
+            };
+            let unmounted = false;
+            if (scenario === 'unmount') {
+                const artifactPath = '/v1/artifacts/' + artifactId;
+                harness.answer(serverId, 'GET ' + artifactPath, { select: async (_input, incoming) => {
+                    if (!unmounted) {
+                        unmounted = true;
+                        await hook.unmount();
+                    }
+                    const response = await harness.artifacts(serverId).handle(artifactPath, incoming.init);
+                    if (!response) throw new Error('Missing Artifact read boundary');
+                    return { status: response.status, body: await response.json() };
+                } });
+            }
+            harness.answer(serverId, path, { select: async input => {
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+                dispatchStatuses.push(readStored().status);
+                expect(envelope.target).toEqual({ kind: 'machine', machineId });
+                expect(envelope.input).toMatchObject({ artifactId, decision: 'approve',
+                    serverIdentityId, originServerId: 'cli-local-home' });
+                if (scenario === 'lost transport') throw new TypeError('Failed to fetch');
+                return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'approval.request.decide',
+                    requestId: envelope.requestId, execution: await receive(envelope.input) }) };
+            } });
+            const decision = hook.getCurrent();
+            if (scenario === 'decline' || scenario === 'withdraw') {
+                await expect(decision(scenario === 'decline' ? 'reject' : 'cancel')).resolves.toBe(true);
+                expect(readStored().status).toBe(scenario === 'decline' ? 'rejected' : 'canceled');
+                await expect(decision('approve')).rejects.toMatchObject({ code: 'approval_not_open' });
+                expect(dispatchStatuses).toEqual([]);
+                expect(effects).toBe(0);
+            } else if (scenario === 'lost transport') {
+                await expect(decision('approve')).rejects.toBeDefined();
+                expect(dispatchStatuses).toEqual(['open']);
+                expect(readStored()).toMatchObject({ status: 'open' });
+                expect(readStored().execution).toBeUndefined();
+                expect(effects).toBe(0);
+            } else if (scenario === 'unmount') {
+                await expect(decision('approve')).resolves.toBe(true);
+                expect(unmounted).toBe(true);
+                expect(dispatchStatuses).toEqual(['open']);
+                expect(readStored()).toMatchObject({ status: 'executed', execution: { ok: true } });
+                expect(effects).toBe(1);
+            } else {
+                await Promise.allSettled([decision('approve'), decision('approve')]);
+                expect(dispatchStatuses).toHaveLength(2);
+                expect(readStored()).toMatchObject({ status: 'executed', execution: { ok: true } });
+                expect(effects).toBe(1);
+            }
+        },
+    );
+
     it('keeps a private Post open until the exact daemon accepts its decision', async () => {
         const serverIdentityId = 'srv_private_post';
         const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://private-post.test',

@@ -2291,14 +2291,14 @@ export type ActionExecutorDeps = Readonly<{
   /**
    * Host transport for replay that must run on an exact daemon. The canonical
    * executor calls this after a local decision, or with `decision` to route a
-   * requester or Discussion Post decision to the original owner before any
-   * local Artifact write.
+   * decision to the original owner before any local Artifact write.
    */
   approvalRequestApprovedReplay?: (args: Readonly<{
     artifactId: string;
     request: ApprovalRequestV2 | TargetActionApprovalRequestV1;
     decision?: 'approve' | 'reject' | 'cancel';
     triggerConsent?: z.infer<typeof ApprovalRequestDecideInputSchema>['triggerConsent'];
+    narrowedInput?: z.infer<typeof ApprovalRequestDecideInputSchema>['narrowedInput'];
     /** The current deciding invocation, not the immutable native effect's authority. */
     context: ActionExecutorContext;
     requestId?: string;

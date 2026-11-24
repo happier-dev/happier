@@ -2612,6 +2612,12 @@ prerequisite before the user approves; JSON retains its pending envelope and
 prints the prerequisite on stderr. Account-owned approvals that the existing
 custody policy permits the approving app to execute retain that path.
 
+For a built-in deferred approval routed through the Account app's
+exact-daemon decision transport, the app sends the decision through Home before
+recording approval. A failure before delivery leaves the request open for
+another review. Once Home accepts dispatch, the daemon can record the
+decision and claim execution on the Artifact even if the deciding screen closes.
+
 Blocking live-only results follow the admitted approval request's flow, including
 the required-result default when the authored spec omits `flow`. They resume the
 original daemon invocation so its caller receives the full typed result; approval

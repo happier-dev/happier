@@ -3529,7 +3529,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }));
     },
 
-    approvalRequestApprovedReplay: async ({ artifactId, request, decision, context, requestId, signal, onReplayDispatched }) => {
+    approvalRequestApprovedReplay: async ({ artifactId, request, decision, triggerConsent, narrowedInput, context, requestId, signal, onReplayDispatched }) => {
       try {
       const requesterDecision = readApprovalRequesterDecisionV1(request, decision);
       if (requesterDecision) {
@@ -3563,6 +3563,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
       if (request.v !== 2) return null;
       const executor = resolveApprovalExecutor(request);
+      const decidingOpenRequest = decision === 'approve' && request.status === 'open';
+      if (decidingOpenRequest && executor.kind !== 'daemon') return null;
       if (executor.kind === 'unavailable') {
         return { ok: false, errorCode: 'approval_origin_unavailable', error: 'approval_origin_unavailable' };
       }
@@ -3606,6 +3608,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         // The exact daemon retained and evaluated this install candidate. Replay
         // its approved Artifact there directly; issuing another decision Action
         // would create a second decision boundary and never settle the candidate.
+        if (decidingOpenRequest) return null;
         onReplayDispatched?.();
         return await replayApprovedApprovalRequestAtExactDaemon({
           artifactId,
@@ -3624,11 +3627,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           actionId: 'approval.request.decide', requestId, machineId,
           onTransportIssued: () => onReplayDispatched?.(),
           input: { artifactId, decision: decision ?? 'approve',
-            serverIdentityId: replayRoute.serverIdentityId, originServerId: replayRoute.originServerId },
+            serverIdentityId: replayRoute.serverIdentityId, originServerId: replayRoute.originServerId,
+            ...(triggerConsent ? { triggerConsent } : {}),
+            ...(narrowedInput === undefined ? {} : { narrowedInput }) },
           ...(signal ? { signal } : {}) });
         accountContext.assertResultCurrent(getActionSpec('approval.request.decide').sideEffectClass);
         if (execution) return execution;
       }
+      if (decidingOpenRequest) return null;
       if (decision === 'approve') {
         onReplayDispatched?.();
         const replay = ActionExecuteResultSchema.safeParse(await replayApprovalRequestAtExactDaemon({
