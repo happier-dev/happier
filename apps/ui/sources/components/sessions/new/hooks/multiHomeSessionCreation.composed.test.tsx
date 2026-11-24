@@ -607,6 +607,69 @@ describe('multi-Home Session creation composition', () => {
         homeBScopeId = profiles.resolveServerProfileScopeId(homeB);
     }
 
+    it('holds the cold /new launch curtain until the standalone draft composer is drawn', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000920';
+        const heldRead = createDeferred<void>();
+        const heldList = createDeferred<void>();
+        const requestedDraft = createDeferred<unknown>();
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const features = createRootLayoutFeaturesResponse({ features: { sessions: { drafts: { enabled: true } } } });
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = async (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json({ ...features,
+                capabilities: { ...features.capabilities,
+                    serverIdentity: { serverIdentityId: profiles.getActiveServerSnapshot().serverId } } });
+            if (path === '/v2/account/session-drafts/list') { await heldList.promise; return Response.json({ items: [] }); }
+            if (path === '/v2/account/session-drafts/read') {
+                requestedDraft.resolve(JSON.parse(String(init?.body)).address);
+                await heldRead.promise;
+                return Response.json({ status: 'absent' });
+            }
+            return coreHttp(path);
+        };
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('cold-new-session', { applyConnectionManager: true }));
+        routeBoundary.params = { draftId };
+        const { default: NewSessionRoute } = await import('@/app/(app)/new/index');
+        const { AgentInput } = await import('@/components/sessions/agentInput');
+        const { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } = await import('@/boot/launchCurtain');
+
+        // The HTML poster initializes the real curtain in this otherwise DOM-free fixture.
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        vi.stubGlobal('document', { documentElement: { classList: { contains: (name: string) => name === 'launch-planet' } } });
+        const releaseShell = holdLaunchCurtain();
+        if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+        else Reflect.deleteProperty(globalThis, 'document');
+
+        function CurtainProbe() {
+            return React.createElement('CurtainProbe', { state: useLaunchCurtainState() });
+        }
+        const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: homeAToken }}>
+            <NewSessionRoute />
+            <CurtainProbe />
+        </InjectedAuthProvider>);
+        const curtain = () => screen.root.findByType('CurtainProbe').props.state;
+        try {
+            expect(curtain()).toBe('up');
+            await expect(requestedDraft.promise).resolves.toEqual({ kind: 'newSession', draftId });
+            expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+            releaseShell();
+            await flushHookEffects({ frames: 2, cycles: 1 });
+            expect(curtain()).toBe('up');
+
+            await act(async () => { heldRead.resolve(); });
+            await vi.waitFor(() => expect(screen.root.findAllByType(AgentInput)).toHaveLength(1));
+            await flushHookEffects({ frames: 2, cycles: 1 });
+            expect(curtain()).toBe('leaving');
+        } finally {
+            releaseShell();
+            heldRead.resolve();
+            heldList.resolve();
+            await screen.unmount();
+            finishLaunchCurtain();
+        }
+    });
+
     it('opens an answering-client authoring seed on its exact target instead of a remembered directory', async () => {
         const coreHttp = await createDraftSurfaceCoreHttpBoundary();
         sessionHttpBoundary = url => coreHttp(new URL(url).pathname);

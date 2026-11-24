@@ -58,6 +58,7 @@ import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useSe
 import { useServerCredentialAccountScopeBindings, useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { DestinationBodyLoading } from '@/components/appShell/workspace/DestinationBodyLoading';
 import { SessionDraftHydrationBoundary } from '@/components/sessions/drafts/SessionDraftHydrationBoundary';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -326,7 +327,7 @@ export function NewSessionScreen(props: NewSessionScreenProps) {
             <GlassSurface testID="new-session-draft-loading" finishRole="composer">
                 <ItemLoadStateRows state={{ kind: 'loading' }} rows={2} lines={1} accessibilityLabel={t('common.loading')} />
             </GlassSurface>
-        ) : undefined}>
+        ) : <DestinationBodyLoading />}>
         <NewSessionScreenReady {...props} draftScope={draftScope} onDraftIdentityResolved={onDraftIdentityResolved} />
     </SessionDraftHydrationBoundary>;
 }
