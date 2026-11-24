@@ -104,6 +104,7 @@ import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@hap
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
 import { WorkflowStartDetailsLead } from './WorkflowStartDetailsLead';
+import { readWorkflowReviewCompositionInputs, WorkflowReviewCompositionControl } from './WorkflowReviewCompositionControl';
 import { WORKFLOW_START_WHERE_CHIP_KEY } from './workflowStartPlacementChips';
 import {
   getWorkflowStartVisibilityChipPlacement,
@@ -357,6 +358,7 @@ export function WorkflowRunComposer(
   // While an earlier request is unsettled, the review is that request: its inputs, Roles and Team.
   const retained = props.retainedRequest ?? null;
   const reviewedDefinition = retained?.reviewedDefinition ?? props.definition;
+  const reviewCompositionInputs = React.useMemo(() => readWorkflowReviewCompositionInputs(reviewedDefinition), [reviewedDefinition]);
   const showsWorkflowAgent = React.useMemo(() => reviewedDefinition
     ? readWorkflowBlockShape(reviewedDefinition).showsWorkflowAgent : false, [reviewedDefinition]);
   const reviewedMachineId = retained?.project?.machineId ?? props.machineId;
@@ -436,6 +438,14 @@ export function WorkflowRunComposer(
   const values = retained
     ? (retained.input.inputs ?? EMPTY_VALUES)
     : props.values;
+  const changeReviewCompositionValues = React.useCallback((next: WorkflowRunComposerProps['values']) => {
+    props.onChangeValues(next);
+    const buffers = { ...rawTextValues };
+    for (const name of Object.values(reviewCompositionInputs ?? {})) {
+      if (name !== undefined) delete buffers[name];
+    }
+    setRawTextValues(buffers);
+  }, [props.onChangeValues, rawTextValues, reviewCompositionInputs, setRawTextValues]);
   const fields = React.useMemo(
     () =>
       projectWorkflowRunInputFields({
@@ -445,6 +455,10 @@ export function WorkflowRunComposer(
         originSession: props.originSession,
       }),
     [props.inputs, values, props.originSession, rawTextValues],
+  );
+  const reviewCompositionValues = React.useMemo(
+    () => reviewCompositionInputs === null ? EMPTY_VALUES : buildWorkflowRunStartInputs(fields) ?? EMPTY_VALUES,
+    [fields, reviewCompositionInputs],
   );
   // Nothing in the review can change while it re-sends the retained request.
   const locked = props.pending === true || retained !== null;
@@ -470,7 +484,8 @@ export function WorkflowRunComposer(
     () => personFields.filter((field) => field !== main && isParticipantInput(field.definition)),
     [personFields, main],
   );
-  const remaining = personFields.filter((field) => field !== main && !isParticipantInput(field.definition));
+  const remaining = personFields.filter((field) => field !== main && !isParticipantInput(field.definition)
+    && field.definition.name !== reviewCompositionInputs?.reviewers && field.definition.name !== reviewCompositionInputs?.steps);
   const participantValues = React.useMemo(
     () => participantFields.map((field) => field.value),
     [participantFields],
@@ -481,7 +496,7 @@ export function WorkflowRunComposer(
   );
   const missing = missingFields.length;
   // The composer's own input (the Request) is said once, by the readiness row: the Inputs chip counts only its own fields.
-  const inputsMissingFields = missingFields.filter((field) => field !== main && !isParticipantInput(field.definition));
+  const inputsMissingFields = missingFields.filter((field) => remaining.includes(field));
   const blocked = fields.find((field) => field.blocking) ?? null;
   // A retained request was reviewed when it was first sent; the canonical admission owner re-checks it.
   const disabled =
@@ -1013,6 +1028,11 @@ export function WorkflowRunComposer(
               <Item testID={`${prefix}-review-target`} title={t('workflows.page.sections.eachStepRunsIn')}
                 subtitle={formatWorkflowRunTargetReviewSummary(targetReview, reviewedExecutionTarget)}
                 showChevron={false} subtitleLines={0} />
+            </HappierPageSectionContext.Provider> : null}
+            {reviewCompositionInputs ? <HappierPageSectionContext.Provider value={REVIEW_ROWS_ON_COLUMN_EDGE}>
+              <WorkflowReviewCompositionControl inputs={reviewCompositionInputs} values={reviewCompositionValues}
+              onChangeValues={changeReviewCompositionValues} machineId={reviewedMachineId} directory={props.directory}
+              serverId={props.serverId} disabled={locked || acceptedRepeat} testID={`${prefix}-review-composition`} />
             </HappierPageSectionContext.Provider> : null}
             {main === null ? (props.definition && props.workflowName ? null : (
               <Text

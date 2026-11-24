@@ -756,14 +756,17 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
     it('returns a sheet-hosted Review selection through its footer without starting a Review', async () => {
         let footer: React.ReactNode = null;
         const onLaunchSelection = vi.fn();
-        await mount({ intent: 'review', reviewSelectionProjection: 'composition', onLaunchSelection,
+        await mount({ intent: 'review', sessionId: null, workspace: { machineId: 'machine_1', cwd: '/repo' },
+            reviewSelectionProjection: 'composition', onLaunchSelection,
             sheet: { onFooterChange: next => { footer = next; }, onCancel: vi.fn() },
-            initialActionInput: { reviewers: [{ kind: 'engine', engineId: 'claude' }] } });
+            initialActionInput: { cwd: '/earlier-folder', reviewers: [{ kind: 'engine', engineId: 'claude' }] } });
         await waitFor(() => expect(composer().isSendDisabled).toBe(false));
         const footerScreen = await renderScreen(<>{footer}</>);
         expect(footerScreen.findByTestId('review-start-footer-start')).toBeNull();
         await footerScreen.pressByTestIdAsync('review-start-footer-use-selection');
-        await waitFor(() => expect(onLaunchSelection).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reviewComposition' })));
+        await waitFor(() => expect(onLaunchSelection).toHaveBeenCalledWith(expect.objectContaining({
+            kind: 'reviewComposition', input: expect.objectContaining({ cwd: '/repo', target: { kind: 'detached' } }),
+        })));
         expect(emittedStarts).toEqual([]);
     });
 

@@ -30,7 +30,7 @@ export async function settleReviewInputSelection(params: Readonly<{
     projection: ReviewInputSelectionProjection;
 }>): Promise<ReviewInputSelection | null> {
     if (!params.isCurrent()) return null;
-    const admitted = ReviewStartInputSchema.parse(params.draft);
+    const admitted = ReviewStartInputSchema.parse(params.launcher.prepareStartInput('review.start', params.draft));
     if (params.projection === 'composition') {
         return params.launcher.accountLifetime?.isCurrent() ? { kind: 'reviewComposition', input: admitted } : null;
     }

@@ -982,7 +982,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         : null,
     [hasSelectedBackend, inheritedModelSelection, inheritedTeamCredentialModel, inheritedRoutePresentation, intent, options.targetMatchesParent, resolveInheritedModelLabel, routeFollowed]);
 
-    const reviewScopeField = intent === 'review' && !props.comparisonReview
+    const reviewScopeField = intent === 'review' && !props.comparisonReview && actionInput.scope !== 'repository'
         ? options.fields.find(field => field.path === 'changeType') : undefined;
     const reviewScopeLabel = reviewScopeField?.options?.find(option => option.value === actionInput.changeType)?.label
         ?? t('agentStart.chips.scope');

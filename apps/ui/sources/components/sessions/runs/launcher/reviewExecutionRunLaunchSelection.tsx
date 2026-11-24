@@ -18,6 +18,7 @@ export type ReviewInputSelectionRequest = Readonly<{
     anchor?: PopoverAnchor;
     sessionId: string | null;
     serverId: string;
+    workspace?: React.ComponentProps<typeof SessionInteractiveExecutionRunDraftView>['workspace'];
     draft: Readonly<Record<string, unknown>>;
     /** Omitting a projection starts the authored Review; projections return input without invoking it. */
     projection?: ReviewInputSelectionProjection;
@@ -42,7 +43,7 @@ export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjecte
         footer,
     }), [footer, props.anchor]));
     return <View testID="review-execution-run-launch-selection" style={{ maxHeight: '100%', flexShrink: 1 }}>
-        <SessionInteractiveExecutionRunDraftView sessionId={props.sessionId} serverId={props.serverId}
+        <SessionInteractiveExecutionRunDraftView sessionId={props.sessionId} serverId={props.serverId} workspace={props.workspace}
             intent="review" initialActionInput={initialActionInput}
             reviewSelectionProjection={props.projection} selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
             onStartAccepted={cancel} onRunStarted={cancel} sheet={sheet} />

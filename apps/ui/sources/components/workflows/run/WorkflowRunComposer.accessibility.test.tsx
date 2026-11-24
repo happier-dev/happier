@@ -1,9 +1,14 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { normalizePluginWorkflowContributionV1 } from '@happier-dev/protocol/workflows';
 import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { Modal } from '@/modal';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { WorkflowRunComposer, type WorkflowRunComposerProps } from './WorkflowRunComposer';
@@ -33,7 +38,51 @@ describe('workflow composer accessibility', () => {
     });
     afterEach(async () => {
         await standardCleanup();
+        vi.restoreAllMocks();
         restorePopoverGlobals();
+    });
+    it('preserves runner, model and Account when composing a repository Hunt through the shared picker', async () => {
+        const { definition } = resolveBuiltinWorkflowDefinitionV1('repository-review')!;
+        const input = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, scope: 'repository', cwd: '/repo',
+            instructions: 'Find hidden defects', reviewers: [{ kind: 'engine', engineId: 'clawpatch',
+                runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                modelSelection: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }), providerConnectionId: null, modelId: 'gpt-6.2-sol' },
+                connectedServices: ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'connected', profileId: 'work' },
+                } }) }] });
+        // Native modal presentation is the boundary; the workflow and the shared presenter remain real.
+        const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
+            const resolve = config.props?.onResolve;
+            if (typeof resolve !== 'function') throw new Error('Expected the composition presenter settlement');
+            queueMicrotask(() => resolve({ kind: 'reviewComposition', input }));
+            return 'hunt-picker';
+        });
+        const onRun = vi.fn();
+        let selected!: () => void;
+        const selectionApplied = new Promise<void>(resolve => { selected = resolve; });
+        function Hunt() {
+            const [values, onChangeValues] = React.useState<WorkflowRunComposerProps['values']>({ cwd: '/repo', instructions: 'Find hidden defects' });
+            const [rawTextValues, onChangeRawTextValues] = React.useState<Readonly<Record<string, string>>>({ cwd: '/authored-repo', instructions: 'An earlier focus' });
+            return <WorkflowRunComposer definition={definition} inputs={definition.inputs}
+                machineId="hunt-machine" directory="/repo" serverId="server-a"
+                values={values} onChangeValues={next => { onChangeValues(next); selected(); }}
+                rawTextValues={rawTextValues} onChangeRawTextValues={onChangeRawTextValues}
+                onRun={onRun} onCancel={() => {}} />;
+        }
+        const screen = await renderScreen(<Hunt />);
+        expect(screen.findByTestId('workflow-run-inputs-review-composition')).not.toBeNull();
+        await act(async () => {
+            await screen.pressByTestIdAsync('workflow-run-inputs-review-composition');
+            await selectionApplied;
+        });
+        expect(show).toHaveBeenCalledOnce();
+        expect(show.mock.calls[0]?.[0].props).toMatchObject({ projection: 'composition',
+            draft: { scope: 'repository', cwd: '/authored-repo', instructions: 'An earlier focus' },
+            workspace: { machineId: 'hunt-machine', cwd: '/authored-repo' } });
+        await screen.pressByTestIdAsync('workflow-run-inputs-inputs-chip');
+        expect(screen.findByTestId('workflow-run-inputs-reviewers')).toBeNull();
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun).toHaveBeenCalledWith(expect.objectContaining({ reviewers: input.reviewers, instructions: input.instructions }), []);
     });
     it('renders a contributed Workflow’s declared input title, placeholder and choice label', async () => {
         const { definition } = normalizePluginWorkflowContributionV1({
