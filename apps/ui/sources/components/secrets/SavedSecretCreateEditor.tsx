@@ -68,6 +68,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     onCreated: (ref: string, storage: SecretStorage) => void | Promise<void>;
     /** The name a new secret gets unless the person types another (a Connect sheet's "DeepSeek key"). */
     initialName?: string;
+    confirmTypedValueStorage?: () => Promise<boolean>;
     /** The primary's words where the sheet names what it saves ("Save key"); "Save secret" by default. */
     submitLabel?: string;
     /** `sheet`: the Connect sheet's card supplies the gutter, so the form adds none of its own. */
@@ -275,10 +276,30 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     const submit = React.useCallback(async () => {
         const trimmedName = effectiveName;
         if ((named && !trimmedName) || !material || operationInFlight.current || props.approvalPending) return;
+        if (props.confirmTypedValueStorage && !linkedSource) {
+            operationInFlight.current = true;
+            setSubmitting(true);
+            setFailure(null);
+            try {
+                const confirmed = await props.confirmTypedValueStorage();
+                if (!confirmed || currentScopeKey.current !== scopeKey) return;
+            } catch (cause) {
+                if (currentScopeKey.current === scopeKey) {
+                    setFailure(resolveActionExecutionErrorMessage(cause, t('secrets.catalog.operationFailed')));
+                }
+                return;
+            } finally {
+                if (currentScopeKey.current === scopeKey) {
+                    operationInFlight.current = false;
+                    setSubmitting(false);
+                }
+            }
+        }
         if (vaultMode === 'existing') await submitLink();
         else if (storage === 'personal') await submitPersonal(trimmedName);
         else await submitShared(trimmedName);
-    }, [effectiveName, material, named, props.approvalPending, storage, submitLink, submitPersonal, submitShared, vaultMode]);
+    }, [effectiveName, linkedSource, material, named, props.approvalPending, props.confirmTypedValueStorage,
+        scopeKey, storage, submitLink, submitPersonal, submitShared, vaultMode]);
 
     const busy = submitting || props.approvalPending;
     const storageTabs = React.useMemo(() => [

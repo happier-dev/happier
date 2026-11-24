@@ -123,6 +123,7 @@ function ConnectKeySheetLeaf(
         sameTargetRefs={model.sameTargetRefs}
         suggestedName={suggestedName}
         guide={presentation?.guide}
+        confirmTypedValueStorage={props.request.confirmTypedValueStorage}
         submitLabel={requested ? t('connectedServicesSettings.keySave') : undefined}
         onResult={props.onResult}
         onCancel={() => props.onResult({ kind: 'dismissed' })}

@@ -46,6 +46,8 @@ export type ConnectSheetKeyRequest = Readonly<{
     scope?: AccountSettingsScope | null;
     current?: string;
     bindingTarget?: ConnectSheetKeyBindingTarget;
+    /** A typed credential's storage review precedes submission in the shared editor. */
+    confirmTypedValueStorage?: () => Promise<boolean>;
 }>;
 export type ConnectSheetNpmRegistryRequest = Readonly<{
     service: Readonly<{ kind: 'npm-registry-profile' }>;

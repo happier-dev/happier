@@ -12,7 +12,6 @@ import { createServerAccountConnectionProbeHttpResponse, installDisconnectedServ
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { ModalProvider } from '@/modal';
 import { t, tLoose, setPreferredLanguageFromSettings } from '@/text';
-import { WebPromptModal } from '@/modal/components/WebPromptModal';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { voiceSettingsParse, type VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
@@ -458,46 +457,65 @@ describe('BundledConversationSettingsSection', () => {
     expect(screen.tree.findAllByType(CredentialComponent)).toHaveLength(1);
   });
   it('binds client BYOK to account SavedSecrets and requires plaintext-mode disclosure', async () => {
-    const screen = await render();
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const screen = await render(account.settings.voice,
+      <InjectedAuthProvider credentials={account.credentials}>
+        <BundledConversationSettingsSection voice={account.settings.voice} />
+      </InjectedAuthProvider>);
     const credential = screen.tree.findByType(CredentialComponent);
     expect(credential.props).toMatchObject({ credentialSlotId: 'api_key', credentialSourcePurpose: 'voice.client-auth.elevenlabs', disclosePlainStorage: true });
     expect(credential.props).not.toHaveProperty('machineId');
     expect(credential.props).not.toHaveProperty('operations');
-    const enterNew = () => credential.findAll((node) => node.props.title === tLoose('settingsVoice.byo.apiKeyTitle')
-      && typeof node.props.onPress === 'function')[0]!.props.onPress();
-    await act(async () => enterNew());
-    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('web-prompt-input')).not.toBeNull());
-    act(() => screen.changeTextByTestId('web-prompt-input', 'test-only-entered-key'));
-    await screen.pressByTestIdAsync('web-prompt-confirm');
-    await waitForAlert(t('settingsVoice.local.voiceCredential.plainStorageTitle'));
-    expect(nativeAlert.mock.calls.at(-1)?.slice(0, 2)).toEqual([
-      t('settingsVoice.local.voiceCredential.plainStorageTitle'), t('settingsVoice.local.voiceCredential.plainStorageBody'),
-    ]);
+    const enterNew = async () => {
+      const control = credential.findAll(node => node.props.title === tLoose('settingsVoice.byo.apiKeyTitle')
+        && typeof node.props.onPress === 'function')[0];
+      if (!control) throw new Error('Expected the ElevenLabs credential control');
+      await act(async () => control.props.onPress());
+      await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('saved-secret-create-value')).not.toBeNull());
+      act(() => screen.changeTextByTestId('saved-secret-create-value', 'test-only-entered-key'));
+    };
+    const submitForPlainStorageDecision = async () => {
+      nativeAlert.mockClear();
+      await screen.pressByTestIdAsync('saved-secret-create-submit');
+      const decision = await waitForTestEvent(notify => {
+        const stopAccount = account.subscribe(notify);
+        const stopScreen = screen.subscribe(notify);
+        alertListeners.add(notify);
+        return () => { stopAccount(); stopScreen(); alertListeners.delete(notify); };
+      }, () => {
+        if (account.resources.length > 0) return 'resource-written';
+        if (screen.findByTestId('saved-secret-create-failure')) return 'save-failed';
+        return nativeAlert.mock.calls.at(-1)?.[0];
+      }, value => value !== undefined);
+      expect(decision).toBe(t('settingsVoice.local.voiceCredential.plainStorageTitle'));
+      expect(nativeAlert.mock.calls.at(-1)?.[1]).toBe(t('settingsVoice.local.voiceCredential.plainStorageBody'));
+      expect(account.resources).toHaveLength(0);
+      expect(account.writes).toHaveLength(0);
+    };
+    const boundReference = () => resolveAccountVoiceCredential(account.persistedSettings, contribution, 'api_key', null)?.secretId;
+    await enterNew();
+    await submitForPlainStorageDecision();
     await act(async () => nativeAlert.mock.calls.at(-1)?.[2]?.find(button => button.style === 'cancel')?.onPress?.());
     await flushHookEffects();
-    expect(screen.tree.findAllByType(WebPromptModal).filter(node => node.props.visible !== false)).toHaveLength(0);
-    expect(account.settings.secrets).toHaveLength(0);
-    expect(account.writes).toHaveLength(0);
-    await act(async () => enterNew());
-    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('web-prompt-input')).not.toBeNull());
-    act(() => screen.changeTextByTestId('web-prompt-input', 'test-only-entered-key'));
-    nativeAlert.mockClear();
-    await screen.pressByTestIdAsync('web-prompt-confirm');
-    await waitForAlert(t('settingsVoice.local.voiceCredential.plainStorageTitle'));
-    await act(async () => nativeAlert.mock.calls.at(-1)?.[2]?.find(button => button.style !== 'cancel')?.onPress?.());
-    await waitForAlert(t('settingsVoice.externalCredentials.recipientApprovalTitle'));
-    // The present user's reversible Action is direct by default. The real
-    // recipient-consent tap is the final prerequisite for this credential.
     expect(account.resources).toHaveLength(0);
-    expect(account.promotions).toHaveLength(0);
+    expect(boundReference()).toBeUndefined();
+    expect(account.writes).toHaveLength(0);
+
+    if (screen.findByTestId('saved-secret-create-cancel')) await screen.pressByTestIdAsync('saved-secret-create-cancel');
+    await waitForTestEvent(screen.subscribe, () => expect(screen.findByTestId('connect-key-sheet')).toBeNull());
+    await enterNew();
+    await submitForPlainStorageDecision();
     await act(async () => nativeAlert.mock.calls.at(-1)?.[2]?.find(button => button.style !== 'cancel')?.onPress?.());
-    await waitForTestEvent(account.subscribe, () => account.resources.length, count => count === 1);
+    await waitForTestEvent(account.subscribe, boundReference, reference => Boolean(reference));
     expect(account.resources).toHaveLength(1);
-    expect(account.promotions).toHaveLength(1);
     expect(account.persistedSettings.secrets).toHaveLength(0);
     const resource = account.resources[0]!;
-    expect('resourceId' in resource && openSavedSecretResourceStoredContentV1({ mode: 'plain',
-      resourceId: resource.resourceId, storedContent: resource.storedContent })?.value).toBe('test-only-entered-key');
+    if (!('resourceId' in resource)) throw new Error('Expected a SavedSecret resource');
+    expect(boundReference()).toBe(resource.entry.ref);
+    expect(resource).toMatchObject({ encryptionMode: 'plain', entry: { relationship: 'owner' } });
+    const content = openSavedSecretResourceStoredContentV1({ mode: 'plain',
+      resourceId: resource.resourceId, storedContent: resource.storedContent });
+    expect(content && 'value' in content ? content.value : undefined).toBe('test-only-entered-key');
     expect(account.settings.voice.providers[providerId]?.config).not.toHaveProperty('apiKey');
     expect(account.persistedSettings.voice.providers[providerId]?.config).not.toHaveProperty('apiKey');
   });

@@ -43,6 +43,7 @@ export function ConnectKeySheetBody(
     suggestedName?: string;
     /** How to create this key, when what asked for it declares that; nothing to create for a saved one. */
     guide?: ConnectedAccountGuideContent | null;
+    confirmTypedValueStorage?: () => Promise<boolean>;
     /** The primary's words for a requested key ("Save key"); a bare secret keeps "Save secret". */
     submitLabel?: string;
     onResult: (
@@ -141,6 +142,7 @@ export function ConnectKeySheetBody(
             scope={props.scope}
             presentation="sheet"
             initialName={props.suggestedName}
+            confirmTypedValueStorage={props.confirmTypedValueStorage}
             submitLabel={props.submitLabel}
             onCreatePersonal={props.catalog.personalMutations.create}
             sharedAvailable={props.catalog.sharedEnabled}

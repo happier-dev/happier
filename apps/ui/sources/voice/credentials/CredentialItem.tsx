@@ -44,6 +44,7 @@ import {
   type VoiceRuntimeFailureOutcome,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import { VoiceRawCredentialAccessReview } from './VoiceRawCredentialAccessReview';
+import { confirmAccountVoiceCredentialWrite } from './confirmAccountVoiceCredentialWrite';
 import { projectVoiceCredentialAccessReviewRequirement } from './credentialReadiness';
 
 const voiceProviderRegistry = createDefaultVoiceProviderRegistry();
@@ -256,6 +257,26 @@ export const VoiceCredentialItem = React.memo(function VoiceCredentialItem(props
           service: { kind: 'key', keyKind: 'apiKey', suggestedName: props.title },
           intent: 'link',
           bindingTarget: { kind: 'voice', contribution, slot: props.credentialSlotId },
+          ...(props.disclosePlainStorage ? {
+            confirmTypedValueStorage: async () => {
+              if (!expectedSettingsScope) return false;
+              const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+              const account = await captureLazyActionAccountContext(expectedSettingsScope.serverId, undefined, undefined, expectedSettingsScope);
+              try {
+                const confirmed = await confirmAccountVoiceCredentialWrite({
+                  disclosePlainStorage: props.disclosePlainStorage,
+                  resolveAccountMode: () => account.resolveAccountMode(),
+                  confirm: () => Modal.confirm(
+                    t('settingsVoice.local.voiceCredential.plainStorageTitle'),
+                    t('settingsVoice.local.voiceCredential.plainStorageBody'),
+                    { confirmText: t('settingsVoice.local.voiceCredential.plainStorageConfirm') },
+                  ),
+                });
+                account.assertCurrent();
+                return confirmed;
+              } finally { account.dispose(); }
+            },
+          } : {}),
           ...(expectedSecretId ? { current: expectedSecretId } : {}),
         });
         if (selection.kind === 'dismissed') return;
