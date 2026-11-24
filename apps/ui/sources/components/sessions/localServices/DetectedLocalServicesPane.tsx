@@ -56,6 +56,7 @@ import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { LocalServicePublicPreviewActions } from './publicPreviewActions';
+import type { LocalServiceEntryHandlers } from './localServiceEntryActions';
 import { ServiceStatusDot } from './ServiceStatusDot';
 import type { LocalServiceCapabilityDisabledReasons } from './useLocalServicePublicPreviewFeature';
 import {
@@ -372,6 +373,7 @@ type DetectedLocalServicesPaneProps = Readonly<{
     onRestartManagedService?: ServiceRowManagedControlHandler;
     onCopyServiceUrl?: ServiceRowCopyUrlHandler;
     onShowServiceTerminal?: (target: LocalServiceLaunchTarget) => Promise<unknown>;
+    onShowServiceLogs?: LocalServiceEntryHandlers['onShowServiceLogs'];
     onOpenServiceInBrowser?: ServiceRowOpenHandler;
     publicPreviewActions?: LocalServicePublicPreviewActions;
     /**
@@ -586,6 +588,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             onRestartManagedService={props.onRestartManagedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
             onShowServiceTerminal={props.onShowServiceTerminal}
+            onShowServiceLogs={props.onShowServiceLogs}
             sourceMachineId={props.sourceMachineId}
             serverId={props.serverId}
             sourceMachine={props.machine}
@@ -624,6 +627,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         starterNames,
         props.onCopyServiceUrl,
         props.onShowServiceTerminal,
+        props.onShowServiceLogs,
         props.onForgetDetectedService,
         props.onRestartManagedService,
         props.onStopManagedService,
@@ -676,6 +680,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             onRestartManagedService={props.onRestartManagedService}
             onCopyServiceUrl={props.onCopyServiceUrl}
             onShowServiceTerminal={props.onShowServiceTerminal}
+            onShowServiceLogs={props.onShowServiceLogs}
             sourceMachineId={props.sourceMachineId}
             serverId={props.serverId}
             sourceMachine={props.machine}
@@ -694,7 +699,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
     ) : null, [detailRow, detailLead, animationEnabled, findRunningOpenTarget, starterNames, testID, preferredLanguage,
         props.onOpenServiceInBrowser, props.onStartLauncherTarget, props.onTerminateDetectedService,
         props.onForgetDetectedService, props.onStopManagedService, props.onRestartManagedService,
-        props.onCopyServiceUrl, props.onShowServiceTerminal, props.sourceMachineId, props.serverId, props.machine,
+        props.onCopyServiceUrl, props.onShowServiceTerminal, props.onShowServiceLogs, props.sourceMachineId, props.serverId, props.machine,
         props.publicPreviewEnabled, props.publicPreviewStatusClient, props.renderServicePlacement,
         props.publicPreviewState, props.previewState, props.publicPreviewActions, props.publicPreviewCapabilityDisabledReasons]);
 

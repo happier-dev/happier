@@ -12,6 +12,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { buildLocalServiceInventoryState } from '@/dev/testkit/fixtures/localServices';
+import type { ItemRowActionsProps } from '@/components/ui/lists/ItemRowActions';
 import { t } from '@/text';
 
 // The log viewport's recycler depends on native layout; render its rows deterministically at that boundary.
@@ -23,13 +25,17 @@ vi.mock('@legendapp/list/react-native', async () =>
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { MachineServiceLogs } = await import('./MachineServiceLogs');
+const { LocalServicesSurfaceHost } = await import('@/components/sessions/localServices/LocalServicesSurfaceHost');
+const { ItemRowActions } = await import('@/components/ui/lists/ItemRowActions');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+const { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } = await import('@/sync/domains/local/services/launch');
 let serverId: string;
 beforeEach(async () => {
     await homes.reset();
     await initializeRealAppRuntimeForTests();
     installHomeGovernanceBoundaries(homes);
     serverId = await homes.addHome({ name: 'Service logs', serverUrl: 'https://service-logs.test',
-        serverIdentityId: 'srv_service_logs', accountId: 'account', currentAccount: true, active: true });
+        serverIdentityId: 'srv_service_logs', accountId: 'account', currentAccount: true, active: true, localServicesEnabled: true });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
     const credentials = await TokenStorage.getCredentialsForServerUrl('https://service-logs.test', { serverId });
@@ -200,7 +206,7 @@ describe('Machine service shared log viewer', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('retains admitted redacted lines through follow, pause, resume and a source change, then releases hidden demand', async () => {
+    it.each(['machine', 'workspace'] as const)('%s logs retain admitted redacted lines through follow, pause, resume and a source change, then release hidden demand', async surface => {
         const actionId = 'machines.services.logs.read';
         const actionPath = `/v1/actions/${actionId}`;
         const first: ManagedServiceNativeLogResultV1 = { kind: 'page', page: {
@@ -246,7 +252,12 @@ describe('Machine service shared log viewer', () => {
                 v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result },
             } });
             const continuation = envelope.resourceContinuation;
-            if (!continuation) { firstReads++; return reply(first); }
+            if (!continuation) {
+                expect(envelope.input).toMatchObject({ serviceId: 'service' });
+                expect(envelope.machineServiceLogsGeneration?.expectedGeneration).toBe('generation-a');
+                firstReads++;
+                return reply(first);
+            }
             if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
                 resourceReads++;
                 if (resourceFailure) return reply({ ok: false, code: 'service_transport_unavailable', reason: 'unavailable' });
@@ -281,8 +292,33 @@ describe('Machine service shared log viewer', () => {
             lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
             capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
         const props = { serverId, machineId: 'machine', machineName: 'Development machine', service };
-        const screen = await renderScreen(<MachineServiceLogs {...props} active />);
+        const workspace = { serverId, machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo' };
+        const inventoryState = buildLocalServiceInventoryState({ rows: [] });
+        const launcherState = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+            v: 1, machineId: 'machine', updatedAt: 1, targets: [{
+                id: 'service', source: 'managed_service', sourceClass: { kind: 'managed_service', managedServiceId: 'generation-a' },
+                machineId: 'machine', workspaceId: workspace.workspaceId, cwd: workspace.rootPath, workspace,
+                declaration: { workspaceRefId: workspace.workspaceId, selection: { kind: 'manifest', name: 'worker' } },
+                title: 'Worker', confidence: 'high', state: 'available', serviceState: 'running', actions: ['manage'],
+            }],
+        });
+        const render = (active: boolean) => surface === 'machine'
+            ? <MachineServiceLogs {...props} active={active} />
+            : <PluginSurfaceFocusEligibilityProvider active={active}>
+                <LocalServicesSurfaceHost machineId="machine" serverId={serverId} workspaceRoot="/repo"
+                    inventoryState={inventoryState} launcherState={launcherState} testID="workspace-services" />
+              </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(render(true));
         try {
+            if (surface === 'workspace') {
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain('Worker'));
+                expect([firstReads, watchOpens]).toEqual([0, 0]);
+                const shownLogsAction = () => screen.findAllByType(ItemRowActions).flatMap(menu => (menu.props as ItemRowActionsProps).actions)
+                    .find(action => action.id === 'show-logs');
+                await vi.waitFor(() => expect(shownLogsAction()).toBeDefined());
+                await act(async () => { shownLogsAction()?.onPress?.(); });
+                expect(screen.findHostByTestId('workspace-services-logs')).not.toBeNull();
+            }
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('first [REDACTED]'));
             await vi.waitFor(() => expect(watchOpens).toBe(1));
             expect(firstReads).toBe(1);
@@ -315,7 +351,7 @@ describe('Machine service shared log viewer', () => {
             // The source transition warns without erasing already-admitted redacted evidence.
             expect.soft(screen.getTextContent()).toContain('resumed 🌍');
             expect.soft(screen.getTextContent()).toContain('first [REDACTED]');
-            await screen.update(<MachineServiceLogs {...props} active={false} />);
+            await screen.update(render(false));
             await vi.waitFor(() => expect(watchCloses).toBe(watchOpens));
             await vi.waitFor(() => expect(pending.size).toBe(0));
             const hidden = { firstReads, resourceReads, watchOpens, watchNexts };

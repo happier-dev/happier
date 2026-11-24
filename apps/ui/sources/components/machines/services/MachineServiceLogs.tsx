@@ -31,7 +31,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
-import { useMachineServiceLogViewer, type useNativeLogViewer } from './useMachineServiceLogViewer';
+import { useServiceOccurrenceLogViewer, type useNativeLogViewer } from './useMachineServiceLogViewer';
 
 /** The viewer model's tail state (SOS-GAP-LOGS): the viewport reports where the reader is, the model counts arrivals. */
 export type NativeLogNavigation = Pick<ReturnType<typeof useNativeLogViewer>['navigation'], 'following' | 'setAtLatest' | 'newLineCount' | 'jumpToLatest'>;
@@ -87,7 +87,7 @@ export function createNativeLogView(): LogViewerControlsV1['view'] {
 /**
  * A service's logs (lab `machine/services/detail` → Logs) in the shared log viewer: Find, copy and save work on the
  * admitted, redacted lines; Follow keeps reading while the page is shown. Opening the page asks for the latest lines
- * once (`machines.services.logs.read`); the canonical Resource follows from there (`useMachineServiceLogViewer`).
+ * once (`machines.services.logs.read`); the canonical Resource follows from there.
  * Last-known lines stay on screen through a stale or failing follow and through a source change.
  */
 export function MachineServiceLogs(
@@ -101,7 +101,32 @@ export function MachineServiceLogs(
     onOpenEnvironment?: (() => void) | null;
   }>,
 ) {
-  const { service, machineName } = props;
+  const { service, ...presentation } = props;
+  if (!service.capabilities.logs || service.generation === null) {
+    return (
+      <SurfaceStateCard
+        testID="machine-service-logs-none"
+        kind="unavailable"
+        size="line"
+        title={t('machineServices.logs.none', { service: service.name })}
+      />
+    );
+  }
+  return <ServiceOccurrenceLogs {...presentation} serviceId={service.serviceId} name={service.name}
+    expectedGeneration={service.generation} />;
+}
+
+export function ServiceOccurrenceLogs(props: Readonly<{
+  serverId: string;
+  machineId: string;
+  machineName: string;
+  serviceId: string;
+  expectedGeneration: string;
+  name: string;
+  active: boolean;
+  onOpenEnvironment?: (() => void) | null;
+}>) {
+  const { machineName } = props;
   const { theme } = useUnistyles();
   const [view] = React.useState(createNativeLogView);
   const root = React.useRef<View>(null);
@@ -117,13 +142,15 @@ export function MachineServiceLogs(
     );
   }, []);
   const isInputFocused = React.useCallback(() => inputFocused.current, []);
-  const logs = useMachineServiceLogViewer({
+  const logs = useServiceOccurrenceLogViewer({
     serverId: props.serverId,
     machineId: props.machineId,
-    service,
+    serviceId: props.serviceId,
+    expectedGeneration: props.expectedGeneration,
+    name: props.name,
     active: props.active,
     view,
-    surfaceId: `machine-service-logs:${props.machineId}:${service.serviceId}`,
+    surfaceId: `machine-service-logs:${props.machineId}:${props.serviceId}`,
     containsFocus,
     isInputFocused,
   });
@@ -146,16 +173,6 @@ export function MachineServiceLogs(
   useFindSurfaceRegistration(registration);
   const findOpen = viewer?.findSnapshot.isOpen === true && props.active;
 
-  if (!service.capabilities.logs || service.generation === null) {
-    return (
-      <SurfaceStateCard
-        testID="machine-service-logs-none"
-        kind="unavailable"
-        size="line"
-        title={t('machineServices.logs.none', { service: service.name })}
-      />
-    );
-  }
   const projection = logs.projection;
   if (projection?.kind === 'unavailable') {
     return (

@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MachineServiceRowV1, ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -22,7 +22,7 @@ vi.mock('@legendapp/list/react-native', async () =>
 // Resource store, continuation transport and Forge index/Find model remain real.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
-const { useMachineServiceLogViewer, useServiceOccurrenceLogViewer } = await import('./useMachineServiceLogViewer');
+const { useServiceOccurrenceLogViewer } = await import('./useMachineServiceLogViewer');
 let serverId: string;
 let restoreScope: () => void | Promise<void> = () => {};
 beforeEach(async () => {
@@ -401,9 +401,6 @@ describe('native log viewer authority withdrawal', () => {
                     if (request.signal?.aborted) abort();
                 });
             } });
-            const service: MachineServiceRowV1 = { serviceId: 'service', name: 'Worker', authority: 'machine',
-                lifecyclePurpose: 'deployment', generation: 'generation-a', state: 'running', watchId: 'watch', watchRevision: 'watch-revision',
-                capabilities: { start: false, stop: true, restart: false, logs: true, accounting: false } };
             // Controlled presentation state belongs to this native host. No view or Find owner is mocked.
             const view: LogViewerControlsV1['view'] = {
                 getSnapshot: () => state, subscribe: () => () => {}, invoke() {},
@@ -412,9 +409,8 @@ describe('native log viewer authority withdrawal', () => {
                 selection: { kind: 'all' }, groupExpanded: {}, revealedLine: null, timestampsVisible: true,
             };
             const hook = await renderHook((props: { active: boolean }) => {
-                const value = reason === 'expired_resource' ? useServiceOccurrenceLogViewer({ serverId, machineId: 'machine',
-                    serviceId: 'service', expectedGeneration: 'generation-a', name: 'Stopped workspace service',
-                    active: props.active, view, surfaceId: 'workspace-occurrence', containsFocus: () => true, isInputFocused: () => false }) : useMachineServiceLogViewer({ serverId, machineId: 'machine', service,
+                const value = useServiceOccurrenceLogViewer({ serverId, machineId: 'machine',
+                    serviceId: 'service', expectedGeneration: 'generation-a', name: 'Worker',
                     active: props.active, view, surfaceId: 'native-currentness', containsFocus: () => true, isInputFocused: () => false });
                 if (captureWithdrawnRenders) withdrawnRenders.push(JSON.stringify({
                     first: value.first, index: value.index?.plainText,

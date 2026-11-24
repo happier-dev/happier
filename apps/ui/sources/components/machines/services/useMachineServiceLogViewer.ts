@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { z } from 'zod';
-import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { useLogViewerV1, type LogViewerControlsV1 } from '@happier-dev/forge-ci/ui';
 import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
@@ -18,26 +17,16 @@ type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.
 const RESOURCE_AUTHORITY_WITHDRAWN = Object.freeze({ kind: 'unavailable' as const, reason: 'admission_unavailable' as const });
 const logContextInput = z.object({ before: z.number().int().nonnegative(), after: z.number().int().nonnegative() }).strict();
 
-/** Native acquisition stops at Action/Resource; Forge owns the sole log presentation model. */
-export function useMachineServiceLogViewer(input: LogViewerControlsV1 & Readonly<{
-    serverId: string; machineId: string; service: MachineServiceRowV1; active: boolean;
-}>) {
-    const canRead = input.service.capabilities.logs && input.service.generation !== null;
-    return useServiceOccurrenceLogViewer({ ...input, serviceId: input.service.serviceId,
-        expectedGeneration: input.service.generation, name: input.service.name, active: input.active && canRead });
-}
-
 /** Workspace and Machine occurrences share the original logs Action, Resource and viewer owner. */
 export function useServiceOccurrenceLogViewer(input: LogViewerControlsV1 & Readonly<{
     serverId: string; machineId: string; serviceId: string;
-    expectedGeneration: string | null; name: string; active: boolean;
+    expectedGeneration: string; name: string; active: boolean;
 }>) {
-    const canRead = input.expectedGeneration !== null;
     const first = useMachineServiceFirstLogRead({ serverId: input.serverId, machineId: input.machineId,
-        serviceId: input.serviceId, active: input.active && canRead,
+        serviceId: input.serviceId, active: input.active,
         expectedGeneration: input.expectedGeneration });
     const page = first.state.kind === 'read' && first.state.value.kind === 'page' ? first.state.value.page : null;
-    const reference = React.useMemo<LogsReference | null>(() => page && input.expectedGeneration !== null ? {
+    const reference = React.useMemo<LogsReference | null>(() => page ? {
         hostRead: 'machines.services.logs', input: { serverId: input.serverId, machineId: input.machineId,
             serviceId: input.serviceId, ...(page.nextCursor ? { cursor: page.nextCursor } : {}) },
         expectedGeneration: input.expectedGeneration, sourceRevision: page.sourceRevision,
@@ -45,7 +34,7 @@ export function useServiceOccurrenceLogViewer(input: LogViewerControlsV1 & Reado
     const sourceKey = JSON.stringify([input.serverId, first.accountLifetime?.scope.accountId ?? null,
         input.machineId, input.serviceId, input.expectedGeneration]);
     return useNativeLogViewer({ ...input, first: first.state, read: first.read, accountLifetime: first.accountLifetime,
-        reference, sourceKey, active: input.active && canRead, fileName: `${input.name}.log` });
+        reference, sourceKey, fileName: `${input.name}.log` });
 }
 
 /**

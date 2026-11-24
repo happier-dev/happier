@@ -1,7 +1,10 @@
 import * as React from 'react';
 
+import { DetailCompanionPane } from '@/components/appShell/panes/details/DetailsPaneSlot';
+import { ServiceOccurrenceLogs } from '@/components/machines/services/MachineServiceLogs';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useSessionWorkspaceTarget } from '@/hooks/session/useSessionWorkspaceTarget';
 import { PluginSurfacePlacementStack } from '@/components/plugins/surfaces';
 import type { FrontDoorRuntimeActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -15,8 +18,10 @@ import type { LocalServicePublicPreviewState } from '@/sync/domains/local/servic
 import type { LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
 import type { LocalServicePreviewPlatform } from '@/sync/domains/local/services/preview/url';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { t } from '@/text';
 
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
+import type { LocalServiceLogOccurrence } from './localServiceOccurrenceActions';
 import type { DescribeServiceDeclaration, ServiceRow } from '@/sync/domains/local/services/serviceRow';
 import type { ServiceRowOpenHandler } from './ServiceRowView';
 import { useLocalServiceEntryActions } from './useLocalServiceEntryActions';
@@ -147,7 +152,7 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
         />
     );
 
-    return (
+    return (<>
         <DetectedLocalServicesPane
             inventoryState={inventoryState}
             launcherState={launcherState}
@@ -175,5 +180,34 @@ export function LocalServicesSurfaceHost(props: LocalServicesSurfaceHostProps): 
             testID={props.testID}
             footer={pluginStack}
         />
+        {serverId && entryActions.logOccurrence ? (
+            <LocalServiceLogsCompanion
+                serverId={serverId}
+                occurrence={entryActions.logOccurrence}
+                onClose={entryActions.dismissServiceLogs}
+                testID={`${props.testID}-logs`}
+            />
+        ) : null}
+    </>);
+}
+
+function LocalServiceLogsCompanion({ serverId, occurrence, onClose, testID }: Readonly<{
+    serverId: string;
+    occurrence: LocalServiceLogOccurrence;
+    onClose: () => void;
+    testID: string;
+}>): React.ReactElement {
+    const presented = useLayoutPresentationActive();
+    const machine = useMachinePresenceSummary(serverId, presented ? occurrence.machineId : null);
+    return (
+        <DetailCompanionPane open title={t('machineServices.logs.title')} subtitle={occurrence.name}
+            onClose={onClose} testID={testID}>
+            <ServiceOccurrenceLogs
+                {...occurrence}
+                serverId={serverId}
+                machineName={machine.sentenceName ?? t('machine.thisMachineInSentence')}
+                active={presented}
+            />
+        </DetailCompanionPane>
     );
 }

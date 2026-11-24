@@ -192,11 +192,12 @@ export function useLocalServiceEntryActions(
       onStartLauncherTarget,
       onClearLauncherHistory,
       ...(input.terminalScopeId ? { onShowServiceTerminal } : {}),
-      onShowServiceLogs,
+      ...(credentialBinding ? { onShowServiceLogs } : {}),
       publicPreviewActions,
     }),
     [
       onClearLauncherHistory,
+      credentialBinding,
       input.terminalScopeId,
       onShowServiceTerminal,
       onShowServiceLogs,
