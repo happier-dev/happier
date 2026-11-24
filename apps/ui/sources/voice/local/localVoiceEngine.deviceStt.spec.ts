@@ -74,7 +74,7 @@ describe('local voice engine device STT (experimental)', () => {
         const { createLocalVoiceAdapter } = await import('@/voice/adapters/local/createLocalVoiceAdapter');
         try {
             await engine.toggleLocalVoiceTurn('s1');
-            const adapter = createLocalVoiceAdapter('local_direct', { currentUiContext: {} as never });
+            const adapter = createLocalVoiceAdapter('local_direct', { contextUpdates: false, textTurns: false });
             expect(adapter.getSnapshot()).toMatchObject({ canCommitInput: true, inputEndsOnSilence: endsOnSilence });
         } finally {
             await engine.stopLocalVoiceSession();
@@ -526,7 +526,7 @@ describe('local voice engine device STT (experimental)', () => {
                 ...snapshot, surfaceState: resolveVoiceSurfaceState(snapshot), tone: 'neutral',
                 muted: false, capturing: false, startAdmitted: true, hasRecovery: false,
             });
-            expect(control).toMatchObject({ surfaceState: 'live', live: true, primaryAction: 'end' });
+            expect(control).toMatchObject({ surfaceState: 'ending', live: true, primaryAction: 'end' });
             expect(getVoiceSessionEndedAttempt()).toBeNull();
             expect(getVoiceConversationRuntimeSnapshot().state).toBe('ending');
             let restartSettled = false;
