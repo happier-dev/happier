@@ -1121,6 +1121,11 @@ resolveServerFeaturesSnapshot?: () =>
       const executor: ReturnType<
         typeof createCliActionExecutorFromCredentials
       > = await trace('daemon.cli_factory', () => createCliActionExecutorFromCredentials({
+        readRequesterWorkspaceScope: async () => {
+          const ingress = resolveRequesterIngress(executionContext);
+          return apiMachineForSessions && ingress ? await apiMachineForSessions.readRequesterWorkspaceScope(ingress)
+            : { kind: 'unavailable', reason: 'requester_authority_unavailable' };
+        },
         executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
         registerWorkflowTriggerList: list => { workflowTriggerList = list; },
         ...(requesterAccountContext ? { workflowRequesterCustody: createWorkflowRequesterCustody({

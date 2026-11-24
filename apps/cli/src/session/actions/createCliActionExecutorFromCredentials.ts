@@ -956,6 +956,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   sessionSpawnDirectTargetTransport?: SessionSpawnDirectTargetTransport;
   /** In-process transport to the current daemon's canonical machine Action handlers. */
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
+  readRequesterWorkspaceScope?: Parameters<typeof createCliActionDeps>[0]['readRequesterWorkspaceScope'];
   sessionActionRpcTransport?: SessionActionRpcTransport;
   machineAdmissionTransport?: CliActionMachineAdmissionTransport;
   /** Late-bound plugin-runtime Composer attachments for declared Session input. */
@@ -1547,6 +1548,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.machineActionDirectTargetTransport
         ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport }
         : {}),
+      ...(params.readRequesterWorkspaceScope ? { readRequesterWorkspaceScope: params.readRequesterWorkspaceScope } : {}),
       ...(params.machineId ? { explicitMachineId: params.machineId } : {}),
       ...(params.sessionActionRpcTransport ? { sessionActionRpcTransport: params.sessionActionRpcTransport } : {}),
       ...(params.externalSessionPluginAdmissionOwner

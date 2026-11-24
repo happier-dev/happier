@@ -4675,6 +4675,11 @@ export class ApiMachineClient {
         }));
     }
 
+    async readRequesterWorkspaceScope(context: RpcHandlerContext): Promise<import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncRequesterAvailabilityV1> {
+        const read = this.lifecycleDependencies.workspaceSync?.readRequesterWorkspaceScope;
+        return read ? await read(context) : { kind: 'unavailable', reason: 'requester_authority_unavailable' };
+    }
+
     async preflightWorkspaceSyncRelationshipTarget(
         request: import('@happier-dev/protocol').HandoffTargetReplacementPreflightV1,
         context: RpcHandlerContext,

@@ -35,6 +35,9 @@ vi.mock('@/configuration', async importOriginal => {
 });
 
 import { createCliActionDeps } from './createCliActionDeps';
+import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { SessionWorkspaceReturnPreviewV1Schema } from '@happier-dev/protocol/actions/specs/session/projectFilesReturn';
 import { scanWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/scanWorkspaceManifest';
@@ -60,6 +63,73 @@ afterEach(async () => {
 });
 
 describe('createCliActionDeps External Session bindings', () => {
+  it('preserves the requester workspace refusal for a controller copy of an SSH Project', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-ssh-project-return-'));
+    roots.push(activeServerDir);
+    configurationBoundary.activeServerDir = activeServerDir;
+    runtimes.push(await createAdmittedPluginRuntimeFixture({ happyHomeDir: activeServerDir, controller: pluginReloadController,
+      runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } }));
+    const credentials = {
+      token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`,
+      encryption: null,
+    };
+    persistedCredentials.current = credentials;
+    const machineId = 'controller';
+    const sourceWorkspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'ssh-project',
+      managedId: 'ssh-guest', rootPath: '/guest/project', controller: { machineId, installationId: 'installation' } };
+    const targetWorkspace = { serverId: 'home', machineId, workspaceId: 'copy', rootPath: '/controller/copy' };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials,
+      accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
+      metadata: { sessionCreationCorrespondenceV1: { v: 1,
+        sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'ssh-copy' }),
+        recipe: {
+          execution: { machineId, directory: { kind: 'path', path: targetWorkspace.rootPath } },
+          organization: { folderId: null, tagIds: [] },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+          modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+          connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+          agentSessionStartupInstructionsMarkerV1: null, checkout: null, projectFilesOrigin: { sourceWorkspace, targetWorkspace },
+        },
+      } },
+    });
+    const session = createCurrentSessionProjectionRecordFixture({ id: 'c2222222222222222222222222', encryptionMode: 'plain', share: null,
+      metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
+      ownerMetadata: fields.ownerMetadata,
+      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+        capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
+    });
+    const response = V2SessionByIdResponseSchema.parse({ session });
+    const currentness = AccountEncryptionCurrentnessResponseSchema.parse({
+      mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    });
+    http.get.mockImplementation(async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path === `/v2/sessions/${session.id}`) return { status: 200, data: response };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+      throw new Error(`unexpected_http:${path}`);
+    });
+    const handlers = new Map<string, RpcHandler>();
+    registerSessionWorkspaceReturnRpcHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials,
+      happyHomeDir: activeServerDir,
+      machineId,
+      admittedAccountEncryptionMode: 'plain',
+      pluginActionExecutionOwner: 'current_process',
+      actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) },
+      readRequesterWorkspaceScope: async () => ({ kind: 'unavailable', reason: 'agent_isolation_unavailable' }),
+      machineActionDirectTargetTransport: { machineId, invoke: async (method, input, options) => {
+        const handler = handlers.get(method);
+        if (!handler) throw new Error(`Unexpected Machine RPC: ${method}`);
+        return await handler(input, { ...options?.rpcContext, signal: options?.signal ?? new AbortController().signal,
+          localActionContext: options?.localActionContext });
+      } },
+    });
+    await expect(executor.execute(SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1, { sessionId: session.id, machineId },
+      { surface: 'ui', authority: 'present_user', actionRequestId: 'ssh-copy-return' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+  });
+
   it('prepares, reads, applies and swaps copied changes in the admitted Account scope', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-project-return-action-'));
     roots.push(activeServerDir);
