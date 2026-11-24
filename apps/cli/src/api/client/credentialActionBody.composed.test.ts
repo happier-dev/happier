@@ -1,4 +1,7 @@
 import { createServer, maxHeaderSize } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import nacl from 'tweetnacl';
 import { expect, it } from 'vitest';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
@@ -7,6 +10,8 @@ import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_S
 import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
   EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createExternalActionAuthorizedRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
+import { readEnvironmentSecretBindingPreparationForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import { MANAGED_POLICY_PROOF_HEADER } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { runExternalActionPhase } from '@/daemon/externalActions/externalActionPhase';
 import { mapUnknownErrorToControlError } from '@/cli/control/controlErrorMapping';
@@ -14,6 +19,47 @@ import { createCliWidgetInputActionDepsV1 } from '@/session/actions/widgetInputA
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { waitFailureDispositionV1 } from '@happier-dev/protocol/actions/executor/waitAction';
 import axios from './credentialAxios';
+
+it.each([
+  { kind: 'signed envelope', body: { error: 'credential_scope_denied', authorizationRefusal: 'effect_family' },
+    failure: { errorCode: 'action_forbidden', failureCause: { phase: 'home.authorization.effect_family', httpStatus: 403 } } },
+  { kind: 'endpoint', body: { ok: false, error: 'deployment_access_denied' },
+    failure: { errorCode: 'deployment_access_denied', failureCause: { phase: 'deployment.secret_launch.admission', httpStatus: 403 } } },
+  { kind: 'empty body', body: undefined,
+    failure: { errorCode: 'action_forbidden', failureCause: undefined } },
+] as const)('preserves the secret launch reader result for a $kind 403', async ({ body, failure }) => {
+  const directory = await mkdtemp(join(tmpdir(), 'credential-action-'));
+  const installationIdentityFile = join(directory, 'identity.json');
+  const server = createServer((request, response) => {
+    request.resume();
+    response.writeHead(403, { 'content-type': 'application/json' })
+      .end(body === undefined ? undefined : JSON.stringify(body));
+  });
+  try {
+    const { installationId } = await readOrCreateInstallationIdentity(installationIdentityFile);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Expected loopback listener');
+    // Home's signed proof is opaque to the client. The loopback server supplies its HTTP response.
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const result = await readEnvironmentSecretBindingPreparationForHost({
+      credentials: { token, encryption: null },
+      serverId: 'home', serverHttpBaseUrl: `http://127.0.0.1:${address.port}`,
+      machineId: 'controller', installationId, installationIdentityFile,
+      environmentId: 'environment', expectedRevision: 1, context: {}, signal: new AbortController().signal,
+      createRequestHeaders: async () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: 'fixture' }),
+    }).catch((error: unknown) => error);
+    expect(result).toMatchObject({ ok: false, errorCode: failure.errorCode });
+    if (failure.failureCause) expect(result).toMatchObject({ failureCause: failure.failureCause });
+    else expect(result).not.toHaveProperty('failureCause');
+  } finally {
+    if (server.listening) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it('sends a large signed mutation through the default HTTP parser without oversized proof headers', async () => {
   const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(41));

@@ -2,7 +2,7 @@ import axios, { type AxiosInstance, type AxiosRequestConfig, type AxiosRequestTr
 import { assertCredentialRequestRedirectAllowed, CREDENTIAL_REQUEST_REDIRECT_POLICY, CredentialRequestRedirectError,
   resolveCredentialRequestRedirect } from '@happier-dev/cli-common/homeTarget';
 import { createHttpStatusError, isAuthenticationStatus, readHttpStatus } from './httpStatusError';
-import { createSignedHomeAuthorizationHttpError } from './homeAuthorizationHttpFailure';
+import { readSignedHomeAuthorizationHttpError } from './homeAuthorizationHttpFailure';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
   EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -80,7 +80,10 @@ function assertCredentialResponseAllowed(status: number, payload: unknown, readS
   if (status === 431) throw createHttpStatusError(status, 'request_headers_too_large', 'request_headers_too_large');
   if (isAuthenticationStatus(status)) {
     const signedRequestUrl = readSignedRequestUrl();
-    if (signedRequestUrl !== undefined) throw createSignedHomeAuthorizationHttpError(status, payload, signedRequestUrl);
+    if (signedRequestUrl !== undefined) {
+      const refusal = readSignedHomeAuthorizationHttpError(status, payload, signedRequestUrl);
+      if (refusal) throw refusal;
+    }
   }
 }
 

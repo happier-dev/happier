@@ -40,8 +40,8 @@ export class SignedHomeAuthorizationHttpError extends HttpStatusError {
     }
 }
 
-/** Project Home's closed refusal phase after the transport identifies the signed request. */
-export function createSignedHomeAuthorizationHttpError(status: 401 | 403, payload: unknown, requestUrl?: string): SignedHomeAuthorizationHttpError {
+/** Project Home's refusal after the transport identifies the signed request. */
+export function readSignedHomeAuthorizationHttpError(status: 401 | 403, payload: unknown, requestUrl?: string): SignedHomeAuthorizationHttpError | undefined {
     const parsed = ExternalActionHttpErrorSchema.safeParse(payload);
     const response = parsed.success ? parsed.data : undefined;
     const path = requestUrl === undefined ? undefined : URL.parse(requestUrl, 'http://localhost')?.pathname;
@@ -54,6 +54,9 @@ export function createSignedHomeAuthorizationHttpError(status: 401 | 403, payloa
         payload && typeof payload === 'object' && 'authorizationRefusal' in payload ? payload.authorizationRefusal : undefined,
     );
     const phase = parsedPhase.success ? parsedPhase.data : undefined;
+    // A route can reject admitted work with its own 403. Only Home's refusal phase
+    // or the verify endpoint's explicit scope result identifies an authorization refusal.
+    if (status === 403 && phase === undefined && errorCode !== 'credential_scope_denied') return undefined;
     const details = response && 'details' in response && response.details !== undefined
         ? response.details : phase ? readHomeAuthorizationRefusalDetails(phase) : undefined;
     const cause = response && 'failureCause' in response ? response.failureCause : undefined;
