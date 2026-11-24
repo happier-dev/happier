@@ -77,15 +77,15 @@ it('keeps a retained native After match for the actual terminal event', async ()
   expect(published).toEqual([]);
 });
 
-it('marks an automatic before wait check unavailable when its Machine is missing', async () => {
+it('skips an automatic before wait check visibly, like any caller, when its Machine is missing', async () => {
   const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [{
     automationId: 'own', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
     ownerAccountId: 'actor', actionIds: ['machines.command.run'], phase: 'before', mode: 'wait', onFailure: 'refuse',
   }] }), settle: async () => {} });
   const selection = await port.select({ actionId: 'machines.command.run', input: { command: 'printf bypass' },
     context: { authority: 'account_automation', serverIdentityId: 'home' } });
-  expect(selection).toMatchObject({ status: 'unavailable', before: [], after: [], notices: [{
-    code: 'action_automations_not_checked', reason: 'machineRequired',
+  expect(selection).toMatchObject({ status: 'ready', before: [], after: [], notices: [{
+    code: 'action_automation_skipped', reason: 'machineRequired', automationId: 'own', triggerId: 'before',
   }] });
 });
 

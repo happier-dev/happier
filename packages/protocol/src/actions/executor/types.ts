@@ -1011,6 +1011,9 @@ export type ActionExecutorContext = Readonly<{
   /** Invocation-private original placement from admitted host preparation; never requester or wire authority. */
   admittedMachineTarget?: ActionPreparedMachineTargetV1;
 
+  /** This invocation's Machine from its spec placement and admitted operand (`readActionOperandExecutionMachineV1`); Automation evidence only, never routing or wire authority. */
+  admittedOperandMachineId?: string;
+
   /** Host-local presentation of this invocation's prepared choice; never Action/RPC input or authority. */
   onSessionCreationPrepared?: (selection: Readonly<Pick<SessionSpawnNewInputV2, 'agentTarget' | 'executionTarget'>>) => void;
 

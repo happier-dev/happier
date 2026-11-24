@@ -366,6 +366,10 @@ allow runs only if the eventual outcome matches its **Only when** condition.
 Skipping a shared check applies to that invocation, and changes to reviewed
 steps require consent again.
 
+An Action that runs on a Machine you pick, such as opening a terminal, runs
+its checks on that Machine, whether you start it from the app, Voice, the CLI
+or an Agent.
+
 When an Account Action has no execution Machine, its before and after checks
 show a Skip explaining that the Workflow needs a Machine. The Account Action
 continues. A Machine configured on the Workflow does not replace the missing

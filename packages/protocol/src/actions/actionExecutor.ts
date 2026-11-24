@@ -6,6 +6,7 @@ import { isApprovalRequestExecutionApproved } from '../approvals/approvalAutomat
 import { isMachineManagedInstallationActionIdV1 } from './specs/machineConnectionActionIdsV1.js';
 import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { createActionAutomationInvocationV1 } from './executor/actionSettlement.js';
+import { readActionOperandExecutionMachineV1 } from './executor/actionOperandExecutionMachine.js';
 import { actionAutomationAdmissionUnavailableV1 } from './executor/actionAutomationAdmission.js';
 import { isActionEffectHookableV1 } from './actionSpecs.js';
 import { prepareTeamGroupCreateActionInput, prepareTeamGroupUpdateActionInput, type TeamGroupCreateActionInputV1, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
@@ -3824,6 +3825,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             targetSessionId, ...(signal ? { signal } : {}),
           }) };
         }
+        // Without a caller Machine, the spec's placement for this admitted operand
+        // places Before selection, its Runs and settlement; a parent's never carries over.
+        const { admittedOperandMachineId: _parentOperandMachineId, ...invocationContext } = ctx;
+        const operandMachineId = readActionOperandExecutionMachineV1({ actionId, input: admittedInput,
+          caller: ctx.actionCaller, surface: ctx.surface ?? 'ui' });
+        ctx = operandMachineId ? { ...invocationContext, admittedOperandMachineId: operandMachineId } : invocationContext;
         const prepareOrigin = ctx.prepareAdmittedExecutionOrigin;
         let selection: import('./executor/actionAutomationAdmission.js').ActionAutomationSelectionV1;
         try { selection = await deps.actionAutomations.select({ actionId, input: admittedInput, context: ctx,

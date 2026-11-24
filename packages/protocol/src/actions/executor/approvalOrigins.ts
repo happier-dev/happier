@@ -14,7 +14,7 @@ import { parseAgentPermissionIntentV1Alias } from '../../runtime/permissionInten
 import { SessionAgentSpawnPolicyV1StrictSchema } from '../../account/settings/accountSettings.js';
 import { PluginSettingsAdministrationActionIdV1Schema, resolvePluginSettingsAdministrationTargetV1 } from '../../plugins/settingsAdministration.js';
 import { NpmRegistryProfileActionIdV1Schema, NpmRegistryProfileActionInputSchemasV1 } from '../npmRegistryProfileActionFamily.js';
-import { readLocalServiceControlActionRequest } from '../specs/localServices.js';
+import { readActionOperandExecutionMachineV1 } from './actionOperandExecutionMachine.js';
 import { isInternalActionId } from '../pluginActionSurface.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../externalActionExecutionAuthorization.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -300,9 +300,8 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
     || normalizeId(params.context.executionRunTargetMachineId)
     || externalAuthorization?.binding.machineId
     // Placement parses the admitted payload; durable approval input may omit live-only values.
-    || (placement === 'machine'
-      ? normalizeId(inputRecord.machineId) : '')
-    || readLocalServiceControlActionRequest(params.actionId, params.input)?.target.machineId
+    || readActionOperandExecutionMachineV1({ actionId: params.actionId, input: params.input,
+      placementInput: params.admittedInput ?? params.input, caller, surface })
     || normalizeId(params.context.defaultSessionMachineId)
     || normalizeId(inputExecutionTarget.machineId)
     || (externalTarget?.kind === 'machine' ? normalizeId(externalTarget.machineId) : '')

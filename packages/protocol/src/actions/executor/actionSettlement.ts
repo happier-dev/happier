@@ -39,12 +39,12 @@ type ActionAutomationContinuationV1 = Readonly<{
   notices?: readonly ActionAutomationNoticeV1[];
 }>;
 
-/** Execution placement comes from the admitted host, never a subject's resource identity. */
+/** Execution placement comes from the admitted host, else its spec placement's operand Machine; never a subject's resource identity. */
 export function readActionAutomationExecutionMachineV1(context: ActionExecutorContext): string | undefined {
   return context.admittedMachineTarget?.machineId
     ?? (context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : undefined)
     ?? context.agentStartContext?.baseline.machineId
-    ?? context.defaultSessionMachineId ?? undefined;
+    ?? context.defaultSessionMachineId ?? context.admittedOperandMachineId ?? undefined;
 }
 
 export function createActionAutomationInvocationV1(args: ActionAutomationContinuationV1 & Readonly<{
