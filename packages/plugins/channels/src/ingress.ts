@@ -6423,8 +6423,8 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
       await Promise.all(fixingBindings.map(binding => resumeExhaustedPullRequestInputs({ binding,
         connectionAuthorityEpoch: connection.value.payload.authorityEpoch, fixAttemptLimit }, context)));
     }
-    // Progress-only CAS keeps the authority epoch but advances the physical
-    // baseline used by this provider cycle and its effect-time assertions.
+    // Progress-only CAS advances the captured PR baseline used by the provider
+    // request and PR settlement without changing its authority epoch.
     pollBindings = projectCheckpointedPollBindings({ bindingRows: pollBindingRows });
     execution = await context.services.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
       poll,
@@ -6572,7 +6572,6 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
     executionOrigin: getPluginMachineExecutionRouting(execution.executionOrigin),
     authorityEpoch: current.value.payload.authorityEpoch,
     connection: current,
-    bindingRows: pollBindingRows,
     pullRequestProvider,
     providerDisplayName,
   };
@@ -6591,13 +6590,16 @@ export async function runConversationCheckpointedPollForInvocation(input: Readon
         return binding === undefined ? [] : [binding];
       });
     }
-    if (result.kind === 'batch') {
+    if (result.kind === 'batch' && result.observations.length > 0) {
+      // Resolve deliveries against the binding state at arrival. The rows used
+      // to build the provider request can predate a re-arm during its wait.
+      const bindingRows = await readBindingsForConnection({ context, connectionId: current.value.id });
       const batchOutcome = await routeCheckpointedPollBatch({
         context,
         connectionId: current.value.id,
         routingIdentityKey: current.value.payload.routingIdentityKey,
         pairing,
-        source: { ...source, connection: current, bindingRows: pollBindingRows },
+        source: { ...source, connection: current, bindingRows },
         observations: result.observations,
       });
       if (batchOutcome.kind === 'unsettled') return { kind: 'retry' };

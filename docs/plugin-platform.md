@@ -6352,6 +6352,9 @@ refusals still require the existing repair/Retry Action. A successful native
 history-gap baseline clears the poll failure while retaining the visible notice.
 Compatible checkpointed-pull transfers preserve both the saved cursor and any
 existing notice; the notice alone does not require a new baseline.
+Channels reads the current binding inventory once when routing a received batch,
+after the provider wait. The request retains its captured provider inputs, and the
+checkpoint advances only after routing settles under the connection's authority.
 The notice states that earlier items may have been missed and offers dismissal
 only. Providers report native continuity facts and never own a second checkpoint
 or gap policy.

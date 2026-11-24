@@ -9845,8 +9845,80 @@ expectedConnectionAuthorityEpoch: 1, pairingRequestId: 'pairing-request-1',
 });
 
 describe('Conversation checkpointed-poll ingress', () => {
-  it('reads binding inventory once per poll and admits only the changed observations', async () => {
-    const inventories: string[][] = [];
+  it.each(['before poll', 'during Bot API read'] as const)('routes native Telegram reply 230 to the Workflow armed %s (FIN cut 38)', async armTiming => {
+    let reads = 0;
+    const received = { update_id: 9001, message: {
+      message_id: 230, message_thread_id: 208, is_topic_message: true, date: Math.floor(Date.now() / 1000),
+      chat: { id: -100456, type: 'supergroup', is_forum: true, title: 'Forum' },
+      from: { id: 42, is_bot: false }, text: 'please run the workflow',
+      reply_to_message: { message_id: 229, from: { id: 12345, is_bot: true } },
+    } };
+    const { 'session-id': sessionId, ...binding } = channelBinding();
+    const endpoint = { kind: 'thread' as const, audience: 'shared' as const, id: '-100456:208', parentId: '-100456' };
+    const writeBinding = (enabled: boolean) => harness.rows.set(binding.id, stateRow({
+      ...binding,
+      ...(enabled ? {} : { 'session-id': sessionId }),
+      payload: {
+        ...binding.payload, enabled, endpoint, inputMode: 'addressedMessages', allowedPrincipalIds: ['42'],
+        authorityEpoch: enabled ? 9 : 7,
+        target: enabled
+          ? { kind: 'automation', automationId: 'automation-1', policy: { resultDelivery: 'finalResult' } }
+          : binding.payload.target,
+      },
+    }, enabled ? 20 : 18));
+    const harness = createIngressHarness({
+      execute: (id): JsonValue => {
+        if (id !== 'automation.conversation.admit') throw new Error(`Unexpected host Action '${id}'`);
+        return { kind: 'admitted', runId: 'run-230', checkpointSafe: true };
+      },
+      pollExecution: (input, signal) => pollTelegramObservations(input, {
+        plugin: { id: telegramProviderPluginId, version: '0.0.0' },
+        contribution: { id: 'telegram/poll-updates', qualifiedId: 'happier.channel.telegram/actions/telegram/poll-updates' },
+        surface: 'plugin', invokedAtMs: Date.now(), signal,
+        caller: { kind: 'plugin', pluginId: 'happier.channels',
+          contribution: { id: 'ingress-supervisor', qualifiedId: 'happier.channels/background/ingress-supervisor' },
+          occurrenceId: 'cut-38-fixture', sourceCustody: { kind: 'development', registeredRootId: 'cut-38-fixture' },
+          materialization: telegramExecutionOrigin.materializationRef },
+        // The credential/test HTTP boundaries are substituted. The provider parses a real Bot API update.
+        services: { connectedAccounts: { materialize: async () => ({ kind: 'environment', env: { TELEGRAM_BOT_TOKEN: ['12345', 'fixture'].join(':') } }) },
+          http: { request: async (request: Readonly<{ url: string }>) => {
+            let result: JsonValue;
+            if (request.url.endsWith('/getMe')) {
+              result = { id: 12345, is_bot: true, first_name: 'Happier', username: 'happier_bot', can_read_all_group_messages: true };
+            } else if (request.url.endsWith('/getUpdates')) {
+              if (++reads === 1) result = [];
+              else {
+                if (armTiming === 'during Bot API read') writeBinding(true);
+                result = [received];
+              }
+            } else throw new Error('Unexpected Telegram HTTP request');
+            return { status: 200, finalUrl: request.url, headers: { 'content-type': 'application/json' },
+              body: new TextEncoder().encode(JSON.stringify({ ok: true, result })) };
+          } },
+        } as unknown as PluginServices,
+      }),
+    });
+    replaceConnectionPayload(harness.rows, { providerConfig: { botUsername: 'happier_bot', canReadAllGroupMessages: true } });
+    writeBinding(false);
+    const poll = () => runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context);
+    await expect(poll()).resolves.toMatchObject({ kind: 'committed' });
+    if (armTiming === 'before poll') writeBinding(true);
+    await expect(poll()).resolves.toMatchObject({ kind: 'committed' });
+    expect(harness.rows.get(binding.id)?.revision).toBe(20);
+    expect(record(currentCheckpoint(harness.rows)?.value.payload).opaqueToken).toMatchObject({ offset: '9002' });
+    expect(harness.execute).toHaveBeenCalledWith('automation.conversation.admit',
+      expect.objectContaining({
+        automationId: 'automation-1', bindingId: binding.id, text: received.message.text,
+        resultDelivery: expect.objectContaining({ kind: 'finalResult' }),
+      }),
+      { signal: harness.context.signal });
+    expect([...harness.rows.values()].find(row => row.value['binding-id'] === binding.id
+      && row.value['record-kind'] === 'ingress-obligation')?.value.payload)
+      .toMatchObject({ target: { kind: 'automation', automationId: 'automation-1' }, disposition: 'admitted' });
+  });
+
+  it('shares one routing inventory across the received batch and admits only its observations', async () => {
+    const inventoryReads: number[] = [];
     let providerSelections = 0;
     let cycle = 0;
     const harness = createIngressHarness({
@@ -9856,7 +9928,7 @@ describe('Conversation checkpointed-poll ingress', () => {
       },
       afterCollectionQuery: ({ index, rowIds }) => {
         if (index === CHANNEL_STATE_INDEX_ID.byConnectionKindV1
-          && rowIds.some(id => id.startsWith('binding-'))) inventories.push([...rowIds]);
+          && rowIds.some(id => id.startsWith('binding-'))) inventoryReads.push(cycle);
       },
       pollExecution: (): JsonValue => {
         cycle += 1;
@@ -9871,12 +9943,13 @@ describe('Conversation checkpointed-poll ingress', () => {
       rows: harness.rows, bindingId: `binding-${ordinal}`, endpointId: `unrelated:${ordinal}`, sessionId: 'session-1',
     });
     await runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context);
-    inventories.length = 0;
+    expect(inventoryReads).toEqual([0]);
+    inventoryReads.length = 0;
     providerSelections = 0;
     await expect(runConversationCheckpointedPollForInvocation({ connectionId: 'connection-1', waitMs: 0 }, harness.context))
       .resolves.toMatchObject({ kind: 'committed' });
     expect(harness.send).toHaveBeenCalledTimes(2);
-    expect(inventories).toHaveLength(1);
+    expect(inventoryReads).toEqual([1, 2]);
     expect(providerSelections).toBe(1);
   });
   it('commits a completed poll across an unrelated readiness observation', async () => {
