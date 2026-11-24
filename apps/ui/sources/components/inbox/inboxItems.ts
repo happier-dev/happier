@@ -379,6 +379,8 @@ function sameItem(left: InboxItem, right: InboxItem): boolean {
         && areSessionAppearanceColorsEqual(left.appearanceColor, right.appearanceColor)
         && left.context === right.context && left.createdAt === right.createdAt && left.read === right.read
         && left.remindAt === right.remindAt
+        && left.expectedDuring?.kind === right.expectedDuring?.kind
+        && shallow(left.expectedDuring?.operation, right.expectedDuring?.operation)
         && left.pageRoute === right.pageRoute && shallow(left.focus, right.focus)
         && left.source.kind === right.source.kind && left.source.id === right.source.id && left.source.serverId === right.source.serverId
         && left.source.displayName === right.source.displayName && left.sourceLabel === right.sourceLabel && left.excerpt === right.excerpt

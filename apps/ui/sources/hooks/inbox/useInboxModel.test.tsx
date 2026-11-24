@@ -55,6 +55,7 @@ import { DiscussionSummaryV1Schema, DiscussionMessageV1Schema } from '@happier-d
 import { DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { readRegisteredDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
 
+import { t } from '@/text';
 import { InboxModelProvider, useInboxModel, type InboxModel } from './useInboxModel';
 import { useInboxExecutionRunCount } from './useInboxExecutionRunSource';
 import { useInboxDiscussionSource } from './useInboxDiscussionSource';
@@ -299,40 +300,73 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } finally { await screen.unmount(); }
     });
 
-    it.each(['reboot', 'backup'] as const)('keeps one C1 health condition in Updates during its readable %s operation and restores blocking after settlement', async kind => {
+    it.each([
+        ['reboot', 'blocked', 'machines.reboot'],
+        ['backup', 'blocked', 'deployments.backups.run'],
+        ['deploy', 'update', 'deployments.deploy'],
+    ] as const)('adds and removes expected downtime for a readable %s and a %s C1 notice', async (kind, type, actionId) => {
         listRuns.mockResolvedValue(page([]));
         const serverId = appliedSnapshot().serverId;
-        const artifact = createServiceHealthNoticeArtifactFixture(serverId, { header: { type: 'blocked' } });
-        seedArtifacts({ [artifact.id]: artifact });
+        const artifact = createServiceHealthNoticeArtifactFixture(serverId, { header: { type } });
+        const unaffected = createAccountNoticeArtifactFixture({ id: 'unrelated-update' });
+        seedArtifacts({ [artifact.id]: artifact, [unaffected.id]: unaffected });
         const operation: ActionOperationSnapshotV1 = {
-            version: 1, operationId: `health-${kind}`, revision: 1, actionId: kind === 'reboot' ? 'machines.reboot' : 'deployments.backups.run', state: 'running',
-            scope: { accountId: 'account-a', machineId: 'machine' }, title: 'Reboot', createdAt: Date.now(),
+            version: 1, operationId: `health-${kind}`, revision: 1, actionId, state: 'running',
+            scope: { accountId: 'account-a', machineId: 'machine' }, title: 'Maintenance', createdAt: Date.now(),
             cancellation: 'unsupported', domainRef: kind === 'reboot' ? { kind: 'machineReboot', serverId, machineId: 'machine',
                 installationId: 'installation-a', task: { id: 'task', taskKind: 'machine.reboot.v1' },
                 basis: { dispatchStarted: true, bootedAt: 1, expectedRunningServiceIds: ['instance/web'], expectedRunningServicesKnown: true } } : { kind: 'deployment', serverId, environmentId: 'environment', deploymentId: 'deployment',
-                expectedDown: { operation: 'backup', targetLinkId: 'link', machineId: 'machine', installationId: 'installation-a',
+                expectedDown: { operation: kind, targetLinkId: 'link', machineId: 'machine', installationId: 'installation-a',
                     serviceIds: ['instance/web'], domains: [] } },
         };
-        actionOperationStore.mergeSnapshots({ serverId, snapshots: [operation] });
-        const screen = await renderModel();
+        const renders = new Map<string, number>();
+        const RowProbe = React.memo(function RowProbe({ item }: { item: InboxModel['items'][number] }) {
+            renders.set(item.source.id, (renders.get(item.source.id) ?? 0) + 1);
+            return null;
+        });
+        function NoticeRows() {
+            return useInboxModel().items.filter(item => item.producer === 'notice')
+                .map(item => <RowProbe key={item.key} item={item} />);
+        }
+        const screen = await renderModel(<><MountedInboxContent view="updates" /><NoticeRows /></>);
+        const label = t('inbox.actionOperations.expectedDuring', { operation: kind });
         try {
             const rows = () => model!.items.filter(item => item.source.id === artifact.id);
+            const restingView = type === 'blocked' ? 'needs_you' : 'updates';
+            expect(rows()).toEqual([expect.objectContaining({ view: restingView, type })]);
+            expect(rows()[0]!.expectedDuring).toBeUndefined();
+            expect(screen.getTextContent()).not.toContain(label);
+            expect(renders.get(artifact.id)).toBeGreaterThan(0);
+            expect(renders.get(unaffected.id)).toBeGreaterThan(0);
+            renders.clear();
+
+            for (let arrival = 0; arrival < 4; arrival += 1) {
+                await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{
+                    ...operation, operationId: `unrelated-${arrival}`, domainRef: undefined,
+                }] }));
+            }
+            expect(renders.size).toBe(0);
+
+            await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [operation] }));
             expect(rows()).toEqual([expect.objectContaining({ view: 'updates', expectedDuring: {
                 kind, operation: { serverId, machineId: 'machine', operationId: `health-${kind}` },
             } })]);
+            expect(screen.getTextContent()).toContain(label);
+            expect([...renders]).toEqual([[artifact.id, 1]]);
             expect(await readInbox()).toMatchObject({ ok: true, result: { items: expect.arrayContaining([
                 expect.objectContaining({ expectedDuring: { kind, operation: {
                     serverId, machineId: 'machine', operationId: `health-${kind}`,
                 } } }),
             ]) } });
             await act(async () => model!.markItemOpened(rows()[0]!));
-            expect(model!.accountNotices[0]!.header).toMatchObject({ healthPhase: 'open', resolved: false });
+            expect(model!.accountNotices.find(entry => entry.artifact.id === artifact.id)?.header).toMatchObject({ healthPhase: 'open', resolved: false });
             await act(async () => actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...operation,
                 revision: 2, state: 'failed', settledAt: Date.now() }] }));
-            expect(rows()).toEqual([expect.objectContaining({ view: 'needs_you', type: 'blocked' })]);
+            expect(rows()).toEqual([expect.objectContaining({ view: restingView, type })]);
             expect(rows()[0]!.expectedDuring).toBeUndefined();
+            expect(screen.getTextContent()).not.toContain(label);
             expect(readAccountNoticeArtifactHeader(storage.getState().artifacts[artifact.id]!, 'account-a'))
-                .toMatchObject({ type: 'blocked', healthPhase: 'open', resolved: false });
+                .toMatchObject({ type, healthPhase: 'open', resolved: false });
         } finally { await screen.unmount(); actionOperationStore.reset(); }
     });
 
