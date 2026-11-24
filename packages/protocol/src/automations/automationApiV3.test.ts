@@ -209,7 +209,8 @@ const run = {
 
 describe('Automation versioned API schemas', () => {
   it('keeps one reply-handoff owner and no singular definition aliases', () => {
-    expect(Api.AutomationReplyHandoffStateV3Schema).toBe(AutomationRunReplyHandoffStateV1Schema);
+    expect(Api.AutomationReplyHandoffStateV3Schema.def.entries)
+      .toEqual(AutomationRunReplyHandoffStateV1Schema.def.entries);
     expect(Api).not.toHaveProperty('AutomationV3DefinitionSchema');
     expect(Api).not.toHaveProperty('AutomationManualDefinitionCreateRequestSchema');
     expect(Api).not.toHaveProperty('AutomationScheduleDefinitionCreateRequestSchema');
@@ -320,7 +321,7 @@ describe('Automation versioned API schemas', () => {
     }).executionRecipe?.templateVersion).toBe(4);
   });
 
-  it('accepts a plain Event display carrier only for a full-editor enablement write', () => {
+  it('preserves a plain Event definition envelope in reconcile and revisioned enablement requests', () => {
     const triggerDefinitionEnvelope = {
       t: 'plain' as const,
       v: {
@@ -360,12 +361,13 @@ describe('Automation versioned API schemas', () => {
       removedTriggers: [],
     };
     expect(Api.AutomationDefinitionReconcileRequestSchema.parse(request)).toEqual(request);
-    expect(Api.AutomationTriggerPatchRequestSchema.safeParse({
+    const patch = {
       triggerId: 'trigger-event-1',
       expectedRevision: 1,
       enabled: false,
       triggerDefinitionEnvelope,
-    }).success).toBe(false);
+    };
+    expect(Api.AutomationTriggerPatchRequestSchema.parse(patch)).toEqual(patch);
   });
 
   it('accepts one strict ciphertext-blind Event authoring arm bound by client-stable ids', () => {
@@ -422,10 +424,6 @@ describe('Automation versioned API schemas', () => {
     expect(Api.AutomationTriggerPatchRequestSchema.safeParse({
       ...enableOnlyReseal,
       trigger: (({ enabled: _enabled, ...definition }) => definition)(encrypted),
-    }).success).toBe(false);
-    expect(Api.AutomationTriggerPatchRequestSchema.safeParse({
-      ...enableOnlyReseal,
-      triggerDefinitionEnvelope: { t: 'plain', v: { private: true } },
     }).success).toBe(false);
   });
 

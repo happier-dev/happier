@@ -239,6 +239,7 @@ describe('saved editor Start through the real front door and Account admission',
             <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} />
         </AppPaneProvider></ModalProvider>, {
             createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }), contains: () => false, focus: () => {},
+                scrollTo: () => {},
                 addEventListener: () => {}, removeEventListener: () => {},
                 ownerDocument: { addEventListener: () => {}, removeEventListener: () => {} },
                 measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
