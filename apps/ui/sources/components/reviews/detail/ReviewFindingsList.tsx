@@ -190,7 +190,7 @@ export function ReviewFindingsLoading() {
       <ItemGroup title={<View style={styles.sectionTitlePending}>
         <SkeletonTitle lineHeight={happierPageTextMetrics('sectionTitle').lineHeight} />
       </View>}>
-        <ItemLoadStateRows state={FINDINGS_LOADING} rows={2} hasLeadingMark />
+        <ItemLoadStateRows state={FINDINGS_LOADING} rows={2} leadingMark="logo" />
       </ItemGroup>
     </View>
   );

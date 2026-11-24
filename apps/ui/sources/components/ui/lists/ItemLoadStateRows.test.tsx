@@ -181,7 +181,7 @@ describe('ItemLoadStateRows', () => {
         // the titles' edge when the arriving items carry marks.
         const pending = await renderScreen(
             <SectionLeadingColumnProvider>
-                <ItemLoadStateRows hasLeadingMark testID="ids" state={{ kind: 'loading' }} rows={1} lines={1} showDivider={false} />
+                <ItemLoadStateRows leadingMark="logo" testID="ids" state={{ kind: 'loading' }} rows={1} lines={1} showDivider={false} />
             </SectionLeadingColumnProvider>,
         );
         expect(rowBox(pending, 'ids-skeleton:0')).toEqual({
@@ -242,7 +242,7 @@ describe('ItemLoadStateRows', () => {
 
         const waiting = await renderScreen(present(
             <WrappedRow>
-                <ItemLoadStateRows testID="waiting" state={{ kind: 'loading' }} rows={2} lines={lines} hasLeadingMark={marked} />
+                <ItemLoadStateRows testID="waiting" state={{ kind: 'loading' }} rows={2} lines={lines} {...(marked ? { leadingMark: 'logo' as const } : {})} />
             </WrappedRow>,
         ));
         const rowHost = waiting.findHostByTestId('waiting-skeleton:0')!;
@@ -282,6 +282,31 @@ describe('ItemLoadStateRows', () => {
         expect(Math.max(style.minHeight, style.paddingTop + style.paddingBottom + lineHeight)).toBe(
             Math.max(metrics.minHeightPx, 2 * metrics.paddingVerticalPx + metrics.title.lineHeight),
         );
+    });
+
+    it.each([
+        { leadingMark: 'avatar', radius: 'round' },
+        { leadingMark: 'logo', radius: 'small' },
+    ] as const)('reserves a column $leadingMark at the mark size the arriving rows draw it', async ({ leadingMark, radius }) => {
+        const { HappierCollectionListRowScope, HAPPIER_COLLECTION_LIST_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+        const { StyleSheet } = await import('react-native');
+        const screen = await renderScreen(
+            <HappierCollectionListRowScope>
+                <ItemLoadStateRows testID="people" state={{ kind: 'loading' }} rows={1} rowRole="catalogRow" leadingMark={leadingMark} />
+            </HappierCollectionListRowScope>,
+        );
+        const row = screen.findHostByTestId('people-skeleton:0')!;
+        const leading = row.children.find(child => typeof child !== 'string'
+            && StyleSheet.flatten(child.props.style)?.width === Math.max(HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, HAPPIER_COLLECTION_LIST_METRICS.markSize));
+        if (!leading || typeof leading === 'string') throw new Error('Missing the reserved mark column');
+        // The mark itself, not its column: the block that has a height.
+        const mark = leading.findAll(node => typeof node.type === 'string'
+            && StyleSheet.flatten(node.props.style)?.width === HAPPIER_COLLECTION_LIST_METRICS.markSize
+            && StyleSheet.flatten(node.props.style)?.height !== undefined)[0];
+        const markStyle = StyleSheet.flatten(mark?.props.style);
+        expect(markStyle?.height).toBe(HAPPIER_COLLECTION_LIST_METRICS.markSize);
+        if (radius === 'round') expect(markStyle?.borderRadius).toBe(HAPPIER_COLLECTION_LIST_METRICS.markSize / 2);
+        else expect(markStyle?.borderRadius).toBeLessThan(HAPPIER_COLLECTION_LIST_METRICS.markSize / 2);
     });
 
     it('offers no Retry when the failure cannot be retried from here', async () => {

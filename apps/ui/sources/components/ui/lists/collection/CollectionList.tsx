@@ -908,11 +908,19 @@ const COLLECTION_LIST_SKELETON_GEOMETRY = Object.freeze({
     gap: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphGap,
 });
 
-/** The same geometry for rows that carry an identity mark: the mark's box is the leading column. */
+/**
+ * The same geometry for rows that carry an identity mark: the mark's box is the leading column, and the reserved mark
+ * is drawn at the mark's own size (`markSize`, as `HappierCollectionListMark` draws it) in the mark's shape.
+ */
 const COLLECTION_LIST_MARKED_SKELETON_GEOMETRY = Object.freeze({
     ...COLLECTION_LIST_SKELETON_GEOMETRY,
     glyphColumn: Math.max(HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, HAPPIER_COLLECTION_LIST_METRICS.markSize),
+    glyphSize: HAPPIER_COLLECTION_LIST_METRICS.markSize,
 });
+const COLLECTION_LIST_AVATAR_SKELETON_GEOMETRY = Object.freeze({ ...COLLECTION_LIST_MARKED_SKELETON_GEOMETRY, glyphShape: 'round' as const });
+
+/** What leads each arriving row: a person's round avatar, or a square logo or mark (a Team's). */
+export type CollectionSkeletonLeadingMark = 'avatar' | 'logo';
 
 /**
  * A list's first load: the shared loading rows in the column's one-line navigation rows (the compact
@@ -923,10 +931,11 @@ export function CollectionSkeletonRows(props: Readonly<{
     count: number;
     rowRole?: HappierCollectionRowRole;
     /**
-     * The arriving rows carry an identity mark (a Team's logo, a person's avatar): in a column it widens the leading
-     * column to the mark's box (`markSize`, as `HappierCollectionListMark` draws it), so the bars start on the names.
+     * The arriving rows carry an identity mark (a person's avatar, a Team's logo): in a column it widens the leading
+     * column to the mark's box and draws the reserved mark at that size in the mark's shape, so nothing changes size
+     * or shape when the rows arrive and the bars start on the names.
      */
-    hasLeadingMark?: boolean;
+    leadingMark?: CollectionSkeletonLeadingMark;
     testID?: string;
     accessibilityLabel?: string;
 }>) {
@@ -945,7 +954,8 @@ export function CollectionSkeletonRows(props: Readonly<{
             geometry={pageCatalog ? { ...COLLECTION_LIST_SKELETON_GEOMETRY,
                 glyphColumn: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markBox,
                 gap: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.markGap,
-            } : props.hasLeadingMark ? COLLECTION_LIST_MARKED_SKELETON_GEOMETRY : COLLECTION_LIST_SKELETON_GEOMETRY}
+            } : props.leadingMark === 'avatar' ? COLLECTION_LIST_AVATAR_SKELETON_GEOMETRY
+                : props.leadingMark === 'logo' ? COLLECTION_LIST_MARKED_SKELETON_GEOMETRY : COLLECTION_LIST_SKELETON_GEOMETRY}
         />
     );
 }

@@ -186,7 +186,7 @@ export const TeamMembersView = React.memo(function TeamMembersView(props: Readon
                         state={{ kind: 'loading' }}
                         rows={reservedPeople}
                         // Every person's row carries their avatar, so the bars start where the names will.
-                        hasLeadingMark
+                        leadingMark="avatar"
                         accessibilityLabel={t('teams.loading')}
                     />
                 </ItemGroup>

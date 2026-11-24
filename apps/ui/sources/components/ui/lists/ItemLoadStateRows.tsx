@@ -4,7 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
-import { CollectionSkeletonRows } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionSkeletonRows, type CollectionSkeletonLeadingMark } from '@/components/ui/lists/collection/CollectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { happierPageRowDividerWidth, resolveHappierItemBehavior } from '@happier-dev/plugin-ui/presentation';
@@ -125,8 +125,11 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     rows?: number;
     /** Whether the rows being reserved carry a second line (a description or status). Defaults to two. */
     lines?: 1 | 2;
-    /** The arriving rows include a leading mark, even if no marked sibling is mounted yet. */
-    hasLeadingMark?: boolean;
+    /**
+     * The arriving rows lead with an identity mark (a person's avatar, a Team's logo), even if no marked sibling is
+     * mounted yet: the reserve keeps the mark's column and, in a catalog column, draws the mark in its size and shape.
+     */
+    leadingMark?: CollectionSkeletonLeadingMark;
     /** The rows' shape: `list` for a compact list's rows (`ItemGroup density="compact"`). */
     shape?: PageRowShape;
     /**
@@ -150,7 +153,7 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     const sectionDividers = React.useContext(ItemLoadStateRowDividersContext);
     const rowPosition = useItemGroupRowPosition();
     const bleedStyle = useSectionRowBleedStyle();
-    const hasLeadingMark = props.state.kind === 'loading' && props.hasLeadingMark === true;
+    const hasLeadingMark = props.state.kind === 'loading' && props.leadingMark !== undefined;
     const reservesLeadingColumn = useSectionLeadingColumn(hasLeadingMark) || hasLeadingMark;
     const rowBox = React.useMemo(
         () => ({ minHeight: rowMetrics.minHeightPx, paddingVertical: rowMetrics.paddingVerticalPx }),
@@ -192,7 +195,7 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
             <CollectionSkeletonRows
                 count={Math.max(1, Math.floor(props.rows ?? 2))}
                 rowRole="catalogRow"
-                hasLeadingMark={hasLeadingMark}
+                {...(hasLeadingMark && props.leadingMark ? { leadingMark: props.leadingMark } : {})}
                 {...(testID === undefined ? {} : { testID })}
                 {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
             />

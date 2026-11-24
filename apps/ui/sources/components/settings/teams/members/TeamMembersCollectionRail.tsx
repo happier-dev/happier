@@ -123,7 +123,7 @@ export const TeamMembersCollectionRail = React.memo(
           state={{ kind: 'loading' }}
           rows={reservedPeople}
           rowRole="catalogRow"
-          hasLeadingMark
+          leadingMark="avatar"
           accessibilityLabel={t('teams.loading')}
         />
       ));

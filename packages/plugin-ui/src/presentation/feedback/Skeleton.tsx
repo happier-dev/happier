@@ -198,6 +198,8 @@ export type HappierSkeletonRowGeometry = Readonly<{
   glyphColumn: number;
   /** The glyph square's size (the host's mark); defaults to the small glyph step. */
   glyphSize?: number;
+  /** `round` for a mark the arriving rows draw as a circle (a person's avatar); defaults to the small radius. */
+  glyphShape?: 'square' | 'round';
   gap: number;
 }>;
 
@@ -329,7 +331,8 @@ export function HappierSkeletonRows(props: HappierSkeletonRowsProps) {
           ) : null}
           {geometry.glyphColumn > 0 ? (
             <View style={{ width: geometry.glyphColumn, alignItems: 'flex-start', justifyContent: 'center' }}>
-              <HappierSkeletonBlock {...common} width={glyphSize} height={glyphSize} radius={SKELETON_GLYPH.radius} />
+              <HappierSkeletonBlock {...common} width={glyphSize} height={glyphSize}
+                radius={geometry.glyphShape === 'round' ? glyphSize / 2 : SKELETON_GLYPH.radius} />
             </View>
           ) : null}
           {lineHeights ? (
