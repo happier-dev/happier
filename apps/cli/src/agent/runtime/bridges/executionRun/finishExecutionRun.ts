@@ -61,14 +61,14 @@ function isRecordOutput(value: unknown): value is Readonly<Record<string, unknow
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-/** The Run envelope's prose: `summary` and `error.message`. Status, codes and ids stay exact. */
-function redactTerminalProse<T extends Readonly<{ summary?: unknown; error?: unknown }>>(value: T): T {
-  const summary = typeof value.summary === 'string' ? redactTranscriptSecrets(value.summary) : value.summary;
-  const error = isRecordOutput(value.error) && typeof value.error.message === 'string'
-    ? { ...value.error, message: redactTranscriptSecrets(value.error.message) } : value.error;
-  return summary === value.summary && error === value.error ? value : {
-    ...value, ...(summary === value.summary ? {} : { summary }), ...(error === value.error ? {} : { error }),
-  };
+/**
+ * The Run envelope's prose is its `summary`. Its `error` was projected by `projectExecutionRunError`
+ * (or read through `readExecutionRunErrorMessage`), which already masked the message once.
+ */
+function redactTerminalProse<T extends Readonly<{ summary?: unknown }>>(value: T): T {
+  if (typeof value.summary !== 'string') return value;
+  const summary = redactTranscriptSecrets(value.summary);
+  return summary === value.summary ? value : { ...value, summary };
 }
 
 type FinishRunNext = Omit<
@@ -115,7 +115,7 @@ export async function finishExecutionRun(args: Readonly<{
   if (!existing) return false;
   // The terminal result is stored, published and materialized from here, while the launch that
   // registered secrets may still be live. A profile already masked the content it decoded; the
-  // host composes the summary and error messages, which are the only prose this writer masks.
+  // host composes the summary, the only prose this writer masks; error messages come masked from the projector.
   const next = redactTerminalProse(args.next);
   const inputStructuredMeta = args.structuredMeta;
   if (existing.status !== 'running') return false;

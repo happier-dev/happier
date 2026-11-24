@@ -63,6 +63,19 @@ describe('outbound Session message content redaction', () => {
         expect(payload.v.content.data.name).toBe('mcp__postgres__query');
     });
 
+    it('classifies every stored body type from the transcript schema, and keeps an unknown body\'s identity exact', () => {
+        const ids = { callId: 'call-1', id: 'native-1', sidechainId: 'side-1' };
+        const callResult = { role: 'agent', content: { type: 'acp', agentId: 'native', data: {
+            type: 'tool-call-result', ...ids, output: { text: 'secret' } } } };
+        const codex = { role: 'agent', content: { type: 'codex', data: { type: 'tool-call', ...ids, name: 'native', input: { q: 'postgres' } } } };
+        const unknown = { role: 'agent', content: { type: 'acp', agentId: 'native', data: { type: 'native-future', ...ids, body: 'postgres' } } };
+        const [a, b, c] = withSecrets(() => [callResult, codex, unknown].map(content => encode({ mode: 'plain', ctx: null }, content)));
+        expect(a).toEqual({ t: 'plain', v: { ...callResult, content: { ...callResult.content, data: {
+            ...callResult.content.data, output: { text: R } } } } });
+        expect(b).toEqual({ t: 'plain', v: { ...codex, content: { ...codex.content, data: { ...codex.content.data, input: { q: R } } } } });
+        expect(c).toEqual({ t: 'plain', v: { ...unknown, content: { ...unknown.content, data: { ...unknown.content.data, body: R } } } });
+    });
+
     it('applies the same projection to the durable writer', () => {
         const message = {
             role: 'agent',

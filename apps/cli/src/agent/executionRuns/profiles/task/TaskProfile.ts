@@ -4,6 +4,7 @@ import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { invalidProfileResultOutput } from '../shared/invalidResultOutput';
+import { redactExecutionRunResultValue } from '../shared/redactExecutionRunResultValue';
 import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 function readTaskIntentInput(value: unknown) {
@@ -48,13 +49,14 @@ export const TaskProfile: ExecutionRunIntentProfile = {
       };
     }
 
-    const decoded = decodeExecutionRunProfileResult(rawText, { kind: 'json', schema: input.resultSchema });
+    const contract = { kind: 'json' as const, schema: input.resultSchema };
+    const decoded = decodeExecutionRunProfileResult(rawText, contract);
     if (!decoded.ok) return invalidProfileResultOutput('Task output did not match the required strict JSON result schema', decoded);
 
     return {
       status: 'succeeded',
       summary: 'Task completed.',
-      toolResultOutput: redactTranscriptSecrets(decoded.value),
+      toolResultOutput: redactExecutionRunResultValue(decoded.value, contract),
     };
   },
 };

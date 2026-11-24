@@ -8,6 +8,7 @@ import {
 } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { ExecutionRunHostRuntime } from '../executionRunHostRuntime';
 import type { ExecutionRunState } from '../executionRunTypes';
+import { evaluateWorkflowCondition } from '@/daemon/workflows/input';
 import { sendBackendLongLivedRun } from './backendLongLivedPrompt';
 
 // A Workflow Session step: the provider runtime is the boundary and returns this exact answer text.
@@ -15,7 +16,7 @@ async function runTypedStep(
   answer: string,
   resultContract: ExecutionRunResultContractV1,
 ) {
-  const releases = ['native', 'postgres', '1', 'secret', 'true'].map(
+  const releases = ['native', 'postgres', '1', 'secret', 'true', 'main'].map(
     registerTranscriptSecret,
   );
   try {
@@ -138,4 +139,16 @@ it('masks a plain text step result as text', async () => {
     kind: 'text',
   });
   expect(last.result).toEqual({ kind: 'text', value: `use ${R} on port 5432` });
+});
+
+it('keeps a choice the result schema declares exact, so a later condition takes the right branch', async () => {
+  const last = await runTypedStep('{"choice":"p1","mode":"main","note":"deploy main with p1"}', { kind: 'json', schema: {
+    type: 'object', required: ['choice', 'mode', 'note'],
+    properties: { choice: { enum: ['p1', 'main', 'other'] }, mode: { const: 'main' }, note: { type: 'string' } },
+  } });
+  expect(last.result).toEqual({ kind: 'json', value: { choice: 'p1', mode: 'main', note: `deploy ${R} with p${R}` } });
+  const value = last.result?.kind === 'json' ? last.result.value : null;
+  const choice = { kind: 'result', producer: { blockId: 'step', scope: { kind: 'current' } }, path: ['choice'] } as const;
+  await expect(evaluateWorkflowCondition({ kind: 'compare', operator: 'eq', left: choice, right: { kind: 'literal', value: 'p1' } },
+    { inputs: {}, resolveResult: async () => value })).resolves.toBe(true);
 });

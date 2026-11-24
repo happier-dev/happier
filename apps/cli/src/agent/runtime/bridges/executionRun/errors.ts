@@ -101,11 +101,6 @@ export function readExecutionRunErrorMessage(error: unknown, fallback = 'Executi
   return fallback;
 }
 
-/** A runtime diagnostic's message is its only prose; its code, and the issue classified from it, stay exact. */
-export function redactExecutionRunDiagnosticMessage<T extends Readonly<{ message?: string }>>(diagnostic: T): T {
-  return diagnostic.message === undefined ? diagnostic : { ...diagnostic, message: redactTranscriptSecrets(diagnostic.message) };
-}
-
 /** Reuse the runtime's typed failure evidence; untyped errors do not acquire a guessed issue. */
 export function readExecutionRunRuntimeIssue(error: unknown): NonNullable<ExecutionRunState['error']>['runtimeIssueV1'] {
   if (!error || typeof error !== 'object') return undefined;
@@ -196,7 +191,9 @@ export function createExecutionRunCodedError(code: string, message: string): Err
 
 export function createExecutionRunDiagnosticError(diagnostic: AgentRuntimeDiagnosticDataV1, occurredAt: number, agentId?: string): Error {
   return Object.assign(createExecutionRunCodedError(diagnostic.code, diagnostic.message ?? diagnostic.code), {
-    runtimeIssueV1: classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: diagnostic, occurredAt, provider: agentId }),
+    // The issue's preview quotes the message; the Error keeps it raw for the one masking projector.
+    runtimeIssueV1: classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt, provider: agentId,
+      error: diagnostic.message === undefined ? diagnostic : { ...diagnostic, message: readExecutionRunErrorMessage(diagnostic, '') } }),
   });
 }
 

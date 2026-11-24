@@ -147,7 +147,7 @@ import type {
   ReviewCommentHostActionCandidate,
   ReviewCommentHostActionMaterializationResult,
 } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
-import { createExecutionRunCodedError, createExecutionRunDiagnosticError, projectExecutionRunError, readExecutionRunErrorCode, markExecutionRunStartPreparationFailure } from './errors';
+import { createExecutionRunCodedError, createExecutionRunDiagnosticError, projectExecutionRunError, readExecutionRunErrorCode, readExecutionRunErrorMessage, markExecutionRunStartPreparationFailure } from './errors';
 import type { ResolvedCliEngineRegistry } from '@/agent/runtime/registry/engineRegistryTypes';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type {
@@ -1029,7 +1029,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         // completion can append a later publication barrier before turning idle.
         if (controller.turnInFlight) return;
         let error = { code: outcome.diagnostic.code,
-          message: outcome.diagnostic.message ?? 'Execution run input was refused before a provider effect.' };
+          message: readExecutionRunErrorMessage(outcome.diagnostic, 'Execution run input was refused before a provider effect.') };
         // Prior accepted output must finish publication before terminal profile
         // settlement can mark the remaining saved outputs failed. A rejected
         // publication is settled too; preserve that failure at the same owner.
@@ -1038,7 +1038,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         } catch (publicationError) {
           error = { code: isExecutionRunTranscriptCustodyError(publicationError)
             ? createExecutionRunTranscriptCustodyError().code : readExecutionRunErrorCode(publicationError) ?? 'execution_run_failed',
-            message: publicationError instanceof Error ? publicationError.message : 'Execution run output publication failed.' };
+            message: readExecutionRunErrorMessage(publicationError, 'Execution run output publication failed.') };
         }
         const run = this.runs.get(runId);
         if (!run || run.status !== 'running' || !isCurrent() || controller.turnInFlight) return;

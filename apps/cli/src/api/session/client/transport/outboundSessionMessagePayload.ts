@@ -7,11 +7,76 @@ import { createSessionToolOutputBindingV1 } from '@happier-dev/protocol/sessions
 import { resolveToolEnvelopeMeta } from '@happier-dev/protocol/tools/v2';
 import { isRecord } from '@happier-dev/protocol/actions/happierActionToolResult';
 
+import type { ACPMessageData, SessionEventMessage } from '@/api/session/sessionMessageTypes';
+import type { TranscriptRawAgentEventV1, TranscriptRawAgentRecordV1 } from '@happier-dev/protocol';
+
 import {
     redactAgentStatePermissionChoiceOffer,
     redactTranscriptSecrets,
     redactTranscriptSecretsExcept,
 } from './transcriptSecretRedaction';
+
+/** The literal `type`s of a union, without a catch-all arm whose `type` is any string. */
+type KnownTypes<T> = T extends { type: infer K extends string } ? string extends K ? never : K : never;
+type StoredAgentRecord<K extends TranscriptRawAgentRecordV1['type']> = Extract<TranscriptRawAgentRecordV1, { type: K }>;
+type Projection = (record: Record<string, unknown>) => Record<string, unknown>;
+
+/**
+ * Agent-authored fields of every body type the transcript schema (ACP and Codex bodies) and the live
+ * writer know. Keyed by the schema's own type unions, so a new body type is a compile error here
+ * rather than a silent fall into whole masking.
+ */
+const BODY_CONTENT_FIELDS = {
+    message: ['message'],
+    reasoning: ['message'],
+    thinking: ['text'],
+    'tool-call': ['input'],
+    'tool-result': ['output'],
+    'tool-call-result': ['output'],
+    'file-edit': ['description', 'diff', 'oldContent', 'newContent'],
+    'terminal-output': ['data'],
+    'permission-request': ['description', 'options'],
+    'context-compaction': ['sanitizedErrorPreview'],
+    task_started: [],
+    task_complete: [],
+    turn_failed: [],
+    turn_cancelled: [],
+    turn_aborted: [],
+    token_count: [],
+    'permission-response': [],
+    output: [],
+    event: [],
+} as const satisfies Record<
+    KnownTypes<StoredAgentRecord<'acp'>['data']> | KnownTypes<StoredAgentRecord<'codex'>['data']> | ACPMessageData['type'],
+    readonly string[]
+>;
+
+/** Agent-authored fields of every Session event type, keyed the same way. */
+const EVENT_CONTENT_FIELDS = {
+    message: ['message'],
+    'runtime-config-outcome': ['message'],
+    'terminal-composer-draft-blocked': ['message'],
+    'context-compaction': ['sanitizedErrorPreview'],
+    'worker-report': ['summary', 'deliverables'],
+    'agent-quota-recovered': [],
+    'agent-quota-wait': [],
+    'agent-state-sharing-degraded': [],
+    'connected-service-account-switch': [],
+    'connected-service-account-switch-attempt': [],
+    'connected-service-account-switch-deferral': [],
+    'connected-service-account-switch-deferral-completed': [],
+    'connected-service-account-switch-deferral-superseded': [],
+    'connected-service-runtime-auth-recovery': [],
+    'goal-changed': [],
+    'limit-reached': [],
+    'mcp-binding-usage': [],
+    'permission-mode-changed': [],
+    'prompt-composition': [],
+    ready: [],
+    switch: [],
+    'task-lifecycle': [],
+    'worker-update': [],
+} as const satisfies Record<KnownTypes<TranscriptRawAgentEventV1> | SessionEventMessage['type'], readonly string[]>;
 
 function redactFields(record: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
     let next = record;
@@ -23,76 +88,63 @@ function redactFields(record: Record<string, unknown>, fields: readonly string[]
     return next;
 }
 
-function redactData(
-    record: Record<string, unknown>,
-    project: (data: Record<string, unknown>) => Record<string, unknown>,
-): Record<string, unknown> {
+function redactData(record: Record<string, unknown>, project: Projection): Record<string, unknown> {
     if (!isRecord(record.data)) return record;
     const data = project(record.data);
     return data === record.data ? record : { ...record, data };
 }
 
-function redactEventBody(data: Record<string, unknown>): Record<string, unknown> {
-    return redactFields(data, data.type === 'worker-report' ? ['summary', 'deliverables'] : ['message', 'sanitizedErrorPreview']);
+/**
+ * A body type this writer does not know (an older or newer peer's) is Agent content, so it can
+ * over-mask, never leak; its type and identity fields are routing data and stay exact.
+ */
+function redactUnknownBody(data: Record<string, unknown>): Record<string, unknown> {
+    return redactTranscriptSecretsExcept(data, ['type', 'id', 'callId', 'sidechainId']);
 }
 
-function redactAcpBody(data: Record<string, unknown>): Record<string, unknown> {
-    switch (data.type) {
-        case 'message':
-        case 'reasoning':
-            return redactFields(data, ['message']);
-        case 'thinking':
-            return redactFields(data, ['text']);
-        case 'tool-call': {
-            const next = redactFields(data, ['input']);
-            const permission = next.permission;
-            if (!isRecord(permission) || !('nativeChoices' in permission)) return next;
-            const nativeChoices = redactAgentStatePermissionChoiceOffer(permission.nativeChoices);
-            return nativeChoices === permission.nativeChoices ? next : { ...next, permission: { ...permission, nativeChoices } };
-        }
-        case 'tool-result':
-            return redactFields(data, ['output']);
-        case 'file-edit':
-            return redactFields(data, ['description', 'diff', 'oldContent', 'newContent']);
-        case 'terminal-output':
-            return redactFields(data, ['data']);
-        case 'permission-request':
-            return redactFields(data, ['description', 'options']);
-        case 'event':
-            return redactData(data, redactEventBody);
-        case 'context-compaction':
-            return redactFields(data, ['sanitizedErrorPreview']);
-        case 'task_started':
-        case 'task_complete':
-        case 'turn_failed':
-        case 'turn_cancelled':
-        case 'turn_aborted':
-        case 'permission-response':
-        case 'token_count':
-        case 'output':
-            return data;
-        default:
-            // A body this projection does not know is Agent content; it can over-mask, never leak.
-            return redactTranscriptSecretsExcept(data, ['type']);
-    }
+function readContentFields(fields: Readonly<Record<string, readonly string[]>>, type: unknown): readonly string[] | null {
+    return typeof type === 'string' && Object.hasOwn(fields, type) ? fields[type] ?? null : null;
 }
+
+function redactEventBody(data: Record<string, unknown>): Record<string, unknown> {
+    const fields = readContentFields(EVENT_CONTENT_FIELDS, data.type);
+    return fields ? redactFields(data, fields) : redactUnknownBody(data);
+}
+
+function redactBody(data: Record<string, unknown>): Record<string, unknown> {
+    const fields = readContentFields(BODY_CONTENT_FIELDS, data.type);
+    if (!fields) return redactUnknownBody(data);
+    if (data.type === 'event') return redactData(data, redactEventBody);
+    const next = redactFields(data, fields);
+    const permission = next.permission;
+    if (data.type !== 'tool-call' || !isRecord(permission) || !('nativeChoices' in permission)) return next;
+    const nativeChoices = redactAgentStatePermissionChoiceOffer(permission.nativeChoices);
+    return nativeChoices === permission.nativeChoices ? next : { ...next, permission: { ...permission, nativeChoices } };
+}
+
+/** One projection per stored content type: the schema's agent record types plus user text. */
+const CONTENT_PROJECTIONS = {
+    text: content => redactFields(content, ['text']),
+    acp: content => redactData(content, redactBody),
+    codex: content => redactData(content, redactBody),
+    event: content => redactData(content, redactEventBody),
+    output: content => redactData(content, redactUnknownBody),
+} satisfies Record<TranscriptRawAgentRecordV1['type'] | 'text', Projection>;
 
 /**
- * The one projection of a stored Session message onto its Agent-authored content: user text and, in
- * an ACP body, message text, tool input and tool output values, file-edit text and terminal data.
- * Role, content and body types, ids, call ids, tool names, provider and meta are host control and stay
- * byte-identical. Shared by the live, durable and historical-import writers.
+ * The one projection of a stored Session message onto its Agent-authored content (the field lists
+ * above). Role, content and body types, ids, call ids, tool names, provider and meta are host control
+ * and stay byte-identical. Shared by the live, durable and historical-import writers.
  */
 export function redactSessionMessageContentSecrets(message: unknown): unknown {
     // A bare value is text; a record without message content (delivery facts) is host control.
     if (!isRecord(message)) return redactTranscriptSecrets(message);
     if (!isRecord(message.content)) return message;
     const content = message.content;
-    const projected = content.type === 'text' ? redactFields(content, ['text'])
-        : content.type === 'acp' ? redactData(content, redactAcpBody)
-            : content.type === 'event' ? redactData(content, redactEventBody)
-                // A content shape this projection does not know is Agent content; it can over-mask, never leak.
-                : redactTranscriptSecretsExcept(content, ['type']);
+    const type = content.type;
+    const projected = typeof type === 'string' && Object.hasOwn(CONTENT_PROJECTIONS, type)
+        ? CONTENT_PROJECTIONS[type as keyof typeof CONTENT_PROJECTIONS](content)
+        : redactUnknownBody(content);
     return projected === content ? message : { ...message, content: projected };
 }
 

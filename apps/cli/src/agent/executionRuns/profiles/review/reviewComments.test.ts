@@ -29,6 +29,7 @@ import {
 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { finishExecutionRun } from '@/agent/runtime/bridges/executionRun/finishExecutionRun';
+import { readExecutionRunErrorMessage } from '@/agent/runtime/bridges/executionRun/errors';
 import { publishExecutionRunTurn } from '@/agent/runtime/bridges/executionRun/publishExecutionRunTurn';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { projectExecutionRunPublicState, projectExecutionRunSessionUpdateState } from '@/agent/runtime/bridges/executionRun/publicState';
@@ -388,12 +389,12 @@ describe('canonical review Run comments', () => {
     const host = manager as unknown as { runs: Map<string, ExecutionRunState> };
     host.runs.set(initial.runId, initial);
     const releaseLaunch = registerTranscriptSecret(secret);
+    // Run error messages reach the terminal writer through the one error message reader.
+    const error = { code: 'execution_run_failed', message: readExecutionRunErrorMessage(new Error(`Provider said ${secret} control-error`)) };
     await finishExecutionRun({ runId: initial.runId,
-      next: { status: 'failed', finishedAtMs: 2, summary: `Summary ${secret} control-summary`,
-        error: { code: 'execution_run_failed', message: `Provider said ${secret} control-error` } },
+      next: { status: 'failed', finishedAtMs: 2, summary: `Summary ${secret} control-summary`, error },
       // A host-composed terminal envelope; Agent output inside it is masked by the profile that decoded it.
-      toolResult: { output: { status: 'failed', summary: `Answer ${secret} control-answer`,
-        error: { code: 'execution_run_failed', message: `Provider said ${secret} control-error` } } },
+      toolResult: { output: { status: 'failed', summary: `Answer ${secret} control-answer`, error } },
       runs: host.runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
       enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites });
     releaseLaunch();
@@ -454,11 +455,11 @@ describe('canonical review Run comments', () => {
     const runs = new Map([[initial.runId, initial]]);
     const releases = ['native', 'postgres', '1', 'secret', 'true'].map(registerTranscriptSecret);
     try {
+      const error = { code: 'connected_service_secret_unavailable', message: readExecutionRunErrorMessage(new Error('the secret was refused')) };
       await finishExecutionRun({ runId: initial.runId,
-        next: { status: 'failed', finishedAtMs: 2, summary: 'native secret refused',
-          error: { code: 'connected_service_secret_unavailable', message: 'the secret was refused' } },
+        next: { status: 'failed', finishedAtMs: 2, summary: 'native secret refused', error },
         toolResult: { output: { status: 'failed', summary: 'native secret refused', runId: 'run-1', callId: 'call-1',
-          sidechainId: 'sidechain-1', error: { code: 'connected_service_secret_unavailable', message: 'the secret was refused' } } },
+          sidechainId: 'sidechain-1', error } },
         runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
         enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites });
     } finally {

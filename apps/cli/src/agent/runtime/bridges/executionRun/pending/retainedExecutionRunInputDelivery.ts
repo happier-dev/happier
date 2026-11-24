@@ -17,7 +17,7 @@ import { readAdmittedSessionMediaInputForDispatchV1 } from '@/session/services/a
 import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { projectExecutionRunWorkflowInputAcceptance } from '../executionRunWorkflowObservation';
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
-import { createExecutionRunDiagnosticError, projectExecutionRunError, redactExecutionRunDiagnosticMessage } from '../errors';
+import { createExecutionRunDiagnosticError, projectExecutionRunError } from '../errors';
 
 import type {
     ExecutionRunPendingInputDelivery,
@@ -154,7 +154,7 @@ export function createRetainedExecutionRunInputDelivery(
                     ...controller.currentInputTurn,
                     state: event.kind === 'turn-complete' ? 'completed' : event.kind === 'turn-failed' ? 'failed' : 'cancelled',
                     ...(event.kind === 'turn-failed' ? { error: projectExecutionRunError(
-                        createExecutionRunDiagnosticError(redactExecutionRunDiagnosticMessage(event.diagnostic), event.emittedAtMs, options.agentId), { runId },
+                        createExecutionRunDiagnosticError(event.diagnostic, event.emittedAtMs, options.agentId), { runId },
                     ) } : {}),
                 };
                 controller.currentInputTurn = undefined;

@@ -16,7 +16,7 @@ import { ScmDiffSummaryResultErrorCodeSchema, ScmDiffSummaryPublicationReceiptSc
 import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
 import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { buildExecutionRunProfileStartParams } from './profileStart';
-import { redactExecutionRunDiagnosticMessage } from './errors';
+import { readExecutionRunErrorMessage } from './errors';
 
 /** One host publisher for retained structured turns, independent of input transport. */
 export async function publishExecutionRunTurn(args: Readonly<{
@@ -45,7 +45,7 @@ export async function publishExecutionRunTurn(args: Readonly<{
   // The profile decodes the exact Agent text and masks the prose of what it decoded, while the
   // launch that registered the secrets is live; only a diagnostic's message is prose here.
   const rawText = args.rawText;
-  const diagnostic = args.diagnostic && redactExecutionRunDiagnosticMessage(args.diagnostic);
+  const diagnostic = args.diagnostic && { ...args.diagnostic, message: readExecutionRunErrorMessage(args.diagnostic, args.diagnostic.code) };
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, run.intent, run.profileId, run.profileSourceCustody)
     : resolveExecutionRunIntentProfile(run.intent);
