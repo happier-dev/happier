@@ -20,10 +20,11 @@ const REGISTER_SCRIPT = [
 // times out deletes the mapping (rpcHandler), and so does expiry after missed refreshes, while the
 // socket can still be connected. Sockets register each method once per connection, so without the
 // restore the method stays unreachable from every other instance until the socket reconnects.
-// The newest registration owns the route: a mapping registered after ours, or written without a
-// registration time by an older server, is left alone (0, and this socket stops claiming the method);
-// one registered before ours means an older socket restored first, so it is taken back (2).
-// Returns 0 (superseded), 1 (refreshed), 2 (restored).
+// The newest registration owns the route: a mapping registered after ours is left alone (0, and
+// this socket stops claiming the method); one registered before ours means an older socket restored
+// first, so it is taken back (2). A mapping written without a registration time (an older server,
+// during a rolling update) has no known order: it is left alone but this socket keeps its claim (3).
+// Returns 0 (superseded), 1 (refreshed), 2 (restored), 3 (owner of unknown age).
 const REFRESH_OR_RESTORE_SCRIPT = [
     "local owner = redis.call('HGET', KEYS[1], 'socketId')",
     "if owner == ARGV[1] then",
@@ -33,7 +34,8 @@ const REFRESH_OR_RESTORE_SCRIPT = [
     "end",
     "if owner then",
     "local ownerAt = tonumber(redis.call('HGET', KEYS[1], 'registeredAt'))",
-    "if not ownerAt or ownerAt >= tonumber(ARGV[5]) then return 0 end",
+    "if not ownerAt then return 3 end",
+    "if ownerAt >= tonumber(ARGV[5]) then return 0 end",
     "end",
     "redis.call('HSET', KEYS[1], 'socketId', ARGV[1], 'updatedAt', ARGV[2], 'instanceId', ARGV[3], 'registeredAt', ARGV[5])",
     "redis.call('EXPIRE', KEYS[1], ARGV[4])",

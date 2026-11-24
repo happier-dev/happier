@@ -109,7 +109,7 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await newer.stopRefreshLoopIfIdle();
     });
 
-    it("leaves another socket's mapping that an older server wrote without a registration time", async () => {
+    it("leaves a mapping an older server wrote without a registration time, and restores once it is gone", async () => {
         const method = "machine-1:stop-session";
         const ownedMethods = new Set([method]);
         const coordinator = createCoordinator("socket-a", ownedMethods);
@@ -123,6 +123,13 @@ describe.skipIf(!redisUrl)("RPC route restore across instances", () => {
         await runRefreshTick();
 
         expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-legacy");
+
+        // Without a registration time the order is unknown, so the socket keeps its claim and
+        // restores the route once the older server's mapping is gone.
+        await getRedisClient().del(key);
+        await runRefreshTick();
+
+        expect(await coordinator.lookupSocketId(userId, method)).toBe("socket-a");
 
         ownedMethods.clear();
         await coordinator.stopRefreshLoopIfIdle();
