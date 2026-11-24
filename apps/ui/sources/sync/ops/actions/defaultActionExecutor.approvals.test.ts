@@ -2010,6 +2010,26 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(outgoing).toEqual([]);
         expect(homes.requestsFor('/v1/teams/invitations/create')).toEqual([]);
     });
+    it('stores the refusal when the Home cannot route an approved Machine Action', async () => {
+        const artifactId = 'missing-origin-machine';
+        await seedApproval(artifactId, ApprovalRequestV2Schema.parse({
+            v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, summary: 'Review original Machine read',
+            createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+            approval: { flow: 'deferred', result: 'required' },
+            actionId: 'paths.list_recent', actionArgs: { machineId: 'machine-exact', limit: 10 },
+            executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+                serverId: homeId, serverIdentityId: 'srv_approval_home', accountId: 'account-a',
+                machineId: 'machine-exact', actionId: 'paths.list_recent', requestId: 'missing-origin-request' },
+        }));
+        homes.answer(homeId, '/v1/machines/machine-exact', { status: 404, body: { error: 'not_found' } });
+
+        const result = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
+
+        const receipt = { status: 'failed', execution: { ok: false, errorCode: 'access_denied', effectAttempted: false } };
+        expect(persistedApproval(artifactId)).toMatchObject(receipt);
+        expect(result).toMatchObject({ ok: true, result: receipt });
+        expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([]);
+    });
     it('lets the origin daemon admit an approval whose requester Account differs from the deciding app', async () => {
         const artifactId = 'remote-origin-admission';
         await seedApproval(artifactId, ApprovalRequestV2Schema.parse({

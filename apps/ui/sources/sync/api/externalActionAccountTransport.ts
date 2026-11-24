@@ -579,8 +579,8 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         } : null;
     // Home shows this Account no such Machine: access was withdrawn or never existed, and the
     // answer cannot tell which. It is access loss, never an admission to retry.
-    if (homeRead?.notFound) return failure('access_denied' satisfies MachineAccessRefusalCodeV1);
-    if (!custody && !telemetryRead) return failure('admission_unavailable');
+    if (homeRead?.notFound) return { ...failure('access_denied' satisfies MachineAccessRefusalCodeV1), effectAttempted: false };
+    if (!custody && !telemetryRead) return { ...failure('admission_unavailable'), effectAttempted: false };
     const foreignCustody = custody !== null && custody.custodian.accountId !== account.accountId;
     const needsCustody = Boolean(telemetryRead || workflowPlacement) || foreignCustody || finite || runtimeDemand && custody?.managed
         || reviewedInvocation || retainedResource;
