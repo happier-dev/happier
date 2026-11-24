@@ -21266,6 +21266,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         setupInstalledMany: ({ count, machine }) => (machine ? `S'han instal·lat ${count} paquets a ${machine}` : `S'han instal·lat ${count} paquets`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,
         setupInstallStep: ({ name, count }) => (count === 1 ? `Instal·la ${name}` : `Instal·la ${count} paquets`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => (count === 1 ? '1 pas ha fallat.' : `${count} passos han fallat.`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `${completed} de ${total} ${total === 1 ? 'pas acabat' : 'passos acabats'}.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `${completed} de ${total} passos i ${itemsCompleted} de ${itemsTotal} elements acabats.`,
         notAnswered: 'Sense resposta',

@@ -828,6 +828,8 @@ export const en = {
         // Follows the word "Completed —".
         setupInstalledSentence: ({ summary }: { summary: string }) => `${summary}.`,
         setupInstallStep: ({ name, count }: { name: string; count: number }) => (count === 1 ? `Install ${name}` : `Install ${count} packages`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => (count === 1 ? '1 step failed.' : `${count} steps failed.`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `${completed} of ${total} ${total === 1 ? 'step' : 'steps'} finished.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `${completed} of ${total} ${total === 1 ? 'step' : 'steps'} and ${itemsCompleted} of ${itemsTotal} ${itemsTotal === 1 ? 'item' : 'items'} finished.`,
         notAnswered: 'Not answered',

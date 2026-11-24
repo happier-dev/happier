@@ -213,6 +213,41 @@ describe('workflow editor declared bindings', () => {
         expect(resting.findByTestId('editor-action-quiet-field-command')).not.toBeNull();
     });
 
+    it('reads a declared default as the field\'s value and edits it with the same field a chosen value gets (FIN-DESIGN-ACCEPT-10 M4)', async () => {
+        const { workflowEditorStyles } = await import('./workflowEditorStyles');
+        const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+        const { chooseDropdownMenuItem } = await import('@/dev/testkit/harness/dropdownMenuHarness');
+        const block = { kind: 'action' as const, id: 'notify', actionId: 'notifications.notify_me', input: {} };
+        const draft = buildWorkflowEditorDraftFromDefinition({ draftId: 'notify', name: 'Notify',
+            definition: createWorkflowDefinitionFixture({ blocks: [block] }) });
+        const resolveFieldOptions = Object.assign(() => [{ value: 'push', label: 'Push notifications' }], {});
+        const changed = vi.fn();
+        const props = { draft, ordinal: 1, total: 1, actions: [], onSelect: () => {}, onChangeBlock: changed,
+            resolveFieldOptions, testIDPrefix: 'editor' };
+        const defaultText = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) => typeof node.type !== 'string'
+            && node.props.children === 'Your delivery default' && node.props.style !== undefined)[0];
+        // At rest the default is the value, in the value's role, not a caption.
+        const resting = await renderScreen(<harness.WorkflowActionBlockEditor {...props} block={block} />);
+        expect(defaultText(resting)?.props.style).toBe(workflowEditorStyles.actionFieldText);
+        // A field with no default keeps its "+ Set".
+        expect(resting.findByTestId('editor-action-notify-field-message-set')).not.toBeNull();
+        // Selected, the same field select a chosen destination draws, reading the default.
+        const selected = await renderScreen(<harness.WorkflowActionBlockEditor {...props} block={block} selected />);
+        const row = selected.findByTestId('editor-action-notify-field-channels')!;
+        const field = row.findAllByType(ActionInputFields)[0];
+        expect(field).toBeDefined();
+        expect(selected.getTextContent()).toContain('Your delivery default');
+        expect(selected.findByTestId('editor-action-notify-field-message-set')).not.toBeNull();
+        await act(async () => field!.props.onPatch({ channels: ['push'] }));
+        expect(changed.mock.lastCall?.[0]).toEqual({ ...block, input: { channels: { kind: 'literal', value: ['push'] } } });
+        // Chosen, the field's "…" returns it to the default.
+        const bound = { ...block, input: { channels: { kind: 'literal' as const, value: ['push'] } } };
+        const chosen = await renderScreen(<harness.WorkflowActionBlockEditor {...props} block={bound} selected />);
+        expect(chosen.getTextContent()).toContain('Push notifications');
+        await chooseDropdownMenuItem(chosen, 'editor-action-notify-field-channels-input-0-actions', 'remove');
+        expect(changed.mock.lastCall?.[0]).toEqual({ ...block, input: {} });
+    });
+
     it('edits command text literally while preserving its environment binding', async () => {
         const block = { kind: 'action' as const, id: 'command', actionId: 'machines.command.run', input: {
             command: { kind: 'literal' as const, value: 'printf "%s\\n" "$MESSAGE"' },

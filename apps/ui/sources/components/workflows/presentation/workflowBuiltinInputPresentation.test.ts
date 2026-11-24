@@ -21,11 +21,28 @@ describe('built-in workflow input presentation', () => {
         const hostBound = ['triggerId', 'diffFingerprint', 'previousRoundContext'];
         for (const id of ['keep-going', 'review-and-converge', 'plan-with-a-panel', 'open-a-pull-request']) {
             const inputs = resolveBuiltinWorkflowDefinitionV1(id)!.definition.inputs;
-            expect(listWorkflowPersonInputs(inputs).map((input) => input.name), id)
-                .toEqual(inputs.map((input) => input.name).filter((name) => !hostBound.includes(name)));
+            const asked = listWorkflowPersonInputs(inputs).map((input) => input.name);
+            expect(asked.filter((name) => hostBound.includes(name)), id).toEqual([]);
+            // Whatever Start needs a person for stays asked.
+            expect(asked, id).toEqual(expect.arrayContaining(inputs
+                .filter((input) => input.required && input.default === undefined && input.defaultFrom === undefined).map((input) => input.name)));
         }
         // A required input stays askable whatever its name: a form never hides what it needs to start.
         const required = [{ name: 'triggerId', valueType: 'string' as const, required: true }];
         expect(listWorkflowPersonInputs(required)).toEqual(required);
+    });
+
+    it('never offers a structured value it cannot present, unless Start needs it (FIN-DESIGN-ACCEPT-9 X2)', () => {
+        const optional = { name: 'steps', valueType: 'json' as const, required: false };
+        const requiredWithDefault = { name: 'reviewers', valueType: 'json' as const, required: true, default: [] };
+        const requiredWithoutDefault = { name: 'reviewers', valueType: 'json' as const, required: true };
+        const presented = { name: 'reviewSession', valueType: 'json' as const, required: false, inputType: { hostType: 'session' as const } };
+        const titled = { name: 'targets', valueType: 'json' as const, required: false, presentation: { title: 'Targets' } };
+        expect(listWorkflowPersonInputs([optional, requiredWithDefault])).toEqual([]);
+        expect(listWorkflowPersonInputs([requiredWithoutDefault, presented, titled])).toEqual([requiredWithoutDefault, presented, titled]);
+        // Review changes asks for its Reviewers (required, no default) and leaves its Steps to Agents and saved definitions.
+        const review = listWorkflowPersonInputs(resolveBuiltinWorkflowDefinitionV1('review-and-converge')!.definition.inputs).map((input) => input.name);
+        expect(review).toContain('reviewers');
+        expect(review).not.toContain('steps');
     });
 });

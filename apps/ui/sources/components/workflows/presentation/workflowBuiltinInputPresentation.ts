@@ -33,9 +33,21 @@ export function isWorkflowHostBoundInput(input: WorkflowInputDefinition): boolea
     return !input.required && (HOST_BOUND_WORKFLOW_INPUTS.has(input.name) || supportsWorkflowAnotherRoundV1({ inputs: [input] }));
 }
 
+/**
+ * Whether a person is asked for this input on a Run form. Not the host-bound ones, and not a structured (JSON)
+ * value its declaration gives no way to fill (no input type, choices or presentation): a bare box of JSON is a form
+ * that cannot succeed. Agents, saved definitions and the Action surface still set it. A required one with no default
+ * stays asked, so a form never hides what Start needs (FIN-DESIGN-ACCEPT-9 X2).
+ */
+export function isWorkflowPersonInput(input: WorkflowInputDefinition): boolean {
+    if (isWorkflowHostBoundInput(input)) return false;
+    const unpresentedStructure = input.valueType === 'json' && input.presentation === undefined && !isWorkflowChoiceInput(input);
+    return !unpresentedStructure || (input.required && input.default === undefined);
+}
+
 /** The inputs a person is asked for in the picker preview, its "Asks for" line and every Run form. */
 export function listWorkflowPersonInputs<T extends WorkflowInputDefinition>(inputs: readonly T[]): readonly T[] {
-    return inputs.filter((input) => !isWorkflowHostBoundInput(input));
+    return inputs.filter(isWorkflowPersonInput);
 }
 
 /** A declared source, enum or input type is chosen, never typed into the main composer. */

@@ -4,7 +4,7 @@ import type { WorkflowProblemPresentation } from '../presentation/workflowProble
 import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { useWindowDimensions, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierInputField } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField, HappierPageSectionContext, type HappierPageSection } from '@happier-dev/plugin-ui/presentation';
 import type {
   JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
 import type {
@@ -75,7 +75,7 @@ import {
 import {
   findWorkflowMainInput,
   isWorkflowChoiceInput,
-  isWorkflowHostBoundInput,
+  isWorkflowPersonInput,
   resolveWorkflowInputCopy,
   resolveWorkflowInputTitle,
 } from '../presentation/workflowBuiltinInputPresentation';
@@ -187,6 +187,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   visibilityStatus: { color: theme.colors.text.secondary, flexShrink: 1 },
 }));
+
+/**
+ * The review rows ("Agent and model", "Each step runs in") start on the column's one gutter, where the title,
+ * description and Request label start, rather than a row inset in from it (FIN-DESIGN-ACCEPT-9 X3).
+ */
+const REVIEW_ROWS_ON_COLUMN_EDGE: HappierPageSection = { rowDividerColor: 'transparent', rowInsetPx: 0, framed: false };
 
 const EMPTY_RAW_TEXT: Readonly<Record<string, string>> = {};
 const EMPTY_VALUES: Readonly<Record<string, JsonValue>> = {};
@@ -453,7 +459,7 @@ export function WorkflowRunComposer(
         : t('workflows.start.retry.start');
   // Host-bound inputs (the previous round, a trigger id, a diff fingerprint) are never asked; they keep their defaults.
   const personFields = React.useMemo(
-    () => fields.filter((field) => !isWorkflowHostBoundInput(field.definition)),
+    () => fields.filter((field) => isWorkflowPersonInput(field.definition)),
     [fields],
   );
   const mainName = findWorkflowMainInput(props.inputs)?.name;
@@ -474,7 +480,8 @@ export function WorkflowRunComposer(
     (field) => field.errorCode === 'missing_required_input',
   );
   const missing = missingFields.length;
-  const inputsMissingFields = missingFields.filter((field) => !isParticipantInput(field.definition));
+  // The composer's own input (the Request) is said once, by the readiness row: the Inputs chip counts only its own fields.
+  const inputsMissingFields = missingFields.filter((field) => field !== main && !isParticipantInput(field.definition));
   const blocked = fields.find((field) => field.blocking) ?? null;
   // A retained request was reviewed when it was first sent; the canonical admission owner re-checks it.
   const disabled =
@@ -994,7 +1001,7 @@ export function WorkflowRunComposer(
               {props.leadContent}
             </WorkflowStartDetailsLead> : null}
             {/* Hosted, the composer's own chips already say where and with what this starts. */}
-            {reviewedDefinition && !composerHosted ? <>
+            {reviewedDefinition && !composerHosted ? <HappierPageSectionContext.Provider value={REVIEW_ROWS_ON_COLUMN_EDGE}>
               {hasWhereChip ? null : <Item testID={`${prefix}-review-where`} title={t('workflows.page.sections.whereTitle')}
                 subtitle={whereSummary} showChevron={false} subtitleLines={0} />}
               {!acceptedRepeat && showsWorkflowAgent
@@ -1006,7 +1013,7 @@ export function WorkflowRunComposer(
               <Item testID={`${prefix}-review-target`} title={t('workflows.page.sections.eachStepRunsIn')}
                 subtitle={formatWorkflowRunTargetReviewSummary(targetReview, reviewedExecutionTarget)}
                 showChevron={false} subtitleLines={0} />
-            </> : null}
+            </HappierPageSectionContext.Provider> : null}
             {main === null ? (props.definition && props.workflowName ? null : (
               <Text
                 testID={`${prefix}-summary`}
@@ -1080,6 +1087,37 @@ export function WorkflowRunComposer(
           style={[columnInnerStyle, styles.footer, phoneSheet ? styles.footerStacked : null]}
         >
           <View testID={`${prefix}-status`} style={[styles.status, phoneSheet ? styles.statusStacked : null]}>
+            {/* What Start still needs sits directly under the composer card, before the facts about the Run
+                (FIN-DESIGN-ACCEPT-10 P6). */}
+            {reason === null || composerHosted ? null : (
+              <View
+                testID={`${prefix}-reason`}
+                style={styles.readiness}
+                {...(readinessOnly
+                  ? {}
+                  : { accessibilityRole: 'alert' as const })}
+              >
+                {neededMarked ? (
+                  <Icon
+                    name="warning"
+                    size={ICON_SIZE.xs}
+                    color={theme.colors.state.warning.foreground}
+                  />
+                ) : null}
+                <Text
+                  testID={`${prefix}-reason-text`}
+                  style={
+                    retained !== null || (readinessOnly && neededMarked)
+                      ? styles.readinessText
+                      : readinessOnly
+                        ? styles.secondary
+                        : styles.required
+                  }
+                >
+                  {reason}
+                </Text>
+              </View>
+            )}
             {props.notice ? (
               <Text style={styles.secondary}>{props.notice}</Text>
             ) : null}
@@ -1144,35 +1182,6 @@ export function WorkflowRunComposer(
                 ) : null}
               </View>
             ) : null}
-            {reason === null || composerHosted ? null : (
-              <View
-                testID={`${prefix}-reason`}
-                style={styles.readiness}
-                {...(readinessOnly
-                  ? {}
-                  : { accessibilityRole: 'alert' as const })}
-              >
-                {neededMarked ? (
-                  <Icon
-                    name="warning"
-                    size={ICON_SIZE.xs}
-                    color={theme.colors.state.warning.foreground}
-                  />
-                ) : null}
-                <Text
-                  testID={`${prefix}-reason-text`}
-                  style={
-                    retained !== null || (readinessOnly && neededMarked)
-                      ? styles.readinessText
-                      : readinessOnly
-                        ? styles.secondary
-                        : styles.required
-                  }
-                >
-                  {reason}
-                </Text>
-              </View>
-            )}
             {props.startProblem?.technicalDetails ? (
               <TechnicalDetailsDisclosure title={t('workflows.run.technicalDetails')}
                 testID={`${prefix}-start-problem-details`}
@@ -1288,7 +1297,7 @@ export function WorkflowRunInputs(
   const fields = React.useMemo(
     () =>
       props.fields.filter(
-        (field) => !isWorkflowHostBoundInput(field.definition),
+        (field) => isWorkflowPersonInput(field.definition),
       ),
     [props.fields],
   );

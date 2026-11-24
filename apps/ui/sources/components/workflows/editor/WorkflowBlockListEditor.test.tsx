@@ -1884,7 +1884,7 @@ describe('document anatomy (DESIGN-4)', () => {
         expect(screen.findHostByTestId('workflow-editor-workflow-review-input-then-input-0-value-trigger')).toBeNull();
         // A declared default reads as the value the child will use, named by the built-in's own label.
         const disposition = screen.findByTestId('workflow-editor-workflow-review-input-then');
-        expect(JSON.stringify(disposition?.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children))).toContain('report');
+        expect(JSON.stringify(disposition?.findAll((node) => typeof node.props?.children === 'string').map((node) => node.props.children))).toContain('Report findings');
         // Pressing the default binds it, ready to edit.
         await screen.pressByTestIdAsync('workflow-editor-workflow-review-input-then-set');
         expect(changes.at(-1)?.blocks[0]).toMatchObject({ input: { then: { kind: 'literal', value: 'report' } } });

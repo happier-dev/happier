@@ -831,6 +831,11 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     // A stopped Run says how far it got, from the server's authored progress the Run row also reads
     // (DESIGN-15 R9); unlike a success count it does not depend on the loaded history pages.
     if (run.state === 'cancelled' && run.stepProgress) {
+        // A stopped Run whose steps failed says that, from the same coverage the step rows read, rather than only how
+        // few finished beside a step marked Failed (FIN-DESIGN-ACCEPT-9 X4). A partly loaded history cannot count them.
+        if (params.historyComplete !== false && coverage.coverage === 'complete' && coverage.observedLeafCounts.failed > 0) {
+            return t('workflows.run.stoppedFailedCount', { count: coverage.observedLeafCounts.failed });
+        }
         // A loop stopped part-way still says which of its items finished, so an answer that arrived
         // never reads as "nothing finished".
         const loop = run.stepProgress.currentLoop;

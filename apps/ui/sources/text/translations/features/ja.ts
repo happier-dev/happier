@@ -21187,6 +21187,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         setupInstalledMany: ({ count, machine }) => (machine ? `${machine} に ${count} 個のパッケージをインストールしました` : `${count} 個のパッケージをインストールしました`),
         setupInstalledSentence: ({ summary }) => `${summary}。`,
         setupInstallStep: ({ name, count }) => (count === 1 ? `${name} をインストール` : `${count} 個のパッケージをインストール`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => `${count} 件のステップが失敗しました。`,
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `${total} ステップ中 ${completed} 件が完了。`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `${total} ステップ中 ${completed} 件、${itemsTotal} 項目中 ${itemsCompleted} 件が完了。`,
         notAnswered: '未回答',

@@ -2,7 +2,6 @@ import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
-import { findWorkflowActionSpec } from './workflowActionCatalog';
 
 const SEPARATOR = ' → ';
 
@@ -20,15 +19,12 @@ export function formatWorkflowSummaryLine(draft: WorkflowEditorDraft, input: Rea
 
 /**
  * A top-level block as this line names it mid-sentence ("find the cause"): the Sentence view's step chips
- * (round 1116c Q4). A step with nothing written yet reads by its kind ("agent step").
+ * (round 1116c Q4). A step with nothing written yet reads by its kind ("agent step"). A chip names the
+ * step, never its field values: a default destination and a chosen one read alike ("share the update"),
+ * and the step's card says which (FIN-DESIGN-ACCEPT-10 P7).
  */
 export function formatWorkflowSummaryStepName(block: WorkflowBlock): string {
-    const name = lowerSentenceStart(readSummaryPart(block) ?? workflowBlockReferenceLabel(block));
-    if (block.kind !== 'action') return name;
-    const fields = findWorkflowActionSpec(block.actionId, [], { authored: true })?.inputHints?.fields ?? [];
-    const defaults = fields.flatMap(({ path, unsetLabel }) =>
-        unsetLabel !== undefined && !path.includes('.') && block.input[path] === undefined ? [unsetLabel] : []);
-    return [name, ...defaults].join(' · ');
+    return lowerSentenceStart(readSummaryPart(block) ?? workflowBlockReferenceLabel(block));
 }
 
 /** A block by its name; an unnamed Agent step by its prompt's first sentence; an empty step says nothing. */

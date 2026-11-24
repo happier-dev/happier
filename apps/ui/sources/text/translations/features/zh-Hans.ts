@@ -21127,6 +21127,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         setupInstalledMany: ({ count, machine }) => (machine ? `已在 ${machine} 上安装 ${count} 个软件包` : `已安装 ${count} 个软件包`),
         setupInstalledSentence: ({ summary }) => `${summary}。`,
         setupInstallStep: ({ name, count }) => (count === 1 ? `安装 ${name}` : `安装 ${count} 个软件包`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => `${count} 个步骤失败。`,
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `已完成 ${completed}/${total} 个步骤。`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `已完成 ${completed}/${total} 个步骤和 ${itemsCompleted}/${itemsTotal} 项。`,
         notAnswered: '未回答',

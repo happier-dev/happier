@@ -645,10 +645,11 @@ describe('workflow composer admission', () => {
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(onRun).toHaveBeenCalledWith({ request: 'Plan the release', previousRoundContext: null });
     });
-    it('keeps the needed-inputs chip visible when the missing field is the sole main text input', async () => {
+    it('says a missing sole main text input once, in the readiness row, with no Inputs chip repeating it (FIN-DESIGN-ACCEPT-9 X3)', async () => {
         const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'brief', valueType: 'string', required: true }]}
             values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
-        expect(screen.findByTestId('workflow-run-inputs-inputs-chip')).not.toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-inputs-chip')).toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-reason')).not.toBeNull();
     });
     it('projects the first text input into the composer and other inputs into its chip', async () => {
         const { screen } = await mount({ brief: 'Release the current draft' });

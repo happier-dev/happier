@@ -21127,6 +21127,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         setupInstalledMany: ({ count, machine }) => (machine ? `已在 ${machine} 上安裝 ${count} 個套件` : `已安裝 ${count} 個套件`),
         setupInstalledSentence: ({ summary }) => `${summary}。`,
         setupInstallStep: ({ name, count }) => (count === 1 ? `安裝 ${name}` : `安裝 ${count} 個套件`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => `${count} 個步驟失敗。`,
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `已完成 ${completed}/${total} 個步驟。`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `已完成 ${completed}/${total} 個步驟和 ${itemsCompleted}/${itemsTotal} 項。`,
         notAnswered: '未回答',

@@ -184,7 +184,10 @@ export function WorkflowBindingRow(props: Readonly<{
     onEdit?: () => void;
     /** Binds an unset field (editing only). */
     onSet?: () => void;
-    /** Draws the bound value's editor (editing only). */
+    /**
+     * Draws the bound value's editor (editing only). For an unset field with a `defaultLabel`, it may draw the
+     * field reading that default (non-null); `null` keeps the default as the row's pressable value.
+     */
     renderEditor?: () => React.ReactNode;
     /**
      * The editor draws the field's label line itself, with Insert at its end (round 1116b g: a text
@@ -204,7 +207,7 @@ export function WorkflowBindingRow(props: Readonly<{
     // to the page body (DESIGN-9 N5). Web only: native focus has no body to fall to.
     const valueRef = React.useRef<View>(null);
     const focusValueOnOpen = React.useRef(false);
-    const valueEditorOpen = binding !== undefined && editing && props.renderEditor !== undefined;
+    const valueEditorOpen = (binding !== undefined || props.defaultLabel !== undefined) && editing && props.renderEditor !== undefined;
     React.useEffect(() => {
         if (!focusValueOnOpen.current || !valueEditorOpen) return;
         focusValueOnOpen.current = false;
@@ -219,13 +222,19 @@ export function WorkflowBindingRow(props: Readonly<{
     // on a phone (DESIGN-7 N5). Editing, the binding's own controls take the presses.
     let rowAction: Readonly<{ testID: string; accessibilityLabel: string; onPress: () => void }> | null = null;
     let value: React.ReactNode;
-    if (binding === undefined) {
+    // A declared default is the field's value until one is chosen: selected, the caller's editor draws the same
+    // field a chosen value gets, reading the default (an Action field's `unsetLabel`, FIN-DESIGN-ACCEPT-10 M4).
+    const unsetEditor = binding === undefined && editing && props.defaultLabel !== undefined ? props.renderEditor?.() ?? null : null;
+    if (unsetEditor !== null) {
+        value = unsetEditor;
+    } else if (binding === undefined) {
         const settable = props.editable && props.onSet !== undefined;
         if (settable) rowAction = { testID: `${props.testID}-set`, accessibilityLabel: `${t('workflows.page.blocks.set')} ${props.label}`, onPress: () => {
             focusValueOnOpen.current = true;
             props.onSet!();
         } };
-        value = props.defaultLabel !== undefined ? <Text style={workflowEditorStyles.metaText}>{props.defaultLabel}</Text>
+        // The default reads as the value it is, in the value's ink; only "Not set" is a quiet caption.
+        value = props.defaultLabel !== undefined ? <Text style={workflowEditorStyles.actionFieldText}>{props.defaultLabel}</Text>
             : settable ? (
                 <View style={workflowEditorStyles.addRow}>
                     <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />

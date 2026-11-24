@@ -21272,6 +21272,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         machineUnavailable: ({ machine }) => `Этот запуск потерял связь с ${machine}.`,
         machineUnavailableBody: 'Варианты продолжения появятся, когда станет известно текущее состояние.',
         completedCount: ({ count }) => (count === 1 ? 'единственный шаг завершён.' : `все шаги (${count}) завершены.`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => `Не удалось шагов: ${count}.`,
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `Завершено шагов: ${completed} из ${total}.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `Завершено шагов: ${completed} из ${total}, элементов: ${itemsCompleted} из ${itemsTotal}.`,
         completedWithSkipped: ({ completed, skipped }) => `Завершено шагов: ${completed}; пропущено: ${skipped}.`,

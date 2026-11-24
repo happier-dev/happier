@@ -464,6 +464,16 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: false })).toBe(t('workflows.run.stoppedCount', { completed: 1, total: 5 }));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, stepProgress: null }, coverage })).toBe(t('workflows.runState.cancelled'));
     });
+    it('says a stopped Run’s failed steps rather than how few finished (FIN-DESIGN-ACCEPT-9 X4)', () => {
+        const failedOne = { observedLeafCounts: { completed: 0, failed: 1, attention: 0 }, coverage: 'complete' as const, knownFailure: true };
+        const run = createWorkflowRunSummaryFixture({ state: 'cancelled', workflowCustodyState: 'settled', stepProgress: { completed: 0, total: 1 } });
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: failedOne })).toBe(t('workflows.run.stoppedFailedCount', { count: 1 }));
+        expect(t('workflows.run.stoppedFailedCount', { count: 1 })).toBe('1 step failed.');
+        expect(t('workflows.run.stoppedFailedCount', { count: 2 })).toBe('2 steps failed.');
+        // A partly loaded history cannot count every failure: the server's progress stays the statement.
+        expect(formatWorkflowRunOutcomeSentence({ run, coverage: { ...failedOne, coverage: 'partial' } }))
+            .toBe(t('workflows.run.stoppedCount', { completed: 0, total: 1 }));
+    });
     it('says which items of a loop finished when a Run stopped inside it', () => {
         const coverage = { observedLeafCounts: { completed: 1, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
         const run = createWorkflowRunSummaryFixture({ state: 'cancelled', workflowCustodyState: 'settled',

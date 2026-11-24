@@ -21271,6 +21271,8 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         machineUnavailable: ({ machine }) => `To uruchomienie straciło kontakt z ${machine}.`,
         machineUnavailableBody: 'Możliwości wznowienia pojawią się, gdy poznamy bieżący stan.',
         completedCount: ({ count }) => (count === 1 ? 'jedyny krok jest gotowy.' : `wszystkie kroki (${count}) są gotowe.`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => `Nieudane kroki: ${count}.`,
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `Ukończone kroki: ${completed} z ${total}.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `Ukończone kroki: ${completed} z ${total}, elementy: ${itemsCompleted} z ${itemsTotal}.`,
         completedWithSkipped: ({ completed, skipped }) => `Ukończone kroki: ${completed}; pominięte: ${skipped}.`,

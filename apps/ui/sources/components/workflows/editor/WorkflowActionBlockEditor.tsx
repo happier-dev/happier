@@ -194,6 +194,30 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                 const fieldId = `${rowPrefix}-field-${row.key}`;
                 const literalOnly = isWorkflowActionLiteralFieldV1(block.actionId, row.key);
                 const typed = binding !== undefined && textCapable(row.hint, literalOnly) && binding.kind !== 'list' && binding.kind !== 'object';
+                const unsetLabel = row.hint?.unsetLabel;
+                // A field with a declared default has nothing to clear to: an emptied choice is the default again.
+                const bindLiteral = (next: unknown) => setBinding(row.key, unsetLabel !== undefined && (next === undefined || (Array.isArray(next) && next.length === 0) || (typeof next === 'string' && next.trim() === ''))
+                    ? undefined : { kind: 'literal', value: next as Extract<WorkflowValueReference, { kind: 'literal' }>['value'] });
+                // The field's own control for a literal. Unset, a field with a declared default reads that default as its
+                // value; a chosen value never does, so one whose choices are still loading never reads as the default.
+                const literalField = (readsDefault: boolean) => row.hint === null || row.hint.widget === 'json' ? undefined : (value: unknown, onChange: (next: unknown) => void) => (
+                    <ActionInputFields
+                        // An empty value well says what goes in it, like the plain value entry (DESIGN-9 N5): a
+                        // typed field asks for a value; a choice keeps its select's own "Choose…" rather than "Type…".
+                        fields={[readsDefault && unsetLabel !== undefined ? { ...row.hint!, placeholder: unsetLabel }
+                            : row.hint!.placeholder !== undefined || row.hint!.widget === 'select' || row.hint!.widget === 'multiselect'
+                                ? row.hint!
+                                : { ...row.hint!, placeholder: t('workflows.condition.literalPlaceholder') }]}
+                        input={{ [row.key]: value }}
+                        editable={editable}
+                        frame="none"
+                        resolveFieldOptions={resolveFieldOptions}
+                        onPatch={(patch) => onChange(patch[row.key])}
+                        resolveFieldTestID={() => `${fieldId}-literal`}
+                    />
+                );
+                const defaultLiteral = unsetLabel === undefined ? undefined : literalField(true);
+                const chosenLiteral = literalField(false);
                 return (
                     <WorkflowBindingRow
                         key={row.key}
@@ -219,9 +243,22 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                             if (row.hint === null) return null;
                             return formatActionInputFieldChoice(row.hint, value, resolveFieldOptions);
                         }}
-                        onSet={() => { setBinding(row.key, initialActionFieldLiteral(row.hint)); props.onSelect(); }}
+                        // A declared default is already a value: pressing it opens its field rather than binding an empty one.
+                        onSet={() => { if (unsetLabel === undefined) setBinding(row.key, initialActionFieldLiteral(row.hint)); props.onSelect(); }}
                         editorOwnsLabel={typed}
-                        renderEditor={() => binding === undefined ? null : typed ? (
+                        renderEditor={() => binding === undefined ? defaultLiteral === undefined ? null : (
+                            // Unset, the field reads its default as its value; choosing one binds it.
+                            <WorkflowValueReferenceEditor
+                                reference={initialActionFieldLiteral(row.hint) as WorkflowValueReference}
+                                index={0}
+                                draft={props.draft}
+                                stepId={block.id}
+                                literalOnly={literalOnly}
+                                onChange={(next) => next.kind === 'literal' ? bindLiteral(next.value) : setBinding(row.key, next)}
+                                renderLiteral={defaultLiteral}
+                                testIDPrefix={fieldId}
+                            />
+                        ) : typed ? (
                             // Words with values inside (owner 2026-11-15): typed directly, Insert puts a value at the caret.
                             <WorkflowActionTextFieldEditor
                                 draft={props.draft}
@@ -286,25 +323,8 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                 draft={props.draft}
                                 stepId={block.id}
                                 literalOnly={literalOnly}
-                                onChange={(next) => setBinding(row.key, next)}
-                                {...(row.hint === null || row.hint.widget === 'json' ? {} : {
-                                    renderLiteral: (value: unknown, onChange: (next: unknown) => void) => (
-                                        <ActionInputFields
-                                            // An empty value well says what goes in it, like the plain value entry (DESIGN-9 N5): a
-                                            // typed field asks for a value; a choice keeps its select's own "Choose…" rather than "Type…".
-                                            fields={[row.hint === null || row.hint.placeholder !== undefined
-                                                || row.hint.widget === 'select' || row.hint.widget === 'multiselect'
-                                                ? row.hint as EffectiveActionInputField
-                                                : { ...row.hint, placeholder: t('workflows.condition.literalPlaceholder') }]}
-                                            input={{ [row.key]: value }}
-                                            editable={editable}
-                                            frame="none"
-                                            resolveFieldOptions={resolveFieldOptions}
-                                            onPatch={(patch) => onChange(patch[row.key])}
-                                            resolveFieldTestID={() => `${fieldId}-literal`}
-                                        />
-                                    ),
-                                })}
+                                onChange={(next) => next.kind === 'literal' ? bindLiteral(next.value) : setBinding(row.key, next)}
+                                {...(chosenLiteral === undefined ? {} : { renderLiteral: chosenLiteral })}
                                 {...(row.required ? {} : { onRemove: () => setBinding(row.key, undefined), label: row.label })}
                                 testIDPrefix={fieldId}
                             />

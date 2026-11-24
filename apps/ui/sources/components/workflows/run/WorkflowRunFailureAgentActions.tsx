@@ -44,12 +44,11 @@ export function WorkflowRunFailureAgentActions(props: Readonly<{
     );
     const leads = props.emphasis !== 'secondary';
     return <>
-        {props.actions == null ? investigate : (
-            <View style={styles.actions}>
-                {leads ? investigate : props.actions}
-                {leads ? props.actions : investigate}
-            </View>
-        )}
+        {/* Always the one actions row, so a lone Investigate keeps its own width at every size (FIN-DESIGN-ACCEPT-10 P4b). */}
+        <View style={styles.actions}>
+            {leads ? investigate : props.actions}
+            {leads ? props.actions : investigate}
+        </View>
         {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner
             outcome={investigation.outcome}
             serverId={props.subject.serverId}

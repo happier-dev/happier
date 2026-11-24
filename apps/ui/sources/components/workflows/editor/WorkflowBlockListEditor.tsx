@@ -1529,7 +1529,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
             return (
               <Text
                 testID={`${testIDPrefix}-${block.kind}-${block.id}-only-when`}
-                style={workflowEditorStyles.groupSummary}
+                // A condition reads in one role wherever it stands: the caption an If's "Only when …" lane uses (FIN-DESIGN-ACCEPT-9 X1).
+                style={workflowEditorStyles.laneLabel}
                 accessibilityLabel={spoken}
               >
                 {prose === null ? spoken : <WorkflowReferenceSentence draft={draft} sentence={spoken} references={prose.references} />}

@@ -145,4 +145,38 @@ describe('workflow composer accessibility', () => {
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.accessibilityHint).toBeUndefined();
         expect(screen.findByTestId('workflow-run-inputs-reason')).toBeNull();
     });
+    it('puts what Start needs directly under the composer, before the facts about the Run (FIN-DESIGN-ACCEPT-10 P6)', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'release', valueType: 'string', required: true }]}
+            values={{}} includesUnsavedEdits onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        const order = screen.findByTestId('workflow-run-inputs-status')!.findAll((node) => typeof node.type === 'string'
+            && (node.props.testID === 'workflow-run-inputs-reason' || node.props.testID === 'workflow-run-inputs-unsaved'))
+            .map((node) => node.props.testID as string);
+        expect(order).toEqual(['workflow-run-inputs-reason', 'workflow-run-inputs-unsaved']);
+    });
+    it('says a missing Request once, in the readiness row, not again on the Inputs chip (FIN-DESIGN-ACCEPT-9 X3)', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'release', valueType: 'string', required: true },
+            { name: 'notes', valueType: 'number', required: false }]}
+            values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(screen.findByTestId('workflow-run-inputs-reason-text')?.props.children).toBe('workflows.start.addToStart');
+        expect(screen.findByTestId('workflow-run-inputs-inputs-chip')).not.toBeNull();
+        expect(screen.getTextContent()).not.toContain('workflows.start.neededNamed');
+    });
+    it('keeps a structured input it cannot present off the form, unless Start needs it (FIN-DESIGN-ACCEPT-9 X2)', async () => {
+        const onRun = vi.fn();
+        const reviewers = [{ kind: 'engine', engineId: 'claude' }];
+        const screen = await renderScreen(<WorkflowRunComposer
+            inputs={[{ name: 'reviewers', valueType: 'json', required: true, default: reviewers },
+                { name: 'steps', valueType: 'json', required: false }]}
+            values={{}} onChangeValues={() => {}} onRun={onRun} onCancel={() => {}} />);
+        // Neither is asked; the required one starts with its declared default.
+        expect(screen.findByTestId('workflow-run-inputs-inputs-chip')).toBeNull();
+        expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        expect(onRun.mock.lastCall?.[0]).toEqual({ reviewers });
+        // Required with no default: shown, so the form says what Start needs.
+        const needed = await renderScreen(<WorkflowRunComposer inputs={[{ name: 'reviewers', valueType: 'json', required: true }]}
+            values={{}} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        expect(needed.findByTestId('workflow-run-inputs-inputs-chip')).not.toBeNull();
+        expect(needed.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
+    });
 });

@@ -4106,7 +4106,7 @@ describe('the Sentence view (round 1116c)', () => {
         await screen.unmount();
     });
 
-    it('reads the Notify delivery default in Sentence only while Send to is unbound', async () => {
+    it('reads the Notify delivery default on its card while Send to is unbound, and the chip names the step alike either way (FIN-DESIGN-ACCEPT-10 P7)', async () => {
         const harness = await loadHarness();
         const base = buildDraft(harness);
         const notice = { kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
@@ -4127,12 +4127,13 @@ describe('the Sentence view (round 1116c)', () => {
         };
         const unbound = await renderNotice(notice);
         expect(unbound.destinationCopy).toContain('Your delivery default');
-        expect(unbound.sentenceCopy).toContain('Your delivery default');
+        // One rule for the chip: it names the step, never the destination, chosen or default.
+        expect(unbound.sentenceCopy).not.toContain('Your delivery default');
         const bound = await renderNotice({ ...notice, input: {
             ...notice.input, channels: { kind: 'literal', value: ['desktop'] },
         } });
         expect(bound.destinationCopy).not.toContain('Your delivery default');
-        expect(bound.sentenceCopy).not.toContain('Your delivery default');
+        expect(bound.sentenceCopy).toBe(unbound.sentenceCopy);
     });
 
     it('uses the step Agent for its Sentence chip', async () => {

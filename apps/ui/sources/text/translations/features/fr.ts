@@ -21309,6 +21309,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         setupInstalledMany: ({ count, machine }) => (machine ? `${count} paquets installés sur ${machine}` : `${count} paquets installés`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,
         setupInstallStep: ({ name, count }) => (count === 1 ? `Installer ${name}` : `Installer ${count} paquets`),
+        // Follows "Stopped —": a stopped Run with failed steps says what happened.
+        stoppedFailedCount: ({ count }: { count: number }) => (count === 1 ? '1 étape a échoué.' : `${count} étapes ont échoué.`),
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `${completed} sur ${total} ${total === 1 ? 'étape terminée' : 'étapes terminées'}.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `${completed} étapes sur ${total} et ${itemsCompleted} éléments sur ${itemsTotal} terminés.`,
         notAnswered: 'Sans réponse',
