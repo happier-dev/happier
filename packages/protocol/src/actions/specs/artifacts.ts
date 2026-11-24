@@ -141,6 +141,7 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
       // The confirm already names the document; the link's raw share id stays exact under Technical details.
       ...(id === 'artifact.public_link.revoke' ? { technicalInputPaths: ['shareId'] } : {}),
       ...(id === 'artifact.public_link.create' ? { inputHints: { fields: [
+      { path: 'artifactId', title: 'Document', widget: 'text', required: true },
       { path: 'audience', title: 'approvals.publicLinkFields.audience', widget: 'select', options: [
         { value: 'anonymous', label: 'Anyone with the link', labelKey: 'approvals.publicLinkFields.anonymous' },
         { value: 'signed_in', label: 'Signed-in viewers', labelKey: 'approvals.publicLinkFields.signedIn' },
