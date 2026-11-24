@@ -41,12 +41,14 @@ describe('shared directory viewer presentation', () => {
     });
     it.each([
         // Exactly what a Home sends when a released 0.2 sign-in reaches a Team route.
+        // The way forward is one control: signing in again, through the Home's own sign-out and its confirmation.
         { name: 'a Team refusal of the released sign-in', response: () => Response.json(
             { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } }, { status: 403 }),
-        message: () => t('teams.errors.signInOutdated'), retryable: false },
+        message: () => t('teams.errors.signInOutdated'), retryable: false, action: () => t('teams.errors.signInAgainAction') },
+        // A failed read names what could not be loaded: the Teams, which the Groups are found through.
         { name: 'a Home failure', response: () => Response.json({ error: 'internal' }, { status: 500 }),
-            message: () => t('teams.errors.loadFailed'), retryable: true },
-    ])('carries $name to the Team and Group pickers with its own words', async ({ response, message, retryable }) => {
+            message: () => t('teams.errors.teamsLoadFailed'), retryable: true, action: () => undefined },
+    ])('carries $name to the Team and Group pickers with its own words', async ({ response, message, retryable, action }) => {
         const releaseLoader = await installRealActionExecutorModuleLoader();
         const home = await serveAccountHomes({ homes: [{ key: 'legacy', serverUrl: 'https://legacy-directory.test', accountId: 'owner' }],
             route: request => request.path === '/v1/teams/list' ? response() : undefined,
@@ -64,6 +66,7 @@ describe('shared directory viewer presentation', () => {
                     expect(hook.getCurrent().sections.find(section => section.kind === kind)).toMatchObject({
                         status: 'error', error: { message: message(), retryable },
                     });
+                    expect(hook.getCurrent().sections.find(section => section.kind === kind)!.error?.action?.label).toBe(action());
                 }
             });
             expect(hook.getCurrent().sections.find(section => section.kind === 'account')!.status).toBe('idle');
@@ -88,6 +91,19 @@ describe('shared directory viewer presentation', () => {
             const scope = { serverId: home.homes.mixed!.id, accountId: 'owner' };
             const hook = await renderHook(() => useSessionAccessDirectory({ scope, enabled: true,
                 availability: 'available', operations: {}, revision: 0, contextTeams: [] }));
+            // The Team rows are the first thing the person sees: the refused Team says why there, from its first
+            // paint, and offers its sign-in in place of Add, which could only be refused.
+            let teams: readonly SessionAccessCandidateRowModel[] = [];
+            await act(async () => {
+                teams = await hook.getCurrent().sections.find(section => section.kind === 'team')!
+                    .resolveCandidates!('', new AbortController().signal);
+            });
+            const refusedTeam = teams.find(row => row.principal.ref.kind === 'team' && row.principal.ref.teamId === restricted.id);
+            expect(refusedTeam?.addition).toMatchObject({ kind: 'blocked', reason: {
+                message: t('session.access.authenticationRequired'), action: { label: t('teams.errors.signInRequiredAction') },
+            } });
+            expect(teams.find(row => row.principal.ref.kind === 'team' && row.principal.ref.teamId === open.id)?.addition)
+                .toEqual({ kind: 'allowed' });
             let groups: readonly SessionAccessCandidateRowModel[] = [];
             await act(async () => {
                 groups = await hook.getCurrent().sections.find(section => section.kind === 'group')!
@@ -95,6 +111,29 @@ describe('shared directory viewer presentation', () => {
             });
             expect(groups.map(row => row.principal.ref)).toEqual([{ kind: 'group', teamId: open.id, groupId: group.id }]);
             expect(hook.getCurrent().sections.find(section => section.kind === 'group')!.status).not.toBe('error');
+            await hook.unmount();
+        } finally { await home.dispose(); releaseLoader(); }
+    });
+    it('says a Team\'s sign-in rule on that Team\'s row only, never as an anonymous Groups line', async () => {
+        const releaseLoader = await installRealActionExecutorModuleLoader();
+        const restricted = teamSummaryFixture({ id: 'team-only-restricted', name: 'Willow Design Studio' });
+        const home = await serveAccountHomes({ homes: [{ key: 'only', serverUrl: 'https://only-restricted.test', accountId: 'owner' }],
+            route: request => request.path === '/v1/teams/list'
+                ? Response.json({ items: [restricted], nextCursor: null })
+                : request.path === '/v1/teams/groups/list'
+                    ? Response.json({ error: 'team_authentication_required' }, { status: 403 }) : undefined,
+        });
+        try {
+            const scope = { serverId: home.homes.only!.id, accountId: 'owner' };
+            const hook = await renderHook(() => useSessionAccessDirectory({ scope, enabled: true,
+                availability: 'available', operations: {}, revision: 0, contextTeams: [] }));
+            await act(async () => {
+                await hook.getCurrent().sections.find(section => section.kind === 'group')!
+                    .resolveCandidates!('', new AbortController().signal);
+            });
+            const groups = hook.getCurrent().sections.find(section => section.kind === 'group')!;
+            expect(groups.status).not.toBe('error');
+            expect(groups.error).toBeUndefined();
             await hook.unmount();
         } finally { await home.dispose(); releaseLoader(); }
     });

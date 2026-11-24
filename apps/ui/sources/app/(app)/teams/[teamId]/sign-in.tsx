@@ -11,7 +11,7 @@ import { teamSessionsPath } from '@/components/settings/teams/teamsRoutes';
 import { HomeAuthenticationFlow } from '@/components/account/auth/HomeAuthenticationFlow';
 import { TeamAuthenticationStep } from '@/components/teams/entry/TeamAuthenticationStep';
 import { projectTeamAuthSelection } from '@/components/teams/entry/teamAuthAction';
-import { teamSignInReturnPath, useTeamSignInHome, type TeamSignInHome } from '@/components/teams/entry/teamSignInHome';
+import { resolveTeamSignInDestination, teamSignInReturnPath, useTeamSignInHome, type TeamSignInHome } from '@/components/teams/entry/teamSignInHome';
 import { AccountCredentialJourney } from '@/components/account/auth/AccountCredentialJourney';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -76,11 +76,13 @@ export default function TeamSignInRoute() {
         serverId?: string | string[];
         target?: string | string[];
         postAuthInvitation?: string | string[];
+        returnTo?: string | string[];
     }>();
     const teamId = firstRouteParam(params.teamId);
     const serverId = firstRouteParam(params.serverId);
     const carrier = firstRouteParam(params.target);
     const expectsPostAuthInvitation = firstRouteParam(params.postAuthInvitation) === '1';
+    const origin = firstRouteParam(params.returnTo);
     const home = useTeamSignInHome({ carrier, serverId });
     // Expo Router updates a mounted dynamic route's params in place, so a second Team
     // link arrives without a remount. Every state below is bound to ONE Team + Home
@@ -96,17 +98,20 @@ export default function TeamSignInRoute() {
             serverId={serverId}
             carrier={carrier}
             expectsPostAuthInvitation={expectsPostAuthInvitation}
+            origin={origin}
             home={home}
         />
         </AccountCredentialJourney>
     );
 }
 
-function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitation, home }: Readonly<{
+function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitation, origin, home }: Readonly<{
     teamId: string;
     serverId: string;
     carrier: string;
     expectsPostAuthInvitation: boolean;
+    /** The in-app page that asked this member to meet the Team's sign-in rule; empty when opened any other way. */
+    origin: string;
     home: TeamSignInHome;
 }>) {
     const router = useRouter();
@@ -229,7 +234,9 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
     }
     // Only a Home with a local credential has a scope to wait for. A Home this
     // device addresses but has not signed in to is simply an anonymous visit.
-    if (savedProfileId !== null && scopeResolution.kind === 'resolving') {
+    // A sign-in in progress keeps its step: the credential it just saved re-resolves this scope, and
+    // replacing the step with a wait would end the sign-in before it can return to where it was opened from.
+    if (savedProfileId !== null && scopeResolution.kind === 'resolving' && !selection) {
         return (
             <TeamSignInStateShell stepId="resolving-account" onBack={goBackHome}>
                 <SurfaceStateCard
@@ -291,7 +298,14 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
         carrier,
         serverId,
         postAuthInvitation: expectsPostAuthInvitation,
+        returnTo: origin,
     });
+    // Opened from a refusal in the app: success goes back to that page (admitted as an in-app path only, else the
+    // Team's page), where the same Share or Start now succeeds. Any other entry keeps this page's own continuation.
+    const homeServerId = savedProfileId ?? serverId;
+    const destination = origin && homeServerId
+        ? resolveTeamSignInDestination({ teamId, serverId: homeServerId, returnTo: origin })
+        : null;
     const leaveMethod = () => runStepMove({ layer: 'workflow', kind: 'back', commit: () => setSelection(null) });
     const selectMethod = (next: TeamAuthEntrySelection) =>
         runStepMove({ layer: 'workflow', kind: 'step', commit: () => setSelection(next) });
@@ -317,7 +331,7 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
                         accountSelection: recoveringIdentity ? 'another' : 'current',
                     } : undefined}
                     onAuthenticated={() => resolvePostAuthLanding({
-                        replace: router.replaceAdmitted, teamContinuation: returnTo, revealHome: router.replace,
+                        replace: router.replaceAdmitted, teamContinuation: destination ?? returnTo, revealHome: router.replace,
                     })}
                     onBack={leaveMethod}
                 />
@@ -331,7 +345,8 @@ function TeamSignInRouteBody({ teamId, serverId, carrier, expectsPostAuthInvitat
             onBack={goBackHome}
             accountScope={scopeResolution.scope}
             accountServiceReturnTo={returnTo}
-            onContinue={() => router.replace(teamSessionsPath({
+            {...(destination ? { purpose: 'sign_in_rule' as const } : {})}
+            onContinue={() => router.replace(destination ?? teamSessionsPath({
                 serverId: scopeResolution.scope.serverId,
                 teamId,
             }))}

@@ -16815,14 +16815,22 @@ const french: TeamsTranslationRoot = {
             loadFailed: "Ces informations n’ont pas pu être chargées. Réessaie.",
             generic: 'L’opération n’a pas abouti. Rien n’a été modifié.',
             policySaveFailed: 'Ce réglage de l’équipe n’a pas pu être enregistré. Vérifie les valeurs actuelles et réessaie.',
-            signInOutdated: 'Les équipes ne sont pas disponibles avec cette connexion. Déconnecte-toi de ce Home sur cet appareil, puis reconnecte-toi pour les utiliser.',
+            signInOutdated: 'Les équipes demandent une connexion plus récente sur cet appareil.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
-            signInRequired: ({ methods }: { methods: string }) => `Cette équipe demande une connexion avec ${methods}.`,
+            signInRequired: ({ methods }: { methods: string }) => `Pour cette équipe, connecte-toi avec ${methods}.`,
             signInRequiredAction: 'Se connecter',
-            signInMethodEmailPassword: 'e-mail et mot de passe',
+            signInMethodEmailPassword: 'ton e-mail et ton mot de passe',
             signInMethodCertificate: 'un certificat d’appareil',
             signInMethodTeamConnection: 'l’authentification unique de l’équipe',
             signInMethodsOr: ' ou ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'ta clé de récupération',
+            signInMethodProvider: ({ provider }: { provider: string }) => `ton compte ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Se reconnecter',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Les équipes n’ont pas pu être chargées.',
+            groupsLoadFailed: 'Les groupes des équipes n’ont pas pu être chargés.',
             outcomeUnknown: 'Le Home a peut-être effectué cette modification. Actualise l’équipe avant de réessayer.',
             authenticationRequired: "Connecte-toi avec la méthode requise par cette équipe, puis réessaie.",
             forbidden: 'Tu n’as pas l’autorisation pour cette modification.',

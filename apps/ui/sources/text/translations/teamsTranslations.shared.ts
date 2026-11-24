@@ -193,14 +193,22 @@ export const english = {
             outcomeUnknown: 'The Home may have completed this change. Refresh the Team before trying again.',
             forbidden: 'You do not have permission for this change.',
             // A released 0.2 sign-in still works at the Home, but Team routes refuse it.
-            signInOutdated: 'Teams aren’t available with this sign-in. Sign out of this Home on this device, then sign in again to use them.',
+            signInOutdated: 'Teams need a newer sign-in on this device.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `This Team needs you signed in with ${methods}.`,
             signInRequiredAction: 'Sign in',
-            signInMethodEmailPassword: 'email and password',
+            signInMethodEmailPassword: 'your email and password',
             signInMethodCertificate: 'a device certificate',
             signInMethodTeamConnection: 'the Team’s single sign-on',
             signInMethodsOr: ' or ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'your Recovery key',
+            signInMethodProvider: ({ provider }: { provider: string }) => `your ${provider} account`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Sign in again',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Teams couldn’t be loaded.',
+            groupsLoadFailed: 'Team Groups couldn’t be loaded.',
             authenticationRequired: "Sign in with the method this Team requires, then try again.",
             notFound: 'This Team is no longer available.',
             archived: 'This Team is archived. Restore it to make changes.',

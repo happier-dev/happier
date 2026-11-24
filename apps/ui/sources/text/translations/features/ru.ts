@@ -16783,14 +16783,22 @@ const russian: TeamsTranslationRoot = {
             loadFailed: "Не удалось загрузить эти данные. Попробуйте ещё раз.",
             generic: 'Не удалось выполнить. Ничего не изменилось.',
             policySaveFailed: 'Не удалось сохранить эту настройку команды. Проверьте текущие значения и повторите попытку.',
-            signInOutdated: 'Команды недоступны с этим входом. Выйдите из этого Home на этом устройстве и войдите снова, чтобы пользоваться ими.',
+            signInOutdated: 'Для команд на этом устройстве нужен более новый вход.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Эта команда требует входа через ${methods}.`,
             signInRequiredAction: 'Войти',
-            signInMethodEmailPassword: 'электронную почту и пароль',
+            signInMethodEmailPassword: 'вашу электронную почту и пароль',
             signInMethodCertificate: 'сертификат устройства',
             signInMethodTeamConnection: 'единый вход команды',
             signInMethodsOr: ' или ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'ваш ключ восстановления',
+            signInMethodProvider: ({ provider }: { provider: string }) => `ваш аккаунт ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Войти снова',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Не удалось загрузить команды.',
+            groupsLoadFailed: 'Не удалось загрузить группы команд.',
             outcomeUnknown: 'Home мог применить это изменение. Обновите данные команды перед повторной попыткой.',
             authenticationRequired: "Войдите способом, который требуется этой команде, и повторите попытку.",
             forbidden: 'У вас нет прав на это изменение.',

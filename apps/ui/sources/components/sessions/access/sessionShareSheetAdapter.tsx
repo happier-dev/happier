@@ -244,19 +244,31 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                     // A choice, so it carries the select caret every other choice trigger has.
                     rightAccessory: () => <SessionChoiceCaret />,
                     expandedContentInset: 'none',
-                    expandedContent: () => <View>{context.options.map((option) => <Item
-                        key={option.teamId ?? 'personal'}
-                        testID={`${idPrefix}session-access-context-${option.teamId ?? 'personal'}`}
-                        // Each choice carries its mark so its title lines up with every other row's title.
-                        icon={<SessionContextOptionMark personal={option.teamId === null} />}
-                        title={option.label} subtitle={option.blockedReason?.message}
-                        selected={option.teamId === context.primaryTeamId}
-                        loading={context.operation === 'saving' && option.teamId === (context.confirmation?.teamId ?? context.primaryTeamId)}
-                        disabled={!editable || context.operation === 'saving'}
-                        onPress={() => option.blockedReason ? actions.explain(option.blockedReason) : actions.setContext(option.teamId)}
-                        showChevron={false}
-                        rightElement={option.teamId === context.primaryTeamId ? <Icon name="check" /> : undefined}
-                    />)}</View>,
+                    expandedContent: () => <View>{context.options.map((option) => {
+                        const reason = option.blockedReason;
+                        // A choice refused with its own way forward (the sign-in a Team needs) says it whole under its
+                        // name and offers that step where its check would be, as the Share Team row does.
+                        const resolution = option.teamId === context.primaryTeamId ? undefined : reason?.action;
+                        return <Item
+                            key={option.teamId ?? 'personal'}
+                            testID={`${idPrefix}session-access-context-${option.teamId ?? 'personal'}`}
+                            // Each choice carries its mark so its title lines up with every other row's title.
+                            icon={<SessionContextOptionMark personal={option.teamId === null} />}
+                            title={option.label} subtitle={reason?.message} subtitleLines={0}
+                            selected={option.teamId === context.primaryTeamId}
+                            loading={context.operation === 'saving' && option.teamId === (context.confirmation?.teamId ?? context.primaryTeamId)}
+                            disabled={!editable || context.operation === 'saving'}
+                            onPress={() => resolution ? resolution.onPress()
+                                : reason ? actions.explain(reason) : actions.setContext(option.teamId)}
+                            showChevron={false}
+                            rightElementOutsidePressable={resolution !== undefined}
+                            rightElement={option.teamId === context.primaryTeamId ? <Icon name="check" />
+                                : resolution ? <ShareRowAction useHost={useShareGrantRowPresentation} label={resolution.label}
+                                    testID={`${idPrefix}session-access-context-${option.teamId ?? 'personal'}-action`}
+                                    onPress={resolution.onPress} />
+                                : undefined}
+                        />;
+                    })}</View>,
                 }, ...(contextReason ? [{
                     // The one place the Home's refusal is said: under the context that causes it.
                     id: 'session-context-reason', testID: `${idPrefix}session-access-context-reason`,

@@ -933,12 +933,16 @@ describe('useNewSessionAccessDraft repository currentness', () => {
         let latest: Controller | null = null;
         await renderScreen(<Probe initial={null} initialPrimaryTeamId="team-willow" availability="available"
             scope={{ serverId: profile.id, accountId: 'creator' }} onReady={(controller) => { latest = controller; }} />);
-        const expected = t('teams.errors.signInRequired', { methods: t('settingsAccount.secretKey') });
-        await vi.waitFor(() => expect(latest!.model.context?.unavailableReason?.message).toBe(expected));
+        const expected = t('teams.errors.signInRequired', { methods: t('teams.errors.signInMethodRecoveryKey') });
+        await vi.waitFor(() => expect(latest!.model.context?.options.find((option) => option.teamId === 'team-willow')
+            ?.blockedReason?.message).toBe(expected));
         const context = latest!.model.context!;
-        expect(context.unavailableReason?.action?.label).toBe(t('teams.errors.signInRequiredAction'));
+        // Said once, by the refused choice itself, with the step that meets the rule: no second notice under the context.
+        expect(context.options.find((option) => option.teamId === 'team-willow')?.blockedReason?.action?.label)
+            .toBe(t('teams.errors.signInRequiredAction'));
+        expect(context.unavailableReason).toBeUndefined();
+        expect(latest!.model.notice).toBeUndefined();
         expect(context.options.find((option) => option.teamId === null)?.blockedReason).toBeUndefined();
-        expect(context.options.find((option) => option.teamId === 'team-willow')?.blockedReason?.message).toBe(expected);
         expect(JSON.stringify(context)).not.toContain(t('session.access.contextPolicyUnavailable'));
     });
 

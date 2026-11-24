@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { listServerProfiles, removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
-import { resolveTeamSignInHome, teamSignInReturnPath } from './teamSignInHome';
+import { resolveTeamSignInDestination, resolveTeamSignInHome, teamSignInReturnPath } from './teamSignInHome';
 
 function descriptorCarrier(homeServerIdentityId: string): string {
     return JSON.stringify({
@@ -107,5 +107,33 @@ describe('teamSignInReturnPath', () => {
     it('keeps a bare in-app return addressed to the same saved Home', () => {
         expect(teamSignInReturnPath({ teamId: 'team-1', serverId: 'profile-acme' }))
             .toBe('/teams/team-1/sign-in?serverId=profile-acme');
+    });
+
+    it('carries the in-app page that asked for the sign-in, and nothing else', () => {
+        const origin = '/session/s-1?right=people';
+        const path = teamSignInReturnPath({ teamId: 'team-1', serverId: 'profile-acme', returnTo: origin });
+        expect(new URLSearchParams(path.split('?')[1]).get('returnTo')).toBe(origin);
+        for (const hostile of ['https://evil.example/x', '//evil.example/x', '/\\evil.example', 'javascript:alert(1)', 'evil.example']) {
+            expect(new URLSearchParams(teamSignInReturnPath({ teamId: 'team-1', serverId: 'profile-acme', returnTo: hostile })
+                .split('?')[1]).has('returnTo')).toBe(false);
+        }
+    });
+});
+
+describe('resolveTeamSignInDestination', () => {
+    it('returns to the in-app page that asked for the sign-in', () => {
+        expect(resolveTeamSignInDestination({ teamId: 'team-1', serverId: 'profile-acme', returnTo: '/session/s-1?right=people' }))
+            .toBe('/session/s-1?right=people');
+        expect(resolveTeamSignInDestination({ teamId: 'team-1', serverId: 'profile-acme', returnTo: '/' })).toBe('/');
+    });
+
+    it('refuses an external or cross-origin return and falls back to the Team page', () => {
+        for (const hostile of ['https://evil.example/x', '//evil.example/x', '/%2F%2Fevil.example', '/\\evil.example',
+            'javascript:alert(1)', 'evil.example', '/x\u0000y']) {
+            expect(resolveTeamSignInDestination({ teamId: 'team-1', serverId: 'profile-acme', returnTo: hostile }))
+                .toBe('/teams/team-1/sessions?serverId=profile-acme');
+        }
+        expect(resolveTeamSignInDestination({ teamId: 'team-1', serverId: 'profile-acme', returnTo: null }))
+            .toBe('/teams/team-1/sessions?serverId=profile-acme');
     });
 });

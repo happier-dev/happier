@@ -1208,6 +1208,33 @@ describe('TeamAuthEntrySurface', () => {
         expect(onRecoverIdentity).toHaveBeenCalledOnce();
     });
 
+    it('asks a member meeting the Team sign-in rule only for the sign-ins this Team accepts, and says which', async () => {
+        // A member whose current sign-in this Team does not accept needs their key, not a new Account or another one.
+        entryScope = 'team';
+        const keyLogin = { kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home',
+            presentation: { displayName: 'Recovery key' } };
+        const actions = [keyLogin, { ...keyLogin, action: 'provision' }, { kind: 'switch_account' }];
+        endpointFetch.mockImplementation(async () => readyResponse('team', undefined, undefined, 'Acme Home', actions));
+        authorityFetch.mockImplementation(async () => readyResponse('team', undefined, undefined, 'Acme Home', actions));
+        const screen = await renderScreen(
+            <TeamAuthEntrySurface
+                teamId="team-1"
+                target={target}
+                accountScope={{ serverId: homeId, accountId: 'account-1' }}
+                purpose="sign_in_rule"
+                onContinue={() => {}}
+                onRecoverIdentity={() => {}}
+                onSelectAction={() => {}}
+            />,
+        );
+        await waitForTestId(screen, 'team-auth-entry-ready');
+        expect(screen.findByTestId('team-auth-entry-action:key_challenge:login')
+            ?? screen.findByTestId('team-auth-entry-action:key_challenge')).not.toBeNull();
+        expect(screen.findByTestId('team-auth-entry-action:key_challenge:provision')).toBeNull();
+        expect(screen.findByTestId('team-auth-entry-use-another-account')).toBeNull();
+        expect(screen.getTextContent()).toContain(t('teams.errors.signInRequired', { methods: t('teams.errors.signInMethodRecoveryKey') }));
+    });
+
     it('states the personal-hosting consequence only when the Home published that purpose', async () => {
         entryScope = 'invitation';
         previewResult = {

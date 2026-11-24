@@ -1,7 +1,9 @@
 import * as React from 'react';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 
+import { teamSessionsPath } from '@/components/settings/teams/teamsRoutes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { admitOpaqueInternalReturnPath } from '@/utils/path/routeUtils';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import {
     usePortableHomeLinkTarget,
@@ -134,14 +136,35 @@ export function teamSignInReturnPath(params: Readonly<{
     carrier?: string | null;
     serverId?: string | null;
     postAuthInvitation?: boolean;
+    /**
+     * The in-app page that asked this member to meet the Team's sign-in rule. Only an in-app path is carried
+     * (never an address or another origin); it is where a successful sign-in returns.
+     */
+    returnTo?: string | null;
 }>): `/teams/${string}/sign-in` | `/teams/${string}/sign-in?${string}` {
     const query = new URLSearchParams();
     const carrier = String(params.carrier ?? '').trim();
     const serverId = String(params.serverId ?? '').trim();
+    const returnTo = admitOpaqueInternalReturnPath(params.returnTo);
     if (carrier) query.set('target', carrier);
     if (serverId) query.set('serverId', serverId);
     if (params.postAuthInvitation) query.set('postAuthInvitation', '1');
+    if (returnTo) query.set('returnTo', returnTo);
     const search = query.toString();
     const pathname: `/teams/${string}/sign-in` = `/teams/${encodeURIComponent(params.teamId)}/sign-in`;
     return search ? `${pathname}?${search}` : pathname;
+}
+
+/**
+ * Where a successful sign-in to meet a Team's rule lands: the in-app page that asked for it, so the same Share or
+ * Start can follow at once, else the Team's own page. The return path arrives in a URL anyone can craft, so it is
+ * admitted here as an in-app path only; an address, another origin or a malformed value falls back to the Team.
+ */
+export function resolveTeamSignInDestination(params: Readonly<{
+    teamId: string;
+    serverId: string;
+    returnTo: string | null | undefined;
+}>): string {
+    return admitOpaqueInternalReturnPath(params.returnTo)
+        ?? teamSessionsPath({ serverId: params.serverId, teamId: params.teamId });
 }

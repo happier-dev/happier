@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { resolveHomeDisplayLabel, resolveHomeDisplayName, resolveHomeDisplayNameForServerIdentity } from '@/components/settings/server/homeDisplayName';
+import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
+import { teamAcceptedSignInNames } from '@/components/teams/entry/teamSignInRequirement';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
@@ -196,6 +198,12 @@ type TeamAuthEntrySurfaceProps = Readonly<{
      * the resolved Team and Home identify the canonical Team sign-in destination.
      */
     accountServiceReturnTo?: string;
+    /**
+     * `sign_in_rule`: a member opened this page to meet the Team's sign-in rule from a refusal in the app. The page
+     * says which sign-in the Team needs and offers only those; creating an Account or switching to another one is
+     * not what that member came for.
+     */
+    purpose?: 'sign_in_rule';
 }> & (
     | Readonly<{
         teamId: string;
@@ -298,6 +306,8 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
             : undefined),
         [scopeServerId, scopeAccountId],
     );
+    // The signed-in Account's own name on this device: the Home's entry answer may not carry it.
+    const viewerProfile = useShareViewerProfile(accountScope ?? null);
     const entryKey = React.useMemo(
         () => Symbol('team-auth-entry-destination'),
         [
@@ -662,10 +672,23 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
     if (loadState.kind === 'ready') {
         const { projection } = loadState;
         const teamName = projection.team.name;
-        const homeDisplayName = projection.home.displayName
-            ?? resolveHomeDisplayLabel(getServerProfileById(projection.home.serverId), projection.home.serverId);
+        // A member meeting this Team's sign-in rule already has an Account here and only needs a sign-in the Team
+        // accepts: the page says which, and offers only those.
+        const meetingSignInRule = props.purpose === 'sign_in_rule' && accountScope !== undefined
+            && projection.state === 'admission_required' && !invitation;
+        // The Home by its name. A member meeting a rule is on a Home this device already has, so it is named by the
+        // Home display-name owner (the name the Home publishes, else the one this device gave it); an unnamed Home is
+        // not named by its address, which the entry answer may carry as its label.
+        const homeDisplayName = meetingSignInRule
+            ? resolveHomeDisplayName(getServerProfileById(projection.home.serverId))
+                ?? resolveHomeDisplayNameForServerIdentity(projection.home.serverId)
+            : projection.home.displayName
+                ?? resolveHomeDisplayLabel(getServerProfileById(projection.home.serverId), projection.home.serverId);
+        // The Home's entry answer may carry the Account without its name (an end-to-end encrypted profile): this
+        // device names its own signed-in Account from the profile it holds.
         const accountLabel = projection.account
-            ? resolveViewerAccountDisplayName(formatAccountDisplayName(projection.account))
+            ? resolveViewerAccountDisplayName(formatAccountDisplayName(projection.account)
+                ?? (viewerProfile ? formatAccountDisplayName(viewerProfile) : null))
             : null;
         const signInServiceName = projectedSignInService?.mode === 'external'
             ? accountServiceDiscovery?.accountServiceDisplayName
@@ -683,17 +706,27 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
         const invitedMailboxMask = previewState.kind === 'ready'
             ? previewState.preview.recipientEmailMask
             : null;
-        const switchAccountOffered = projection.state === 'admission_required'
+        const switchAccountOffered = !meetingSignInRule && projection.state === 'admission_required'
             && projection.actions.some((action) => action.kind === 'switch_account');
         const entryActions = invitationProjection
             ? leadWithHomeSignUp(projection.actions)
-            : projection.actions;
+            : meetingSignInRule
+                // Creating an Account would not meet this member's rule; only the accepted sign-ins remain.
+                ? projection.actions.filter((action) => action.kind !== 'switch_account'
+                    && !(action.kind === 'authenticate' && action.action === 'provision'))
+                : projection.actions;
+        const requiredSignIns = meetingSignInRule ? teamAcceptedSignInNames(entryActions.flatMap((action) =>
+            action.kind !== 'authenticate' && action.kind !== 'provider_unavailable' ? []
+                : action.origin === 'team' ? [{ kind: 'team_connection' as const }]
+                    : [{ kind: 'home_method' as const, methodId: action.methodId }])) : '';
         const firstRunnableAuthenticateIndex = entryActions.findIndex((action) => action.kind === 'authenticate');
         // One message per state, matching the actions below it: a member opens the Team, a signed-in
         // person with a usable invitation joins, and an invitation that cannot be used (or is still
         // being read) is explained by its preview alone. Only the sign-in choices ask to sign in.
         const entryStatus = projection.state === 'already_member'
             ? t('teams.join.alreadyMemberTitle')
+            : requiredSignIns
+                ? t('teams.errors.signInRequired', { methods: requiredSignIns })
             : invitation && !invitationIsJoinable
                 ? null
                 : invitation && accountScope
@@ -966,7 +999,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 teamName={teamName}
                 logo={projection.team.logo ?? null}
                 previewState={offeredInvitation}
-                homeLabel={homeDisplayName}
+                homeLabel={homeDisplayName ?? t('common.homeProductName')}
                 headerNotice={signInServiceNotice}
                 status={admissionStateCard}
                 signedIn={Boolean(accountScope)}
@@ -986,7 +1019,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         ? resolveTeamJoinPresentation(completedAdmission.result, teamName).title
                         : undefined}
                 >
-                    {completedAdmission ? null : (
+                    {completedAdmission || !homeDisplayName ? null : (
                         <Text style={styles.subtitle}>
                             {t('teams.entry.onHome', {
                                 home: homeDisplayName,

@@ -16573,14 +16573,22 @@ const german: TeamsTranslationRoot = {
             loadFailed: "Diese Informationen konnten nicht geladen werden. Versuche es erneut.",
             generic: 'Das hat nicht geklappt. Es wurde nichts geändert.',
             policySaveFailed: 'Diese Team-Einstellung konnte nicht gespeichert werden. Prüfe die aktuellen Werte und versuche es erneut.',
-            signInOutdated: 'Teams sind mit dieser Anmeldung nicht verfügbar. Melde dich auf diesem Gerät von diesem Home ab und dann wieder an, um sie zu nutzen.',
+            signInOutdated: 'Teams brauchen auf diesem Gerät eine neuere Anmeldung.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Dieses Team braucht eine Anmeldung mit ${methods}.`,
             signInRequiredAction: 'Anmelden',
-            signInMethodEmailPassword: 'E-Mail und Passwort',
+            signInMethodEmailPassword: 'deiner E-Mail und deinem Passwort',
             signInMethodCertificate: 'einem Gerätezertifikat',
             signInMethodTeamConnection: 'dem Single Sign-on des Teams',
             signInMethodsOr: ' oder ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'deinem Wiederherstellungsschlüssel',
+            signInMethodProvider: ({ provider }: { provider: string }) => `deinem ${provider}-Konto`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Erneut anmelden',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Teams konnten nicht geladen werden.',
+            groupsLoadFailed: 'Team-Gruppen konnten nicht geladen werden.',
             outcomeUnknown: 'Das Home hat diese Änderung möglicherweise abgeschlossen. Aktualisiere das Team, bevor du es erneut versuchst.',
             authenticationRequired: "Melde dich mit der von diesem Team erforderlichen Methode an und versuche es erneut.",
             forbidden: 'Dir fehlt die Berechtigung für diese Änderung.',

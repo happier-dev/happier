@@ -16758,14 +16758,22 @@ const italian: TeamsTranslationRoot = {
             loadFailed: "Non è stato possibile caricare queste informazioni. Riprova.",
             generic: 'Operazione non riuscita. Non è stato modificato nulla.',
             policySaveFailed: 'Non è stato possibile salvare questa impostazione del team. Controlla i valori attuali e riprova.',
-            signInOutdated: 'I team non sono disponibili con questo accesso. Esci da questo Home su questo dispositivo, poi accedi di nuovo per usarli.',
+            signInOutdated: 'I team richiedono un accesso più recente su questo dispositivo.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Questo team richiede l’accesso con ${methods}.`,
             signInRequiredAction: 'Accedi',
-            signInMethodEmailPassword: 'email e password',
+            signInMethodEmailPassword: 'la tua email e la tua password',
             signInMethodCertificate: 'un certificato del dispositivo',
             signInMethodTeamConnection: 'il single sign-on del team',
             signInMethodsOr: ' o ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'la tua chiave di recupero',
+            signInMethodProvider: ({ provider }: { provider: string }) => `il tuo account ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Accedi di nuovo',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Impossibile caricare i team.',
+            groupsLoadFailed: 'Impossibile caricare i gruppi dei team.',
             outcomeUnknown: 'L’Home potrebbe aver completato questa modifica. Aggiorna il team prima di riprovare.',
             authenticationRequired: "Accedi con il metodo richiesto da questo team, poi riprova.",
             forbidden: 'Non hai l’autorizzazione per questa modifica.',

@@ -16782,14 +16782,22 @@ const polish: TeamsTranslationRoot = {
             loadFailed: "Nie udało się wczytać tych informacji. Spróbuj ponownie.",
             generic: 'Operacja nie doszła do skutku. Nic nie zostało zmienione.',
             policySaveFailed: 'Nie udało się zapisać tego ustawienia zespołu. Sprawdź bieżące wartości i spróbuj ponownie.',
-            signInOutdated: 'Zespoły nie są dostępne przy tym logowaniu. Wyloguj się z tego Home na tym urządzeniu, a potem zaloguj ponownie, aby z nich korzystać.',
+            signInOutdated: 'Zespoły wymagają nowszego logowania na tym urządzeniu.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Ten zespół wymaga logowania przez ${methods}.`,
             signInRequiredAction: 'Zaloguj się',
-            signInMethodEmailPassword: 'e-mail i hasło',
+            signInMethodEmailPassword: 'Twój e-mail i hasło',
             signInMethodCertificate: 'certyfikat urządzenia',
             signInMethodTeamConnection: 'logowanie jednokrotne zespołu',
             signInMethodsOr: ' lub ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'Twój klucz odzyskiwania',
+            signInMethodProvider: ({ provider }: { provider: string }) => `Twoje konto ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Zaloguj się ponownie',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Nie udało się wczytać zespołów.',
+            groupsLoadFailed: 'Nie udało się wczytać grup zespołów.',
             outcomeUnknown: 'Home mógł wykonać tę zmianę. Odśwież zespół przed ponowną próbą.',
             authenticationRequired: "Zaloguj się metodą wymaganą przez ten zespół i spróbuj ponownie.",
             forbidden: 'Nie masz uprawnień do tej zmiany.',

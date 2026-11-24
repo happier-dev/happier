@@ -16772,14 +16772,22 @@ const catalan: TeamsTranslationRoot = {
             loadFailed: "No s’ha pogut carregar aquesta informació. Torna-ho a provar.",
             generic: 'No s’ha pogut completar. No s’ha canviat res.',
             policySaveFailed: 'No s’ha pogut desar aquesta configuració del Team. Revisa els valors actuals i torna-ho a provar.',
-            signInOutdated: 'Els Teams no estan disponibles amb aquest inici de sessió. Tanca la sessió d’aquest Home en aquest dispositiu i torna a iniciar-la per fer-los servir.',
+            signInOutdated: 'Els Teams necessiten un inici de sessió més recent en aquest dispositiu.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Aquest Team necessita que iniciïs la sessió amb ${methods}.`,
             signInRequiredAction: 'Inicia la sessió',
-            signInMethodEmailPassword: 'correu i contrasenya',
+            signInMethodEmailPassword: 'el teu correu i la teva contrasenya',
             signInMethodCertificate: 'un certificat del dispositiu',
             signInMethodTeamConnection: 'l’inici de sessió únic del Team',
             signInMethodsOr: ' o ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'la teva clau de recuperació',
+            signInMethodProvider: ({ provider }: { provider: string }) => `el teu compte de ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Torna a iniciar la sessió',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'No s’han pogut carregar els Teams.',
+            groupsLoadFailed: 'No s’han pogut carregar els grups dels Teams.',
             outcomeUnknown: 'És possible que el Home hagi completat aquest canvi. Actualitza l’equip abans de tornar-ho a provar.',
             authenticationRequired: "Inicia sessió amb el mètode que requereix aquest equip i torna-ho a provar.",
             forbidden: 'No tens permís per a aquest canvi.',

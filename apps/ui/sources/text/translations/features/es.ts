@@ -16694,14 +16694,22 @@ const spanish: TeamsTranslationRoot = {
             loadFailed: "No se pudo cargar esta información. Inténtalo de nuevo.",
             generic: 'No se pudo completar. No se cambió nada.',
             policySaveFailed: 'No se pudo guardar esta configuración del equipo. Revisa los valores actuales e inténtalo de nuevo.',
-            signInOutdated: 'Los equipos no están disponibles con este inicio de sesión. Cierra la sesión de este Home en este dispositivo y vuelve a iniciarla para usarlos.',
+            signInOutdated: 'Los equipos necesitan un inicio de sesión más reciente en este dispositivo.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Este equipo necesita que inicies sesión con ${methods}.`,
             signInRequiredAction: 'Iniciar sesión',
-            signInMethodEmailPassword: 'correo y contraseña',
+            signInMethodEmailPassword: 'tu correo y tu contraseña',
             signInMethodCertificate: 'un certificado del dispositivo',
             signInMethodTeamConnection: 'el inicio de sesión único del equipo',
             signInMethodsOr: ' o ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'tu clave de recuperación',
+            signInMethodProvider: ({ provider }: { provider: string }) => `tu cuenta de ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Volver a iniciar sesión',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'No se pudieron cargar los equipos.',
+            groupsLoadFailed: 'No se pudieron cargar los grupos de los equipos.',
             outcomeUnknown: 'Es posible que el Home haya completado este cambio. Actualiza el equipo antes de volver a intentarlo.',
             authenticationRequired: "Inicia sesión con el método que requiere este equipo e inténtalo de nuevo.",
             forbidden: 'No tienes permiso para este cambio.',

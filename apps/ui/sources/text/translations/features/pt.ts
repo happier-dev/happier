@@ -16744,14 +16744,22 @@ const portuguese: TeamsTranslationRoot = {
             loadFailed: "Não foi possível carregar esta informação. Tente novamente.",
             generic: 'Não foi possível concluir. Nada foi alterado.',
             policySaveFailed: 'Não foi possível guardar esta definição da equipa. Reveja os valores atuais e tente novamente.',
-            signInOutdated: 'As equipas não estão disponíveis com este início de sessão. Termine a sessão deste Home neste dispositivo e inicie-a novamente para as usar.',
+            signInOutdated: 'As equipas precisam de um início de sessão mais recente neste dispositivo.',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `Esta equipa exige que inicie sessão com ${methods}.`,
             signInRequiredAction: 'Iniciar sessão',
-            signInMethodEmailPassword: 'email e palavra-passe',
+            signInMethodEmailPassword: 'o seu email e palavra-passe',
             signInMethodCertificate: 'um certificado do dispositivo',
             signInMethodTeamConnection: 'o início de sessão único da equipa',
             signInMethodsOr: ' ou ',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: 'a sua chave de recuperação',
+            signInMethodProvider: ({ provider }: { provider: string }) => `a sua conta ${provider}`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'Iniciar sessão novamente',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'Não foi possível carregar as equipas.',
+            groupsLoadFailed: 'Não foi possível carregar os grupos das equipas.',
             outcomeUnknown: 'O Home pode ter concluído esta alteração. Atualize a equipa antes de tentar novamente.',
             authenticationRequired: "Inicie sessão com o método exigido por esta equipa e tente de novo.",
             forbidden: 'Não tem permissão para esta alteração.',

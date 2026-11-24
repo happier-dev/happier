@@ -56,6 +56,16 @@ export function CurrentRouteLocationProvider(props: React.PropsWithChildren<Read
     </CurrentRouteLocationStoreContext.Provider>;
 }
 
+/**
+ * The window's in-app address when read (path and query on the web, where the URL is the location; the
+ * workspace's path elsewhere), for an intent that must come back to exactly this page. Null when unknown.
+ */
+export function readCurrentRouteHref(): string | null {
+    const location = typeof window === 'undefined' ? undefined : window.location as Location | undefined;
+    if (location?.pathname) return `${location.pathname}${location.search ?? ''}`;
+    return windowRouteLocation.current?.pathname ?? null;
+}
+
 /** Expo's global params shape: the route's path params and query, repeated query keys as arrays. */
 export function readCurrentRouteLocation(href: string, pathParams: Readonly<Record<string, string>>): CurrentRouteLocation {
     const url = new URL(href, 'https://route.invalid');

@@ -203,10 +203,10 @@ describe('SessionAccessEditor', () => {
         const screen = await renderScreen(<SessionAccessEditor model={model({ directory: { sections: [people, failed('group', false), failed('team', false)] } })}
             actions={intent} presentation="compact" />);
         await flushHookEffects({ runOnlyPendingTimers: true });
-        // One cause, said once: the Group row carries it and the Team row does not repeat it.
+        // One cause, said once, with the Teams whose read it was; the Groups (found through the Teams) do not repeat it.
         expect(screen.getTextContent()).toContain('Teams need a newer sign-in.');
-        expect(screen.findByTestId('session-access-directory-refusal:group')).not.toBeNull();
-        expect(screen.findByTestId('session-access-directory-refusal:team')).toBeNull();
+        expect(screen.findByTestId('session-access-directory-refusal:team')).not.toBeNull();
+        expect(screen.findByTestId('session-access-directory-refusal:group')).toBeNull();
         for (const kind of ['team', 'group']) {
             expect(screen.findByTestId(`session-access-directory-retry:${kind}`)).toBeNull();
             expect(screen.findByTestId(`session-access-browse:${kind}`)).toBeNull();

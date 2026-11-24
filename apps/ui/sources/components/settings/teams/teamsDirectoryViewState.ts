@@ -8,6 +8,7 @@ import type { TeamsDirectorySnapshot } from '@/sync/store/teams/teamsSnapshots';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { t } from '@/text';
+import { presentTeamSignInOutdated } from '@/components/teams/entry/teamSignInRequirement';
 import type { SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 
 /**
@@ -92,11 +93,15 @@ export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableH
     }
 }
 
-/** The way forward for a Home whose read was turned off in Settings, Actions: the setting itself. */
+/**
+ * The way forward for a Home whose answer no retry can change: the setting itself for a read turned off in
+ * Settings, Actions; signing in again (through the Home's own sign-out) for a released 0.2 sign-in.
+ */
 export function teamsUnavailableHomeSettingsAction(
-    home: Pick<TeamsDirectoryUnavailableHome, 'reason'>,
+    home: Pick<TeamsDirectoryUnavailableHome, 'reason' | 'serverId'>,
     openActionSettings: () => void,
 ): Readonly<{ label: string; onPress: () => void }> | undefined {
+    if (home.reason === 'sign_in_outdated') return presentTeamSignInOutdated({ code: 'team_forbidden', serverId: home.serverId }).action;
     return home.reason === 'turned_off'
         ? { label: t('actionConfirmations.openActionSettings'), onPress: openActionSettings }
         : undefined;

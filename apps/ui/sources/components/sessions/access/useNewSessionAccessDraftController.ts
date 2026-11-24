@@ -1,13 +1,15 @@
 import * as React from 'react';
 import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
 import type { SessionAccessCreationDecisionV1, SessionAccessCreationRefusalV1, SessionAccessPrincipalSummaryV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
-import { useRouter, type Href } from 'expo-router';
+// The workspace's router: a hosted pane (the Session's Share) navigates through its destination owner.
+import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
+import { readCurrentRouteHref } from '@/components/appShell/workspace/currentRouteLocation';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
@@ -240,7 +242,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         && creationRefusal === null && primaryTeamPolicy === null;
     const signInReason = React.useMemo(() => signInRefusal ? presentTeamSignInRequired({
         code: signInRefusal.code, teamId: signInRefusal.teamId, serverId: scope.serverId,
-        accepted: signInRefusal.accepted, navigate: (href) => routerRef.current.push(href as Href),
+        accepted: signInRefusal.accepted, navigate: (href) => routerRef.current.push(href as Href), origin: readCurrentRouteHref,
     }) : null, [scope.serverId, signInRefusal]);
     // Signing in again on this Home is the natural boundary: the decision is read again then, not polled.
     React.useEffect(() => subscribeHomeCredentialChange((event) => {
@@ -510,7 +512,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             summary: projectSessionAccessChipSummary({ grants: rows, audienceComplete: true }),
             context: {
                 primaryTeamId,
-                ...(signInReason ? { unavailableReason: signInReason } : {}),
+                // A refused Team is said by its own choice below, with the step that meets its rule; nothing repeats it.
                 ...(pendingContextDecision || contextDecisionError ? {
                     operation: contextDecisionError ? 'error' as const : 'saving' as const,
                     ...(contextDecisionError ? { error: {

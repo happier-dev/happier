@@ -16,8 +16,10 @@ import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionC
 import { createSessionAccessClient, inspectSessionAccessCandidates, SessionAccessApiError, SessionAccessApprovalPendingError } from '@/sync/api/session/sessionAccessApi';
 import { readSessionDataKeyEnvelopeCollectionPage, prepareSessionDataKeyEnvelopesDetached } from '@/sync/api/session/sessionDataKeyEnvelopesApi';
 import { t } from '@/text';
-import { useRouter, type Href } from 'expo-router';
+// The workspace's router: a hosted pane (the Session's Share) navigates through its destination owner.
+import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { presentTeamSignInRequired } from '@/components/teams/entry/teamSignInRequirement';
+import { readCurrentRouteHref } from '@/components/appShell/workspace/currentRouteLocation';
 import { HappyError } from '@/utils/errors/errors';
 import { projectSessionAccessEditorSnapshot, sessionAccessSubjectKey } from './projectSessionAccessEditorSnapshot';
 import { sessionAccessGrantMutation } from './sessionAccessGrantMutation';
@@ -394,7 +396,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         const team=teamId?directoryTeamsRef.current.find((candidate)=>candidate.teamId===teamId):undefined;
         const issue:SessionAccessUiError=teamId&&(failure.code==='session_access_authentication_required'||failure.code==='session_access_authentication_unavailable')
             ? presentTeamSignInRequired({code:failure.code,teamId,serverId:input.scope.serverId,
-                accepted:team?.authenticationPolicy?.accepted??[],navigate:(href)=>routerRef.current.push(href as Href)})
+                accepted:team?.authenticationPolicy?.accepted??[],navigate:(href)=>routerRef.current.push(href as Href),origin:readCurrentRouteHref})
             : failure;
         dispatch({type:'operation',scopeKey,key,operation:issue.retryable
             ? {kind:'error',error:issue,reconcileIntent:mutation?{kind:'set',mutation}:{kind:'remove',subject}}

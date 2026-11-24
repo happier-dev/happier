@@ -16694,7 +16694,7 @@ const japanese: TeamsTranslationRoot = {
             loadFailed: "この情報を読み込めませんでした。もう一度お試しください。",
             generic: '完了できませんでした。何も変更されていません。',
             policySaveFailed: 'このチーム設定を保存できませんでした。現在の値を確認して、もう一度お試しください。',
-            signInOutdated: 'このサインインではチームを使えません。このデバイスでこの Home からサインアウトし、もう一度サインインしてください。',
+            signInOutdated: 'このデバイスでチームを使うには、新しいサインインが必要です。',
             // A Team whose sign-in rule the current sign-in does not meet, and the one step that meets it.
             signInRequired: ({ methods }: { methods: string }) => `このチームでは次の方法でサインインする必要があります: ${methods}`,
             signInRequiredAction: 'サインイン',
@@ -16702,6 +16702,14 @@ const japanese: TeamsTranslationRoot = {
             signInMethodCertificate: 'デバイス証明書',
             signInMethodTeamConnection: 'チームのシングルサインオン',
             signInMethodsOr: '、または',
+            // Each sign-in named as it reads in a sentence ("…signed in with your Recovery key").
+            signInMethodRecoveryKey: '復旧キー',
+            signInMethodProvider: ({ provider }: { provider: string }) => `${provider} アカウント`,
+            // The one step a released 0.2 sign-in needs: the Home's own sign-out, then sign in again.
+            signInAgainAction: 'もう一度サインイン',
+            // A Team or Group directory read that failed, named by what could not be loaded.
+            teamsLoadFailed: 'チームを読み込めませんでした。',
+            groupsLoadFailed: 'チームのグループを読み込めませんでした。',
             outcomeUnknown: 'Home でこの変更が完了した可能性があります。再試行する前にチームを更新してください。',
             authenticationRequired: "このチームが必要とする方法でサインインし、もう一度お試しください。",
             forbidden: 'この変更を行う権限がありません。',

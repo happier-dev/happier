@@ -135,14 +135,16 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             seen.add(row.principal.key);
             const reason = row.addition.kind === 'blocked' ? row.addition.reason : undefined;
             // A refusal with its own way forward (the sign-in a Team needs) is said in full beneath the name
-            // and offers that step where Add was: adding again could only be refused again.
-            const resolution = row.operation.kind === 'error' ? row.operation.error.action : undefined;
+            // and offers that step where Add was: adding again could only be refused again. The Home can say it
+            // before any Add (the row's own addition) or answer an Add with it (the row's operation).
+            const resolution = row.operation.kind === 'error' ? row.operation.error.action : reason?.action;
             // A candidate the Home refuses reads as unavailable: a short state instead of Add, and pressing the row
             // explains it in full. The reason itself is not repeated on every row; a refusal shared by the whole
             // sheet (an archived context Team) is said once by the adapter, and a row's own reason is one press away.
             return [{ id: row.principal.key, testID: `${idPrefix}${ns}-candidate-${row.principal.key}`,
                 label: row.principal.displayName,
-                subtitle: subtitle(row.principal, undefined, [reason ? host.text('shareSheet.cantAdd') : undefined,
+                subtitle: subtitle(row.principal, undefined, [
+                    reason?.action ? reason.message : reason ? host.text('shareSheet.cantAdd') : undefined,
                     row.operation.kind === 'error' ? row.operation.error.message : undefined]),
                 accessibilityLabel: reason ? `${row.principal.accessibilityLabel}, ${reason.message}` : row.principal.accessibilityLabel,
                 icon: visual(row.principal),
@@ -209,8 +211,13 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     if (!searching) sections.push(...roster);
     const collapsedControls: SelectionListOption[] = [];
     const suggestionSections: SelectionListSectionDescriptor[] = [];
-    // Directories refused for one cause (Teams and their Groups) say it once.
-    const refusalsShown = new Set<string>();
+    // Directories that failed for one cause (Groups are found through the Teams) say it once, with the last
+    // directory that carries it: the Teams, whose read it was.
+    const failureOwner = new Map<string, ShareDirectoryKind>();
+    for (const kind of SHARE_DIRECTORY_KINDS) {
+        const failed = model.directory.sections.find((section) => section.kind === kind);
+        if (failed?.status === 'error' && failed.error) failureOwner.set(failed.error.message, kind);
+    }
     if (model.editable) for (const kind of SHARE_DIRECTORY_KINDS) {
         if (input.directoryKind && input.directoryKind !== kind) continue;
         const source = model.directory.sections.find((section) => section.kind === kind);
@@ -224,13 +231,18 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         const refusal = source.status === 'error' && source.error && !source.error.retryable ? source.error : undefined;
         if (suggestionsShown && !refusal) suggestionSections.push(sourceSection(source));
         const controls: SelectionListOption[] = [];
-        if (refusal) {
-            if (!refusalsShown.has(refusal.message)) controls.push({ id: `refusal:${kind}`, label: refusal.message, labelLines: 0, disabled: true,
-                testID: `${idPrefix}${ns}-directory-refusal:${kind}` });
-            refusalsShown.add(refusal.message);
-        } else if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,
+        const failure = source.status === 'error' && source.error
+            && (input.directoryKind !== undefined || failureOwner.get(source.error.message) === kind) ? source.error : undefined;
+        const resolution = refusal?.action;
+        // A settled refusal with its own way forward (signing in again) offers that one step beside it.
+        const failureRow: SelectionListOption | undefined = !failure ? undefined : refusal ? {
+            id: `refusal:${kind}`, label: refusal.message, labelLines: 0, testID: `${idPrefix}${ns}-directory-refusal:${kind}`,
+            ...(resolution ? { onSelect: resolution.onPress, rightAccessoryOutsidePressable: true,
+                rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={resolution.label}
+                    testID={`${idPrefix}${ns}-directory-refusal-action:${kind}`} onPress={resolution.onPress} /> } : { disabled: true }),
+        } : { id: `retry:${kind}`, label: failure.message, labelLines: 0,
             rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={host.text('common.retry')}
-                testID={`${idPrefix}${ns}-directory-retry:${kind}`} onPress={() => actions.retryDirectory(kind)} /> });
+                testID={`${idPrefix}${ns}-directory-retry:${kind}`} onPress={() => actions.retryDirectory(kind)} /> };
         // A searchable directory (a resolver) is always one Browse away: a query's page says nothing about everyone
         // else. A fixed people list already shown as suggestions needs Browse only for its next page.
         const browsable = !refusal && (source.resolveCandidates !== undefined || source.hasMore
@@ -241,6 +253,8 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             ...(source.status === 'loading' || source.status === 'refreshing' ? { subtitle: host.text('common.loading') } : {}),
             testID: `${idPrefix}${ns}-browse:${kind}`,
             openStep: buildShareSheetSelectionStep({ ...input, directoryKind: kind }) });
+        // What failed sits with the directory it belongs to, under its Browse row.
+        if (failureRow) controls.push(failureRow);
         if (!suggestionsShown) { if (!adapter.browseOnlyWhileAdding) collapsedControls.push(...controls); }
         else if (controls.length) sections.push({ kind: 'static', id: `directory-controls:${kind}`, options: controls });
     }
