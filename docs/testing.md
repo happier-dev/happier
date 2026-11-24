@@ -775,6 +775,8 @@ The existing rolling checks run full package and app typechecks. An incomplete
 app comparison leaves its checked checkpoint in place so the next run can retry
 the range. The post-commit report compares Protocol and Plugin SDK declarations against
 the exact parent and runs the broader entry, bundle and export checks.
+An entry is newly failing only when its graph name passed at the parent.
+The report includes the failure diagnostic and omits progress and resource metrics.
 Findings are attributed to the introducing SHA and sent to its author for
 a fix forward. Before and after the ref update are separate verdicts.
 

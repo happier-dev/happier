@@ -69,3 +69,22 @@ test('a missing import identifies its importing module through the entry graph',
   assert.equal(result.status, 'failed');
   assert.equal(result.firstFailingModule, importer);
 });
+
+test('entry diagnostics ignore timing and resource telemetry', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'runtime-entry-progress-' });
+  const entrypoint = fixture.path('entry.mjs');
+  const failure = 'generated output differs: apps/cli/assets/bundled-plugin-manifests/database-workbench.json';
+  const progress = [
+    'bundled-plugins: phase=generation-and-publication deltaMs=92 totalMs=92',
+    'worker resourceUsage={"pid":125,"cpuMicros":10}',
+  ];
+  for (const [lines, expected] of [
+    [[...progress, failure], failure],
+    [progress, 'Entry process failed without public loader diagnostics'],
+  ]) {
+    await writeFile(entrypoint, `console.error(${JSON.stringify(lines.join('\n'))}); process.exitCode = 1;`);
+    const result = await probeRuntimeImport({ entrypoint });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.loadError.message, expected);
+  }
+});

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isRuntimeImportProgressLine } from '../../apps/stack/scripts/utils/proc/runtimeImportProbe.mjs';
 
 const self = fileURLToPath(import.meta.url);
 const tooling = new URL('../../', import.meta.url);
@@ -325,7 +326,7 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
   const selected = graphIds ? selection.graphs.filter(id => graphIds.includes(id)) : selection.selected;
   const empty = { findings: [], preexisting: [], results: [], selected, graphs: selection.graphs.length, timings: {} };
   if (!selected.length) return prepare ? undefined : empty;
-  const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, waitForDependencies: !compareAdmittedEntryLoads };
+  const request = { repo, base, tree, installDir, root, selected, graphs: selection.graphs.length, phase, waitForDependencies: !compareAdmittedEntryLoads };
   const run = compareAdmittedEntryLoads ?? (candidate => admitEntryLoads(candidate, { env, signal }));
   return phase === 'commit' ? await compareWithVerifiedGraphs(request, { env, signal, run, entryProof, expectedEnvironment, prepare }) : await run(request);
 }
@@ -425,7 +426,7 @@ async function admitEntryLoads(request, { env, signal, admissionClass }) {
   return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
 }
 
-async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, selected, graphs, waitForDependencies }, env, signal) {
+async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, selected, graphs, phase, waitForDependencies }, env, signal) {
   const started = performance.now();
   const cpuBefore = process.cpuUsage();
   const childBefore = childCpuMs();
@@ -441,15 +442,17 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
   if (requiredFailures.length) return finish({
     findings: requiredFailures.map(failure => failure.finding), preexisting: [], results: candidate.results,
   });
-  // Non-CLI graphs keep reporting the delta for checks such as manifest generation and route composition.
+  // The post-commit report attributes new failed entries. Their diagnostic
+  // paths and text are evidence for the owner and can differ across trees.
+  const keyOf = failure => phase === 'deferred' ? failure.graph : failure.key;
   const failing = candidate.failures.map(failure => failure.graph);
   const baseFailures = failing.length
-    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {}, waitForDependencies })).failures.map(failure => failure.key))
+    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {}, waitForDependencies })).failures.map(keyOf))
     : new Set();
   const findings = [];
   const preexisting = [];
-  for (const { key, finding } of candidate.failures) {
-    (baseFailures.has(key) ? preexisting : findings).push(finding);
+  for (const failure of candidate.failures) {
+    (baseFailures.has(keyOf(failure)) ? preexisting : findings).push(failure.finding);
   }
   return finish({ findings, preexisting, results: candidate.results });
 }
@@ -543,7 +546,11 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
       }
       const failures = results.filter(result => result.status === 'failed').map(result => {
         const module = result.firstFailingModule ? relative(dir, resolve(dir, result.firstFailingModule)) : result.entry;
-        const message = String(result.loadError?.message ?? 'failed').split('\n')[0].replaceAll(`${dir}/`, '').slice(0, 300);
+        // A historical tree can return diagnostics from its older probe.
+        const diagnostic = String(result.loadError?.message ?? '').split(/\r?\n/u)
+          .find(line => line.trim() && !isRuntimeImportProgressLine(line));
+        const message = (diagnostic ?? 'failed without a public diagnostic').trim()
+          .replaceAll(`${dir}/`, '').slice(0, 300);
         const phase = /(?:^|\s)phase=([a-z][\w-]*)\b/u.exec(message)?.[1] ?? null;
         return { graph: result.graph, key: JSON.stringify([result.graph, module, phase]),
           finding: `${result.graph}: ${module}: ${message}` };

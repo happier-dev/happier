@@ -280,19 +280,29 @@ test('the synchronous scope ignores a UI-only packet for CLI and daemon and keep
   assert.deepEqual((await selectCommitTreeEntryGraphs({ repo, base: ui, tree: cli, phase: 'commit' })).selected, ['cli', 'daemon']);
 });
 
-test('post-commit entry loads ignore timing and process counters in the same parent failure', async t => {
+test('post-commit entry loads attribute only newly failed entries and retain actionable diagnostics', async t => {
   const entry = 'packages/protocol/src/index.mjs';
+  const stale = 'apps/cli/assets/bundled-plugin-manifests/database-workbench.json';
   const { repo, tree: base, write } = miniatureRevision(t, {
-    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = [{ id: 'bundled-manifests', entry: '${entry}', args: ['--check'] }];`,
+    'apps/stack/scripts/perf/entry-graphs.mjs': `export const ENTRY_GRAPHS = ${JSON.stringify([
+      { id: 'bundled-manifests', entry, args: ['--check'] },
+      { id: 'other-entry', entry, args: ['--check'] },
+    ])};`,
     'apps/stack/scripts/perf/entry-load.mjs': `
       import { readFileSync } from 'node:fs';
       export { ENTRY_GRAPHS } from './entry-graphs.mjs';
       export function loadEntryGraph(graph) {
         const n = Number(readFileSync(graph.entry, 'utf8'));
+        if (graph.id === 'other-entry' && n === 10) {
+          return { graph: graph.id, status: 'passed', entry: graph.entry, elapsedMs: n };
+        }
+        const progress = 'bundled-plugins: phase=generation-and-publication deltaMs=' + n;
+        const usage = 'worker resourceUsage={"pid":' + process.pid + '}';
+        const failure = graph.id === 'bundled-manifests'
+          ? 'generated output differs: ${stale}' : 'unrelated entry cannot load';
         return { graph: graph.id, status: 'failed', entry: graph.entry, elapsedMs: n,
-          firstFailingModule: 'apps/cli/scripts/build-owned/bundledPlugins/outputs.ts',
-          loadError: { message: 'bundled-plugins: phase=generation-and-publication deltaMs=' + n
-            + ' resourceUsage={"pid":' + process.pid + ',"userCpuMicros":' + n + '}' } };
+          firstFailingModule: n === 10 ? '${stale}' : '${entry}',
+          loadError: { message: n === 10 ? failure : [progress, usage, failure].join('\\n') } };
       }
     `,
     'apps/stack/scripts/build/source_revision.mjs': 'export function deriveRevisionGeneratedInputs() {}',
@@ -305,9 +315,9 @@ test('post-commit entry loads ignore timing and process counters in the same par
   git('commit', '-qm', 'candidate');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p03-stable-entry-failure-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const result = await commitTreeEntryLoads({ repo, base, tree: git('rev-parse', 'HEAD'), graphIds: ['bundled-manifests'], phase: 'deferred', root });
-  assert.deepEqual(result.findings, []);
-  assert.equal(result.preexisting.length, 1);
+  const result = await commitTreeEntryLoads({ repo, base, tree: git('rev-parse', 'HEAD'), phase: 'deferred', root });
+  assert.deepEqual(result.findings, [`other-entry: ${entry}: unrelated entry cannot load`]);
+  assert.deepEqual(result.preexisting, [`bundled-manifests: ${entry}: generated output differs: ${stale}`]);
 });
 
 test('route composition subsumes standalone server startup and defers preparation probes', async t => {

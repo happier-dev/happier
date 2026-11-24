@@ -8,7 +8,12 @@ export function isPublicRuntimeImportDiagnostic(value) {
   return typeof value === 'string' && !privateLine.test(value);
 }
 
+export function isRuntimeImportProgressLine(line) {
+  return /^\s*bundled-plugins:\s+phase=|(?:^|\s)resourceUsage\s*=/u.test(line);
+}
+
 export function describeRuntimeImportFailure(stderr, entrypoint = null) {
+  stderr = stderr.split(/\r?\n/u).filter(line => !isRuntimeImportProgressLine(line)).join('\n');
   // Node's first location names the throwing module, including TDZ failures;
   // bundlers/Vite also publish file:line locations before their stack frames.
   const frames = stderr.split('\n').filter(line => !/\bnode:/u.test(line)).join('\n');
