@@ -11,5 +11,7 @@ it.each(['subscription', 'api-key'] as const)('materializes only the native xAI 
   } as unknown as Parameters<ConnectedAccountRuntime['materialize']>[1];
   expect(await owner.materialize({ kind: 'environment', keys: ['XAI_API_KEY', 'XAI_OAUTH_TOKEN', 'HAPPIER_CONNECTED_XAI_API_KEY'] }, context))
     .toEqual({ kind: 'environment', env: mode === 'subscription' ? { XAI_OAUTH_TOKEN: 'fake-selected' }
-      : { XAI_API_KEY: 'fake-selected', HAPPIER_CONNECTED_XAI_API_KEY: 'fake-selected' } });
+      : { XAI_API_KEY: 'fake-selected', HAPPIER_CONNECTED_XAI_API_KEY: 'fake-selected' },
+      // The refresh token is never delivered, but it is a secret of this credential all the same.
+      secretValues: ['fake-selected', 'fake-root'] });
 });

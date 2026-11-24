@@ -183,7 +183,12 @@ export function snapshotConnectedAccountEstablishedResult<
     }
     if (operation.kind === 'materialize') {
         const result = raw as PluginConnectedAccountMaterialization;
-        const scope = result.usageAccountScope === undefined ? {} : { usageAccountScope: result.usageAccountScope };
+        const scope = {
+            ...(result.usageAccountScope === undefined ? {} : { usageAccountScope: result.usageAccountScope }),
+            ...(result.secretValues === undefined ? {} : {
+                secretValues: Object.freeze(result.secretValues.filter(value => typeof value === 'string' && value.length > 0)),
+            }),
+        };
         if (result.kind === 'files') {
             return Object.freeze({
                 ...scope,

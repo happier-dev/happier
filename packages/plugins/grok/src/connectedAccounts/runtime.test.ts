@@ -39,7 +39,7 @@ describe('xAI selected credential runtime', () => {
       .toMatchObject({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fake-paid-key' }, facts: { mode: 'api-key', usingApi: true, base: 'https://api.x.ai/v1' } });
     expect(runtime.quota).toBeTypeOf('function');
     await runtime.quota?.(f.read);
-    expect(await runtime.materialize({ kind: 'environment', keys: ['GROK_CONNECTED_ACCOUNT_MODE', 'XAI_API_KEY', 'GROK_OAUTH2_ISSUER', 'GROK_OAUTH2_CLIENT_ID'] }, f.read)).toEqual({ kind: 'environment', env: { GROK_CONNECTED_ACCOUNT_MODE: 'api-key', XAI_API_KEY: 'fake-paid-key' } });
+    expect(await runtime.materialize({ kind: 'environment', keys: ['GROK_CONNECTED_ACCOUNT_MODE', 'XAI_API_KEY', 'GROK_OAUTH2_ISSUER', 'GROK_OAUTH2_CLIENT_ID'] }, f.read)).toEqual({ kind: 'environment', env: { GROK_CONNECTED_ACCOUNT_MODE: 'api-key', XAI_API_KEY: 'fake-paid-key' }, secretValues: ['fake-paid-key'] });
     expect(f.request).not.toHaveBeenCalled();
     expect(await runtime.materialize({ kind: 'httpHeaders', origin: 'https://cli-chat-proxy.grok.com', headerNames: ['authorization'] }, f.read))
       .toMatchObject({ facts: { usingApi: true, base: 'https://api.x.ai/v1' } });
@@ -120,6 +120,15 @@ describe('xAI OAuth discovery and refresh', () => {
 
 
 describe('xAI refresh custody', () => {
+  it('names the tokens inside a record saved before the canonical keys, so the host registers them', async () => {
+    const f = fixture();
+    // The shape stored before 23daa813ee9: the JSON value only, no canonical keys.
+    await f.credentials.set('xaiCredential', JSON.stringify({ mode: 'api-key', accessToken: 'fake-legacy-xai-key' }));
+    const runtime = createXaiConnectedAccountRuntime();
+    await expect(runtime.materialize({ kind: 'environment', keys: ['XAI_API_KEY'] }, f.read)).resolves.toEqual({
+      kind: 'environment', env: { XAI_API_KEY: 'fake-legacy-xai-key' }, secretValues: ['fake-legacy-xai-key'] });
+    expect([...f.saved.keys()]).toEqual(['xaiCredential']);
+  });
   it('discovers the selected native issuer once when an imported credential needs refresh', async () => {
     const f = fixture(); const runtime = createXaiConnectedAccountRuntime();
     await f.credentials.set('xaiCredential', JSON.stringify({ mode: 'subscription', accessToken: 'fake-import', refreshToken: 'fake-refresh', issuer: 'https://auth.x.ai', clientId: 'fake-native-client' }));

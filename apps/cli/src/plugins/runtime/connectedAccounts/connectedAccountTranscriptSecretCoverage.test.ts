@@ -365,12 +365,15 @@ async function readBundledAgentDeliveredServices(): Promise<
   return { services, delivered };
 }
 
-/** Everything a runtime writes into a Session's env and home for one stored credential. */
+/**
+ * Everything a runtime writes into a Session's env and home for one stored credential, and the
+ * secret values it names for the host to register beside the collector's (as the host's receipt does).
+ */
 async function readDelivered(
   runtime: ConnectedAccountRuntime,
   modeId: string,
   values: StoredShape,
-): Promise<string> {
+): Promise<Readonly<{ output: string; secretValues: readonly string[] }>> {
   const credentials = {
     async get(key: string) {
       return values[key] ?? null;
@@ -397,6 +400,7 @@ async function readDelivered(
     configuration: { target: { modeId }, values: {} },
   } as unknown as Parameters<ConnectedAccountRuntime['materialize']>[1];
   const outputs: string[] = [];
+  const secretValues: string[] = [];
   // A destination this mode does not serve refuses; refusal delivers nothing.
   for (const key of ENVIRONMENT_KEYS) {
     try {
@@ -407,6 +411,7 @@ async function readDelivered(
       );
       if (result.kind === 'environment')
         outputs.push(...Object.values(result.env));
+      secretValues.push(...(result.secretValues ?? []));
     } catch {
       /* not a destination of this mode */
     }
@@ -424,11 +429,12 @@ async function readDelivered(
             new TextDecoder().decode(bytes),
           ),
         );
+      secretValues.push(...(result.secretValues ?? []));
     } catch {
       /* not a destination of this mode */
     }
   }
-  return outputs.join('\n');
+  return { output: outputs.join('\n'), secretValues };
 }
 
 describe('bundled Connected Account transcript secret coverage', () => {
@@ -449,17 +455,17 @@ describe('bundled Connected Account transcript secret coverage', () => {
           leaks.push(`${row}: no stored shape`);
           continue;
         }
-        const output = await readDelivered(service.runtime, mode.id, values);
+        const { output, secretValues } = await readDelivered(service.runtime, mode.id, values);
         if (!output.includes('fake-secret-')) {
           leaks.push(`${row}: delivers no credential`);
           continue;
         }
         let transcript = output;
-        const secrets = createConnectedAccountCredentialRedaction({
+        const secrets = [...createConnectedAccountCredentialRedaction({
           mode,
           credential: { v: 1, values },
           configuration: {},
-        }).readSecretValues();
+        }).readSecretValues(), ...secretValues];
         for (const secret of [...secrets].sort(
           (left, right) => right.length - left.length,
         ))

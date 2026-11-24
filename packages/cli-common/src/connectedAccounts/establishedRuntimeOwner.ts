@@ -1095,7 +1095,8 @@ export function createConnectedAccountEstablishedRuntimeOwner<
           basis: Object.freeze({
             credentialRevision: initial.credential.credentialRevision,
             ...(input.operation.kind === 'materialize' ? { materializationPublicValues: redaction.readPublicValues(),
-              materializationSecretValues: redaction.readSecretValues() } : {}),
+              materializationSecretValues: Object.freeze([...new Set([...redaction.readSecretValues(),
+                ...((result as { secretValues?: readonly string[] }).secretValues ?? [])])]) } : {}),
             credentialHealth: observedCredentialHealth,
             credentialProviderIdentity: initial.credential.metadata.providerIdentity,
             credentialConfigurationRevision:

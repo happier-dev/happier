@@ -1477,7 +1477,8 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       await expect(input.context.credentials.get('missing')).resolves.toBeNull();
       await expect(input.isConfigurationCurrent(input.context.configuration)).resolves.toBe(true);
       await expect(input.isCredentialRevisionCurrent()).resolves.toBe(true);
-      return { kind: 'environment' as const, env: { TOKEN: 'access-1' } };
+      // A runtime also names a secret it delivers from inside a stored value (a token in a JSON blob).
+      return { kind: 'environment' as const, env: { TOKEN: 'access-1' }, secretValues: ['inner-access-1'] };
     });
     const invoker = Object.freeze({
       invokeAuthentication: vi.fn(),
@@ -1547,6 +1548,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
       result: {
         kind: 'environment',
         env: { TOKEN: 'access-1' },
+        secretValues: ['inner-access-1'],
       },
       basis: {
         credentialRevision: 'credential-1',
@@ -1556,7 +1558,7 @@ describe('createQualifiedConnectedAccountEstablishedRuntimeOwner', () => {
         runtimeConfigurationRevision: 'configuration-1',
         materializationPublicValues: ['https://api.example.test'],
         // The credential the materializer wrote is handed back for Session transcript redaction.
-        materializationSecretValues: expect.arrayContaining(['access-1']),
+        materializationSecretValues: expect.arrayContaining(['access-1', 'inner-access-1']),
         occurrenceId: 'generation-1',
         sourceCustody: {
           kind: 'managed',

@@ -207,6 +207,8 @@ export function createXaiPortableConnectedAccountRuntime(): ConnectedAccountRunt
     },
     async materialize(request, context, options) {
       const credential = readXaiCredential(await context.credentials.get(XAI_CREDENTIAL_KEY, options));
+      // The tokens inside the stored JSON value, for records saved before the canonical keys existed.
+      const secretValues = [credential.accessToken, ...(credential.refreshToken ? [credential.refreshToken] : [])];
       if (request.kind === 'environment') {
         const available: Readonly<Record<string, string>> = {
           [GROK_CONNECTED_ACCOUNT_MODE_ENV]: credential.mode,
@@ -216,11 +218,11 @@ export function createXaiPortableConnectedAccountRuntime(): ConnectedAccountRunt
             GROK_OAUTH2_CLIENT_ID: credential.clientId ?? GROK_XAI_CLIENT_ID,
           }),
         };
-        return { kind: 'environment', env: Object.fromEntries(request.keys.filter(key => key in available).map(key => [key, available[key]])) };
+        return { kind: 'environment', env: Object.fromEntries(request.keys.filter(key => key in available).map(key => [key, available[key]])), secretValues };
       }
       if (request.kind === 'files') {
         return { kind: 'files', files: Object.fromEntries(request.fileIds.filter(id => id === 'auth.json')
-          .map(id => [id, new TextEncoder().encode(serializeGrokSelectedAuth(credential, { nowMs: context.invokedAtMs }))])) };
+          .map(id => [id, new TextEncoder().encode(serializeGrokSelectedAuth(credential, { nowMs: context.invokedAtMs }))])), secretValues };
       }
       if (request.kind !== 'httpHeaders') throw new Error('Unsupported xAI materialization');
       const base = BASES[credential.mode];

@@ -14,6 +14,12 @@ export type ConnectedAccountMaterialization = Readonly<{
     /** Scope positively established by the service from this credential revision.
      * Omission or unknown never establishes personal usage eligibility. */
     usageAccountScope?: 'personal' | 'workspace' | 'unknown';
+    /**
+     * Secret strings this materialization delivers that the stored credential does not hold under a
+     * declared secret key (a token inside a stored JSON value). The host registers them with the
+     * Session transcript redactor together with the credential's own secret values.
+     */
+    secretValues?: readonly string[];
 }> & (
     | Readonly<{ kind: 'httpHeaders'; headers: Readonly<Record<string, string>>; facts?: RequestAuthFactsV1; expiresAt?: number }>
     | Readonly<{ kind: 'environment'; env: Readonly<Record<string, string>> }>
