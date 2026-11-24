@@ -30,6 +30,19 @@ describe('transcript secret redaction', () => {
     }
   });
 
+  it('masks string values only and never rewrites a record key', () => {
+    const release = registerTranscriptSecret('postgres');
+    try {
+      expect(redactTranscriptSecrets({ postgresUrl: 'postgres://made-up-host/db', nested: { postgres: ['use postgres'] } }))
+        .toEqual({
+          postgresUrl: `${TRANSCRIPT_SECRET_REDACTED}://made-up-host/db`,
+          nested: { postgres: [`use ${TRANSCRIPT_SECRET_REDACTED}`] },
+        });
+    } finally {
+      release();
+    }
+  });
+
   it('keeps a value redacted until every launch that registered it is released', () => {
     const first = registerTranscriptSecret('shared-project-value');
     const second = registerTranscriptSecret('shared-project-value');

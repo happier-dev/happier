@@ -9,6 +9,7 @@ import type {
   ExecutionRunStructuredMeta,
   ExecutionRunStructuredOutputRecovery,
 } from '../ExecutionRunIntentProfile';
+import { redactTranscriptSecrets, redactTranscriptSecretsExcept } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
 import { deriveLoosePlanSections } from '../shared/deriveLoosePlanSections';
 import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObjectFromText';
@@ -60,9 +61,10 @@ function normalizePlanBoundedCompletion(params: Readonly<{
   });
   const parsedModel = ModelOutputSchema.safeParse(parsedJson);
   if (!parsedModel.success) {
+    // Recovered sections are Agent prose, masked after they are derived from the exact text.
     const loose =
       params.structuredOutputRecovery?.plan === 'loose-sections'
-        ? deriveLoosePlanSections(trimmed)
+        ? redactTranscriptSecrets(deriveLoosePlanSections(trimmed))
         : null;
     if (loose) {
       const payload = PlanOutputV1Schema.parse({
@@ -124,6 +126,8 @@ function normalizePlanBoundedCompletion(params: Readonly<{
     };
   }
 
+  // Every model field is Agent prose except the backend it recommends, a reference.
+  const model = redactTranscriptSecretsExcept(parsedModel.data, ['recommendedBackendId']);
   const recommendedBackendId =
     typeof parsedModel.data.recommendedBackendId === 'string' && parsedModel.data.recommendedBackendId.trim().length > 0
       ? parsedModel.data.recommendedBackendId.trim()
@@ -136,10 +140,10 @@ function normalizePlanBoundedCompletion(params: Readonly<{
       backendId: params.backendId,
       backendTarget: params.backendTarget,
     },
-    summary: parsedModel.data.summary,
-    sections: parsedModel.data.sections,
-    risks: parsedModel.data.risks,
-    milestones: parsedModel.data.milestones,
+    summary: model.summary,
+    sections: model.sections,
+    risks: model.risks,
+    milestones: model.milestones,
     recommendedBackendId,
     generatedAtMs: params.finishedAtMs,
   });

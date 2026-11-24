@@ -1,3 +1,5 @@
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 
 export const MemoryHintsProfile: ExecutionRunIntentProfile = {
@@ -8,6 +10,6 @@ export const MemoryHintsProfile: ExecutionRunIntentProfile = {
   onBoundedComplete: ({ rawText }) => ({
     status: 'succeeded',
     summary: 'Memory hints generated.',
-    toolResultOutput: rawText,
+    toolResultOutput: redactTranscriptSecrets(rawText),
   }),
 };

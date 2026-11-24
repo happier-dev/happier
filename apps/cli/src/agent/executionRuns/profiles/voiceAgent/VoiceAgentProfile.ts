@@ -1,6 +1,7 @@
 import type { ExecutionRunReplaySeedRequest } from '@happier-dev/protocol';
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { configuration } from '@/configuration';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { VoiceAgentError } from '@/agent/voice/agent/voiceAgentTypes';
 import { readStoredCredentials } from '@/persistence';
 import type { ReplaySeedDraftResolution } from '@/session/replay/resolveReplaySeedDraft';
@@ -83,7 +84,7 @@ export const VoiceAgentProfile: ExecutionRunIntentProfile = {
       ? ['voice_agent.welcome', 'voice_agent.commit']
       : [],
   onBoundedComplete: ({ start, rawText, finishedAtMs }) => {
-    const summary = rawText.trim().length > 0 ? rawText.trim() : 'Voice agent completed.';
+    const summary = rawText.trim().length > 0 ? redactTranscriptSecrets(rawText.trim()) : 'Voice agent completed.';
     return {
       status: 'succeeded',
       summary,

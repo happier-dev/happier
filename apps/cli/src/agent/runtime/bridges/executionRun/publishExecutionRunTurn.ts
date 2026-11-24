@@ -16,7 +16,7 @@ import { ScmDiffSummaryResultErrorCodeSchema, ScmDiffSummaryPublicationReceiptSc
 import { readReviewNarration } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
 import { readScmDiffSummaryIntent } from './kinds/scmDiffSummary/readScmDiffSummaryIntent';
 import { buildExecutionRunProfileStartParams } from './profileStart';
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { redactExecutionRunDiagnosticMessage } from './errors';
 
 /** One host publisher for retained structured turns, independent of input transport. */
 export async function publishExecutionRunTurn(args: Readonly<{
@@ -42,10 +42,10 @@ export async function publishExecutionRunTurn(args: Readonly<{
   const run = args.runs.get(args.runId);
   const current = () => args.controllers.get(args.runId) === args.controller && !args.controller.cancelled;
   if (!run || run.status !== 'running' || !current()) return false;
-  // Agent output is stored, published and materialized from here. Redact registered secrets
-  // now, while the launch that registered them is live, so no later read depends on them.
-  const rawText = redactTranscriptSecrets(args.rawText);
-  const diagnostic = redactTranscriptSecrets(args.diagnostic);
+  // The profile decodes the exact Agent text and masks the prose of what it decoded, while the
+  // launch that registered the secrets is live; only a diagnostic's message is prose here.
+  const rawText = args.rawText;
+  const diagnostic = args.diagnostic && redactExecutionRunDiagnosticMessage(args.diagnostic);
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, run.intent, run.profileId, run.profileSourceCustody)
     : resolveExecutionRunIntentProfile(run.intent);

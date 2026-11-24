@@ -7,14 +7,101 @@ import { createSessionToolOutputBindingV1 } from '@happier-dev/protocol/sessions
 import { resolveToolEnvelopeMeta } from '@happier-dev/protocol/tools/v2';
 import { isRecord } from '@happier-dev/protocol/actions/happierActionToolResult';
 
-import { redactTranscriptSecrets } from './transcriptSecretRedaction';
+import {
+    redactAgentStatePermissionChoiceOffer,
+    redactTranscriptSecrets,
+    redactTranscriptSecretsExcept,
+} from './transcriptSecretRedaction';
+
+function redactFields(record: Record<string, unknown>, fields: readonly string[]): Record<string, unknown> {
+    let next = record;
+    for (const field of fields) {
+        if (!(field in record)) continue;
+        const value = redactTranscriptSecrets(record[field]);
+        if (value !== record[field]) next = { ...next, [field]: value };
+    }
+    return next;
+}
+
+function redactData(
+    record: Record<string, unknown>,
+    project: (data: Record<string, unknown>) => Record<string, unknown>,
+): Record<string, unknown> {
+    if (!isRecord(record.data)) return record;
+    const data = project(record.data);
+    return data === record.data ? record : { ...record, data };
+}
+
+function redactEventBody(data: Record<string, unknown>): Record<string, unknown> {
+    return redactFields(data, data.type === 'worker-report' ? ['summary', 'deliverables'] : ['message', 'sanitizedErrorPreview']);
+}
+
+function redactAcpBody(data: Record<string, unknown>): Record<string, unknown> {
+    switch (data.type) {
+        case 'message':
+        case 'reasoning':
+            return redactFields(data, ['message']);
+        case 'thinking':
+            return redactFields(data, ['text']);
+        case 'tool-call': {
+            const next = redactFields(data, ['input']);
+            const permission = next.permission;
+            if (!isRecord(permission) || !('nativeChoices' in permission)) return next;
+            const nativeChoices = redactAgentStatePermissionChoiceOffer(permission.nativeChoices);
+            return nativeChoices === permission.nativeChoices ? next : { ...next, permission: { ...permission, nativeChoices } };
+        }
+        case 'tool-result':
+            return redactFields(data, ['output']);
+        case 'file-edit':
+            return redactFields(data, ['description', 'diff', 'oldContent', 'newContent']);
+        case 'terminal-output':
+            return redactFields(data, ['data']);
+        case 'permission-request':
+            return redactFields(data, ['description', 'options']);
+        case 'event':
+            return redactData(data, redactEventBody);
+        case 'context-compaction':
+            return redactFields(data, ['sanitizedErrorPreview']);
+        case 'task_started':
+        case 'task_complete':
+        case 'turn_failed':
+        case 'turn_cancelled':
+        case 'turn_aborted':
+        case 'permission-response':
+        case 'token_count':
+        case 'output':
+            return data;
+        default:
+            // A body this projection does not know is Agent content; it can over-mask, never leak.
+            return redactTranscriptSecretsExcept(data, ['type']);
+    }
+}
+
+/**
+ * The one projection of a stored Session message onto its Agent-authored content: user text and, in
+ * an ACP body, message text, tool input and tool output values, file-edit text and terminal data.
+ * Role, content and body types, ids, call ids, tool names, provider and meta are host control and stay
+ * byte-identical. Shared by the live, durable and historical-import writers.
+ */
+export function redactSessionMessageContentSecrets(message: unknown): unknown {
+    // A bare value is text; a record without message content (delivery facts) is host control.
+    if (!isRecord(message)) return redactTranscriptSecrets(message);
+    if (!isRecord(message.content)) return message;
+    const content = message.content;
+    const projected = content.type === 'text' ? redactFields(content, ['text'])
+        : content.type === 'acp' ? redactData(content, redactAcpBody)
+            : content.type === 'event' ? redactData(content, redactEventBody)
+                // A content shape this projection does not know is Agent content; it can over-mask, never leak.
+                : redactTranscriptSecretsExcept(content, ['type']);
+    return projected === content ? message : { ...message, content: projected };
+}
 
 /** Socket transcript payload shape; encryption stays owned by the Session codec. Live host-minted secrets are redacted first. */
 export function buildOutboundSessionMessagePayload(
     context: SessionStoredContentCryptoContext,
     content: unknown,
 ): string | { t: 'plain'; v: unknown } {
-    const redacted = redactTranscriptSecrets(content);
+    const redacted = redactSessionMessageContentSecrets(content);
     return context.mode === 'plain'
         ? { t: 'plain', v: redacted }
         : encryptSessionMessagePayload({ ctx: context.ctx, payload: redacted });
@@ -27,8 +114,8 @@ export function buildDurableOutboundSessionMessagePayload(
     context: SessionStoredContentCryptoContext,
     input: Readonly<{ content: unknown; sessionId: string; localId: string; canonicalToolName?: string }>,
 ): Readonly<{ payload: OutboundSessionMessagePayload; toolOutputPart?: StrictSessionStoredMessageContentEnvelope }> {
-    const content = redactTranscriptSecrets(input.content);
-    const seal = (payload: unknown): OutboundSessionMessagePayload => context.mode === 'plain'
+    const content = redactSessionMessageContentSecrets(input.content);
+    const seal =(payload: unknown): OutboundSessionMessagePayload => context.mode === 'plain'
         ? { t: 'plain', v: payload }
         : encryptSessionMessagePayload({ ctx: context.ctx, payload });
     const split = splitDurableSessionToolOutput(context, { ...input, content });

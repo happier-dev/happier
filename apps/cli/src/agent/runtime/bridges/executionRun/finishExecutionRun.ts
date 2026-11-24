@@ -57,6 +57,20 @@ function readExecutionRunMarkerResultSizeBytes(value: unknown): number | undefin
   return Buffer.byteLength(serialized, 'utf8');
 }
 
+function isRecordOutput(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** The Run envelope's prose: `summary` and `error.message`. Status, codes and ids stay exact. */
+function redactTerminalProse<T extends Readonly<{ summary?: unknown; error?: unknown }>>(value: T): T {
+  const summary = typeof value.summary === 'string' ? redactTranscriptSecrets(value.summary) : value.summary;
+  const error = isRecordOutput(value.error) && typeof value.error.message === 'string'
+    ? { ...value.error, message: redactTranscriptSecrets(value.error.message) } : value.error;
+  return summary === value.summary && error === value.error ? value : {
+    ...value, ...(summary === value.summary ? {} : { summary }), ...(error === value.error ? {} : { error }),
+  };
+}
+
 type FinishRunNext = Omit<
   ExecutionRunState,
   | 'runId'
@@ -99,10 +113,11 @@ export async function finishExecutionRun(args: Readonly<{
 }>): Promise<boolean> {
   const existing = args.runs.get(args.runId);
   if (!existing) return false;
-  // The terminal result is stored, published and materialized from here. Redact registered
-  // secrets now, while the launch that registered them may still be live.
-  const next = redactTranscriptSecrets(args.next);
-  const inputStructuredMeta = redactTranscriptSecrets(args.structuredMeta);
+  // The terminal result is stored, published and materialized from here, while the launch that
+  // registered secrets may still be live. A profile already masked the content it decoded; the
+  // host composes the summary and error messages, which are the only prose this writer masks.
+  const next = redactTerminalProse(args.next);
+  const inputStructuredMeta = args.structuredMeta;
   if (existing.status !== 'running') return false;
   const claimed = terminalTransitionsInFlight.get(args.runs) ?? new Set<string>();
   if (claimed.has(args.runId)) return false;
@@ -111,7 +126,9 @@ export async function finishExecutionRun(args: Readonly<{
   try {
   const terminalEventId = randomUUID();
 
-  let toolResult = redactTranscriptSecrets(args.toolResult);
+  // A retained result already published by the host was masked when it was stored.
+  let toolResult = isRecordOutput(args.toolResult.output) && args.toolResult.output !== existing.latestToolResult
+    ? { ...args.toolResult, output: redactTerminalProse(args.toolResult.output) } : args.toolResult;
   let structuredMeta = inputStructuredMeta;
   let terminalizationError: unknown = null;
   let shouldPublishTranscriptMarker = false;

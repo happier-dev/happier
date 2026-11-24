@@ -8,6 +8,7 @@ import type {
 } from '../ExecutionRunIntentProfile';
 import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult, normalizeExecutionRunProfileResultContract } from '@happier-dev/protocol/execution/runs/resultContract';
 import { invalidProfileResultOutput } from '../shared/invalidResultOutput';
+import { redactExecutionRunResultValue } from '../shared/redactExecutionRunResultValue';
 import type { ExecutionRunProfileResultContract } from '@happier-dev/protocol';
 
 function readAgentIntentInput(value: unknown) {
@@ -25,15 +26,14 @@ function readResultContract(
 }
 
 function completeAgentTurn({ start, rawText }: ExecutionRunProfileBoundedCompleteParams): ExecutionRunProfileBoundedCompleteResult {
-  const decoded = decodeExecutionRunProfileResult(
-    rawText,
-    readResultContract(start.intentInput, start.resultContract),
-  );
+  const contract = readResultContract(start.intentInput, start.resultContract);
+  const decoded = decodeExecutionRunProfileResult(rawText, contract);
   if (!decoded.ok) return invalidProfileResultOutput('Agent output did not match the required result contract', decoded);
+  const value = redactExecutionRunResultValue(decoded.value, contract);
   return {
     status: 'succeeded',
-    summary: typeof decoded.value === 'string' ? decoded.value : JSON.stringify(decoded.value),
-    toolResultOutput: decoded.value,
+    summary: typeof value === 'string' ? value : JSON.stringify(value),
+    toolResultOutput: value,
   };
 }
 

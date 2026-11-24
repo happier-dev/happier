@@ -2,6 +2,7 @@ import { ScmDiffSummaryModelOutputSchema, normalizeScmDiffSummaryModelOutput } f
 import type { ScmDiffSummaryModelOutput } from '@happier-dev/protocol';
 
 import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
+import { redactTranscriptSecretsExcept } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 export type DiffSummaryModelOutput = ScmDiffSummaryModelOutput;
 
@@ -27,6 +28,31 @@ export function parseDiffSummaryModelOutput(
   const result = ScmDiffSummaryModelOutputSchema.safeParse(parsed);
   if (!result.success) return null;
   try {
-    return context ? normalizeScmDiffSummaryModelOutput(result.data, context) : result.data;
+    return redactDiffSummaryProse(context ? normalizeScmDiffSummaryModelOutput(result.data, context) : result.data);
   } catch { return null; }
+}
+
+/**
+ * Masks the model's prose after the exact output was validated against the comparison. Stop, group
+ * and change references, caption anchors and finding identities stay exact for their readers.
+ */
+function redactDiffSummaryProse(model: DiffSummaryModelOutput): DiffSummaryModelOutput {
+  const { walkthrough, commitPlan, reviewExplanations } = model;
+  return {
+    ...redactTranscriptSecretsExcept(model, ['walkthrough', 'commitPlan', 'reviewExplanations']),
+    ...(walkthrough ? { walkthrough: {
+      ...redactTranscriptSecretsExcept(walkthrough, ['stops', 'otherChangeRefs']),
+      stops: walkthrough.stops.map(stop => ({
+        ...redactTranscriptSecretsExcept(stop, ['id', 'changeRefs', 'importance', 'captions', 'findingRefs', 'reviewExplanations']),
+        ...(stop.captions ? { captions: stop.captions.map(caption =>
+          redactTranscriptSecretsExcept(caption, ['changeRef', 'side', 'startLine', 'endLine'])) } : {}),
+        ...(stop.reviewExplanations ? { reviewExplanations: stop.reviewExplanations.map(explanation =>
+          redactTranscriptSecretsExcept(explanation, ['findingRefs', 'provenance'])) } : {}),
+      })),
+    } } : {}),
+    ...(commitPlan ? { commitPlan: { ...commitPlan, groups: commitPlan.groups.map(group =>
+      redactTranscriptSecretsExcept(group, ['id', 'changeRefs'])) } } : {}),
+    ...(reviewExplanations ? { reviewExplanations: reviewExplanations.map(explanation =>
+      redactTranscriptSecretsExcept(explanation, ['stopId'])) } : {}),
+  };
 }

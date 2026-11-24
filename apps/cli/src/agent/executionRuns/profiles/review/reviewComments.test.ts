@@ -1,5 +1,6 @@
 import { runWithScmAccountScope } from '@/scm/accountScope';
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -39,7 +40,7 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
-import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
@@ -390,7 +391,9 @@ describe('canonical review Run comments', () => {
     await finishExecutionRun({ runId: initial.runId,
       next: { status: 'failed', finishedAtMs: 2, summary: `Summary ${secret} control-summary`,
         error: { code: 'execution_run_failed', message: `Provider said ${secret} control-error` } },
-      toolResult: { output: { answer: `Answer ${secret} control-answer` } },
+      // A host-composed terminal envelope; Agent output inside it is masked by the profile that decoded it.
+      toolResult: { output: { status: 'failed', summary: `Answer ${secret} control-answer`,
+        error: { code: 'execution_run_failed', message: `Provider said ${secret} control-error` } } },
       runs: host.runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
       enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites });
     releaseLaunch();
@@ -401,6 +404,72 @@ describe('canonical review Run comments', () => {
     expect(read).not.toContain(secret);
     expect(read).toContain('control-answer');
     expect(read).toContain('control-error');
+  });
+
+  it('keeps Review references exact and masks only prose when short secrets are registered', async () => {
+    return runWithScmAccountScope('account', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-short-' });
+    repositories.push(fixture.rootPath);
+    const path = 'packages/postgres/a.ts';
+    await mkdir(join(fixture.rootPath, 'packages/postgres'), { recursive: true });
+    await writeFile(join(fixture.rootPath, path), Array.from({ length: 15 }, (_, line) => `line${line}();`).join('\n') + '\n');
+    execFileSync('git', ['add', path], { cwd: fixture.rootPath });
+    const captured = await captureScmComparison({ cwd: fixture.rootPath, sessionId: 'session-1', source: { kind: 'workingTree' } });
+    const requests: unknown[] = [];
+    vi.mocked(axios.post).mockImplementation(async (_url, body) => {
+      requests.push(body);
+      return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
+    });
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
+      launch: { cwd: fixture.rootPath },
+      intentInput: { cwd: fixture.rootPath, comparisonId: captured.comparison.id, comparison: captured.comparison } };
+    const manager = new ExecutionRunHostBridge({ cwd: root, parentProvider: 'claude', sendAcp: async () => {} });
+    const host = manager as unknown as { runs: Map<string, ExecutionRunState>; controllers: Map<string, ExecutionRunBackendController> };
+    const controller = { kind: 'backend', cancelled: false, backend: { readPendingPermissionRequestIds: () => [] } } as unknown as ExecutionRunBackendController;
+    host.runs.set(initial.runId, initial);
+    host.controllers.set(initial.runId, controller);
+    const releases = ['native', 'postgres', '1', 'secret', 'true'].map(registerTranscriptSecret);
+    try {
+      await publishExecutionRunTurn({ runId: initial.runId, turnId: 'short-secret-review', controller,
+        controllers: host.controllers, runs: host.runs,
+        rawText: JSON.stringify({ summary: 'The native driver logs the secret', findings: [{ id: 'f1', title: 'Leaks secret',
+          severity: 'high', category: 'correctness', filePath: path, startLine: 12, endLine: 12, summary: 'postgres password is printed' }] }),
+        finishedAtMs: 2, parentProvider: 'claude', reviewComments: service(), sendAcp: async () => {} });
+    } finally {
+      releases.forEach(release => release());
+    }
+    const stored = host.runs.get(initial.runId)!;
+    expect(stored.error).toBeUndefined();
+    const payload = stored.structuredMeta?.payload as { summary: string; findings: Array<Record<string, unknown>> };
+    expect(payload.summary).toBe(`The ${TRANSCRIPT_SECRET_REDACTED} driver logs the ${TRANSCRIPT_SECRET_REDACTED}`);
+    expect(payload.findings[0]).toMatchObject({ id: 'f1', severity: 'high', category: 'correctness', filePath: path,
+      startLine: 12, endLine: 12, title: `Leaks ${TRANSCRIPT_SECRET_REDACTED}`, summary: `${TRANSCRIPT_SECRET_REDACTED} password is printed` });
+    expect(JSON.stringify(requests)).toContain(path);
+    expect(JSON.stringify(requests)).not.toContain('postgres password');
+    });
+  });
+
+  it('keeps a Run error code and terminal output identity exact while masking its message', async () => {
+    const initial = { ...run(), runId: 'run-1', callId: 'call-1', sidechainId: 'sidechain-1' };
+    const runs = new Map([[initial.runId, initial]]);
+    const releases = ['native', 'postgres', '1', 'secret', 'true'].map(registerTranscriptSecret);
+    try {
+      await finishExecutionRun({ runId: initial.runId,
+        next: { status: 'failed', finishedAtMs: 2, summary: 'native secret refused',
+          error: { code: 'connected_service_secret_unavailable', message: 'the secret was refused' } },
+        toolResult: { output: { status: 'failed', summary: 'native secret refused', runId: 'run-1', callId: 'call-1',
+          sidechainId: 'sidechain-1', error: { code: 'connected_service_secret_unavailable', message: 'the secret was refused' } } },
+        runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+        enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites });
+    } finally {
+      releases.forEach(release => release());
+    }
+    const stored = runs.get(initial.runId)!;
+    expect(stored.error).toEqual({ code: 'connected_service_secret_unavailable', message: `the ${TRANSCRIPT_SECRET_REDACTED} was refused` });
+    expect(stored.summary).toBe(`${TRANSCRIPT_SECRET_REDACTED} ${TRANSCRIPT_SECRET_REDACTED} refused`);
+    expect(stored.latestToolResult).toMatchObject({ status: 'failed', summary: `${TRANSCRIPT_SECRET_REDACTED} ${TRANSCRIPT_SECRET_REDACTED} refused`,
+      runId: 'run-1', callId: 'call-1', sidechainId: 'sidechain-1',
+      error: { code: 'connected_service_secret_unavailable', message: `the ${TRANSCRIPT_SECRET_REDACTED} was refused` } });
   });
 
   it('uses the prepared comparison for a Session finding after the live file is deleted', async () => {

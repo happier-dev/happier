@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { SCM_COMMIT_MESSAGE_MAX_LENGTH } from '@happier-dev/protocol/scm';
 
 import { parseTrailingJsonObject } from '@/agent/executionRuns/profiles/shared/parseTrailingJsonObject';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 const ModelOutputSchema = lazyZodSchema(() => z.looseObject({
   title: z.string().check(z.minLength(1), z.maxLength(200)),
@@ -19,6 +20,7 @@ function clamp(value: string, max: number): string {
   return value.slice(0, Math.max(0, max - 1)) + '…';
 }
 
+/** Decodes the exact model text, then masks its prose before clamping; a commit message is Agent content throughout. */
 export function parseCommitMessageModelOutput(rawText: string): CommitMessageModelOutput | null {
   const trimmed = rawText.trim();
   if (!trimmed) return null;
@@ -26,9 +28,10 @@ export function parseCommitMessageModelOutput(rawText: string): CommitMessageMod
   // The shared Run-output reader tolerates the prose or code fence a model puts around its JSON.
   const parsed = parseTrailingJsonObject(trimmed);
 
-  const result = ModelOutputSchema.safeParse(parsed);
+  const decoded = ModelOutputSchema.safeParse(parsed);
+  const result = decoded.success ? { success: true as const, data: redactTranscriptSecrets(decoded.data) } : decoded;
   if (!result.success) {
-    const lines = trimmed.split('\n');
+    const lines = redactTranscriptSecrets(trimmed).split('\n');
     const title = clamp(lines[0] ?? 'Commit', 200).trim() || 'Commit';
     const body = lines.slice(1).join('\n').trim();
     const message = clamp(body ? `${title}\n\n${body}` : title, SCM_COMMIT_MESSAGE_MAX_LENGTH);

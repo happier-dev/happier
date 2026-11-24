@@ -4,6 +4,7 @@ import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { invalidProfileResultOutput } from '../shared/invalidResultOutput';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 function readTaskIntentInput(value: unknown) {
   return ExecutionRunTaskIntentInputV1Schema.parse(value ?? {});
@@ -43,7 +44,7 @@ export const TaskProfile: ExecutionRunIntentProfile = {
       return {
         status: 'succeeded',
         summary: 'Task completed.',
-        toolResultOutput: rawText,
+        toolResultOutput: redactTranscriptSecrets(rawText),
       };
     }
 
@@ -53,7 +54,7 @@ export const TaskProfile: ExecutionRunIntentProfile = {
     return {
       status: 'succeeded',
       summary: 'Task completed.',
-      toolResultOutput: decoded.value,
+      toolResultOutput: redactTranscriptSecrets(decoded.value),
     };
   },
 };

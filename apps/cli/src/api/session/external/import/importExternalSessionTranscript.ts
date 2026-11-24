@@ -9,8 +9,10 @@ import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/message
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import type { ExternalSessionTranscriptRawMessageV1, SessionMessageRole, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
 
-import { splitDurableSessionToolOutput } from '@/api/session/client/transport/outboundSessionMessagePayload';
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
+import {
+  redactSessionMessageContentSecrets,
+  splitDurableSessionToolOutput,
+} from '@/api/session/client/transport/outboundSessionMessagePayload';
 import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
@@ -108,7 +110,7 @@ function buildStoredMessageContent(params: Readonly<{
 
   // Production imports stay inline until the exact output reader is available.
   if (params.toolOutputStorage !== 'detached') return { content: seal(params.raw) };
-  const split = splitDurableSessionToolOutput(context, { ...params, content: redactTranscriptSecrets(params.raw) });
+  const split = splitDurableSessionToolOutput(context, { ...params, content: redactSessionMessageContentSecrets(params.raw) });
   if (!split) return { content: seal(params.raw) };
   const original = seal(params.raw);
   const normalized = normalizeSessionStoredMessageContentForStorage(original.t === 'plain'

@@ -9,6 +9,7 @@ import { authorizePluginExecLaunchForHost, authorizeResolvedAgentNativeExecLaunc
 import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { finishExecutionRun } from '@/agent/runtime/bridges/executionRun/finishExecutionRun';
+import { resolveExecutionRunIntentProfile } from '@/agent/executionRuns/profiles/intentRegistry';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from './agentRuntimeDaemonServiceProtocol';
@@ -411,8 +412,12 @@ describe('runner daemon PluginServices proxy', () => {
             instructions: '', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
             ioMode: 'request_response', status: 'running', startedAtMs: 1 };
         const runs = new Map([[run.runId, run]]);
-        await finishExecutionRun({ runId: run.runId, next: { status: 'succeeded', finishedAtMs: 2, summary: `Done ${secret} control-summary` },
-            toolResult: { output: { answer: `Echo ${secret} control-answer` } }, runs, controllers: new Map(), budgetRegistry: null,
+        // The Run profile decodes the exact Agent text and masks its prose; the writer stores the result.
+        const completion = resolveExecutionRunIntentProfile('delegate').onBoundedComplete({ start: run, finishedAtMs: 2,
+            rawText: JSON.stringify({ summary: `Echo ${secret} control-answer`, deliverables: [{ id: 'd1', title: 'Done' }] }) });
+        await finishExecutionRun({ runId: run.runId, next: { status: completion.status, finishedAtMs: 2, summary: completion.summary },
+            toolResult: { output: completion.toolResultOutput, meta: completion.toolResultMeta }, structuredMeta: completion.structuredMeta,
+            runs, controllers: new Map(), budgetRegistry: null,
             parentProvider: 'claude', sendAcp: async () => {}, enqueueMarkerWrite: async (_runId, write) => { await write(); },
             terminalMarkerWritePromises: new Map() });
         const stored = JSON.stringify(runs.get(run.runId));

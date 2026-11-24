@@ -30,7 +30,6 @@ import type { ExecutionRunTranscriptPublisher } from '../executionRunTranscriptP
 import { settleExecutionRunController } from '../settleExecutionRunController';
 import type { ExecutionRunTurnResultV1, JsonValue } from '@happier-dev/protocol';
 import { projectExecutionRunInputTurn } from '../runOccurrenceWitness';
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 export async function executeBoundedBackendRun(args: Readonly<{
   runId: string;
@@ -438,9 +437,9 @@ export async function executeBoundedBackendRun(args: Readonly<{
       return;
     }
 
-    // The turn result, summary and terminal output derive from this text; redact registered
-    // secrets while they are registered.
-    const rawText = redactTranscriptSecrets(backendCtrl.buffer.trim());
+    // The profile decodes this exact text and masks the prose of its decoded result while the
+    // registered secrets are live; the sidechain line below goes through the message writer.
+    const rawText = backendCtrl.buffer.trim();
     const finishedAtMs = args.getNowMs();
     let completion = profile.onBoundedComplete({
       start,
@@ -472,7 +471,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
       await runTurnWithLiveInterventions(repairPrompt);
 
-      const repairedRawText = redactTranscriptSecrets(backendCtrl.buffer.trim());
+      const repairedRawText = backendCtrl.buffer.trim();
       completion = profile.onBoundedComplete({
         start,
         rawText: repairedRawText,

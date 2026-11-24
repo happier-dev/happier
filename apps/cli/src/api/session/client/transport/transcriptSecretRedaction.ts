@@ -1,12 +1,13 @@
 /**
- * Exact-value redaction of secrets that an Agent can read and echo into its transcript. Applied
- * once at each Session writer of Agent-authored content, before encryption or plain storage: the
- * message writer (`buildOutboundSessionMessagePayload`) and the Agent-state commit
- * (`ApiSessionClient.updateAgentState`, which carries permission request arguments). Execution Run
- * output is redacted where it is stored: `publishExecutionRunTurn`, `finishExecutionRun`, the
- * exact-input turn writers and the Voice turn-stream pushes, so Run state, Review findings and
- * comments, Workflow step results and stream reads never hold a value whose registration later
- * ends (Project secrets outlive their launch). Reads apply no second pass.
+ * Exact-value redaction of secrets that an Agent can read and echo into its transcript. One rule:
+ * string values of Agent-authored content are masked, never record keys and never control data.
+ * Each shape owner passes only its content, once, before encryption or plain storage: the message
+ * writer (`redactSessionMessageContentSecrets`: text, tool input and tool output), the Agent-state
+ * request store when it builds the stored entry (request arguments, offer and question prose), each Execution
+ * Run profile right after it decodes the Agent's output (prose of the decoded result), the Run
+ * writers (`finishExecutionRun` summary and error messages) and the Voice turn-stream pushes, so
+ * Run state, Review findings and comments, Workflow step results and stream reads never hold a
+ * value whose registration later ends (Project secrets outlive their launch). Reads apply no second pass.
  *
  * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers, the session hook
  * server, and the secret values the daemon materialized into a runner-spawned launch (Project
@@ -89,7 +90,7 @@ function redactValue(value: unknown, secrets: readonly string[]): unknown {
     if (typeof value === 'string') return redactString(value, secrets);
     if (Array.isArray(value)) return mapArray(value, entry => redactValue(entry, secrets));
     if (value === null || typeof value !== 'object') return value;
-    return mapRecord(value, (key, entry) => [redactString(key, secrets), redactValue(entry, secrets)]);
+    return mapRecord(value, (key, entry) => [key, redactValue(entry, secrets)]);
 }
 
 function redactFields(
@@ -181,11 +182,23 @@ export function redactAgentStatePermissionChoiceOffer(value: unknown): unknown {
 }
 
 /**
- * Replaces every registered secret inside the string keys and values of JSON content, leaving its
- * structure intact; registered values may be any person-chosen string. Unchanged content is
- * returned as is. Without a registered secret this is a no-op.
+ * Replaces every registered secret inside the string values of Agent-authored content. Record keys,
+ * numbers and booleans are never touched, so the structure and types stay exact. Callers pass only
+ * content, never an envelope with control fields, and pass decoded values, never serialized text that
+ * is parsed later. Unchanged content is returned as is. Without a registered secret this is a no-op.
  */
 export function redactTranscriptSecrets<T>(content: T): T {
     const secrets = readActiveSecrets();
     return secrets ? redactValue(content, secrets) as T : content;
+}
+
+/**
+ * Masks a decoded Agent-authored record whose fields are all Agent content except the named
+ * references (ids, paths, refs its shape owner resolves against host data); key order is kept.
+ */
+export function redactTranscriptSecretsExcept<T extends object>(record: T, references: readonly (keyof T & string)[]): T {
+    const secrets = readActiveSecrets();
+    if (!secrets) return record;
+    return mapRecord(record, (key, entry) => [key, (references as readonly string[]).includes(key)
+        ? entry : redactValue(entry, secrets)]) as T;
 }

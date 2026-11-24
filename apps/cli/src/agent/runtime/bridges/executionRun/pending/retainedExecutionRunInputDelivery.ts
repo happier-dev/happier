@@ -1,4 +1,3 @@
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readSessionAttachmentDescriptorsV1 } from '@happier-dev/protocol/messages/structured/sessionAttachmentsInputV1';
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -18,7 +17,7 @@ import { readAdmittedSessionMediaInputForDispatchV1 } from '@/session/services/a
 import { resolveStructuredInputProviderDispatchContext } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 import { projectExecutionRunWorkflowInputAcceptance } from '../executionRunWorkflowObservation';
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
-import { createExecutionRunDiagnosticError, projectExecutionRunError } from '../errors';
+import { createExecutionRunDiagnosticError, projectExecutionRunError, redactExecutionRunDiagnosticMessage } from '../errors';
 
 import type {
     ExecutionRunPendingInputDelivery,
@@ -155,7 +154,7 @@ export function createRetainedExecutionRunInputDelivery(
                     ...controller.currentInputTurn,
                     state: event.kind === 'turn-complete' ? 'completed' : event.kind === 'turn-failed' ? 'failed' : 'cancelled',
                     ...(event.kind === 'turn-failed' ? { error: projectExecutionRunError(
-                        createExecutionRunDiagnosticError(redactTranscriptSecrets(event.diagnostic), event.emittedAtMs, options.agentId), { runId },
+                        createExecutionRunDiagnosticError(redactExecutionRunDiagnosticMessage(event.diagnostic), event.emittedAtMs, options.agentId), { runId },
                     ) } : {}),
                 };
                 controller.currentInputTurn = undefined;

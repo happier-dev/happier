@@ -16,6 +16,7 @@ import type {
 import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 import { parseTrailingJsonObject } from '../../executionRuns/profiles/shared/parseTrailingJsonObject';
 import { createReviewScopeAttribution } from './scopeAttribution';
+import { redactTranscriptSecrets, redactTranscriptSecretsExcept } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 function stripOptionalModelNulls(value: unknown, shape: Readonly<Record<string, {
   safeParse(value: unknown): Readonly<{ success: boolean }>;
@@ -28,13 +29,24 @@ function stripOptionalModelNulls(value: unknown, shape: Readonly<Record<string, 
   return record;
 }
 
+/**
+ * A validated model finding is Agent content except the references its readers resolve against the
+ * comparison and the comment owner: identity, classification, file path, lines and confidence.
+ */
 function parseModelFinding(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return ReviewFindingSchema.safeParse(value);
   // Persisted references are attached only by the host ReviewComment owner.
   const { comment: _modelComment, scopeAttribution: _modelScopeAttribution, ...finding } = value as Record<string, unknown>;
   // Models use an empty patch to report that no replacement was proposed.
   if (finding.patch === '') delete finding.patch;
-  return ReviewFindingSchema.safeParse(stripOptionalModelNulls(finding, ReviewFindingSchema.shape));
+  const parsed = ReviewFindingSchema.safeParse(stripOptionalModelNulls(finding, ReviewFindingSchema.shape));
+  return parsed.success ? { ...parsed, data: redactTranscriptSecretsExcept(parsed.data,
+    ['id', 'severity', 'category', 'filePath', 'startLine', 'endLine', 'confidence']) } : parsed;
+}
+
+/** Questions and assumptions are prose that names findings by id. */
+function redactModelNote<T extends Readonly<{ id: string; findingIds?: readonly string[]; status?: string }>>(note: T): T {
+  return redactTranscriptSecretsExcept(note, ['id', 'findingIds', 'status']);
 }
 
 function readAdmittedReviewComparison(input: Record<string, unknown>) {
@@ -82,13 +94,13 @@ export function normalizeParsedReviewContent(params: Readonly<{
   const questions = Array.isArray(questionsRaw)
     ? questionsRaw.flatMap((item) => {
       const parsedQuestion = ReviewQuestionSchema.safeParse(stripOptionalModelNulls(item, ReviewQuestionSchema.shape));
-      return parsedQuestion.success ? [parsedQuestion.data] : [];
+      return parsedQuestion.success ? [redactModelNote(parsedQuestion.data)] : [];
     })
     : [];
   const assumptions = Array.isArray(assumptionsRaw)
     ? assumptionsRaw.flatMap((item) => {
       const parsedAssumption = ReviewAssumptionSchema.safeParse(stripOptionalModelNulls(item, ReviewAssumptionSchema.shape));
-      return parsedAssumption.success ? [parsedAssumption.data] : [];
+      return parsedAssumption.success ? [redactModelNote(parsedAssumption.data)] : [];
     })
     : [];
   const proposedComments = typeof proposedCommentsRaw === 'undefined'
@@ -116,7 +128,8 @@ export function normalizeParsedReviewContent(params: Readonly<{
   const quality = ReviewQualityV1Schema.safeParse(rawQuality);
   const fileCount = admittedComparison?.inventory.files.length;
   const content = ReviewFindingsContentV2Schema.safeParse({
-    ...modelContent,
+    // Remaining model fields are Agent prose; the host-owned fields below replace any model copy.
+    ...redactTranscriptSecrets(modelContent),
     reviewOutcome,
     ...(quality.success ? { quality: quality.data } : {}),
     ...(fileCount !== undefined ? { fileCount } : {}),
@@ -124,12 +137,13 @@ export function normalizeParsedReviewContent(params: Readonly<{
     comparisonId: params.intentInput && typeof params.intentInput === 'object'
       && 'comparisonId' in params.intentInput && typeof params.intentInput.comparisonId === 'string'
       ? params.intentInput.comparisonId : undefined,
-    summary: summaryRaw,
-    overviewMarkdown: typeof overviewMarkdownRaw === 'string' ? overviewMarkdownRaw : summaryRaw,
+    summary: redactTranscriptSecrets(summaryRaw),
+    overviewMarkdown: redactTranscriptSecrets(typeof overviewMarkdownRaw === 'string' ? overviewMarkdownRaw : summaryRaw),
     findings,
     questions,
     assumptions,
-    ...(proposedComments?.success ? { proposedComments: proposedComments.data } : {}),
+    ...(proposedComments?.success ? { proposedComments: proposedComments.data.map(proposal =>
+      redactTranscriptSecretsExcept(proposal, ['findingId', 'anchor', 'severity', 'taxonomyIds'])) } : {}),
     generatedAtMs: params.generatedAtMs,
   });
 
@@ -195,16 +209,17 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     const questions = Array.isArray(questionsRaw)
       ? questionsRaw.flatMap((item) => {
         const parsedQuestion = ReviewQuestionSchema.safeParse(stripOptionalModelNulls(item, ReviewQuestionSchema.shape));
-        return parsedQuestion.success ? [parsedQuestion.data] : [];
+        return parsedQuestion.success ? [redactModelNote(parsedQuestion.data)] : [];
       })
       : undefined;
     const assumptions = Array.isArray(assumptionsRaw)
       ? assumptionsRaw.flatMap((item) => {
         const parsedAssumption = ReviewAssumptionSchema.safeParse(stripOptionalModelNulls(item, ReviewAssumptionSchema.shape));
-        return parsedAssumption.success ? [parsedAssumption.data] : [];
+        return parsedAssumption.success ? [redactModelNote(parsedAssumption.data)] : [];
       })
       : undefined;
 
+    const answerMarkdown = redactTranscriptSecrets(answerMarkdownRaw);
     const structuredMeta: ExecutionRunStructuredMeta = {
       kind: 'review_follow_up.v1',
       payload: {
@@ -213,14 +228,14 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
         ...(followUpIntent.data.findingIds.length > 0 ? { findingIds: followUpIntent.data.findingIds } : {}),
         ...(followUpIntent.data.replyToQuestionId ? { replyToQuestionId: followUpIntent.data.replyToQuestionId } : {}),
         requestMarkdown: followUpIntent.data.messageMarkdown,
-        answerMarkdown: answerMarkdownRaw,
+        answerMarkdown,
         ...(updatedFindings ? { updatedFindings } : {}),
         ...(questions ? { questions } : {}),
         ...(assumptions ? { assumptions } : {}),
         generatedAtMs: params.finishedAtMs,
       },
     };
-    const summary = firstMarkdownProse(answerMarkdownRaw) || 'Review follow-up completed.';
+    const summary = firstMarkdownProse(answerMarkdown) || 'Review follow-up completed.';
     return {
       status: 'succeeded',
       summary,

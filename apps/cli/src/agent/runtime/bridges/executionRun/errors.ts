@@ -101,6 +101,11 @@ export function readExecutionRunErrorMessage(error: unknown, fallback = 'Executi
   return fallback;
 }
 
+/** A runtime diagnostic's message is its only prose; its code, and the issue classified from it, stay exact. */
+export function redactExecutionRunDiagnosticMessage<T extends Readonly<{ message?: string }>>(diagnostic: T): T {
+  return diagnostic.message === undefined ? diagnostic : { ...diagnostic, message: redactTranscriptSecrets(diagnostic.message) };
+}
+
 /** Reuse the runtime's typed failure evidence; untyped errors do not acquire a guessed issue. */
 export function readExecutionRunRuntimeIssue(error: unknown): NonNullable<ExecutionRunState['error']>['runtimeIssueV1'] {
   if (!error || typeof error !== 'object') return undefined;

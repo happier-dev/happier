@@ -9,9 +9,18 @@ import type {
   ExecutionRunStructuredMeta,
   ExecutionRunStructuredOutputRecovery,
 } from '../ExecutionRunIntentProfile';
+import { redactTranscriptSecrets, redactTranscriptSecretsExcept } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { parseTrailingJsonObject } from '../shared/parseTrailingJsonObject';
 import { deriveLooseDelegateDeliverables } from '../shared/deriveLooseDelegateDeliverables';
 import { stripTrailingJsonObjectFromText } from '../shared/stripTrailingJsonObjectFromText';
+
+/** Delegate output is Agent prose except each deliverable's id, which its readers reference. */
+function redactDelegateProse<D extends Readonly<{ id: string }>>(output: Readonly<{ summary: string; deliverables: readonly D[] }>) {
+  return {
+    summary: redactTranscriptSecrets(output.summary),
+    deliverables: output.deliverables.map(deliverable => redactTranscriptSecretsExcept(deliverable, ['id'])),
+  };
+}
 
 function buildDelegateGuidanceBlock(): string {
   return [
@@ -85,8 +94,7 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
           backendId: params.backendId,
           backendTarget: params.backendTarget,
         },
-        summary: loose.summary,
-        deliverables: loose.deliverables,
+        ...redactDelegateProse(loose),
         generatedAtMs: params.finishedAtMs,
       });
 
@@ -145,8 +153,7 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
       backendId: params.backendId,
       backendTarget: params.backendTarget,
     },
-    summary: parsedModel.data.summary,
-    deliverables: parsedModel.data.deliverables,
+    ...redactDelegateProse(parsedModel.data),
     generatedAtMs: params.finishedAtMs,
   });
 
