@@ -224,6 +224,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         serverId: props.serverId,
         projectionPhase: projection.phase,
         projectionInputs: projection.inputs,
+        projectionFailureReason: projection.failureReason,
         initialEditSeed: currentSeed,
         onEditSeedApplied: props.onEditSeedApplied,
         initialEventRef: props.initialEventRef,
@@ -246,9 +247,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         ? getPluginMachineExecutionOriginRef(model.selectedWatcherOrigin).machineId : null;
     const setupKey = newSetup ? nativeWatcherId : 'saved';
     const readyToOpen = newSetup
-        ? model.sourceStatus === 'idle' && nativeWatcherId === machineId && model.selectedEvent !== null
-            && projection.phase === 'ready'
-            && projection.inputs?.automationEligibleEvents?.includes(model.selectedEvent) === true
+        ? model.sourceStatus === 'idle' && nativeWatcherId === machineId && model.hasCurrentSetupEvent === true
         : model.sourceStatus === 'configured';
     React.useEffect(() => {
         if (!setup || chooseWatcher || !setupKey || nativeSetupStarted.current === setupKey || !readyToOpen) return;
@@ -257,8 +256,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
     }, [chooseWatcher, model.configureSource, readyToOpen, setup, setupKey]);
     if (setup) {
         const retrySetup = () => {
-            if (model.eventCatalogStatus === 'ready' && model.selectedEvent
-                && (!newSetup || model.selectedWatcherOrigin)) model.configureSource();
+            if (model.hasCurrentSetupEvent && (!newSetup || model.selectedWatcherOrigin)) model.configureSource();
             else {
                 nativeSetupStarted.current = null;
                 setCatalogRefresh(current => current + 1);
@@ -283,6 +281,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         }
         const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp' || applying
             || (newSetup ? model.sourceStatus === 'idle' && nativeWatcherId !== null && nativeSetupStarted.current !== setupKey
+                && (nativeWatcherId !== machineId || readyToOpen)
                 : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
         if (waiting) return <>
             {newSetup && model.nativeSetupProjectionTargets &&

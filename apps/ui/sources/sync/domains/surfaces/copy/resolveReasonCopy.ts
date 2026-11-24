@@ -389,6 +389,21 @@ const WIDGET_KEYS = {
  * `diagnosticCode` for QA channels.
  */
 const PLUGIN_RUNTIME_KEYS = {
+    'not-supported': 'pluginRuntime.routeUnavailable',
+    'update-required': 'pluginRuntime.routeUnavailable',
+    'invalid-response': 'pluginRuntime.responseInvalid',
+    'projection-stale': 'pluginRuntime.viewNotCurrent',
+    event_retired: 'pluginRuntime.viewNotCurrent',
+    'request-failed': 'pluginRuntime.transportUnavailable',
+    'transport-error': 'pluginRuntime.transportUnavailable',
+    'transport-unavailable': 'pluginRuntime.transportUnavailable',
+    'machine-unavailable': 'pluginSurfaces.originReason.daemon_unavailable',
+    'access-denied': 'errors.permissionDenied',
+    'authentication-required': 'errors.authenticationFailed',
+    'authentication-unavailable': 'errors.authenticationFailed',
+    'encryption-unavailable': 'pluginRuntime.responseInvalid',
+    aborted: 'pluginRuntime.transportUnavailable',
+    error: 'pluginRuntime.transportUnavailable',
     local_artifact_failure: 'pluginRuntime.localArtifactFailure',
     load_error: 'pluginRuntime.localArtifactLoadFailure',
     render_error: 'pluginRuntime.localArtifactFailure',

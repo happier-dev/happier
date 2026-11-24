@@ -15,7 +15,7 @@ import { type PluginMachineExecutionOriginV1, arePluginMachineExecutionOriginsEq
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import type { DaemonMergedProjectionInputsState, DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -117,6 +117,10 @@ export type PluginEventAutomationPluginPresentation = Readonly<{
     isCurrent: () => boolean;
 }>;
 
+const RETIRED_SETUP_FAILURE = {
+    code: 'event_retired', reason: 'event_retired', retryable: true, remediation: { kind: 'retry' },
+} satisfies PluginEventAutomationSetupFailure;
+
 export type PluginEventAutomationComposerModel = Readonly<{
     eligibleEvents: readonly DaemonContributionRegistryProjectionAutomationEligibleEventV1[];
     eventCatalogStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
@@ -124,6 +128,8 @@ export type PluginEventAutomationComposerModel = Readonly<{
     catalogMachineId?: string | null;
     catalogServerId?: string | null;
     selectedEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null;
+    /** The current catalog still admits this selected setup presentation. */
+    hasCurrentSetupEvent?: boolean;
     /** Qualified intent only; never an admitted Event descriptor. */
     pendingEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     selectEvent: (event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) => void;
@@ -282,6 +288,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     serverId: string | null;
     projectionPhase: DaemonMergedProjectionPhase;
     projectionInputs: DaemonMergedProjectionInputs | null;
+    projectionFailureReason?: DaemonMergedProjectionInputsState['failureReason'];
     initialEditSeed?: PluginEventAutomationEditSeed | null;
     /** The original private value, published once when the existing edit seed is applied. */
     onEditSeedApplied?: (trigger: NonNullable<ReturnType<typeof buildPluginEventAutomationTriggerInput>>, seed: PluginEventAutomationEditSeed) => void;
@@ -384,11 +391,16 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     }
     const [maximumObservationAgeMsText, setMaximumObservationAgeMsText] = React.useState('');
     const [revision, advanceRevision] = React.useReducer((value: number) => value + 1, 0);
+    const appliedActivityIntentRef = React.useRef(false);
     const eligibleEvents = React.useMemo(() => (
         params.projectionPhase === 'ready' && params.projectionInputs?.automationEligibleEvents
             ? params.projectionInputs.automationEligibleEvents
             : []
     ), [params.projectionInputs?.automationEligibleEvents, params.projectionPhase]);
+    const currentSetupEvent = React.useMemo(() => selectedEvent
+        ? eligibleEvents.find(candidate => sameEligibleEvent(candidate, selectedEvent)) ?? null : null,
+    [eligibleEvents, selectedEvent]);
+    const openingNewSource = params.newSourceSetup !== undefined && sourceStatus === 'settingUp';
     React.useEffect(() => {
         // A pending catalog cannot withdraw the retained Event or its configured source.
         if (params.projectionPhase === 'loading') return;
@@ -409,10 +421,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 selected.setupAction.identity,
             )
         ) {
+            if (params.newSourceSetup) appliedActivityIntentRef.current = false;
             setSelectedEvent(null);
             setConfiguredSetup(null);
             setSourceStatus('unavailable');
-            setSourceFailure(null);
+            setSourceFailure(openingNewSource ? RETIRED_SETUP_FAILURE : null);
             setWebhookEndpoint(null);
             advanceRevision();
             return;
@@ -422,9 +435,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             // physical setup presentation was replaced. Swap in that exact
             // row so the setup scope retires the predecessor renderer.
             setSelectedEvent(current);
+            if (openingNewSource) {
+                setSourceStatus('unavailable');
+                setSourceFailure(RETIRED_SETUP_FAILURE);
+            }
             advanceRevision();
         }
-    }, [eligibleEvents, nativeSetupResume, params.projectionPhase]);
+    }, [eligibleEvents, nativeSetupResume, openingNewSource, params.newSourceSetup, params.projectionPhase]);
     const eventCatalogStatus = params.projectionPhase === 'ready'
         && params.projectionInputs?.automationEligibleEvents !== undefined
         ? 'ready' as const
@@ -556,8 +573,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
 
     // A source seed can bind its observer to one Machine. Keep that owner's
     // settled failure visible while the ordinary editor configures that source.
+    const catalogFailure = params.projectionPhase === 'unsupported' ? 'not-supported'
+        : params.projectionPhase === 'error' ? params.projectionFailureReason ?? 'request-failed' : undefined;
     const seedSetupFailure = React.useMemo(() => monitoringMachineId ? readSeededPluginEventAutomationSetupFailure({
         catalogReady: eventCatalogStatus === 'ready',
+        ...(catalogFailure ? { catalogFailure } : {}),
         event: watcherEvent,
         plugin: params.projectionInputs?.pluginProjectionById[watcherPluginId],
         selectableWatchers,
@@ -565,7 +585,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         discoveryPending: suppliedWatcherFacts.establishingTargets.some(target =>
             target.machineId === monitoringMachineId
             && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
-    }) : null, [eventCatalogStatus, monitoringMachineId,
+    }) : null, [catalogFailure, eventCatalogStatus, monitoringMachineId,
         params.serverId, params.projectionInputs, watcherPluginId, watcherEvent, selectableWatchers,
         suppliedWatcherFacts.establishingTargets, watcherFailures]);
 
@@ -616,7 +636,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         advanceRevision();
     }, [eligibleEvents]);
 
-    const appliedActivityIntentRef = React.useRef(false);
     const initialEventPluginId = initialEventRef?.pluginId;
     const initialEventLocalId = initialEventRef?.localId;
     React.useEffect(() => {
@@ -926,10 +945,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setWebhookEndpointRefreshing(false);
     }, [setupScope]);
 
-    const configureSource = React.useCallback(() => {
+    const configureSource = useEventCallback(() => {
         void (async () => {
-            const event = selectedEventRef.current;
-            if (!event || !accountLifetime || setupScope.signal.aborted) {
+            if (!accountLifetime || setupScope.signal.aborted) {
                 setSourceFailure(null);
                 setSourceStatus('unavailable');
                 return;
@@ -939,7 +957,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 setSourceStatus('unavailable');
                 return;
             }
-            const currentEvent = eligibleEvents.find((candidate) => sameEligibleEvent(candidate, event)) ?? null;
+            const currentEvent = currentSetupEvent;
             if (!currentEvent) {
                 setSourceFailure(null);
                 setSourceStatus('unavailable');
@@ -1029,7 +1047,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 setWebhookEndpoint(null);
                 setSourceFailure(configured.kind === 'unavailable' && configured.code && configured.reason
                     ? { ...configured, code: configured.code, reason: configured.reason }
-                    : null);
+                    : configured.kind === 'stale' && params.newSourceSetup ? RETIRED_SETUP_FAILURE : null);
                 setSourceStatus('unavailable');
                 return;
             }
@@ -1052,30 +1070,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 } else setSourceStatus('unavailable');
             }
         })();
-    }, [
-        accountLifetime,
-        configuredSetup,
-        initialEditSeed,
-        effectiveObservationTransport,
-        commandBridge,
-        executeWebhookAction,
-        eligibleEvents,
-        filter.valid,
-        filter.value,
-        maximumObservationAgeMs.valid,
-        maximumObservationAgeMs.value,
-        resolveExecutionOrigin,
-        nativeSetupResume,
-        nativeWatcherChoices,
-        selectedWatcherOrigin,
-        selectNativeWatcher,
-        setupScope,
-        sourceStatus,
-        sourceFailure,
-        initialSetupSeed,
-        params.newSourceSetup,
-        params.savedSourceSetup,
-    ]);
+    });
 
     const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;
     const webhookEndpointPluginId = configuredSetup?.draft.eventRef.pluginId ?? null;
@@ -1194,6 +1189,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         catalogMachineId: params.machineId,
         catalogServerId: params.serverId,
         selectedEvent,
+        hasCurrentSetupEvent: currentSetupEvent !== null,
         pendingEventRef: !selectedEvent && (!initialEditSeed || movingSavedSource) && initialEventPluginId && initialEventLocalId
             && accountLifetime?.isCurrent() === true
             ? { pluginId: initialEventPluginId, localId: initialEventLocalId } : null,
@@ -1237,6 +1233,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         chooseEvent,
         configureSource,
         createDraft,
+        currentSetupEvent,
         effectiveObservationTransport,
         eraseConfiguredSource,
         getEventPresentation,

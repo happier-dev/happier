@@ -1241,14 +1241,17 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 });
 
 // The alternate Machine can finish its first origin read after the native form opens.
-it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'projectionRefused', 'retiredWhileOpening'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
     const { subjectStarterEventSeed } = await import('@/components/workflows/triggers/subjectTriggerStarters');
     const { storage } = await import('@/sync/domains/state/storage');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-    const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    const { clearDaemonMergedProjectionCacheForTests, readObservedDaemonMergedProjectionCacheEntry } =
+        await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+    const { PLUGIN_EVENT_AUTOMATION_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
     const { readPluginUiExecutionOriginCandidates } = await import('@/sync/domains/plugins/ui/projectionUnion');
     const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
@@ -1301,12 +1304,12 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
             config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
             periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }] });
     const readSourceFacts = (members: readonly { machineId: string; inputs: typeof inputs }[]) =>
-        readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
+        readPluginUiExecutionOriginCandidates({ pluginId, projection: members.length ? inputs.pluginUiProjection : null,
         members: members.map(member => ({
             machineId: member.machineId, serverId: connection.serverId, serverIdentityId,
             projection: member.inputs.pluginUiProjection, phase: 'current', interactionEnabled: true,
         })) });
-    let sourceFacts = readSourceFacts([{ machineId, inputs }]);
+    let sourceFacts = readSourceFacts(outcome === 'refreshedBeforeWatcher' ? [] : [{ machineId, inputs }]);
     const projectionListeners = new Set<() => void>();
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
         id => id === pluginId ? sourceFacts : null, listener => {
@@ -1314,13 +1317,31 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
             return () => { projectionListeners.delete(listener); };
         });
     const alternateProjection = createDeferred<void>();
+    const schemaResponse = createDeferred<void>();
     const describeMachines = new Set<string>();
+    let catalogRefresh: 'label' | 'renderer' | null = null;
+    let refuseProjection = outcome === 'projectionRefused';
+    let holdSchema = outcome === 'retiredWhileOpening';
+    let openedSchemaRead = false;
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            if (refuseProjection) return { protocolVersion: 1 };
             const selected = peer?.machineId === request.machineId ? peer : { projection, event };
             if (request.machineId) describeMachines.add(request.machineId);
-            const response = { protocolVersion: 1, projection: selected.projection, automationEligibleEvents: [selected.event] };
+            const currentEvent = catalogRefresh === 'label' && selected !== peer
+                ? { ...selected.event, event: { ...selected.event.event, title: 'Updated health status label' } }
+                : catalogRefresh === 'renderer' && selected.event.setupSurface
+                    ? { ...selected.event, setupSurface: { ...selected.event.setupSurface, projectionGeneration: 2 } }
+                    : selected.event;
+            const currentProjection = catalogRefresh === 'renderer'
+                ? { ...selected.projection, generation: 2 }
+                : selected.projection;
+            const response = { protocolVersion: 1, projection: currentProjection, automationEligibleEvents: [currentEvent] };
             return selected === peer ? alternateProjection.promise.then(() => response) : response;
+        }
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ && holdSchema) {
+            openedSchemaRead = true;
+            return schemaResponse.promise.then(() => ({ ok: true, inputSchema: event.setupAction.inputSchema }));
         }
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
             return { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
@@ -1342,7 +1363,51 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
         if (!seed) throw new Error('Expected the Environment Add check seed');
         const onClose = vi.fn();
         screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed} onClose={onClose} />);
-        await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(1));
+        const scope = { machineId, serverId: connection.serverId };
+        const projectionEntry = () => readObservedDaemonMergedProjectionCacheEntry({
+            ...scope, accountLifetime: lifetime, sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
+        });
+        if (outcome === 'projectionRefused' || outcome === 'retiredWhileOpening') {
+            const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+            if (outcome === 'retiredWhileOpening') {
+                await waitForHomeGovernance(() => expect(openedSchemaRead).toBe(true));
+                catalogRefresh = 'renderer';
+                await act(async () => publishMachineContributionRegistryProjectionInvalidation(scope, 'refresh'));
+                await waitForHomeGovernance(() => expect(projectionEntry()).toMatchObject({
+                    kind: 'ready', inputs: { automationEligibleEvents: [{ setupSurface: { projectionGeneration: 2 } }] },
+                }));
+            }
+            await waitForHomeGovernance(() => expect(screen!.findByType(SurfaceStateCard).props.diagnosticCode)
+                .toBe(outcome === 'projectionRefused' ? 'invalid-response' : 'event_retired'));
+            const state = screen.findByType(SurfaceStateCard);
+            expect(state.props.reason).toBeTruthy();
+            expect(modal).not.toHaveBeenCalled();
+            expect(rpc.hostActions).toEqual([]);
+            expect(workflows.creates).toEqual([]);
+            refuseProjection = false;
+            holdSchema = false;
+            await act(async () => schemaResponse.resolve());
+            await act(async () => state.props.action.onPress());
+        }
+        if (outcome === 'refreshedBeforeWatcher') {
+            await waitForHomeGovernance(() => expect(screen!.findByTestId('add-check.unavailable')).not.toBeNull());
+            const original = projectionEntry();
+            expect(original?.kind).toBe('ready');
+            expect(modal).not.toHaveBeenCalled();
+            catalogRefresh = 'label';
+            await act(async () => publishMachineContributionRegistryProjectionInvalidation(scope, 'refresh'));
+            await waitForHomeGovernance(() => {
+                const current = projectionEntry();
+                expect(current).toMatchObject({ kind: 'ready', inputs: { automationEligibleEvents: [
+                    { event: { title: 'Updated health status label' } },
+                ] } });
+            });
+            await act(async () => {
+                sourceFacts = readSourceFacts([{ machineId, inputs }]);
+                projectionListeners.forEach(listener => listener());
+            });
+        }
+        await waitForHomeGovernance(() => expect(modal.mock.calls, screen!.getTextContent()).toHaveLength(1));
         expect(rpc.hostActions).toEqual([]);
         expect(modal.mock.calls[0]?.[0].props).toMatchObject({ launchInput: { observerMachineId: machineId, initialInput: { subject } } });
         if (peer) {
@@ -1459,6 +1524,7 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
         }
     } finally {
         alternateProjection.resolve();
+        schemaResponse.resolve();
         await nativeForm?.dispose();
         await screen?.unmount();
         modal.mockRestore();
