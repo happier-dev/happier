@@ -398,7 +398,8 @@ Normal current access and content-mode checks still precede disclosure.
 
 In 0.3 development, `session.input.result.get` with `projection: 'reply'`
 reads that same original reply custody for agents and CLI callers, including
-queued inputs before transcript materialization. It returns the canonical
+queued inputs before transcript materialization. Mounted plugins can read
+reply progress for their own committed original input. The Action returns the canonical
 `available`, `none` or `unavailable` projection without loading answer bodies;
 omitting `projection` keeps the existing native input-result read. Plugin
 callers retain their original producer/receipt check before reading progress.

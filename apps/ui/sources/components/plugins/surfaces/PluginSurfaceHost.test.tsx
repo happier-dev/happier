@@ -18710,11 +18710,32 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
         const homes = createHomeGovernanceHarness();
         onTestFinished(() => homes.reset());
         const serverId = await homes.addHome({ name: 'Plugin page', serverUrl: 'https://server-1', accountId: 'account-a',
-            serverIdentityId: 'srv_server_dash_1', currentAccount: true });
+            serverIdentityId: 'srv_server_dash_1', currentAccount: true, accountEncryptionMode: 'plain' });
         const features = createRootLayoutFeaturesResponse({ features: { plugins: { enabled: true,
             ui: { enabled: true, hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } },
         } } });
         for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(serverId, path, { body: features });
+        const { createPlainSessionByIdResponseFixture, createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { settleSessionInputRequestV1, withSessionInputAuthorityV1 } = await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
+        const sessionId = 'reply-session';
+        const localId = 'original-input';
+        const inputAdmissionReceipt = { v: 1, issuer: 'authenticatedMachine' } as const;
+        const authority = settleSessionInputRequestV1({ request: { v: 1, producer: 'pluginSession',
+            caller: { kind: 'plugin', pluginId: 'acme.browser', contributionLocalId: 'actionless-review' }, permission: {} },
+            currentSessionPermissionCeiling: 'default', inputAdmissionReceipt });
+        const originalPath = `/v2/sessions/${sessionId}/messages/by-local-id/${localId}`;
+        homes.answer(serverId, `GET /v2/sessions/${sessionId}`, {
+            body: createPlainSessionByIdResponseFixture(createSessionFixture({ id: sessionId, encryptionMode: 'plain' })),
+        });
+        homes.answer(serverId, `GET ${originalPath}`, { body: { message: {
+            id: 'original-message', seq: 1, localId, sidechainId: null, accountActor: null,
+            createdAt: 1, updatedAt: 1, inputAdmissionReceipt,
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Question' },
+                meta: withSessionInputAuthorityV1({}, authority) } },
+        } } });
+        homes.answer(serverId, `GET ${originalPath}/reply`, { body: { v: 1, status: 'available',
+            progress: { v: 1, mode: 'wait', disposition: 'released', outcome: { kind: 'pass' } },
+        } });
         await pluginSurfaceAccountLifetime.setScope({ serverId, accountId: 'account-a' },
             (path, init) => createEmptyAccountBootstrapHttpResponse(path, init)
                 ?? homes.request(`https://server-1${path}`, init),
@@ -18757,8 +18778,12 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             expect(screen.findByTestId('plugin-surface-execution.chip')).toBeNull();
             targetedContributionsReadMock.mockClear();
             const read = readMountedHostApi().executeAction('widgets.fragment.get', { account, artifactId: 'actionless-review' });
-            if (hasProducer) await expect(read).resolves.toMatchObject({ fragment: { name: 'Saved review' } });
-            else await expect(read).rejects.toMatchObject({ code: 'unavailable', diagnostics: expect.arrayContaining([
+            if (hasProducer) {
+                await expect(read).resolves.toMatchObject({ fragment: { name: 'Saved review' } });
+                await expect(readMountedHostApi().executeAction('session.input.result.get', { sessionId, localId, projection: 'reply' }))
+                    .resolves.toMatchObject({ ok: true, sessionId, localId, projection: 'reply',
+                        reply: { status: 'available', progress: { outcome: { kind: 'pass' } } } });
+            } else await expect(read).rejects.toMatchObject({ code: 'unavailable', diagnostics: expect.arrayContaining([
                 expect.objectContaining({ code: 'plugin_mounted_caller_unavailable' }),
             ]) });
             expect(targetedContributionsReadMock).not.toHaveBeenCalled();

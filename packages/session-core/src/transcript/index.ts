@@ -14,3 +14,10 @@ export * from './agentActivity/fromHeadline.js';
 export * from './agentActivity/fromSessionSubagents.js';
 export * from './agentActivity/toolCallActivityTimestamps.js';
 export * from './agentActivity/resolvePendingPermissionRouteForSubAgentTool.js';
+
+export * from './sessionTurnLifecycle.js';
+export * from './assistantTurnOutcome.js';
+export * from '../usage/usageObservation.js';
+export * from '../usage/exactTurnUsage.js';
+export * from './readSessionInputResult.js';
+export * from './sessionInputOriginal.js';

@@ -1,4 +1,5 @@
-import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { isMemoryArtifactDecryptedRow, isSessionAgentThreadTextUserMessage, isSessionAgentMessage } from '@happier-dev/session-core/transcript';
+export { isMemoryArtifactDecryptedRow, isSessionAgentThreadTextUserMessage, isSessionAgentMessage } from '@happier-dev/session-core/transcript';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { fetchEncryptedTranscriptMessagesPage, MAX_TRANSCRIPT_MESSAGES_PAGE_SIZE, resolveTranscriptFetchTimeoutMs } from '@/session/replay/fetchEncryptedTranscriptMessages';
@@ -109,17 +110,6 @@ export function detectSessionTurnActivityFromProjection(value: unknown): Session
     };
 }
 
-export function isMemoryArtifactDecryptedRow(value: unknown): boolean {
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-    if (!obj) return false;
-    const meta = obj.meta;
-    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
-    const happier = (meta as Record<string, unknown>).happier;
-    if (!happier || typeof happier !== 'object' || Array.isArray(happier)) return false;
-    const kind = (happier as Record<string, unknown>).kind;
-    return kind === 'session_summary_shard.v1' || kind === 'session_synopsis.v1';
-}
-
 function tryDecryptTranscriptEnvelope(params: Readonly<{
     content: { t: 'encrypted'; c: string } | { t: 'plain'; v: unknown };
     encryptionMode: SessionStoredContentEncryptionMode;
@@ -141,16 +131,6 @@ function tryDecryptTranscriptEnvelope(params: Readonly<{
     } catch (error) {
         throw new SessionTurnActivityUnavailableError(error);
     }
-}
-
-export function isSessionAgentThreadTextUserMessage(value: unknown): boolean {
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-    return obj?.role === 'user' && isAgentThreadTextConversationTurnMeta(obj.meta);
-}
-
-export function isSessionAgentMessage(value: unknown): boolean {
-    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
-    return obj?.role === 'agent';
 }
 
 export async function detectSessionTurnActivity(params: Readonly<{

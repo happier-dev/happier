@@ -61,6 +61,7 @@ import { createUiSessionHandoffRecoveryActionDeps } from './sessionHandoffRecove
 import { createUiPetChooseAction } from './petChooseAction';
 import { createUiPetActionExecute, createUiPetImportPrepare } from './petActionDeps';
 import { setClientEncryptionRequirement } from '@/sync/ops/settings/setClientEncryptionRequirement';
+import { readSessionInputResultForAction } from '@/sync/api/session/sessionInputResultActions';
 import { readSessionTranscriptForAction } from '@/sync/api/session/sessionTranscriptActions';
 import { readUiMemoryInheritedContext, readUiMemoryScopeContext } from './readUiMemoryInheritedContext';
 import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
@@ -4923,6 +4924,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     sessionEventsGet: async (_params, invocation) => {
       if (!accountContext) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
       return await createUiAccountAction({ account: accountContext })(invocation);
+    },
+    sessionInputResultGet: async (input) => {
+      if (!accountContext || (input.serverId && !areServerProfileIdentifiersEquivalent(input.serverId, accountContext.serverId))) {
+        return { ok: false, code: 'result_read_failed' };
+      }
+      assertExpectedActionAccount(accountContext, input.context);
+      accountContext.assertCurrent();
+      const result = await readSessionInputResultForAction(input, { serverId: accountContext.serverId, accountId: accountContext.accountId });
+      accountContext.assertCurrent();
+      return result;
     },
     sessionTranscriptGet: async (input) => {
       // Natural Voice references acquire their exact Home at the target resolver,

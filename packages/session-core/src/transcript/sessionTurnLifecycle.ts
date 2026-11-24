@@ -1,0 +1,206 @@
+import { isAgentThreadTextConversationTurnMeta } from '@happier-dev/protocol/messages/structured/conversationTurnOriginV1';
+import { SESSION_FOLLOW_WAKE_EVENT_MESSAGE } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
+
+export const WORKFLOW_STEP_INPUT_EVENT_MESSAGE = 'Workflow step input';
+
+export type SessionTurnLifecycleEvent =
+    | 'task_started'
+    | 'task_complete'
+    | 'turn_aborted'
+    | 'turn_failed'
+    | 'turn_cancelled'
+    | 'ready';
+
+const TERMINAL_OUTPUT_STOP_REASONS = new Set([
+    'end_turn',
+    'stop',
+    'stop_sequence',
+    'max_tokens',
+    'length',
+    'complete',
+    'completed',
+    'success',
+]);
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null;
+}
+
+function readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+/** Only host input commitments open a new turn; output reports and diagnostics do not. */
+export function isSessionContextOnlyHostInput(value: unknown): boolean {
+    const row = asRecord(value);
+    if (!row || (row.role !== 'agent' && row.role !== 'event')) return false;
+    const content = asRecord(row.content);
+    if (!content) return false;
+    const data = asRecord(content.data);
+    const event = content.type === 'event' ? data
+        : (content.type === 'acp' || content.type === 'codex') && data?.type === 'event' ? asRecord(data.data)
+            : null;
+    return event?.type === 'worker-update'
+        || (event?.type === 'message'
+            && (event.message === SESSION_FOLLOW_WAKE_EVENT_MESSAGE || event.message === WORKFLOW_STEP_INPUT_EVENT_MESSAGE));
+}
+
+function hasTextPart(parts: readonly unknown[]): boolean {
+    return parts.some((part) => {
+        const partObj = asRecord(part);
+        return partObj?.type === 'text' && typeof partObj.text === 'string' && partObj.text.trim().length > 0;
+    });
+}
+
+function isTerminalOutputStopReason(value: unknown): boolean {
+    const reason = readString(value)?.toLowerCase();
+    return reason ? TERMINAL_OUTPUT_STOP_REASONS.has(reason) : false;
+}
+
+function readLifecycleEventType(value: unknown): SessionTurnLifecycleEvent | null {
+    const type = typeof value === 'string' ? value : null;
+    if (
+        type === 'task_started'
+        || type === 'task_complete'
+        || type === 'turn_aborted'
+        || type === 'turn_failed'
+        || type === 'turn_cancelled'
+        || type === 'ready'
+    ) {
+        return type;
+    }
+    return null;
+}
+
+function detectOutputLifecycleEvent(contentObj: Record<string, unknown>): SessionTurnLifecycleEvent | null {
+    const dataObj = asRecord(contentObj.data);
+    if (dataObj?.type !== 'assistant') return null;
+
+    const messageObj = asRecord(dataObj.message);
+    const parts = Array.isArray(messageObj?.content) ? messageObj.content : [];
+    if (!hasTextPart(parts)) return null;
+
+    if (
+        !isTerminalOutputStopReason(messageObj?.stop_reason)
+        && !isTerminalOutputStopReason(messageObj?.stopReason)
+        && !isTerminalOutputStopReason(dataObj.stop_reason)
+        && !isTerminalOutputStopReason(dataObj.stopReason)
+    ) {
+        return null;
+    }
+
+    return 'ready';
+}
+
+export function detectSessionTurnLifecycleEvent(value: unknown): SessionTurnLifecycleEvent | null {
+    const obj = asRecord(value);
+    if (!obj || (obj.role !== 'agent' && obj.role !== 'event')) return null;
+
+    const content = obj.content;
+    const contentObj = asRecord(content);
+    if (!contentObj) return null;
+
+    if (contentObj.type === 'text') {
+        return obj.role === 'agent' ? 'ready' : null;
+    }
+
+    if (contentObj.type === 'acp' || contentObj.type === 'codex') {
+        const data = contentObj.data;
+        const dataObj = asRecord(data);
+        const dataType = typeof dataObj?.type === 'string' ? dataObj.type : null;
+        if (dataType === 'message') {
+            // Stream segments are checkpointed during a turn and closed at tool-call
+            // boundaries too. Even a complete segment does not finish the turn.
+            const streamSegment = asRecord(asRecord(obj.meta)?.happierStreamSegmentV1);
+            if (streamSegment?.v === 1) return null;
+            return 'ready';
+        }
+        const lifecycleEvent = readLifecycleEventType(dataType);
+        if (!lifecycleEvent) return null;
+        return lifecycleEvent === 'ready' ? null : lifecycleEvent;
+    }
+
+    if (contentObj.type === 'event') {
+        const data = contentObj.data;
+        const dataObj = asRecord(data);
+        return readLifecycleEventType(dataObj?.type);
+    }
+
+    if (contentObj.type === 'output') {
+        return detectOutputLifecycleEvent(contentObj);
+    }
+
+    return null;
+}
+
+export function isBareSessionReadyEvent(value: unknown): boolean {
+    const obj = asRecord(value);
+    if (!obj || (obj.role !== 'agent' && obj.role !== 'event')) return false;
+
+    const content = obj.content;
+    const contentObj = asRecord(content);
+    if (contentObj?.type !== 'event') return false;
+
+    const data = contentObj.data;
+    const dataObj = asRecord(data);
+    return dataObj?.type === 'ready';
+}
+
+export function isSessionTurnCompletionProof(value: unknown): boolean {
+    const lifecycleEvent = detectSessionTurnLifecycleEvent(value);
+    if (!lifecycleEvent || isBareSessionReadyEvent(value)) {
+        return false;
+    }
+    return lifecycleEvent === 'ready' || lifecycleEvent === 'task_complete';
+}
+
+export function applySessionTurnLifecycleEvent(params: Readonly<{
+    pendingUserTurns: number;
+    activeTaskInFlight: boolean;
+    event: SessionTurnLifecycleEvent;
+}>): Readonly<{
+    pendingUserTurns: number;
+    activeTaskInFlight: boolean;
+}> {
+    if (params.event === 'task_started') {
+        return {
+            pendingUserTurns: params.pendingUserTurns > 0 ? params.pendingUserTurns - 1 : 0,
+            activeTaskInFlight: true,
+        };
+    }
+
+    if (params.activeTaskInFlight) {
+        return {
+            pendingUserTurns: params.pendingUserTurns,
+            activeTaskInFlight: false,
+        };
+    }
+
+    return {
+        pendingUserTurns: params.pendingUserTurns > 0 ? params.pendingUserTurns - 1 : 0,
+        activeTaskInFlight: false,
+    };
+}
+
+export function isMemoryArtifactDecryptedRow(value: unknown): boolean {
+    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    if (!obj) return false;
+    const meta = obj.meta;
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return false;
+    const happier = (meta as Record<string, unknown>).happier;
+    if (!happier || typeof happier !== 'object' || Array.isArray(happier)) return false;
+    const kind = (happier as Record<string, unknown>).kind;
+    return kind === 'session_summary_shard.v1' || kind === 'session_synopsis.v1';
+}
+
+export function isSessionAgentThreadTextUserMessage(value: unknown): boolean {
+    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    return obj?.role === 'user' && isAgentThreadTextConversationTurnMeta(obj.meta);
+}
+
+export function isSessionAgentMessage(value: unknown): boolean {
+    const obj = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    return obj?.role === 'agent';
+}

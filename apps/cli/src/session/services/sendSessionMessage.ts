@@ -16,7 +16,7 @@ import {
   type PermissionIntent,
 } from '@happier-dev/agents';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
-import { assertSessionInputAdmissionReceiptForAuthorityV1, type SessionInputResultGetResultV1,
+import { type SessionInputResultGetResultV1,
     type SessionInputResultV1, type SessionInputUsageV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 export type { SessionInputResultV1, SessionInputUsageV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -65,15 +65,13 @@ import {
   detectSessionTurnActivity,
   detectSessionTurnActivityFromProjection,
   isSessionAgentThreadTextUserMessage,
-  isMemoryArtifactDecryptedRow,
-  isSessionAgentMessage,
   readSessionProjectedTurnStatus,
   type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById, fetchSessionTurnsProjection, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { createSessionInputAttentionObserver } from './sessionInputAttention';
-import { SessionRuntimeIssueV1Schema, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { openSessionEventSource, waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
 import {
   decryptSessionPayload,
@@ -83,15 +81,18 @@ import {
   type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { getExecutionRun } from '@/session/services/executionRuns';
-import { extractUsageObservationFromTokenCountMessage } from '@/usage/usageObservation';
-import { createExactTurnUsageAccumulator } from '@/usage/exactTurnUsage';
 import {
   detectSessionTurnLifecycleEvent,
-  isBareSessionReadyEvent,
-  isSessionTurnCompletionProof,
   isSessionContextOnlyHostInput,
 } from '@/session/shared/sessionTurnLifecycle';
 
+import {
+    ASSISTANT_TURN_SCAN_PAGE_LIMIT, formatStructuredTurnFailureMessage, isAssistantTurnCompletionProof,
+    formatBlockedPromptDeliveryFailure, projectBlockedInputResult, readSessionInputResult as readInputResult,
+    readAssistantTurnFailure, readRuntimeIssueV1, readStructuredIssuePreview, resultFromAssistantTurnOutcome,
+    readAssistantTurnOutcomeAfterCurrentUserTurn as readAssistantTurnOutcome,
+    scanAssistantTurnAfterCurrentUserTurn, type AssistantTurnFailure, type AssistantTurnOutcome, type AssistantTurnTranscriptReader,
+} from '@happier-dev/session-core/transcript';
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 import { rejectMissingOrArchivedSessionInputV1, requiresMachineAdmissionForSessionInput, resolveSessionInputTargetMachineId, supportsAccountPendingForCliSessionInput } from './sessionInputAdmissionIdentity';
 import { MachineAdmissionTransportUnavailableError } from '@/daemon/machineAdmissionTransport';
@@ -499,13 +500,6 @@ function decryptTranscriptRowContent(params: Readonly<{
   }
 }
 
-function isAssistantTurnCompletionProof(value: unknown): boolean {
-  if (!value || isMemoryArtifactDecryptedRow(value) || isSessionAgentThreadTextUserMessage(value)) {
-    return false;
-  }
-  return isSessionTurnCompletionProof(value);
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -514,67 +508,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readNonnegativeInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function readStructuredIssuePreview(value: unknown): string | null {
-  const record = asRecord(value);
-  const preview = typeof record?.sanitizedPreview === 'string' ? record.sanitizedPreview.trim() : '';
-  return preview.length > 0 ? preview : null;
-}
-
-function readTranscriptRuntimeIssuePreview(value: unknown): string | null {
-  const record = asRecord(value);
-  const content = asRecord(record?.content);
-  const data = asRecord(content?.data);
-  const message = typeof data?.message === 'string' ? data.message.trim() : '';
-  return message.length > 0 ? message : null;
-}
-
-/** The host's failure writers attach the typed issue; only its schema fields leave the transcript. */
-function readRuntimeIssueV1(value: unknown): Readonly<{ runtimeIssueV1?: SessionRuntimeIssueV1 }> {
-  const parsed = SessionRuntimeIssueV1Schema.safeParse(value);
-  return parsed.success ? { runtimeIssueV1: parsed.data } : {};
-}
-
-function hasTranscriptRuntimeIssue(value: unknown): boolean {
-  const record = asRecord(value);
-  const meta = asRecord(record?.meta);
-  const code = typeof meta?.runtimeIssueCode === 'string' ? meta.runtimeIssueCode.trim() : '';
-  return code.length > 0;
-}
-
-function formatStructuredTurnFailureMessage(
-  kind: 'failed' | 'cancelled' | 'aborted',
-  preview?: string | null,
-): string {
-  if (kind === 'cancelled') return 'Current turn cancelled';
-  if (kind === 'aborted') return 'Current turn aborted';
-  const suffix = preview && preview.trim().length > 0 ? `: ${preview.trim()}` : '';
-  return `Current turn failed${suffix}`;
-}
-
-function readAssistantTurnFailure(value: unknown): AssistantTurnFailure | null {
-  if (!value || isMemoryArtifactDecryptedRow(value) || isSessionAgentThreadTextUserMessage(value)) {
-    return null;
-  }
-  const lifecycleEvent = detectSessionTurnLifecycleEvent(value);
-  if (lifecycleEvent === 'turn_failed') {
-    return { kind: 'failed', message: formatStructuredTurnFailureMessage('failed'), ...readRuntimeIssueV1(asRecord(asRecord(value)?.meta)?.runtimeIssueV1) };
-  }
-  if (lifecycleEvent === 'turn_cancelled') {
-    return { kind: 'cancelled', message: formatStructuredTurnFailureMessage('cancelled') };
-  }
-  if (lifecycleEvent === 'turn_aborted') {
-    return { kind: 'failed', message: formatStructuredTurnFailureMessage('aborted') };
-  }
-  if (hasTranscriptRuntimeIssue(value)) {
-    return {
-      kind: 'failed',
-      message: formatStructuredTurnFailureMessage('failed', readTranscriptRuntimeIssuePreview(value)),
-      ...readRuntimeIssueV1(asRecord(asRecord(value)?.meta)?.runtimeIssueV1),
-    };
-  }
-  return null;
 }
 
 function readProjectedCurrentTurnFailure(params: Readonly<{
@@ -622,22 +555,6 @@ function turnActivityFromProjectedCurrentTurnStatus(
   };
 }
 
-type AssistantTurnFailure =
-  | Readonly<{ kind: 'failed'; message: string; runtimeIssueV1?: SessionRuntimeIssueV1; usage?: SessionInputUsageV1 }>
-  | Readonly<{ kind: 'cancelled'; message: string; partialText?: string; finalAssistantMessageId?: string; usage?: SessionInputUsageV1 }>;
-
-type AssistantTurnOutcome =
-  | Readonly<{ kind: 'missing' }>
-  | Readonly<{
-      kind: 'completed';
-      finalAssistantText: string | null;
-      finalAssistantMessageId?: string;
-      usage?: SessionInputUsageV1;
-    }>
-  | AssistantTurnFailure;
-
-const ASSISTANT_TURN_SCAN_PAGE_LIMIT = 100;
-
 type CurrentPromptDeliveryOutcome =
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'materialized'; message: TranscriptMessageLookupResult }>
@@ -675,11 +592,6 @@ function projectBlockedPromptDeliveryAdmissionResult(reason: PendingQueueDeliver
     : { status: 'rejected', code: rejection.data };
 }
 
-function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
-  if (reason === 'team_access_removed') return 'Team access was withdrawn before Home published the Turn. The native Agent may have acted on the input.';
-  return `Current input delivery blocked (${reason})`;
-}
-
 function projectBlockedPromptDelivery(
   delivery: Pick<Extract<CurrentPromptDeliveryOutcome, { kind: 'blocked' }>, 'reason' | 'inputDeliveryIssue'>,
   localId: string,
@@ -687,9 +599,7 @@ function projectBlockedPromptDelivery(
   const { reason, inputDeliveryIssue } = delivery;
   const admissionResult = projectBlockedPromptDeliveryAdmissionResult(reason, localId);
   const message = formatBlockedPromptDeliveryFailure(reason);
-  const result: SessionInputResultV1 = !inputDeliveryIssue && admissionResult.status === 'outcomeUnknown'
-    ? { kind: 'pending' }
-    : { kind: 'failed', message, ...(inputDeliveryIssue ? { runtimeIssueV1: inputDeliveryIssue } : {}) };
+  const result = projectBlockedInputResult(reason, inputDeliveryIssue);
   const sendResult: Extract<SendSessionMessageResult, { ok: false }> = {
     ok: false,
     code: 'wait_failed',
@@ -798,232 +708,26 @@ async function waitForCurrentPromptDelivery(params: CurrentPromptDeliveryObserva
   }
 }
 
-async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
-  token: string;
-  sessionId: string;
-  localId: string;
-  materializedSeq: number;
-  signal?: AbortSignal;
-  /** Host-owned correspondence takes precedence over transcript adjacency. */
-  turn?: SessionTurnV1;
-  precedingTurnEndSeq?: number;
-  /** Immutable original reply custody may select an explicit committed publication. */
-  resultMessageId?: string;
-  sidechainId?: string;
-  ctx: Readonly<{
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
-  }> | null;
-  resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
-}>): Promise<Readonly<{
-  failure: AssistantTurnFailure | null;
-  sawCompletion: boolean;
-  finalAssistantText: string | null;
-  finalAssistantMessageId?: string;
-  usage?: SessionInputUsageV1;
-}>> {
-  const readCommittedTurnText = params.turn?.status === 'completed'
-    && typeof params.turn.transcriptAnchors?.finalAssistantMessageSeq !== 'number';
-  let afterSeq = Math.max(0, Math.trunc(params.materializedSeq) - 1,
-    readCommittedTurnText ? 0 : params.precedingTurnEndSeq ?? 0);
-  let currentUserSeq = Math.max(0, Math.trunc(params.materializedSeq));
-  let observedAgentProgress = false;
-  let sawCompletion = params.turn?.transcriptAnchors?.finalAssistantMessageSeq === null;
-  let finalAssistantText: string | null = null;
-  let finalAssistantMessageId: string | undefined;
-  const exactTurnUsage = createExactTurnUsageAccumulator();
+type CliAssistantTurnTranscript = Readonly<{
+    token: string;
+    sessionId: string;
+    sidechainId?: string;
+    ctx: Parameters<typeof decryptTranscriptRowContent>[0]['ctx'];
+    signal?: AbortSignal;
+    resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
+}>;
 
-  const addTurnUsage = (value: unknown): void => {
-    const row = asRecord(value);
-    const content = asRecord(row?.content) ?? row;
-    const data = asRecord(content?.data);
-    if (!content || !data || (data.type !== 'token_count' && data.type !== 'token-count')) return;
-    const provider = typeof content.agentId === 'string' && content.agentId.trim()
-      ? content.agentId
-      : typeof content.provider === 'string' && content.provider.trim()
-        ? content.provider
-        : content.type === 'codex'
-          ? 'codex'
-          : 'unknown';
-    const observation = extractUsageObservationFromTokenCountMessage({
-      provider,
-      body: data,
-      defaultScope: 'turn_delta',
-    });
-    if (observation) exactTurnUsage.observe(observation);
-  };
-
-  const currentUsage = (): SessionInputUsageV1 | undefined => exactTurnUsage.current();
-
-  while (true) {
-    params.signal?.throwIfAborted();
-    const rows = await fetchEncryptedTranscriptPageAfterSeq({
-      token: params.token,
-      sessionId: params.sessionId,
-      afterSeq,
-      limit: ASSISTANT_TURN_SCAN_PAGE_LIMIT,
-      ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
-      ...(params.signal ? { signal: params.signal } : {}),
-      ...(params.resolveAuthorizationHeaders
-        ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
-        : {}),
-    });
-    const orderedRows = [...rows].sort((a, b) => a.seq - b.seq);
-    const matchedCurrentUserSeq = orderedRows.find((row) => row.localId === params.localId)?.seq;
-    if (typeof matchedCurrentUserSeq === 'number' && matchedCurrentUserSeq >= 0) {
-      currentUserSeq = matchedCurrentUserSeq;
-    }
-
-    for (const row of orderedRows) {
-      if (row.seq <= currentUserSeq) {
-        continue;
-      }
-      if (params.resultMessageId && row.id !== params.resultMessageId) continue;
-      const endSeq = readCommittedTurnText ? undefined : params.turn?.transcriptAnchors?.endSeqInclusive;
-      if (typeof endSeq === 'number' && row.seq > endSeq) break;
-      const decrypted = decryptTranscriptRowContent({
-        content: row.content,
-        ctx: params.ctx,
-      });
-      const meta = asRecord(asRecord(decrypted)?.meta);
-      // Retained terminal projections can predate their complete anchors.
-      // Only the host's exact native turn tag can fill that correspondence;
-      // transcript adjacency and later turns cannot supply it.
-      if (readCommittedTurnText && meta?.runtimeTurnId !== params.turn?.turnId) continue;
-      // The exact input's terminal proof closes this scan. A later input
-      // starts another turn and must not become a fallback result for this
-      // input when a legacy transcript lacks an explicit turn anchor.
-      if (!params.resultMessageId && !params.turn && (isSessionAgentThreadTextUserMessage(decrypted) || isSessionContextOnlyHostInput(decrypted))) {
-        const usage = currentUsage();
-        return { failure: null, sawCompletion, finalAssistantText,
-          ...(finalAssistantMessageId ? { finalAssistantMessageId } : {}), ...(usage ? { usage } : {}) };
-      }
-      const failure = params.turn || params.resultMessageId ? null : readAssistantTurnFailure(decrypted);
-      if (failure) {
-        const usage = currentUsage();
-        return {
-          failure: usage ? { ...failure, usage } : failure,
-          sawCompletion,
-          finalAssistantText,
-          ...(finalAssistantMessageId ? { finalAssistantMessageId } : {}),
-          ...(usage ? { usage } : {}),
-        };
-      }
-      const decoded = decodeTranscriptBody(decrypted);
-      addTurnUsage(decrypted);
-      const segment = asRecord(meta?.happierStreamSegmentV1);
-      const committedTurnText = readCommittedTurnText && (meta?.runtimeEventKind === 'transcript-message-committed'
-        || segment?.segmentKind === 'assistant' && segment.segmentState === 'complete');
-      if (decoded?.semanticRole === 'assistant' && (params.resultMessageId || decoded.sidechainId === undefined) && decoded.text
-        && (!params.turn || row.seq === params.turn.transcriptAnchors?.finalAssistantMessageSeq || committedTurnText)) {
-        finalAssistantText = decoded.text;
-        finalAssistantMessageId = row.id || undefined;
-        if (params.turn || params.resultMessageId) sawCompletion = true;
-      }
-      if (params.turn) continue;
-      if (isAssistantTurnCompletionProof(decrypted)) {
-        sawCompletion = true;
-        // Completion can precede a terminal runtime issue in the same
-        // transcript window. Keep scanning this exact turn so the later
-        // authoritative failure wins without crossing the next user input.
-        continue;
-      }
-      if (isBareSessionReadyEvent(decrypted)) {
-        if (observedAgentProgress) {
-          sawCompletion = true;
-        }
-        continue;
-      }
-      if (isSessionAgentMessage(decrypted)) {
-        observedAgentProgress = true;
-      }
-    }
-
-    const endSeq = readCommittedTurnText ? undefined : params.turn?.transcriptAnchors?.endSeqInclusive;
-    if (orderedRows.length < ASSISTANT_TURN_SCAN_PAGE_LIMIT
-      || (typeof endSeq === 'number' && (orderedRows.at(-1)?.seq ?? 0) >= endSeq)) {
-      const usage = currentUsage();
-      return { failure: null, sawCompletion, finalAssistantText,
-        ...(finalAssistantMessageId ? { finalAssistantMessageId } : {}), ...(usage ? { usage } : {}) };
-    }
-    const lastRowSeq = orderedRows[orderedRows.length - 1]?.seq ?? null;
-    if (!Number.isSafeInteger(lastRowSeq) || lastRowSeq <= afterSeq) {
-      const usage = currentUsage();
-      return { failure: null, sawCompletion, finalAssistantText,
-        ...(finalAssistantMessageId ? { finalAssistantMessageId } : {}), ...(usage ? { usage } : {}) };
-    }
-    afterSeq = lastRowSeq;
-  }
+function assistantTurnTranscript(params: CliAssistantTurnTranscript): AssistantTurnTranscriptReader {
+    return {
+        openContent: content => decryptTranscriptRowContent({ content, ctx: params.ctx }),
+        readPage: input => fetchEncryptedTranscriptPageAfterSeq({ ...params, ...input }),
+    };
 }
 
-async function readAssistantTurnOutcomeAfterCurrentUserTurn(params: Readonly<{
-  token: string;
-  sessionId: string;
-  localId: string;
-  materializedSeq: number;
-  signal?: AbortSignal;
-  materializedContent?: TranscriptMessageLookupResult['content'];
-  resultMessageId?: string;
-  sidechainId?: string;
-  /** Original input custody, never supplied by transcript content. */
-  acceptedTurnId?: string;
-  /** Exact admitted server snapshot, never a message-authored turn claim. */
-  hostTurn?: SessionTurnV1;
-  ctx: Readonly<{
-    encryptionKey: Uint8Array;
-    encryptionVariant: 'legacy' | 'dataKey';
-  }> | null;
-  resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
-}>): Promise<AssistantTurnOutcome> {
-  const projection: Readonly<{ turns: readonly SessionTurnV1[] }> | null = params.hostTurn ? { turns: [params.hostTurn] }
-    : params.resultMessageId ? null : await fetchSessionTurnsProjection(params);
-  const input = params.materializedContent
-    ? asRecord(decryptTranscriptRowContent({ content: params.materializedContent, ctx: params.ctx })) : null;
-  const inputAuthority = readSessionInputAuthority(input?.meta, 'stored');
-  const workflowInput = inputAuthority?.producer === 'workflow';
-  const matchesWorkflowInput = (candidate: SessionTurnV1) => Boolean(candidate.workflowInvocation && deriveWorkflowSessionInputLocalIdV2({
-      purpose: 'invocation', ...candidate.workflowInvocation,
-    }) === params.localId);
-  const turn = params.hostTurn ?? projection?.turns.find(candidate => params.acceptedTurnId
-    ? candidate.turnId === params.acceptedTurnId && (workflowInput || isSessionContextOnlyHostInput(input)
-      ? matchesWorkflowInput(candidate) && (inputAuthority?.producer === 'workflow'
-        ? deriveWorkflowSessionInputLocalIdV2(inputAuthority.workflow) === params.localId
-        : isSessionContextOnlyHostInput(input))
-      // An ordinary input's accepted turn is named by its original custody alone.
-      : true)
-    : candidate.transcriptAnchors?.userMessageSeqs?.includes(params.materializedSeq)
-      || candidate.transcriptAnchors?.startUserMessageSeq === params.materializedSeq || matchesWorkflowInput(candidate));
-  // A queued input can be materialized before the current provider turn ends.
-  // Neither that turn's text nor the next input's transcript position owns it.
-  if (!params.resultMessageId && (
-    params.acceptedTurnId && !turn
-    || !projection && (workflowInput || isSessionContextOnlyHostInput(input))
-    || projection && (!turn || turn.status === 'in_progress' || turn.status === 'waiting')
-  )) return { kind: 'missing' };
-  const precedingTurnEndSeq = turn && projection ? projection.turns.reduce((latest, candidate) => {
-    const end = candidate.transcriptAnchors?.endSeqInclusive;
-    const currentEnd = turn.transcriptAnchors?.endSeqInclusive;
-    return candidate.status !== 'in_progress' && typeof end === 'number' && typeof currentEnd === 'number' && end < currentEnd
-      ? Math.max(latest, end) : latest;
-  }, 0) : undefined;
-  const scan = await scanAssistantTurnAfterCurrentUserTurn({ ...params, ...(turn ? { turn, precedingTurnEndSeq } : {}) });
-  if (turn?.status === 'failed' || turn?.status === 'cancelled') {
-    return { kind: turn.status, message: formatStructuredTurnFailureMessage(turn.status,
-      readStructuredIssuePreview(turn.lastRuntimeIssue)),
-      ...(turn.status === 'failed' && turn.lastRuntimeIssue ? { runtimeIssueV1: turn.lastRuntimeIssue } : {}),
-      ...(scan.usage ? { usage: scan.usage } : {}) };
-  }
-  if (scan.failure) {
-    return scan.failure;
-  }
-  return scan.sawCompletion
-    ? {
-        kind: 'completed',
-        finalAssistantText: scan.finalAssistantText,
-        ...(scan.finalAssistantMessageId ? { finalAssistantMessageId: scan.finalAssistantMessageId } : {}),
-        ...(scan.usage ? { usage: scan.usage } : {}),
-      }
-    : { kind: 'missing' };
+async function readAssistantTurnOutcomeAfterCurrentUserTurn(
+    params: Omit<Parameters<typeof readAssistantTurnOutcome>[0], 'transcript' | 'readTurns'> & CliAssistantTurnTranscript,
+): Promise<AssistantTurnOutcome> {
+    return readAssistantTurnOutcome({ ...params, transcript: assistantTurnTranscript(params), readTurns: () => fetchSessionTurnsProjection(params) });
 }
 
 async function findAssistantFailureAfterCurrentUserTurn(params: Readonly<{
@@ -1037,7 +741,7 @@ async function findAssistantFailureAfterCurrentUserTurn(params: Readonly<{
   }> | null;
   resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
 }>): Promise<AssistantTurnFailure | null> {
-  return (await scanAssistantTurnAfterCurrentUserTurn(params)).failure;
+  return (await scanAssistantTurnAfterCurrentUserTurn({ ...params, transcript: assistantTurnTranscript(params) })).failure;
 }
 
 type AssistantCompletionObservationParams = Readonly<{
@@ -1151,39 +855,6 @@ async function waitForAssistantCompletionAfterCurrentUserTurn(params: AssistantC
   }
 }
 
-function resultFromAssistantTurnOutcome(
-  outcome: AssistantTurnOutcome,
-  session: SessionMessageRefV1['session'],
-): SessionInputResultV1 {
-  if (outcome.kind === 'missing') {
-    return { kind: 'pending' };
-  }
-  if (outcome.kind === 'cancelled') {
-    const { finalAssistantMessageId, ...cancelled } = outcome;
-    return { ...cancelled, ...(finalAssistantMessageId ? { messageRef: SessionMessageRefV1Schema.parse({
-      kind: 'session', session, messageId: finalAssistantMessageId,
-    }) } : {}) };
-  }
-  if (outcome.kind === 'failed') {
-    return outcome;
-  }
-  if (!outcome.finalAssistantText) {
-    return {
-      kind: 'terminal_no_result',
-      reason: 'missing_final_assistant_text',
-      ...(outcome.usage ? { usage: outcome.usage } : {}),
-    };
-  }
-  return {
-    kind: 'final_text',
-    text: outcome.finalAssistantText,
-    ...(outcome.finalAssistantMessageId ? { messageRef: SessionMessageRefV1Schema.parse({
-      kind: 'session', session, messageId: outcome.finalAssistantMessageId,
-    }) } : {}),
-    ...(outcome.usage ? { usage: outcome.usage } : {}),
-  };
-}
-
 /** One nonblocking read of an original input; unavailable proof never means completion. */
 export async function readSessionInputResult(params: Readonly<{
   credentials: StoredCredentials; serverId?: string; idOrPrefix: string; localId: string;
@@ -1191,71 +862,26 @@ export async function readSessionInputResult(params: Readonly<{
   callerPluginId?: string; signal?: AbortSignal; resolveAuthorizationHeaders?: ResolveSessionMessageAuthorizationHeaders;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
 }>): Promise<SessionInputResultGetResultV1> {
-  const localId = readPendingLocalId(params.localId);
-  if (!localId) return { ok: false, code: 'invalid_local_id' };
-  try {
-    const readReply = async (sessionId: string): Promise<SessionInputResultGetResultV1> => {
-      const reply = await readOriginalReply({ credentials: params.credentials, sessionId, localId,
-        ...(params.signal ? { signal: params.signal } : {}),
-        ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
-      params.signal?.throwIfAborted();
-      return { ok: true, sessionId, localId, projection: 'reply', reply };
-    };
-    if (params.projection === 'reply' && !params.callerPluginId) {
-      // Original progress contains no body. Reuse canonical identity/access
-      // resolution without requiring keys for an unopened result transcript.
-      const target = await resolveSessionIdOrPrefix({ ...params, reason: 'session-query' });
-      if (!target.ok) return { ok: false, code: target.code, ...(target.candidates ? { candidates: target.candidates } : {}) };
-      return await readReply(target.sessionId);
-    }
-    const target = await resolveSessionTransportContext({ ...params, reason: 'session-query' });
-    if (!target.ok) return { ok: false, code: target.code, ...(target.candidates ? { candidates: target.candidates } : {}) };
-    const lookup = await findTranscriptEncryptedMessageByLocalIdV2({ serverUrl: resolveServerHttpBaseUrl(), token: params.credentials.token,
-      sessionId: target.sessionId, localId, ...(params.signal ? { signal: params.signal } : {}),
-      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
-    params.signal?.throwIfAborted();
-    if (lookup.type === 'not_found') {
-      if (!params.callerPluginId) {
-        if (lookup.inputDisposition) return { ok: false, code: lookup.inputDisposition.code };
-        if (lookup.error !== undefined) throw lookup.error;
+  const { credentials, signal, resolveAuthorizationHeaders } = params;
+  const address = (sessionId: string) => ({ serverId: params.serverId ?? configuration.activeServerId, sessionId });
+  const common = { ...(signal ? { signal } : {}), ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}) };
+  return readInputResult(params, {
+    resolveSession: async needsTranscript => {
+      if (!needsTranscript) {
+        const target = await resolveSessionIdOrPrefix({ ...params, reason: 'session-query' });
+        return target.ok ? { ok: true, address: address(target.sessionId) }
+          : { ok: false, code: target.code, ...(target.candidates ? { candidates: target.candidates } : {}) };
       }
-    } else if (lookup.type !== 'found') throw lookup.error;
-    const message = lookup.type === 'found' ? lookup.message : null;
-    if (!message || message.localId !== localId || message.sidechainId !== null) return { ok: false, code: 'result_read_failed' };
-    if (params.callerPluginId) {
-      try {
-        const opened = asRecord(decryptTranscriptRowContent({ content: message.content, ctx: target.ctx }));
-        const authority = readSessionInputAuthority(opened?.meta, 'stored');
-        if (authority?.producer !== 'pluginSession' || authority.caller?.kind !== 'plugin'
-          || authority.caller.pluginId !== params.callerPluginId) return { ok: false, code: 'result_read_failed' };
-        assertSessionInputAdmissionReceiptForAuthorityV1({ authority, inputAdmissionReceipt: message.inputAdmissionReceipt });
-      } catch {
-        // An unproven plugin caller must not learn why this original cannot be opened.
-        return { ok: false, code: 'result_read_failed' };
-      }
-    }
-    if (params.projection === 'reply') return await readReply(target.sessionId);
-    if (message.turn && message.turn.turnId !== message.turnStartWitnessId) return { ok: false, code: 'result_read_failed' };
-    const outcome = message.turn ? await readAssistantTurnOutcomeAfterCurrentUserTurn({
-      token: params.credentials.token, sessionId: target.sessionId, localId, materializedSeq: message.seq,
-      materializedContent: message.content, hostTurn: message.turn, ctx: target.ctx,
-      ...(params.signal ? { signal: params.signal } : {}),
-      ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}),
-    }) : { kind: 'missing' as const };
-    params.signal?.throwIfAborted();
-    return { ok: true, sessionId: target.sessionId, localId,
-      ...(message.acceptedTurnId ? { acceptedTurnId: message.acceptedTurnId } : {}),
-      ...(message.turnStartWitnessId ? { turnStartWitnessId: message.turnStartWitnessId } : {}),
-      ...(message.turn ? { turnStatus: message.turn.status } : {}),
-      ...(message.followDeliveryProjection ? { followDeliveryProjection: message.followDeliveryProjection } : {}),
-      result: message.inputDeliveryIssue && !message.turn
-        ? projectBlockedPromptDelivery({ reason: 'team_access_removed', inputDeliveryIssue: message.inputDeliveryIssue }, localId).result
-        : resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
-    };
-  } catch (error) {
-    if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
-    return { ok: false, code: 'result_read_failed', failureCause: projectActionFailureCauseV1(error, 'session.input.result.get') };
-  }
+      const target = await resolveSessionTransportContext({ ...params, reason: 'session-query' });
+      return target.ok ? { ok: true, address: address(target.sessionId),
+        transcript: assistantTurnTranscript({ token: credentials.token, sessionId: target.sessionId, ctx: target.ctx, ...common }) }
+        : { ok: false, code: target.code, ...(target.candidates ? { candidates: target.candidates } : {}) };
+    },
+    readOriginal: (sessionId, localId) => findTranscriptEncryptedMessageByLocalIdV2({
+      serverUrl: resolveServerHttpBaseUrl(), token: credentials.token, sessionId, localId, ...common,
+    }),
+    readReply: (sessionId, localId) => readOriginalReply({ credentials, sessionId, localId, ...common }),
+  });
 }
 
 /**
