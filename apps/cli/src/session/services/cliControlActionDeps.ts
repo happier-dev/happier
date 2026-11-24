@@ -51,6 +51,8 @@ export function createCliControlActionDeps(
     sessionConnectedServicesAuthSet: async ({ machineId, serverId, ...request }, context) => callMachineAction({
       machineId, ...(serverId ? { serverId } : {}),
       method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
+      // The daemon settles the switch at the Session's turn boundary. Keep caller cancellation.
+      timeoutMs: null,
       request, context, authority: context.authority, effectActionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
       exactMachine: true, ...(context.signal ? { signal: context.signal } : {}),
       authorization: { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId: request.sessionId },

@@ -2970,6 +2970,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const machineId = resolveSessionMachineId(sid, resolvedServerId);
 
       const settings = state.settings;
+      const replayEnabled = resolveHappierReplayConfig(settings ?? {}).enabled;
       // One fork policy for every surface. This executor has no strategy modal
       // to show, so it reads the same availability the modal renders and asks
       // for the exact route that modal would have offered. An unqualified
@@ -2978,7 +2979,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const availability = resolveSessionForkStrategyAvailability({
         session,
         forkPoint,
-        replayEnabled: resolveHappierReplayConfig(settings ?? {}).enabled,
+        replayEnabled,
         // Source-context continuation is a navigation to the New Session
         // screen; this executor has no such route, so it is not one of its
         // options rather than a route it silently fails to take.
@@ -2989,7 +2990,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // Its live capability need not be in this presentation's projection cache.
       if (((strategy === undefined || strategy === 'auto') && !availability.native && !availability.replay)
         || (strategy === 'replay' && !availability.replay)) {
-        return { ok: false, errorCode: 'action_disabled', errorMessage: 'action_disabled' };
+        return { ok: false, errorCode: 'action_disabled', error: 'action_disabled',
+          ...(!replayEnabled ? { details: { reason: 'disabled_by_settings' } } : {}) };
       }
       const replayOptions = resolveSessionForkReplayOptions({
         settings,

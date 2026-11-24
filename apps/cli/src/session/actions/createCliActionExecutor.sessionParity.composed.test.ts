@@ -242,6 +242,8 @@ describe('CLI current-Session control owners', () => {
       bindings: { v: 2 as const, bindingsByServiceId: { [service]: { source: 'native' as const } } } };
     const auth = { sessionId, machineId, serverId, routing };
     const applied: unknown[] = [];
+    const switchIssued = Promise.withResolvers<void>();
+    const switchCompleted = Promise.withResolvers<void>();
     daemonAnswer = (method, raw, received) => {
       const configHandler = daemonHandlers.get(method);
       if (configHandler) {
@@ -254,8 +256,10 @@ describe('CLI current-Session control owners', () => {
       expect(method).toBe(`${machineId}:${RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH}`);
       const input = SessionConnectedServiceAuthSwitchRpcParamsSchema.parse(raw);
       applied.push(input);
-      return { ok: true, action: 'metadata_updated', materializedTargetByServiceId: { internal: '/private/runtime' },
-        verificationByServiceId: { internal: { accountId: 'another-account' } } };
+      switchIssued.resolve();
+      return switchCompleted.promise.then(() => ({ ok: true, action: 'metadata_updated',
+        materializedTargetByServiceId: { internal: '/private/runtime' },
+        verificationByServiceId: { internal: { accountId: 'another-account' } } }));
     };
     const readOptions = (fieldPath: 'configId' | 'valueId', optionsSourceId: string, draftInput: Record<string, string>) =>
       executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
@@ -276,8 +280,18 @@ describe('CLI current-Session control owners', () => {
     if (owner.t !== 'plain') throw new Error('Expected plain Account metadata');
     const visible = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(readRow().metadata), ownerMetadata: owner.v });
     expect(visible.acpConfigOptionOverridesV1).toMatchObject({ overrides: { effort: { value: 'high' } } });
-    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, authContext))
-      .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
+    vi.useFakeTimers();
+    try {
+      const switching = executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, authContext);
+      await switchIssued.promise;
+      // The live Session can reach its next turn boundary after the generic Machine RPC deadline.
+      await vi.advanceTimersByTimeAsync(30_000);
+      switchCompleted.resolve();
+      await expect(switching).resolves.toMatchObject({ ok: true, result: { ok: true, action: 'metadata_updated' } });
+    } finally {
+      switchCompleted.resolve();
+      vi.useRealTimers();
+    }
     expect(applied).toEqual([expect.objectContaining({ sessionId, agentId: routing.agentId, bindings: routing.bindings })]);
     const acceptedVersion = readRow().metadataVersion;
     expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { ...config, valueId: 'unadvertised' }, context))

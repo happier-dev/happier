@@ -14,6 +14,7 @@ import { Typography } from '@/constants/Typography';
 import type { CustomModalInjectedProps } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { readSafeFailureDetails, showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import type {
     SessionForkNativeUnavailableReason,
     SessionForkStrategyAvailability,
@@ -313,8 +314,19 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                         <Text style={styles.noticeBody}>
                             {failure.kind === 'update_required'
                                 ? t('session.forking.strategy.failure.updateRequired')
-                                : failure.message ?? t('session.forking.strategy.failure.generic')}
+                                : failure.actionFailure
+                                    ? t('common.disabled')
+                                    : failure.message ?? t('session.forking.strategy.failure.generic')}
                         </Text>
+                        {failure.actionFailure ? (
+                            <RoundButton size="small" title={t('approvals.technicalDetails')} onPress={() => {
+                                const action = failure.actionFailure;
+                                if (!action) return;
+                                showActionFailureDetails({ code: action.errorCode, context: {
+                                    ...readSafeFailureDetails(action.details), requestId: action.requestId ?? null,
+                                } });
+                            }} />
+                        ) : null}
                     </View>
                 </View>
             ) : null}

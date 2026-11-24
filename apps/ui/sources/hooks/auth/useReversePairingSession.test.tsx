@@ -200,6 +200,33 @@ describe('useReversePairingSession', () => {
         await hook.unmount();
     });
 
+    it('displays a requester invite for an explicit fresh profile before Welcome has cached discovery', async () => {
+        homeDescriptor = HomeConnectionDescriptorV1Schema.parse({
+            ...descriptor,
+            homeServerIdentityId: 'srv_fresh_requester_home',
+            canonicalServerUrl: 'https://fresh-home.example.test',
+            endpoints: [{ kind: 'https', url: 'https://fresh-home.example.test' }],
+        });
+        const profile = await profiles.upsertServerProfile({ serverUrl: homeDescriptor.canonicalServerUrl, source: 'manual' });
+        profileId = profile.id;
+        features.capabilities.serverIdentity.serverIdentityId = homeDescriptor.homeServerIdentityId;
+        features.capabilities.server.canonicalServerUrl = homeDescriptor.canonicalServerUrl;
+
+        const hook = await mount();
+        await vi.waitFor(() => expect(hook.getCurrent().presentation.phase).toBe('ready'));
+        readyInvite(hook);
+        expect(requestsFor('/v1/features')).toEqual([
+            expect.objectContaining({ origin: homeDescriptor.canonicalServerUrl, token: null }),
+        ]);
+        const requestsToStartPairing = requestsFor('/v2/auth/account/request');
+        expect(requestsToStartPairing.length).toBeGreaterThan(0);
+        for (const request of requestsToStartPairing) {
+            expect(request).toMatchObject({ origin: homeDescriptor.canonicalServerUrl, token: null });
+        }
+        expect(profiles.getServerProfileById(profileId)?.serverIdentityId).toBeUndefined();
+        await hook.unmount();
+    });
+
     it('does not create a requester invite when the exact Home lacks bound QR v2', async () => {
         tryWriteServerEnabledBitInPlace(features, 'auth.pairing.boundQrV2', false);
         const hook = await mount();

@@ -4,10 +4,10 @@ import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollment
 import { authQRStart, type HomeQrEnrollmentTarget, type QRAuthKeyPair } from '@/auth/flows/qrStart';
 import { authQRWait, runVisibleQrPoll, waitForQrPollOrVisibilityChange } from '@/auth/flows/qrWait';
 import { buildRenderableHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
-import { resolveObservedReversePairingHome } from '@/auth/pairing/resolveReversePairingHome';
+import { resolveReversePairingHome } from '@/auth/pairing/resolveReversePairingHome';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { pairingRequest } from '@/sync/api/account/apiPairingAuth';
-import { observeAuthenticatedServerFeaturesFresh, probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
+import { observeAuthenticatedServerFeaturesFresh, probeServerFeaturesAtUrl, type ServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import {
     adoptHomeProfileWithCredentials,
     finalizeRetainedHomeProfileAdoption,
@@ -141,9 +141,33 @@ export function useReversePairingSession(params: Readonly<{
             // Resolve only the caller-selected stored Home. Ambient focus and fallback profiles
             // are deliberately not enrollment authority.
             const profile = params.targetProfileId ? getServerProfileById(params.targetProfileId) : null;
-            const admission = profile ? resolveObservedReversePairingHome(profile) : null;
-            if (!profile || !admission) {
+            if (!profile) {
+                publish(attempt, { phase: 'invalid' });
+                return;
+            }
+            let admission = resolveReversePairingHome(profile);
+            let publicDiscovery: ServerFeaturesSnapshot | undefined;
+            if (!admission) {
+                publicDiscovery = await probeServerFeaturesAtUrl({
+                    endpointUrl: profile.serverUrl,
+                    serverId: profile.id,
+                    force: true,
+                    signal: attempt.controller.signal,
+                });
                 if (!isCurrent(attempt)) return;
+                if (publicDiscovery.status === 'error' && isTransientStatus(publicDiscovery.httpStatus ?? 0)
+                    && publicDiscovery.reason !== 'identity_conflict') {
+                    publish(attempt, { phase: 'retryable_error', partialCommit: null });
+                    return;
+                }
+                if (publicDiscovery.status === 'ready') {
+                    admission = resolveReversePairingHome(profile, {
+                        serverIdentityId: publicDiscovery.serverIdentityId ?? null,
+                        descriptor: publicDiscovery.features.homeConnectionDescriptor,
+                    });
+                }
+            }
+            if (!admission) {
                 publish(attempt, { phase: 'invalid' });
                 return;
             }
@@ -159,7 +183,7 @@ export function useReversePairingSession(params: Readonly<{
             }
             const target: HomeQrEnrollmentTarget = { ...transportResolution.transport, serverId: profile.id };
             attempt.target = target;
-            const featureSnapshot = await probeServerFeaturesAtUrl({
+            const featureSnapshot = publicDiscovery ?? await probeServerFeaturesAtUrl({
                 endpointUrl: target.endpointUrl,
                 ...(target.runtimeOrigin ? { runtimeOrigin: target.runtimeOrigin } : {}),
                 ...(target.homeCarrier ? { homeCarrier: target.homeCarrier } : {}),

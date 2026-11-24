@@ -13,6 +13,7 @@ import { abortPendingAcpPermissionRequests } from '@/agent/acp/permissions/permi
 import { SessionActionConfirmationsV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { readSharedMetadataActionConfirmationState } from '@happier-dev/session-core/pending';
 import { createDeferred } from '@/testkit/async/deferred';
+import { registerSessionPermissionRpcHandlers } from '@/rpc/handlers/sessionPermissions';
 
 beforeEach(() => {
   resetActiveAccountSettingsSnapshotForTests();
@@ -630,6 +631,25 @@ function sharedApproverContext(sessionId: string) {
 }
 
 describe('native offered permission ingress', () => {
+  it('settles Allow once after the Session RPC routes are registered again', async () => {
+    const session = new FakeSession();
+    const handler = new NativeChoicesHandler(session as never, { logPrefix: '[Native rebound]' });
+    const pending = handler.requestNative();
+    void pending.catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(session.agentState.requests['native-pending']).toBeDefined());
+      registerSessionPermissionRpcHandlers({
+        rpcHandlerManager: session.rpcHandlerManager,
+        actionExecutor: createActionExecutor({} as ActionExecutorDeps),
+      });
+      const choice = { requirementId: 'native-requirement', choiceId: 'opaque-once' };
+      const answer = session.rpcHandlerManager.handlers.get('session.permission.respond')!;
+      await expect(answer(buildSessionPermissionRespondRpcParamsV1({ id: 'native-pending', nativeChoice: choice })))
+        .resolves.toBeUndefined();
+      await expect(pending).resolves.toMatchObject({ decision: 'approved', nativeChoice: choice });
+    } finally { await handler.reset(); }
+  });
+
   it.each([
     { name: 'bash persistent', sessionId: 'cmwcukh1p008omcjqre7ahinv',
       requestId: 'call_01a1cd4c44ec7686b40259ad68a30416', approvalId: '01a1cd4c-483f-70f3-bc29-714e650316a2',

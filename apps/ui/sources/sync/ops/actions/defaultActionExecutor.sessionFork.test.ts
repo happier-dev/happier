@@ -516,8 +516,10 @@ describe('default Action executor Session lifecycle contracts', () => {
   it('rejects a fork before dispatch when both Replay and the native route are unavailable', async () => {
     installSession({ metadata: { path: '/repo', host: 'tester.local', machineId: 'machine_1', flavor: 'claude' } });
     setSettings({ sessionReplayEnabled: false });
-    expect(await executor().execute('session.fork', { sessionId: 'sess_parent' }, context()))
-      .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    const requestId = 'replay-disabled-by-settings';
+    expect(await executor().execute('session.fork', { sessionId: 'sess_parent', strategy: 'replay' },
+      { ...context(), actionRequestId: requestId }))
+      .toMatchObject({ ok: false, errorCode: 'action_disabled', requestId, details: { reason: 'disabled_by_settings' } });
     expect(outgoing).toEqual([]);
   });
 

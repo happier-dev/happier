@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { normalizeSpawnSessionErrorDetail, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { SessionForkRpcResultSchema } from '@happier-dev/protocol/sessions/fork';
 import { type LlmTaskRunnerConfigV1} from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
@@ -41,6 +42,7 @@ export type SessionForkStrategyFailure = Readonly<{
     kind: 'update_required' | 'error';
     message: string | null;
     errorDetail?: SpawnSessionErrorDetail;
+    actionFailure?: ActionExecuteFailure;
 }>;
 
 /**
@@ -232,6 +234,12 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                     : {}),
                 ...(request.replaySummaryRunner ? { replaySummaryRunner: request.replaySummaryRunner } : {}),
             }, { actionRequestId: requestId });
+            if (!action.ok && action.errorCode === 'action_disabled') {
+                if (mountedRef.current) setFailure({ route, kind: 'error', message: null,
+                    actionFailure: { ...action, requestId: action.requestId ?? requestId } });
+                applyPhase({ type: 'choosing' });
+                return;
+            }
             const result = action.ok
                 ? SessionForkRpcResultSchema.safeParse(action.result)
                 : { success: true as const, data: { ok: false as const, errorCode: action.errorCode, errorMessage: action.error,

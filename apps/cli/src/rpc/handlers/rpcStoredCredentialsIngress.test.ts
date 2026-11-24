@@ -62,7 +62,7 @@ describe('plain-account RPC action ingress', () => {
     },
     {
       name: 'permissions',
-      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
+      method: RPC_METHODS.SESSION_PERMISSION_MODE_SET,
       register: (rpcHandlerManager: ReturnType<typeof createRegistrar>['rpcHandlerManager']) =>
         registerSessionPermissionRpcHandlers({ rpcHandlerManager }),
     },
