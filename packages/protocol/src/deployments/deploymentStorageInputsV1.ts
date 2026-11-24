@@ -11,6 +11,7 @@ import { DeploymentBindingSavedSecretRevisionsV1Schema } from './deploymentBindi
 /** Private prepared installation envelopes accompany the single public binding intent. */
 export const DeploymentBindingsSetStorageInputV1Schema = z.extend(DeploymentBindingsPreparedInputV1Schema, {
     grants: z.array(MachineSecretGrantV1Schema),
+    retainGrantsForOwnServerDataRoleRemoval: z.optional(z.literal(true)),
     targetLinkContent: z.optional(z.strictObject({
         targetLinkId: DeploymentIdentifierV1Schema, expectedTargetLinkRevision: DeploymentRevisionV1Schema,
         ...DeploymentArtifactContentReferenceV1Schema.shape,

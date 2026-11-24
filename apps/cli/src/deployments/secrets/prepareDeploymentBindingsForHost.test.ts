@@ -56,6 +56,8 @@ afterEach(async () => {
 it.each([
     { placementChange: false, mode: 'plain' as const, external: false, uncodedReadFailure: true,
         name: 'keeps an uncoded bindings read failure private and diagnosable through daemon preparation' },
+    { placementChange: false, mode: 'e2ee' as const, external: false, removeOwnDataRole: true,
+        name: 'removes the own-server write role without acquiring the retained read role' },
     { placementChange: false, mode: 'plain' as const, external: false, ownDataRole: true, name: 'refuses read-role setup without an active deployment before acquiring its password' },
     { placementChange: false, mode: 'plain' as const, external: false, preTarget: true, name: 'authors plain backup credential references before any target exists' },
     { placementChange: false, mode: 'e2ee' as const, external: false, preTarget: true, name: 'authors E2EE backup credential references before any target exists' },
@@ -81,7 +83,7 @@ it.each([
     { placementChange: false, mode: 'e2ee' as const, external: false, atomicMove: true, name: 'saves the reviewed database connection and ordinary secret bindings atomically for E2EE' },
     { placementChange: true, mode: 'plain' as const, external: false, name: 'refreshes exact shared-resource uses after the current placement writer moves builder C to runtime A' },
     { placementChange: true, mode: 'plain' as const, external: true, name: 'acquires one selected vault field for build and runtime through real deployment preparation' },
-])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole, uncodedReadFailure }) => {
+])('$name', async ({ placementChange, mode, external, replay, atomicMove, preTarget, preTargetWithBuilder, configureChild, templateChild, missingCustody, managedDataRole, ownDataRole, removeOwnDataRole, uncodedReadFailure }) => {
     const detail = createDeploymentEnvironmentDetailV1();
     if (ownDataRole) delete detail.targetLinks[0]!.targetLink.activeDeploymentId;
     if (atomicMove) detail.content.definition = await normalizeStoredComposeDefinitionInput({ from: 'compose',
@@ -147,6 +149,12 @@ it.each([
             source: { kind: 'secret', ref, resourceRevision: 1 } },
     ] : [];
     if (atomicMove) detail.content.bindings = operational;
+    if (removeOwnDataRole) detail.content.bindings = [
+        { purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+            source: { kind: 'secret', ref, resourceRevision: 1 } },
+        { purpose: 'dataRole', service: 'database', role: 'write',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1('write-credential'), resourceRevision: 1 } },
+    ];
     const bindings: EnvironmentSecretBindingV1[] = ownDataRole ? [{ purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
             source: { kind: 'secret', ref, resourceRevision: 1 } }] : managedDataLink ? [{ purpose: 'dataRole', targetLinkId: managedDataLink.id, role: 'readOnlyPassword',
             source: { kind: 'secret', ref, resourceRevision: 1 } }]
@@ -254,6 +262,8 @@ it.each([
             return { status: 200, data: { ok: true, environmentId: environment.id, revision: environment.revision } };
         }
         if (config.url?.endsWith('/secret-launch-admission')) bindingAdmissionReads++;
+        if (config.url?.endsWith('/secret-launch-admission') && removeOwnDataRole)
+            return { status: 403, data: { ok: false, error: 'deployment_access_denied' } };
         if (config.url?.endsWith('/secret-launch-admission') && denyBindingAdmission)
             return { status: 403, data: { ok: false, error: 'secret_missing' } };
         if (config.url?.endsWith('/secret-launch-admission')) {
@@ -360,6 +370,19 @@ it.each([
             expect(JSON.stringify(result)).not.toContain('binding_read_unavailable');
             expect(writes).toHaveLength(0);
             expect(materialReads).toBe(0);
+            return;
+        }
+        if (removeOwnDataRole) {
+            const result = await daemon.deploymentAction!('deployments.bindings.set', { serverId: 'home',
+                environmentId: environment.id, expectedRevision: environment.revision, set: [],
+                remove: [{ purpose: 'dataRole', service: 'database', role: 'write' }] }, {});
+            expect(result).toMatchObject({ ok: true });
+            expect(bindingAdmissionReads).toBe(0);
+            expect(materialReads).toBe(0);
+            expect(writes).toHaveLength(1);
+            expect(writes[0]).toMatchObject({ grants: [], retainGrantsForOwnServerDataRoleRemoval: true,
+                referencedSavedSecretRevisions: [{ resourceId: 'credential', revision: 1,
+                    requiredBindings: [{ purpose: 'dataRole' }] }] });
             return;
         }
         if (ownDataRole) {

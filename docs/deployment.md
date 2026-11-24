@@ -6120,6 +6120,9 @@ The shared UI API and deployment editor send `set` and `remove` to
 `prepareDeploymentBindingsForHost` owns applying the patch, preparing the private
 Environment candidate and sealing its admitted secret uses. UI and agent callers
 of that shared API do not publish those private candidates themselves.
+Removing an own-server database role that withdraws its dedicated Saved Secret
+reference keeps the surviving installation grants inside Home's binding
+transaction. The removal does not open credentials or rerun database role setup.
 
 For `deployments.environments.update`, the current content reference, revision CAS
 and `patch.ingress` already express the authored change. The Environment content

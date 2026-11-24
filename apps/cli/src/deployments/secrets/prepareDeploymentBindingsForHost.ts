@@ -4,7 +4,8 @@ import { carryActionFailureDiagnostic, normalizeActionExecutorThrownError } from
 import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1,
+    isOwnServerDataRoleBindingRemovalV1, readRemovedDataRoleSecretResourcesV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentGetInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -188,7 +189,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                     contentBodyVersion: created.revision.bodyVersion, referencedSavedSecretRevisions: selectedCaptures }), grants };
             };
-            const platformLink = loaded.targetLinks.find(link => link.id === targetLinkId && link.source.kind === 'plugin');
+            const runtimeLink = loaded.targetLinks.find(link => link.id === targetLinkId);
+            const platformLink = runtimeLink?.source.kind === 'plugin' ? runtimeLink : undefined;
             if (platformLink && !request.buildMachineId && !request.environmentUpdate && !databaseReadAccessChild) {
                 if (!host.preparePlatformBindings) return refuse('unsupported_action');
                 if (readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: current.content.bindings,
@@ -210,6 +212,17 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion };
                 if (dataRoleTargetLinkIds.length === 0) return { ...await complete([]), providerVariables, targetLinkContent };
             }
+            if (!request.buildMachineId && !request.environmentUpdate && !child
+                && 'set' in input && input.set.length === 0 && input.remove.length > 0
+                && input.remove.every(binding => binding.purpose === 'dataRole' && 'service' in binding)
+                && runtimeLink?.source.kind === 'host' && runtimeLink.targetKind === 'ownServer'
+                && dataRoleTargetLinkIds.length === 0) {
+                const removed = readRemovedDataRoleSecretResourcesV1(
+                    captureDeploymentBindingSavedSecretRevisionsV1(current.content.bindings), selectedCaptures);
+                if (removed && isOwnServerDataRoleBindingRemovalV1(current.content.bindings, candidate.content.bindings, removed)) {
+                    return { ...await complete([]), retainGrantsForOwnServerDataRoleRemoval: true };
+                }
+            }
             if (candidate.content.bindings.length === 0 && current.content.bindings.length === 0) {
                 await assertAuthority();
                 return await complete([]);
@@ -222,7 +235,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                     runtimeInstallations: [], existingGrants: [], assertCurrent });
                 return await complete(prepared.grants);
             }
-            if (targetLinkId && !loaded.targetLinks.some(link => link.id === targetLinkId))
+            if (targetLinkId && !runtimeLink)
                 throw deploymentUnavailableError('deployment.bindings.prepare.target_link', 'not_found');
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity) return refuse('secret_missing');

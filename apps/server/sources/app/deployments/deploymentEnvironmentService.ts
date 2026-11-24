@@ -10,7 +10,8 @@ import { readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/d
 import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
 import { resolveDeploymentStoredDefinitionRevisionV1, isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1, applyOwnServerEnvironmentConfigurationPatchV1, isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1 } from '@happier-dev/deployments/contracts/v1';
-import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
+    isOwnServerDataRoleBindingRemovalV1, readRemovedDataRoleSecretResourcesV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
@@ -738,6 +739,18 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     // Retained identities come from stored custody, independently of caller seals.
     const previousBindingCaptures = previous.content ? captureDeploymentBindingSavedSecretRevisionsV1(previous.content.bindings)
         : readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? [];
+    if (input.retainGrantsForOwnServerDataRoleRemoval) {
+        if (placement || databaseReadBinding || link?.sourceKind !== 'host' || link.targetKind !== 'ownServer'
+            || link.detachedAt !== null || controllerManagesData || telemetryChanged || telemetryCapabilitiesChanged || input.grants.length) {
+            return deploymentFailure('deployment_conflict');
+        }
+        const removed = readRemovedDataRoleSecretResourcesV1(previousBindingCaptures, input.referencedSavedSecretRevisions);
+        if (!removed || preparedContent.content && (!previous.content || !isOwnServerDataRoleBindingRemovalV1(
+            previous.content.bindings, preparedContent.content.bindings, removed))) return deploymentFailure('deployment_conflict');
+        // Revocation needs no installation proof and sends no seal to the requester. The existing CAS
+        // can only retain stored envelopes byte for byte or delete them with the removed resources.
+        input = { ...input, grants: existingGrants.filter(grant => grant.kind !== 'secret' || !removed.has(grant.resourceId)) };
+    }
     if (platformVariables && previous.content === null && previousBindingCaptures.some(capture => !capture.requiredBindings))
         return deploymentFailure('deployment_conflict');
     const nonVariableCaptures = (captures: typeof input.referencedSavedSecretRevisions) =>

@@ -1,4 +1,5 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
+import { readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as serverLog from '@/utils/logging/log';
 import nacl from 'tweetnacl';
@@ -22,7 +23,7 @@ import { machineSecretGrantSubjectKey, type MachineSecretGrantV1 } from '@happie
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
-import { inTx } from '@/storage/inTx';
+import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { initEncrypt } from '@/modules/encrypt';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
@@ -179,30 +180,34 @@ describe('private installed Environment secret launch transport', () => {
                     targetKind: 'platform' as const, machineId, installationId, machines: [] }),
             role: 'runtime', requestKey: crypto.randomUUID(), ...targetContent }));
         if (!linked.ok) throw new Error(linked.error);
-        const resourceId = crypto.randomUUID();
-        const resourceKey = nacl.randomBytes(32);
         const resourceContent = { v: 1 as const, name: 'Delivery credential', kind: 'token' as const, value: secretValue };
         const envelopes = (dataKey: Uint8Array, recipients: readonly Readonly<{ id: string; publicKey: Uint8Array }>[]) =>
             mode === 'plain' ? [] : recipients.map(recipient => ({ recipientAccountId: recipient.id,
                 encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: recipient.publicKey,
                     randomBytes: nacl.randomBytes })), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(recipient.publicKey) }));
         const recipients = [{ id: owner.id, publicKey: ownerKey.publicKey }, { id: requester.id, publicKey: requesterKey.publicKey }];
-        const resource = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
-            displayName: 'Delivery credential', kind: 'token', encryptionMode: mode, teamGrants: [team.id], accountGrants: [],
-            keyEnvelopes: envelopes(resourceKey, recipients), storedContent: sealSavedSecretResourceStoredContentV1(mode === 'plain'
-                ? { resourceId, mode, content: resourceContent }
-                : { resourceId, mode, resourceDataKey: resourceKey, content: resourceContent, randomBytes: nacl.randomBytes }) }));
-        if (!resource.ok) throw new Error(resource.error);
+        async function createCredential() {
+            const resourceId = crypto.randomUUID();
+            const resourceKey = nacl.randomBytes(32);
+            const resource = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: owner.id, resourceId,
+                displayName: 'Delivery credential', kind: 'token', encryptionMode: mode, teamGrants: [team.id], accountGrants: [],
+                keyEnvelopes: envelopes(resourceKey, recipients), storedContent: sealSavedSecretResourceStoredContentV1(mode === 'plain'
+                    ? { resourceId, mode, content: resourceContent }
+                    : { resourceId, mode, resourceDataKey: resourceKey, content: resourceContent, randomBytes: nacl.randomBytes }) }));
+            if (!resource.ok) throw new Error(resource.error);
+            return { resourceId, resourceRevision: resource.value.revision };
+        }
+        const { resourceId, resourceRevision } = await createCredential();
         const grant: MachineSecretGrantV1 = { v: 1, kind: 'secret', environmentId: environment.environmentId,
-            machineId, installationId, resourceId, resourceRevision: resource.value.revision, sealedContent: 'launch-trims-installed-ciphertext' };
-        const secretSource = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: resource.value.revision };
+            machineId, installationId, resourceId, resourceRevision, sealedContent: 'launch-trims-installed-ciphertext' };
+        const secretSource = { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision };
         const boundDefinition = DeploymentEnvironmentContentV1Schema.parse({ ...content, bindings: [roleService
             ? { purpose: 'dataRole', service: roleService, role: 'readOnlyPassword', source: secretSource }
             : { purpose: 'variable', phase: 'runtime', name: 'TOKEN', grantRef: crypto.randomUUID(), source: secretSource }] });
         const boundContent = await artifact('deployment-environment.v1', boundDefinition);
         const preparedBindings = { grants: [grant],
             referencedSavedSecretRevisions: roleService ? captureDeploymentBindingSavedSecretRevisionsV1(boundDefinition.bindings)
-                : [{ resourceId, revision: resource.value.revision }] };
+                : [{ resourceId, revision: resourceRevision }] };
         // A plugin link's bindings writer owns provider variables and adds no
         // Machine grants; its runtime grants come from the Environment writer.
         const bound = await inTx(tx => runtimePlacement === 'plugin'
@@ -231,8 +236,8 @@ describe('private installed Environment secret launch transport', () => {
         const payload = { ...body, proof: signMachineInstallationProof({ payload: { version: 1, machineId, installationId,
             accountId: requester.id, deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
             privateKey: keys.secretKey }) };
-        return { owner, requester, team, keys, controller, authorization, resourceId, resourceRevision: resource.value.revision, grant, payload,
-            artifact, content, envelopes, recipients, receipt,
+        return { owner, requester, team, keys, controller, authorization, resourceId, resourceRevision, grant, payload,
+            artifact, content, envelopes, recipients, receipt, createCredential,
             url: `/v1/deployments/environments/${environment.environmentId}/secret-launch-admission` };
     }
 
@@ -1590,6 +1595,44 @@ describe('private installed Environment secret launch transport', () => {
             .toMatchObject({ ok: true, environmentId: environment.environmentId });
     });
 
+    it.each(['plain', 'e2ee'] as const)('removes an own-server data role from %s custody and preserves the other exact grants', async mode => {
+        const kept = await admittedTeamDelivery(mode, false, 'db');
+        const removed = await kept.createCredential();
+        const grants = [kept.grant, { ...kept.grant, ...removed, sealedContent: 'removed-write-ciphertext' }];
+        const readRole = { purpose: 'dataRole' as const, service: 'db', role: 'readOnlyPassword' as const,
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(kept.resourceId), resourceRevision: kept.resourceRevision } };
+        const writeRole = { ...readRole, role: 'write' as const,
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(removed.resourceId), resourceRevision: removed.resourceRevision } };
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: kept.payload.environmentId } });
+        const current = { serverId, environmentId: row.id, expectedRevision: row.revision };
+        const withWrite = await kept.artifact('deployment-environment.v1', { ...kept.content, bindings: [readRole, writeRole] });
+        const bound = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, kept.owner.id, { ...current, ...withWrite,
+            grants, referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1([readRole, writeRole]) }));
+        expect(bound).toMatchObject({ ok: true });
+        if (!bound.ok) throw new Error(bound.error);
+        const withRead = await kept.artifact('deployment-environment.v1', { ...kept.content, bindings: [readRole] });
+        // Inject the real storage endpoint so the private transport marker is validated.
+        const body = { ...current, expectedRevision: bound.revision, ...withRead, grants: [],
+            retainGrantsForOwnServerDataRoleRemoval: true,
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1([readRole]) };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const url = `/v1/deployments/environments/${row.id}/bindings`;
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const denied = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': outsider.id }, payload: body });
+            expect(denied.statusCode).toBeGreaterThanOrEqual(400);
+            const headers = { 'x-test-user-id': kept.owner.id };
+            const reissued = await app.inject({ method: 'POST', url, headers, payload: { ...body, grants } });
+            expect(reissued.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            const changedRevision = await app.inject({ method: 'POST', url, headers, payload: { ...body,
+                referencedSavedSecretRevisions: [{ ...body.referencedSavedSecretRevisions[0]!, revision: kept.resourceRevision + 1 }] } });
+            expect(changedRevision.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
+            const response = await app.inject({ method: 'POST', url, headers, payload: body });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json()).toMatchObject({ ok: true, revision: bound.revision + 1 });
+        });
+        expect(await inReadSnapshot(tx => readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: row.id }))).toEqual([kept.grant]);
+    });
+
     it.each(['plain', 'e2ee'] as const)('PL-19 keeps the %s owner link as approval without resource re-admission at installed acquisition', async mode => {
         const f = await admittedTeamDelivery(mode);
         expect((await db.savedSecretResource.findUniqueOrThrow({ where: { id: f.resourceId } })).ownerAccountId).toBe(f.owner.id);
@@ -1647,22 +1690,44 @@ describe('private installed Environment secret launch transport', () => {
         });
         const grant: MachineSecretGrantV1 = { ...f.grant, resourceRevision: withdrawn.value.revision,
             sealedContent: 'owner-linked-without-team-resource-share' };
-        const content = await f.artifact('deployment-environment.v1', { ...f.content, bindings: [{ purpose: 'variable',
+        const definition = DeploymentEnvironmentContentV1Schema.parse({ ...f.content, bindings: [{ purpose: 'variable',
             phase: 'runtime', name: 'OWNER_TOKEN', grantRef: crypto.randomUUID(), source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(f.resourceId),
                 resourceRevision: withdrawn.value.revision } }] });
+        const content = await f.artifact('deployment-environment.v1', definition);
         const linked = await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, f.owner.id, { serverId,
             environmentId: row.id, expectedRevision: row.revision, ...content, grants: [grant],
-            referencedSavedSecretRevisions: [{ resourceId: f.resourceId, revision: withdrawn.value.revision }] }));
+            referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(definition.bindings) }));
         expect(linked).toMatchObject({ ok: true });
         expect(await db.savedSecretTeamGrant.count({ where: { resourceId: f.resourceId } })).toBe(0);
         expect(await db.savedSecretAccountGrant.count({ where: { resourceId: f.resourceId } })).toBe(0);
         expect(await db.machineSecretGrant.count({ where: { environmentId: row.id, resourceId: f.resourceId } })).toBe(1);
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const readEnvironment = async () => {
+                const response = await app.inject({ method: 'GET',
+                    url: `/v1/deployments/environments/${row.id}?serverId=${serverId}`,
+                    headers: { 'x-test-user-id': f.requester.id } });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json();
+            };
+            expect(await readEnvironment()).toMatchObject({
+                savedSecretRevisions: [],
+                secretScope: { status: 'ready', reason: 'secret_scope_current', requiredGrantCount: 1, missingGrantCount: 0 },
+            });
             const delivered = await app.inject({ method: 'POST', url: f.url,
                 headers: { 'x-test-user-id': f.requester.id }, payload: f.payload });
             expect(delivered.statusCode, delivered.body).toBe(200);
             expect(delivered.json()).toEqual({ ok: true, grants: [grant] });
             expect(delivered.body).not.toContain('launch-trims-private-sentinel');
+
+            // An owner revision change prunes the old seal and must refuse new use.
+            expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, { accountId: f.owner.id,
+                resourceId: f.resourceId, expectedRevision: withdrawn.value.revision,
+                accountGrants: [], teamGrants: [], groupGrants: [] }))).toMatchObject({ ok: true });
+            expect(await readEnvironment()).toMatchObject({
+                savedSecretRevisions: [],
+                secretScope: { status: 'unavailable', reason: 'secret_scope_resource_unavailable',
+                    requiredGrantCount: 1, missingGrantCount: 1 },
+            });
         });
     });
 

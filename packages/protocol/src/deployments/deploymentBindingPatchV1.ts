@@ -115,6 +115,33 @@ export function captureDeploymentBindingSavedSecretRevisionsV1(bindings: readonl
         .sort((a, b) => a.resourceId.localeCompare(b.resourceId));
 }
 
+/** Returns only wholly withdrawn resources dedicated to data roles, preserving all surviving routing. */
+export function readRemovedDataRoleSecretResourcesV1(
+    previous: readonly DeploymentBindingSavedSecretRevisionV1[], candidate: readonly DeploymentBindingSavedSecretRevisionV1[],
+): ReadonlySet<string> | null {
+    const retained = new Set(candidate.map(capture => capture.resourceId));
+    const removed = previous.filter(capture => !retained.has(capture.resourceId));
+    if (!removed.length || removed.some(capture => capture.requiredBindings?.length !== 1
+        || capture.requiredBindings[0]?.purpose !== 'dataRole')) return null;
+    const previousRetained = previous.filter(capture => retained.has(capture.resourceId));
+    return sameStrictJsonValue(normalizeDeploymentBindingSavedSecretRevisionsV1(previousRetained),
+        normalizeDeploymentBindingSavedSecretRevisionsV1(candidate))
+        ? new Set(removed.map(capture => capture.resourceId)) : null;
+}
+
+/** An own-server role removal preserves every other binding, including its private definition. */
+export function isOwnServerDataRoleBindingRemovalV1(
+    previous: readonly EnvironmentSecretBindingV1[], candidate: readonly EnvironmentSecretBindingV1[],
+    removedResources: ReadonlySet<string>,
+): boolean {
+    const retained = previous.filter(binding => {
+        if (binding.purpose !== 'dataRole' || !('service' in binding) || binding.source.kind !== 'secret') return true;
+        const ref = parseSavedSecretRefV1(binding.source.ref);
+        return ref.kind !== 'shared_resource' || !removedResources.has(ref.resourceId);
+    });
+    return sameStrictJsonValue(retained, candidate);
+}
+
 /** Applies a settled patch and gives a new variable one opaque Machine-grant reference exactly once. */
 export function applyEnvironmentSecretBindingsPatchV1(bindings: readonly EnvironmentSecretBindingV1[], patch: Readonly<{
     set: readonly EnvironmentSecretBindingInputV1[];

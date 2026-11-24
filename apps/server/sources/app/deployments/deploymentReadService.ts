@@ -248,11 +248,13 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
     const changedResource = captures?.some(capture => current.get(formatSharedSavedSecretRefV1(capture.resourceId)) !== capture.revision);
     const secretScope = {
         ...coverage,
+        // A saved binding gives the workload access through the exact installation seal.
+        // The requester's catalog access only explains how to repair missing coverage.
         ...(required.status === 'incomplete' ? { status: 'unavailable', reason: 'secret_scope_requirements_unavailable' }
-            : unavailableResource ? { status: 'unavailable', reason: 'secret_scope_resource_unavailable' }
-                : changedResource ? { status: 'actionNeeded', reason: 'secret_scope_resource_revision_changed' }
-                    : coverage.missingGrantCount ? { status: 'actionNeeded', reason: 'secret_scope_grants_required' }
-                        : { status: 'ready', reason: 'secret_scope_current' }),
+            : coverage.missingGrantCount === 0 ? { status: 'ready', reason: 'secret_scope_current' }
+                : unavailableResource ? { status: 'unavailable', reason: 'secret_scope_resource_unavailable' }
+                    : changedResource ? { status: 'actionNeeded', reason: 'secret_scope_resource_revision_changed' }
+                        : { status: 'actionNeeded', reason: 'secret_scope_grants_required' }),
     };
     // The reinstall fact comes from the owner the Deploy root refusal uses; its availability is the
     // Link writer's own admission (Source manage plus Machine Manage at the current installation).
