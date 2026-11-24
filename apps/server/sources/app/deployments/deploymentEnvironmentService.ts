@@ -13,7 +13,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
 import { resolveDeploymentStoredDefinitionRevisionV1, isDeploymentEnvironmentBindingsOnlyUpdateV1, reconcileDeploymentRemovedDataServicesV1, applyOwnServerEnvironmentConfigurationPatchV1, isEnvironmentSecretBindingManagedByBindingsWriterV1, readRetainedOperationalEnvironmentBindingGrantsV1, type DeploymentEnvironmentTemplateSetInputV1, type DeploymentEnvironmentBackupSetInputV1 } from '@happier-dev/deployments/contracts/v1';
 import { captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, normalizeDeploymentBindingSavedSecretRevisionsV1, readDeploymentBindingSavedSecretRevisionsV1,
     isManagedDeploymentDataRoleBindingV1, isOwnServerDataRoleBindingRemovalV1, readRemovedDataRoleSecretResourcesV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
-import { machineSecretGrantSubjectKey } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
+import { machineSecretGrantSubjectKey, type MachineSecretGrantV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
 import { type DeploymentBindingsSetStorageInputV1, type DeploymentEnvironmentUpdateStorageInputV1 } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { environmentSecretBindingInstallationsV1, projectEnvironmentSecretBindingRequiredUsesV1,
     selectEnvironmentSecretCapturePurposesV1, type EnvironmentSecretRequiredUsesProjectionV1 } from '@happier-dev/deployments';
@@ -744,6 +744,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
     // Retained identities come from stored custody, independently of caller seals.
     const previousBindingCaptures = previous.content ? captureDeploymentBindingSavedSecretRevisionsV1(previous.content.bindings)
         : readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? [];
+    let grants: readonly MachineSecretGrantV1[] = input.grants;
     if (input.retainGrantsForOwnServerDataRoleRemoval) {
         if (placement || databaseReadBinding || link?.sourceKind !== 'host' || link.targetKind !== 'ownServer'
             || link.detachedAt !== null || controllerManagesData || telemetryChanged || telemetryCapabilitiesChanged || input.grants.length) {
@@ -754,7 +755,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             previous.content.bindings, preparedContent.content.bindings, removed))) return deploymentFailure('deployment_conflict');
         // Revocation needs no installation proof and sends no seal to the requester. The existing CAS
         // can only retain stored envelopes byte for byte or delete them with the removed resources.
-        input = { ...input, grants: existingGrants.filter(grant => grant.kind !== 'secret' || !removed.has(grant.resourceId)) };
+        grants = existingGrants.filter(grant => grant.kind !== 'secret' || !removed.has(grant.resourceId));
     }
     const capturesOutsideWriter = (captures: typeof input.referencedSavedSecretRevisions) =>
         normalizeDeploymentBindingSavedSecretRevisionsV1(captures.flatMap(capture => {
@@ -789,8 +790,8 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             && capture.revision === grant.resourceRevision)) : [];
     if (platformVariables) {
         // Keep caller duplicates visible to the existing subject uniqueness check.
-        input = { ...input, grants: [...retainedPlatformGrants.filter(retained => !input.grants.some(grant =>
-            machineSecretGrantSubjectKey(grant) === machineSecretGrantSubjectKey(retained))), ...input.grants] };
+        grants = [...retainedPlatformGrants.filter(retained => !grants.some(grant =>
+            machineSecretGrantSubjectKey(grant) === machineSecretGrantSubjectKey(retained))), ...grants];
     }
     const retainedGrants = preparedContent.content && previous.content
         ? readRetainedOperationalEnvironmentBindingGrantsV1({ previousBindings: previous.content.bindings,
@@ -801,14 +802,14 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         : managedPlatformBindings ? existingGrants.filter(grant => grant.kind === 'environmentValues'
             || grant.kind === 'secret' && retainedCaptures.some(capture =>
                 capture.resourceId === grant.resourceId && capture.revision === grant.resourceRevision))
-        : existingGrants.filter(existing => input.grants.some(grant => isDeepStrictEqual(existing, grant)));
+        : existingGrants.filter(existing => grants.some(grant => isDeepStrictEqual(existing, grant)));
     if (retainedGrants === null) return deploymentFailure('deployment_conflict');
     const retainedSubjects = new Map(retainedGrants.map(grant => [machineSecretGrantSubjectKey(grant), grant]));
     // References survive authoring before placement; grants cover only current installations.
     const secretRevisions = new Map(input.referencedSavedSecretRevisions.map(ref => [ref.resourceId, ref.revision]));
     const subjects = new Set<string>();
     const recipients = new Map<string, { machineId: string; installationId: string; role: 'target' | 'build' | 'controller' }>();
-    for (const grant of input.grants) {
+    for (const grant of grants) {
         if (grant.kind === 'connectorToken' || grant.environmentId !== input.environmentId) return deploymentFailure('deployment_conflict');
         const key = machineSecretGrantSubjectKey(grant);
         if (subjects.has(key)) return deploymentFailure('deployment_conflict');
@@ -877,7 +878,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             const destinations = binding.purpose === 'dataRole'
                 ? 'targetLinkId' in binding
                     ? controllerInstallation ? [controllerInstallation] : []
-                    : runtimeInstallations.filter(member => input.grants.some(grant => grant.kind === 'secret'
+                    : runtimeInstallations.filter(member => grants.some(grant => grant.kind === 'secret'
                     && grant.resourceId === resourceId && grant.resourceRevision === binding.source.resourceRevision
                     && grant.machineId === member.machineId && grant.installationId === member.installationId))
                 : environmentSecretBindingInstallationsV1<{ machineId: string; installationId: string }>(binding,
@@ -902,7 +903,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
             return deploymentFailure('deployment_conflict');
         }
         if ([...requiredSubjects].some(subject => !subjects.has(subject))
-            || input.grants.some(grant => !requiredSubjects.has(machineSecretGrantSubjectKey(grant)))) {
+            || grants.some(grant => !requiredSubjects.has(machineSecretGrantSubjectKey(grant)))) {
             return deploymentFailure('deployment_conflict');
         }
         // The selected runtime relation was already read; resolve only additional exact registry links.
@@ -945,7 +946,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         && previousCaptures.every((capture, index) => capture !== null && typeof capture === 'object' && !Array.isArray(capture)
             && capture.resourceId === referencedSavedSecretRevisions[index]!.resourceId
             && capture.revision === referencedSavedSecretRevisions[index]!.revision);
-    const grantsChanged = await syncEnvironmentSecretGrantsInTx(tx, { environmentId: loaded.row.id, grants: input.grants,
+    const grantsChanged = await syncEnvironmentSecretGrantsInTx(tx, { environmentId: loaded.row.id, grants,
         ...(!contentOrPlacementChanged ? { admitMutation } : {}),
         ...(retainAcceptedBuildCustody ? { retainAcceptedBuildCustody: true } : {}) });
     if (grantsChanged === null) return deploymentFailure('deployment_conflict');
