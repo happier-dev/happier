@@ -169,7 +169,10 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
       await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId, enabled: true });
     }
     const auth = await readCliAccessKey(cliHomeDir);
-    if (!auth || !('secret' in auth)) throw new Error('Fixture requires legacy test credentials');
+    if (!auth) throw new Error('Fixture requires CLI credentials');
+    const material = 'secret' in auth
+      ? { type: 'legacy' as const, secret: Buffer.from(auth.secret, 'base64') }
+      : { type: 'dataKey' as const, machineKey: Buffer.from(auth.encryption.machineKey, 'base64') };
     const machineId = await waitForDaemonMachineIdFromCliSettings({ cliHomeDir });
     const recordKey = { providerId: 'codex', accountSubjectId: 'direct-usage-fixture', subjectKind: 'account', quotaScope: 'account' } as const;
     const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({
@@ -183,7 +186,7 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     const write = await fetchJson(`${server.baseUrl}/v2/connect/provider-account-usage/${snapshot.recordId}`, {
       method: 'POST', headers: { Authorization: `Bearer ${auth.token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ recordKey,
-        sealed: sealProviderAccountUsageSnapshot({ material: { type: 'legacy', secret: Buffer.from(auth.secret, 'base64') }, snapshot, randomBytes }),
+        sealed: sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes }),
         metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
       }), timeoutMs: 20_000,
     });
