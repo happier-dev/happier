@@ -118,7 +118,7 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
     // Contributor reasons can contain private launch details. Publish the typed
     // host code and a recovery message through the existing service output.
     const diagnostics: NonNullable<LocalServiceLaunchTargetV1['diagnostics']> = launchWarning
-        ? [{ code: launchWarning, severity: 'warning', message: 'Local capture could not start. Restart this service to retry capture.' }] : [];
+        ? [{ code: launchWarning, severity: 'warning', message: 'Service launch setup was incomplete. Restart this service to retry.' }] : [];
     if (snapshot.state === 'failed' || snapshot.state === 'unhealthy') {
         // The supervisor owns sanitization and retention bounds for process output.
         for (const { code, severity, message } of snapshot.diagnostics) {
