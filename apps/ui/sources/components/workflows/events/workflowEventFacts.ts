@@ -1,4 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
+import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
+import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
@@ -59,13 +61,15 @@ export function matchesWorkflowEventFilter(
 export function readWorkflowEventWhen(
   fact: WorkflowActivityFact,
   match?: WorkflowEventMatch | null,
+  filter?: AutomationEventFilterV1 | null,
 ): TriggerWhenValue | null {
   if (fact.kind === 'run') return { kind: 'runLifecycle',
     source: fact.coverage === 'retained_cause' ? fact.evidence.source : { kind: 'workflow_run', runId: fact.runId }, condition: fact.event };
   if (fact.kind !== 'session') return null;
   const event = readSessionLifecycleEvent(fact);
   const kind = readSessionLifecycleKind([event]);
-  return { kind, ...(kind === 'turnEnds' ? { events: [event] } : {}), ...(match ? { subject: match.subject } : {}) };
+  return { kind, ...(kind === 'turnEnds' ? { events: [event] } : {}), ...(match ? { subject: match.subject } : {}),
+    ...(filter ? { filter } : {}) };
 }
 
 function readSessionLifecycleEvent(fact: Extract<WorkflowActivityFact, { kind: 'session' }>) {
@@ -102,16 +106,20 @@ export function formatWorkflowMachineEventTitle(fact: Readonly<{ event: 'online'
  * (read on the person's press), a Machine fact's draft starts on that same Machine, so its catalog names the
  * pending When; the place stays editable. Without a listed Machine and folder the draft stays unplaced.
  */
+export function readWorkflowEventDeploymentEnvironment(fact: WorkflowActivityFact): DeploymentEnvironmentRefV1 | null {
+  if (fact.kind !== 'deployment' || fact.homeServerIdentityId === null) return null;
+  return { serverId: fact.homeServerIdentityId, projectSourceId: fact.projectSourceId, environmentId: fact.environmentId };
+}
+
 export function readWorkflowEventDraftIntent(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],
   placement?: Omit<Parameters<typeof resolveWorkflowProjectTargetOnMachine>[0], 'machineId'>,
   match?: WorkflowEventMatch | null,
 ): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent' | 'eventSeed' | 'project'> | null {
   if (fact.kind === 'deployment') {
-    if (fact.homeServerIdentityId === null) return null;
-    const eventSeed = subjectStarterEventSeed('deploymentFailed', {
-      deploymentEnvironment: { serverId: fact.homeServerIdentityId, projectSourceId: fact.projectSourceId, environmentId: fact.environmentId },
-    });
+    const deploymentEnvironment = readWorkflowEventDeploymentEnvironment(fact);
+    if (deploymentEnvironment === null) return null;
+    const eventSeed = subjectStarterEventSeed('deploymentFailed', { deploymentEnvironment });
     return eventSeed === undefined ? null : { eventSeed };
   }
   if (fact.kind === 'machine') {

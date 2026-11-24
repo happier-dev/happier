@@ -9,6 +9,7 @@ import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderScreen as renderHostScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
+import { WorkflowTriggerBlock } from '../triggers/WorkflowTriggerBlock';
 import { editWorkflowTriggerDraft } from '../triggers/workflowTriggerDraft';
 import { flattenTestStyle, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { ModalProvider as RealModalProvider, useModal } from '@/modal/ModalProvider';
@@ -1410,11 +1411,11 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
     });
 
-    it.each(['press', 'agent'] as const)('admits pending Machine Add and selective Undo through the draft owner (%s)', async entry => {
+    it.each(['press', 'agent', 'when-remove'] as const)('admits pending Machine Add and selective removal through the draft owner (%s)', async entry => {
         const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const boundary = await serveMountedDraftActionHome();
-        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         const executor = createDefaultActionExecutor();
         const context = { surface: 'agent' as const, authority: 'account_automation' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
@@ -1426,7 +1427,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         const add = async (event: 'online' | 'offline') => {
             const nativeEvent = { kind: 'machine', machineId: 'machine-a', event,
                 key: event, sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
-            if (entry === 'press') {
+            if (entry !== 'agent') {
                 return (await readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent })) ?? '';
             }
             const clientId = `agent-${event}`;
@@ -1445,15 +1446,41 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(await editTrigger({ kind: 'removeAdded', clientId: first }, previous))
             .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
         expect(readBodyProps()!.canUndoAddedTrigger?.(first)).toBe(true);
+        const beforeRemove = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const address = { scope: beforeRemove.scope, draftId: beforeRemove.draftId };
+        if (entry === 'when-remove') {
+            const findBlock = () => screen.findByType(WorkflowEditorBody)?.findAllByType(WorkflowTriggerBlock)
+                .find(block => block.props.testID === `workflow-editor-trigger:new:${first}`);
+            if (!findBlock()) await screen.pressByTestIdAsync('workflow-editor-when-toggle');
+            const block = findBlock();
+            expect(block).toBeDefined();
+            await act(async () => block!.props.onRemove());
+            await vi.waitFor(() => expect(readBodyProps()!.hasTriggerRow!(first)).toBe(false));
+        } else {
+            await act(async () => {
+                if (entry === 'press') await readBodyProps()!.onUndoAddedTrigger!(first);
+                else expect(await editTrigger({ kind: 'removeAdded', clientId: first }))
+                    .toMatchObject({ ok: true, result: { status: 'applied' } });
+            });
+        }
+        expect(readBodyProps()!.hasTriggerRow!(first)).toBe(false);
+        expect(await editTrigger({ kind: 'removeAdded', clientId: second }, beforeRemove.draftRevision))
+            .toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
         await act(async () => {
-            if (entry === 'press') await readBodyProps()!.onUndoAddedTrigger!(first);
-            else expect(await editTrigger({ kind: 'removeAdded', clientId: first }))
+            expect(await executor.execute(WORKFLOW_AUTHORING_ACTION_ID.draftUndo, address, context))
                 .toMatchObject({ ok: true, result: { status: 'applied' } });
         });
-        expect(readBodyProps()!.hasTriggerRow!(first)).toBe(false);
+        expect(readBodyProps()!.hasTriggerRow!(first)).toBe(true);
         expect(readBodyProps()!.hasTriggerRow!(second)).toBe(true);
         expect(readBodyProps()!.draftStore.get().name).toBe('Keep this title');
         expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
+        expect(await executor.execute(WORKFLOW_AUTHORING_ACTION_ID.draftGet, address, context))
+            .toMatchObject({ ok: true, result: { status: 'available', drafts: [{
+                incompleteTriggers: { pending: [
+                    { clientId: first, nativeEvent: { event: 'online' } },
+                    { clientId: second, nativeEvent: { event: 'offline' } },
+                ], edits: {} },
+            }] } });
         expect(boundary.updates).toHaveLength(0);
         expect(boundary.automationCreates).toHaveLength(0);
     });
@@ -2139,7 +2166,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.updates).toHaveLength(1);
     });
 
-    it('Copy retires a conflict Test Run read and lets B open its own Test Run after A completes', async () => {
+    it.each(['UI', 'CLI'] as const)('Copy retires a conflict Test Run read and lets B open its own Test Run (%s)', async surface => {
         nativeRouteBoundary.width = 390;
         const boundary = await serveMountedDraftActionHome();
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
@@ -2150,6 +2177,18 @@ describe('WorkflowEditorHostScreen composition', () => {
         await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'B local changes' }); });
         await saveDirectlyFromUi();
         expect(readBodyProps()!.saveConflict).toMatchObject({ currentRevision: { headerVersion: 2, bodyVersion: 2 } });
+        const { WORKFLOW_AUTHORING_ACTION_ID } = await import('@happier-dev/protocol/actions/workflowAuthoringActionIds');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const address = { scope: snapshot.scope, draftId: snapshot.draftId };
+        const context = { surface: 'cli' as const, authority: 'present_user' as const,
+            serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId };
+        expect(await executor.execute(WORKFLOW_AUTHORING_ACTION_ID.draftGet, address, context)).toMatchObject({
+            ok: true, result: { status: 'available', drafts: [{ name: 'B local changes',
+                saveConflict: { currentRevision: { headerVersion: 2, bodyVersion: 2 }, currentDraft: { name: 'A changed elsewhere' } },
+            }] },
+        });
         const gate = boundary.holdNextRead();
         try {
             await act(async () => { readBodyProps()!.onTestRun!(); });
@@ -2159,9 +2198,17 @@ describe('WorkflowEditorHostScreen composition', () => {
                 typeof node.props.testID === 'string' && node.props.testID.endsWith('-save-as-copy')
                 && typeof node.props.onPress === 'function')[0];
             expect(copyControl).toBeDefined();
-            await act(async () => { await invokeTestInstanceHandler(copyControl!, 'onPress'); });
+            await act(async () => {
+                if (surface === 'UI') await invokeTestInstanceHandler(copyControl!, 'onPress');
+                else {
+                    const reverseExecutor = createDefaultActionExecutor({ admittedClientActionId: WORKFLOW_AUTHORING_ACTION_ID.draftSave });
+                    const result = await reverseExecutor.execute(WORKFLOW_AUTHORING_ACTION_ID.draftSave, { ...address, asCopy: true }, context);
+                    expect(result.ok ? result.result : result).toEqual({ status: 'applied' });
+                }
+            });
             await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
             expect(boundary.creates).toHaveLength(1);
+            expect(boundary.updates).toHaveLength(1);
             expect(readBodyProps()!.saveConflict).toBeNull();
             gate.resolve();
             await flushHookEffects();

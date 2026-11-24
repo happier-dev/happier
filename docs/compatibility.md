@@ -22,7 +22,17 @@ for staging a Machine Event before setup or selectively removing an unsaved
 trigger row. It carries the authoring source and transition, and the mounted
 draft validates the revision as for other edits. Matching 0.3 development
 Protocol, daemon and client builds understand the new request. Existing edit
-requests, responses and saved Workflow formats keep their shapes.
+requests and saved Workflow formats keep their shapes. Deployment failure Add
+stages a qualified Environment and optional Only when filter in the same
+revision-bound edit. Save configures its observation source on the Workflow's
+selected Machine.
+
+The mounted Draft Get response includes unfinished trigger rows and the
+current definition when a Save conflicts, if those are available. Both the
+editor's Save as copy control and Action callers send `asCopy: true` to the
+existing Draft Save Action. Use matching 0.3 development clients and daemons
+for these strict Action DTOs. Save writes the same Workflow definition and
+trigger formats.
 
 ## Next-prompt permission staging (unreleased 0.3)
 

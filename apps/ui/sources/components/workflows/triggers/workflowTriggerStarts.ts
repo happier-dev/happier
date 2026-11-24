@@ -1,6 +1,8 @@
 import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { isPluginAutomationActionSubjectV1, isPluginAutomationEventSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowDraftDeploymentEventSeedV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
@@ -322,12 +324,25 @@ export type WorkflowTriggerDraftSeedIntent = Readonly<{
     eventSeed?: PluginUiOpenAutomationEventRequestV1;
     /** The watched resource is independent of the controller the author selects later. */
     nativeEvent?: Extract<WorkflowActivityLiveFact, { kind: 'machine' }>;
+    deploymentEvent?: WorkflowDraftDeploymentEventSeedV1;
 }>;
 export type WorkflowTriggerIncomplete = Readonly<{
     pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue; enabled?: boolean } & WorkflowTriggerDraftSeedIntent>[];
     edits: Readonly<Record<string, TriggerWhenValue>>;
 }>;
 export const EMPTY_WORKFLOW_TRIGGER_INCOMPLETE: WorkflowTriggerIncomplete = Object.freeze({ pending: Object.freeze([]), edits: Object.freeze({}) });
+
+/** Both mounted editors expose the same unfinished rows through Draft Get. */
+export function projectWorkflowDraftIncompleteTriggers(incomplete: WorkflowTriggerIncomplete) {
+    if (incomplete.pending.length === 0 && Object.keys(incomplete.edits).length === 0) return undefined;
+    return {
+        pending: incomplete.pending.map(({ clientId, when, enabled, nativeEvent, eventSeed, deploymentEvent }) => ({
+            clientId, when: projectNativeJsonValueForTransport(when), enabled: enabled ?? true, nativeEvent,
+            eventRef: eventSeed?.eventRef, initialFilter: eventSeed?.initialFilter, deploymentEvent,
+        })),
+        edits: projectNativeJsonValueForTransport(incomplete.edits),
+    };
+}
 
 export function createWorkflowTriggerIncompleteSeed(intent?: WorkflowTriggerDraftSeedIntent): WorkflowTriggerIncomplete | undefined {
     if (intent?.eventSeed === undefined && intent?.nativeEvent === undefined) return undefined;

@@ -23,7 +23,7 @@ import { useWorkflowEditorHistory, workflowEditorSnapshotsEqual, type WorkflowEd
 import { parseMountedWorkflowDraftMutation, saveMountedWorkflowDraft, saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate, type WorkflowEditorSavedRevision } from '../editor/saveWorkflowEditorDefinition';
 import { useWorkflowTriggerEditing, type WorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
 import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
-import { createWorkflowTriggerIncompleteSeed } from '../triggers/workflowTriggerStarts';
+import { createWorkflowTriggerIncompleteSeed, projectWorkflowDraftIncompleteTriggers } from '../triggers/workflowTriggerStarts';
 import { formatTriggerSetSentence, type TriggerSummaryContext, type TriggerSummarySource } from '../triggers/formatTriggerSummary';
 import { prepareWorkflowSentenceEditorEntry, type WorkflowSentenceEditorIntent } from './workflowSentenceAuthoring';
 
@@ -231,7 +231,8 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
                 name: current.draft.name, definition: projectNativeJsonValueForTransport(buildWorkflowDefinitionCandidate(current.draft)),
                 blockLabels: walkWorkflowBlocks(current.draft.blocks).map(block => ({ id: block.id, label: workflowBlockReferenceLabel(block) })),
                 settings: { description: current.description, projectTarget: current.projectTarget, executionTarget: current.executionTarget,
-                    triggers: projectNativeJsonValueForTransport(current.triggers) }, validationIssues: validation.issues,
+                    triggers: projectNativeJsonValueForTransport(current.triggers) },
+                incompleteTriggers: projectWorkflowDraftIncompleteTriggers(triggers.incomplete), validationIssues: validation.issues,
                 dirty: !workflowEditorSnapshotsEqual(current.draft, baseline.current.draft)
                     || current.description !== baseline.current.description || triggers.dirty, draftRevision: history.getRevision() });
         },
@@ -239,6 +240,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
             if (!mounted.current || !source.lifetime?.isCurrent()) return { status: 'unavailable' };
             if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave) {
+                if (typeof input === 'object' && input !== null && 'asCopy' in input && input.asCopy === true) {
+                    return { status: 'unavailable' };
+                }
                 const outcome = await save(caller, { signal, operationProgress: caller?.operationProgress });
                 if (outcome.status === 'applied' || outcome.status === 'unchanged') onRequestClose?.();
                 return outcome;

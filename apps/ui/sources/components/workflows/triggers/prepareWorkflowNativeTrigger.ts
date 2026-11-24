@@ -10,11 +10,13 @@ import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/proj
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { callWorkflowAction, type WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
-import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import type { WorkflowTriggerDraftSeedIntent } from './workflowTriggerStarts';
+import { subjectStarterEventSeed } from './subjectTriggerStarters';
 import { readWorkflowEventDraftSeed } from '../events/workflowEventFacts';
 
 export async function prepareWorkflowNativeTrigger(
-    fact: Extract<WorkflowActivityLiveFact, { kind: 'machine' }>,
+    source: WorkflowTriggerDraftSeedIntent,
+    runsOnMachineId: string,
     accountLifetime: ServerAccountScopeLifetime,
     signal: AbortSignal | undefined,
     caller?: WorkflowActionCallerContext,
@@ -23,16 +25,25 @@ export async function prepareWorkflowNativeTrigger(
     const load = (target: Readonly<{ machineId: string; serverId: string | null }>) => loadDaemonMergedProjectionInputs({
         ...target, sections: PLUGIN_EVENT_AUTOMATION_SECTIONS, accountLifetime, signal,
     });
-    const machineId = fact.machineId;
+    const machineId = source.nativeEvent?.machineId ?? runsOnMachineId;
     const projection = await load({ machineId, serverId });
     const eligibleEvents = projection?.automationEligibleEvents ?? [];
-    const seed = readWorkflowEventDraftSeed(fact, { serverId, events: eligibleEvents.map(({ event }) => ({
-        eventRef: event.identity, automation: event.automation, payloadSchema: event.payloadSchema,
-    })) });
-    if (!seed?.setupRequired || signal?.aborted || !accountLifetime.isCurrent()) return null;
+    if (signal?.aborted || !accountLifetime.isCurrent()) return null;
 
-    const eligible = eligibleEvents.find(({ event }) => event.identity.pluginId === seed.eventSeed.eventRef.pluginId
-        && event.identity.localId === seed.eventSeed.eventRef.localId);
+    const machineSeed = source.nativeEvent && readWorkflowEventDraftSeed(source.nativeEvent, {
+        serverId, events: eligibleEvents.map(({ event }) => ({
+            eventRef: event.identity, automation: event.automation, payloadSchema: event.payloadSchema,
+        })),
+    });
+    const environment = source.deploymentEvent?.environment;
+    const eventSeed = machineSeed?.setupRequired ? machineSeed.eventSeed
+        : environment && subjectStarterEventSeed('deploymentFailed', { deploymentEnvironment: environment });
+    const subject = machineSeed?.setupRequired ? machineSeed.subject : environment && {
+        kind: 'environment' as const, serverId: environment.serverId, environmentId: environment.environmentId,
+    };
+    if (!eventSeed || !subject) return null;
+    const eligible = eligibleEvents.find(({ event }) => event.identity.pluginId === eventSeed.eventRef.pluginId
+        && event.identity.localId === eventSeed.eventRef.localId);
     const origin = eligible?.observationBinding?.executionOrigin;
     if (!eligible || !origin || eligible.setupSurface || getPluginMachineExecutionOriginRef(origin).machineId !== machineId) return null;
 
@@ -44,9 +55,9 @@ export async function prepareWorkflowNativeTrigger(
     let setupFailure: WorkflowActionError | undefined;
     const setup = await configurePluginEventAutomationSetup({
         eligibleEvent: eligible,
-        initialSetupSeed: { ...seed.eventSeed, monitoringMachineId: machineId },
+        initialSetupSeed: { ...eventSeed, monitoringMachineId: machineId },
         observationTransport: 'checkpointedPull',
-        filter: null,
+        filter: source.deploymentEvent?.filter ?? null,
         maximumObservationAgeMs: null,
         accountLifetime,
         signal,
@@ -93,5 +104,5 @@ export async function prepareWorkflowNativeTrigger(
     const trigger = watcher ? buildPluginEventAutomationTriggerInput({
         eligibleEvents, draft: setup.draft.draft, watcherOrigin: watcher.origin,
     }) : null;
-    return trigger ? { trigger: { ...trigger, subject: seed.subject }, payloadSchema: seed.payloadSchema } : null;
+    return trigger ? { trigger: { ...trigger, subject }, payloadSchema: eligible.event.payloadSchema } : null;
 }

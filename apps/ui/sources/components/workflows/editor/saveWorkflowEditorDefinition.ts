@@ -1,6 +1,6 @@
 import { randomUUID } from '@/platform/randomUUID';
 import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
-import { WorkflowDraftMutationResultV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import { WorkflowDraftMutationResultV1Schema, type WorkflowDraftSaveInputV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -23,10 +23,12 @@ export function parseMountedWorkflowDraftMutation(value: unknown) {
     return mutation.success ? mutation.data : ActionApprovalRequestCreatedResultSchema.parse(value);
 }
 
-export async function saveMountedWorkflowDraft(accountLifetime: ServerAccountScopeLifetime, draftId: string, operation?: WorkflowActionOperation) {
+export async function saveMountedWorkflowDraft(accountLifetime: ServerAccountScopeLifetime,
+    draftId: string, options?: WorkflowActionOperation & Pick<WorkflowDraftSaveInputV1, 'asCopy'>) {
+    const { asCopy, ...operation } = options ?? {};
     const execute = createFrontDoorActionExecute(undefined, { useCapturedWorkflowDraftChildren: true });
     return await callWorkflowAction({ actionId: WORKFLOW_AUTHORING_ACTION_ID.draftSave,
-        input: { scope: accountLifetime.scope, draftId }, accountLifetime, execute, ...operation,
+        input: { scope: accountLifetime.scope, draftId, ...(asCopy ? { asCopy } : {}) }, accountLifetime, execute, ...operation,
         parseResult: parseMountedWorkflowDraftMutation });
 }
 

@@ -5,11 +5,15 @@ import { z } from '../zodRuntimePolicy.js';
 import { EntityDragScopeV1Schema, EntityDragSessionAddressV1Schema } from '../plugins/ui/entityDragDrop.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import { WorkflowDefinitionEditOpV1Schema } from '../workflows/workflowDefinitionEditV1.js';
+import { WorkflowArtifactRevisionV1Schema } from '../workflows/workflowDefinitionV1.js';
+import { PluginUiOpenAutomationEventRequestV1Schema } from '../plugins/ui/hostApiRequests.js';
 import { WorkflowValidationIssueV1Schema } from '../workflows/workflowV1.js';
 import { WorkflowProjectTargetV1Schema } from '../workflows/workflowWorkspaceV1.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { WorkflowDecimalV1Schema } from '../workflows/workflowProgressV1.js';
+import { AutomationEventFilterV1Schema } from '../automations/automationEventFilterV1.js';
+import { DeploymentEnvironmentRefV1Schema } from '../deployments/deploymentEnvironmentRefV1.js';
 import { AutomationTriggerDefinitionInputSchema } from '../automations/automationTriggerDefinition.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
@@ -24,6 +28,10 @@ export {
 
 const draftAddress = { scope: EntityDragScopeV1Schema, draftId: z.string().check(z.trim(), z.minLength(1)) };
 export const WorkflowDraftAddressV1Schema = lazyZodSchema(() => z.strictObject(draftAddress));
+export const WorkflowDraftSaveInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...draftAddress, asCopy: z.optional(z.literal(true)),
+}));
+export type WorkflowDraftSaveInputV1 = z.infer<typeof WorkflowDraftSaveInputV1Schema>;
 export const WorkflowDraftGetInputV1Schema = lazyZodSchema(() => z.strictObject({
   scope: EntityDragScopeV1Schema, draftId: z.optional(draftAddress.draftId),
 }));
@@ -54,10 +62,15 @@ const WorkflowDraftMachineEventSeedV1Schema = lazyZodSchema(() => z.strictObject
   event: z.enum(['online', 'offline']), sourceRevision: z.number().check(z.int(), z.nonnegative()),
   occurredAt: z.number(), coverage: z.enum(['live', 'retained']),
 }));
+const WorkflowDraftDeploymentEventSeedV1Schema = lazyZodSchema(() => z.strictObject({
+  environment: DeploymentEnvironmentRefV1Schema, filter: z.nullable(AutomationEventFilterV1Schema),
+}));
+export type WorkflowDraftDeploymentEventSeedV1 = z.infer<typeof WorkflowDraftDeploymentEventSeedV1Schema>;
 const WorkflowDraftTriggerEditV1Schema = lazyZodSchema(() => {
   const clientId = z.string().check(z.minLength(1));
   return z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('stageMachineEvent'), clientId, nativeEvent: WorkflowDraftMachineEventSeedV1Schema }),
+    z.strictObject({ kind: z.literal('stageDeploymentEvent'), clientId, deploymentEvent: WorkflowDraftDeploymentEventSeedV1Schema }),
     z.strictObject({ kind: z.literal('removeAdded'), clientId }),
   ]);
 });
@@ -89,6 +102,20 @@ export const WorkflowMountedDraftV1Schema = lazyZodSchema(() => z.strictObject({
   definition: StrictJsonValueSchema,
   blockLabels: z.array(z.strictObject({ id: z.string(), label: z.string() })),
   settings: WorkflowDraftSettingsV1Schema,
+  incompleteTriggers: z.optional(z.strictObject({
+    pending: z.array(z.strictObject({
+      clientId: z.string().check(z.minLength(1)), when: StrictJsonValueSchema,
+      enabled: z.boolean(), nativeEvent: z.optional(WorkflowDraftMachineEventSeedV1Schema),
+      eventRef: z.optional(PluginUiOpenAutomationEventRequestV1Schema.shape.eventRef),
+      initialFilter: PluginUiOpenAutomationEventRequestV1Schema.shape.initialFilter,
+      deploymentEvent: z.optional(WorkflowDraftDeploymentEventSeedV1Schema),
+    })),
+    edits: z.record(z.string(), StrictJsonValueSchema),
+  })),
+  saveConflict: z.optional(z.strictObject({
+    currentRevision: zMini.nullable(WorkflowArtifactRevisionV1Schema),
+    currentDraft: zMini.nullable(z.strictObject({ name: z.string(), definition: StrictJsonValueSchema })),
+  })),
   validationIssues: z.array(WorkflowValidationIssueV1Schema), dirty: z.boolean(), draftRevision: z.number().check(z.int(), z.nonnegative()),
 }));
 export const WorkflowDraftGetResultV1Schema = lazyZodSchema(() => z.union([
@@ -144,7 +171,7 @@ function createWorkflowAuthoringActionSpecs() {
 }, {
   id: 'workflow.authoring.draft.get', approval: {result: 'required'}, title: 'Read mounted Workflow draft',
   cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'get'], visibility: 'canonical' }] },
-  description: 'Read the answering client’s open Workflow draft, settings, validation and revision. Omit draftId to list drafts in the scope. Never loads or creates an editor.',
+  description: 'Read the answering client’s open Workflow draft, including unfinished triggers, Save conflict, validation and revision. Omit draftId to list drafts in the scope. Never loads or creates an editor.',
   safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_get', voiceClientToolName: 'readWorkflowDraft' },
   inputSchema: WorkflowDraftGetInputV1Schema, outputSchema: WorkflowDraftGetResultV1Schema,
@@ -153,14 +180,14 @@ function createWorkflowAuthoringActionSpecs() {
 }, {
   id: 'workflow.authoring.draft.edit', approval: {result: 'required'}, title: 'Edit mounted Workflow draft',
   cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'edit'], visibility: 'canonical' }] },
-  description: 'Apply canonical Workflow edit ops, a settings patch, or a trigger row edit to the open draft at expectedDraftRevision as one undoable change. triggerEdit can stage a Machine event before setup or remove a single unsaved row by clientId. A stale revision is refused. Does not save or run.',
+  description: 'Apply canonical Workflow edit ops, a settings patch, or a trigger row edit to the open draft at expectedDraftRevision as one undoable change. triggerEdit can stage a Machine or Deployment event before setup or remove a single unsaved row by clientId. A stale revision is refused. Does not save or run.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_edit', voiceClientToolName: 'editWorkflowDraft' },
   inputSchema: WorkflowDraftEditInputV1Schema, outputSchema: WorkflowDraftMutationResultV1Schema,
   inputHints: { fields: [...addressHints, { path: 'expectedDraftRevision', title: 'Observed draft revision', widget: 'number', required: true },
     { path: 'ops', title: 'Canonical Workflow edit operations', widget: 'json', required: false },
     { path: 'settings', title: 'Mounted draft settings patch', widget: 'json', required: false },
-    { path: 'triggerEdit', title: 'Pending Machine event or selective removal', widget: 'json', required: false }] },
+    { path: 'triggerEdit', title: 'Pending event or selective removal', widget: 'json', required: false }] },
   examples: { mcp: { argsExample: editExample }, voice: { argsExample: editExample } },
 }, {
   id: 'workflow.authoring.draft.undo', approval: {result: 'required'}, title: 'Undo Workflow draft change',
@@ -181,11 +208,11 @@ function createWorkflowAuthoringActionSpecs() {
 }, {
   id: 'workflow.authoring.draft.save', approval: {result: 'required'}, title: 'Save mounted Workflow draft',
   cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'save'], visibility: 'canonical' }] },
-  description: 'Explicitly save through the mounted host’s validation and conflict-checked Save, including its trigger delta. Waits for Save to finish; never starts a Run.',
+  description: 'Explicitly save through the mounted host’s validation and conflict-checked Save, including its trigger delta. Use asCopy: true to resolve an editor conflict by saving the definition as a new Workflow. Never starts a Run.',
   safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: mountedSurfaces,
   bindings: { mcpToolName: 'workflow_authoring_draft_save', voiceClientToolName: 'saveWorkflowDraft' },
-  inputSchema: WorkflowDraftAddressV1Schema, outputSchema: WorkflowDraftMutationResultV1Schema,
-  inputHints: { fields: addressHints }, examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
+  inputSchema: WorkflowDraftSaveInputV1Schema, outputSchema: WorkflowDraftMutationResultV1Schema,
+  inputHints: { fields: [...addressHints, { path: 'asCopy', title: 'Save as a copy', widget: 'boolean', required: false }] }, examples: { mcp: { argsExample: addressExample }, voice: { argsExample: addressExample } },
 }, {
   id: 'workflow.authoring.draft.discard', approval: {result: 'required'}, title: 'Discard mounted Workflow edits',
   cli: { commands: [{ path: ['workflow', 'authoring', 'draft', 'discard'], visibility: 'canonical' }] },

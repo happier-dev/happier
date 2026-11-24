@@ -105,6 +105,28 @@ export type AutomationEventFilterDisclosure = ReturnType<typeof useEventComposer
 /** The same bounded filter controls serve plugin Events and native Session lifecycle facts. */
 export function AutomationEventFilterFields(props: Readonly<{
     model: AutomationEventFilterFieldsModel;
+    disclosure?: AutomationEventFilterDisclosure;
+}>) {
+    return props.disclosure
+        ? <AutomationEventFilterFieldsContent model={props.model} disclosure={props.disclosure} />
+        : <StandaloneAutomationEventFilterFields model={props.model} />;
+}
+
+function StandaloneAutomationEventFilterFields({ model }: Readonly<{ model: AutomationEventFilterFieldsModel }>) {
+    const [filterFieldPickerOpenFor, setFilterFieldPickerOpenFor] = React.useState<string | null>(null);
+    const [filterOperatorPickerOpenFor, setFilterOperatorPickerOpenFor] = React.useState<string | null>(null);
+    const disclosure = useEventComposerPickerDisclosure({
+        anyPickerOpen: filterFieldPickerOpenFor !== null || filterOperatorPickerOpenFor !== null,
+        collapseAllPickers: () => { setFilterFieldPickerOpenFor(null); setFilterOperatorPickerOpenFor(null); },
+    });
+    return <AutomationEventFilterFieldsContent model={model} disclosure={{
+        ...disclosure, filterFieldPickerOpenFor, filterOperatorPickerOpenFor,
+        setFilterFieldPickerOpenFor, setFilterOperatorPickerOpenFor,
+    }} />;
+}
+
+function AutomationEventFilterFieldsContent(props: Readonly<{
+    model: AutomationEventFilterFieldsModel;
     disclosure: AutomationEventFilterDisclosure;
 }>) {
     const { theme } = useUnistyles();

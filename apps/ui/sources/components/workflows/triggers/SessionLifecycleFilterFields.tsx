@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { AUTOMATION_SESSION_LIFECYCLE_FILTER_PAYLOAD_SCHEMA_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
-import { AutomationEventFilterFields, useEventComposerPickerDisclosure } from '@/components/automations/editor/AutomationEventFilterFields';
+import { AutomationEventFilterFields } from '@/components/automations/editor/AutomationEventFilterFields';
 import { useAutomationEventFilterDraft } from '@/components/automations/editor/useAutomationEventFilterDraft';
 import { readPluginEventAutomationFilterClauses } from '@/components/automations/editor/pluginEventAutomationFilterBuilder';
 import type { SessionLifecycleWhen } from './sessionTriggerForm';
@@ -32,12 +32,5 @@ export function SessionLifecycleFilterFields(props: Readonly<{
             ? model.filter.value === null ? {} : { filter: model.filter.value }
             : { filterInvalid: true }) });
     }, [model.filter, props.when, props.onChange]);
-    const [filterFieldPickerOpenFor, setFilterFieldPickerOpenFor] = React.useState<string | null>(null);
-    const [filterOperatorPickerOpenFor, setFilterOperatorPickerOpenFor] = React.useState<string | null>(null);
-    const disclosure = useEventComposerPickerDisclosure({
-        anyPickerOpen: filterFieldPickerOpenFor !== null || filterOperatorPickerOpenFor !== null,
-        collapseAllPickers: () => { setFilterFieldPickerOpenFor(null); setFilterOperatorPickerOpenFor(null); },
-    });
-    return <AutomationEventFilterFields model={model} disclosure={{ ...disclosure, filterFieldPickerOpenFor,
-        filterOperatorPickerOpenFor, setFilterFieldPickerOpenFor, setFilterOperatorPickerOpenFor }} />;
+    return <AutomationEventFilterFields model={model} />;
 }

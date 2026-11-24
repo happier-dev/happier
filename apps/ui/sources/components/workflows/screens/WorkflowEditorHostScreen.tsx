@@ -33,7 +33,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { readDeviceTimeZone } from '../triggers/sessionTriggerForm';
-import { prepareWorkflowTriggerWhenAddition } from '../triggers/workflowTriggerStarts';
+import { prepareWorkflowTriggerWhenAddition, projectWorkflowDraftIncompleteTriggers } from '../triggers/workflowTriggerStarts';
 import type { WorkflowCompanionAddTrigger, WorkflowCompanionUndoTrigger } from '../events/WorkflowLiveEventsPane';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleSelection, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
@@ -85,6 +85,7 @@ import {
 } from '../run/workflowRunAsTargets';
 import { useWorkflowDetachedRunSupport } from '../run/useWorkflowDetachedRunSupport';
 import { resolveContextualWorkflowProjectTarget, resolveWorkflowProjectTargetOnMachine } from './resolveContextualWorkflowTarget';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { prepareWorkflowNativeTrigger } from '../triggers/prepareWorkflowNativeTrigger';
 import { readWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { deriveWorkflowPlanRunId, readWorkflowPlanResult, startWorkflowPlanReview } from '@/sync/domains/workflows/workflowPlanReview';
@@ -1208,8 +1209,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         history.commit();
         const { draft, description, projectTarget: project } = snapshot;
         const { pending, edits } = snapshot.incompleteTriggers;
-        const nativeFacts = pending.flatMap(row => row.nativeEvent === undefined ? [] : [{ row, fact: row.nativeEvent }]);
-        if (!triggers.complete && (copying || Object.keys(edits).length > 0 || nativeFacts.length !== pending.length)) {
+        const observationRows = pending.filter(row => row.nativeEvent !== undefined || row.deploymentEvent !== undefined);
+        if (!triggers.complete && (copying || Object.keys(edits).length > 0 || observationRows.length !== pending.length)) {
             return { status: 'refused', reason: 'workflow_trigger_setup_required' };
         }
         const definitionChanged = canEditDefinition && (copying || saved === null
@@ -1229,16 +1230,16 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             let preparedDraft;
             let eventProjection = { triggerEvents: triggers.triggerEvents, intendedTriggers: triggers.intendedTriggers };
             try {
-                if (nativeFacts.length > 0) {
+                if (observationRows.length > 0) {
                     let next = triggers.draft;
-                    const first = nativeFacts[0]!;
+                    const machineId = observationRows.find(row => row.nativeEvent !== undefined)?.nativeEvent?.machineId;
                     const runsOn = next.context?.project ?? triggers.set?.project ?? project
-                        ?? resolveWorkflowProjectTargetOnMachine({
-                            machineId: first.fact.machineId, machines, recentMachinePaths: recentMachinePaths ?? [],
-                        });
+                        ?? (machineId === undefined ? null : resolveWorkflowProjectTargetOnMachine({
+                            machineId, machines, recentMachinePaths: recentMachinePaths ?? [],
+                        }));
                     if (runsOn === null) return { status: 'refused', reason: 'workflow_trigger_setup_required' };
-                    for (const { row, fact } of nativeFacts) {
-                        const configured = await prepareWorkflowNativeTrigger(fact, lifetime, signal, caller);
+                    for (const row of observationRows) {
+                        const configured = await prepareWorkflowNativeTrigger(row, runsOn.machineId, lifetime, signal, caller);
                         if (!isCurrent() || draftRevision !== history.getRevision()) return { status: 'refused', reason: 'draft_retired' };
                         if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
                         if (!configured) return { status: 'refused', reason: 'workflow_trigger_setup_required' };
@@ -1249,7 +1250,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         next = editWorkflowTriggerDraft(next, { kind: 'setContext', context: { ...next.context, project: runsOn } });
                     }
                     const triggerSnapshot = triggers.captureSnapshot(next);
-                    const configuredRows = triggerSnapshot.rows.filter(row => nativeFacts.some(({ row: pendingRow }) => pendingRow.clientId === row.identity.clientId));
+                    const configuredRows = triggerSnapshot.rows.filter(row => observationRows.some(pendingRow => pendingRow.clientId === row.identity.clientId));
                     // Enrollment completes the same Add intent. Undo/Redo keep its identity and the surrounding edits.
                     history.mapSnapshots(previous => {
                         const resolved = configuredRows.filter(row => previous.incompleteTriggers.pending.some(item => item.clientId === row.identity.clientId));
@@ -1408,7 +1409,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 },
             },
         };
-        const request = asCopy ? handleSave(undefined, true, operation) : saveMountedWorkflowDraft(accountLifetime, draftId, operation);
+        const request = saveMountedWorkflowDraft(accountLifetime, draftId, { ...operation, ...(asCopy ? { asCopy: true } : {}) });
         void request.then(result => {
             if (!isCurrent() || !('status' in result)) return;
             if (result.status === 'unavailable') setSaveFailure(t('workflows.save.failedBody'));
@@ -1421,7 +1422,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         }).catch(error => {
             if (isCurrent() && !abort.signal.aborted) setSaveFailure(`${formatWorkflowProblemMessage(error)} ${t('workflows.save.failedBody')}`);
         });
-    }, [accountLifetime, cancelAutomationCheck, captureSourceGeneration, handleSave]);
+    }, [accountLifetime, cancelAutomationCheck, captureSourceGeneration]);
     const saveFromUi = React.useCallback(() => presentSaveResult(false), [presentSaveResult]);
     const handleSaveAsCopy = React.useCallback(() => presentSaveResult(true), [presentSaveResult]);
 
@@ -1853,16 +1854,16 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         if (edit.triggerEdit !== undefined) {
             const { clientId } = edit.triggerEdit;
             const incomplete = current.incompleteTriggers;
-            if (edit.triggerEdit.kind === 'stageMachineEvent') {
+            if (edit.triggerEdit.kind !== 'removeAdded') {
                 if (current.triggers.rows.some(row => row.identity.clientId === clientId)
                     || incomplete.pending.some(row => row.clientId === clientId)) {
                     return { status: 'refused', reason: 'invalid_trigger_snapshot', draftRevision: revision };
                 }
-                settings = { ...settings, incompleteTriggers: { ...incomplete,
-                    pending: [...incomplete.pending, {
-                        clientId, when: { kind: 'pluginEvent', value: null }, nativeEvent: edit.triggerEdit.nativeEvent,
-                    }],
-                } };
+                const row = edit.triggerEdit.kind === 'stageMachineEvent'
+                    ? { clientId, when: { kind: 'pluginEvent' as const, value: null }, nativeEvent: edit.triggerEdit.nativeEvent }
+                    : { clientId, when: { kind: 'pluginEvent' as const, value: null, eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed },
+                        deploymentEvent: edit.triggerEdit.deploymentEvent };
+                settings = { ...settings, incompleteTriggers: { ...incomplete, pending: [...incomplete.pending, row] } };
             } else {
                 const pending = incomplete.pending.filter(row => row.clientId !== clientId);
                 if (pending.length !== incomplete.pending.length) {
@@ -1911,11 +1912,22 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 blockLabels: walkWorkflowBlocks(current.draft.blocks).map(block => ({ id: block.id, label: workflowBlockReferenceLabel(block) })),
                 settings: { description: current.description, projectTarget: current.projectTarget,
                     executionTarget: current.executionTarget, triggers: projectNativeJsonValueForTransport(current.triggers) },
+                incompleteTriggers: projectWorkflowDraftIncompleteTriggers(current.incompleteTriggers),
+                ...(saveConflict === null ? {} : { saveConflict: {
+                    currentRevision: saveConflict.currentRevision,
+                    currentDraft: saveConflict.currentDraft === null ? null : {
+                        name: saveConflict.currentDraft.name,
+                        definition: projectNativeJsonValueForTransport(buildWorkflowDefinitionCandidate(saveConflict.currentDraft)),
+                    },
+                } }),
                 validationIssues: validation.issues, dirty: readDraftDirty(current.draft, current.description), draftRevision: history.getRevision() });
         },
         execute: async (actionId, input, signal, caller) => {
             if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
-            if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave) return await handleSave(caller, false, { signal, operationProgress: caller?.operationProgress });
+            if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave) {
+                const asCopy = typeof input === 'object' && input !== null && 'asCopy' in input && input.asCopy === true;
+                return await handleSave(caller, asCopy, { signal, operationProgress: caller?.operationProgress });
+            }
             if (actionId === WORKFLOW_AUTHORING_ACTION_ID.draftDiscard) {
                 if (!canEditDefinition) return { status: 'refused', reason: 'workflow_draft_read_only' };
                 return saved !== null ? await handleDiscardChanges()
@@ -2089,10 +2101,11 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     });
     const onAddTriggerWhen: WorkflowCompanionAddTrigger = useEventCallback(async (when, seed, caller) => {
         const addition = prepareWorkflowTriggerWhenAddition({ draft: triggers.readDraft(), when, seed });
-        const nativeEvent = addition.kind === 'incomplete' ? addition.row.nativeEvent : undefined;
         const patch = addition.kind === 'complete'
             ? { settings: { triggers: projectNativeJsonValueForTransport(triggers.captureSnapshot(addition.draft)) } }
-            : nativeEvent === undefined ? null : { triggerEdit: { kind: 'stageMachineEvent' as const, clientId: addition.clientId, nativeEvent } };
+            : addition.row.nativeEvent ? { triggerEdit: { kind: 'stageMachineEvent' as const, clientId: addition.clientId, nativeEvent: addition.row.nativeEvent } }
+                : addition.row.deploymentEvent ? { triggerEdit: { kind: 'stageDeploymentEvent' as const, clientId: addition.clientId,
+                    deploymentEvent: addition.row.deploymentEvent } } : null;
         if (patch && await editCompanionTrigger(patch, t('workflows.events.addToWorkflow'), caller)) return addition.clientId;
     });
     const canUndoAddedTrigger = React.useCallback((clientId: string) => (
@@ -2101,8 +2114,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     ), [triggers.draft.adds, triggers.incomplete.pending]);
     const onUndoAddedTrigger: WorkflowCompanionUndoTrigger = useEventCallback((clientId, caller) =>
         editCompanionTrigger({ triggerEdit: { kind: 'removeAdded', clientId } }, t('workflows.editor.undo'), caller));
-    const triggerIncomplete = React.useMemo(() => ({ state: triggers.incomplete, onChange: triggers.updateIncomplete }),
-        [triggers.incomplete, triggers.updateIncomplete]);
+    const triggerIncomplete = React.useMemo(() => ({ state: triggers.incomplete, onChange: triggers.updateIncomplete,
+        onRemove: (clientId: string) => { void onUndoAddedTrigger(clientId); } }),
+        [triggers.incomplete, triggers.updateIncomplete, onUndoAddedTrigger]);
 
     // The private seed this editor opened belongs to another Account now. There
     // is no id to re-open it under this one and no honest way to keep showing

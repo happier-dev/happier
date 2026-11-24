@@ -621,6 +621,100 @@ test.describe('ui e2e: automations authoring', () => {
         }]);
     });
 
+    test('P04.F2 companion Add preserves draft history', async ({ page }) => {
+        test.setTimeout(900_000);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const { context, event, arrive } = await startP04DeploymentEventsCase(page, 'p04-f2');
+        const sourceName = event.event.title;
+        const { WorkflowDraftAddressV1Schema, WorkflowDraftGetResultV1Schema, WorkflowDraftMutationResultV1Schema } =
+            await import('@happier-dev/protocol/actions/workflowAuthoringAction');
+        const definitionId = randomUUID();
+        const created = await invokeP04Action(context, 'f2-workflow', 'workflow.definition.create', {
+            definitionId, metadata: { title: 'Companion workflow' },
+            definition: { version: 1, blocks: [{ kind: 'action', id: 'command', actionId: 'machines.command.run',
+                input: { command: { kind: 'literal', value: 'echo companion-event' } } }] },
+        });
+        expect(created.ok).toBe(true);
+        await gotoDomContentLoadedWithRetries(page, `${context.uiBaseUrl}/workflows/${definitionId}`);
+        const renamed = `Keep my edit ${run.runId}`;
+        await page.getByTestId('workflow-editor-name').fill(renamed);
+        const readTriggers = async () => {
+            const response = await invokeP04Action(context, 'f2-read-triggers', 'workflow.trigger.list', { workflow: definitionId });
+            expect(response.ok).toBe(true);
+            return WorkflowTriggerListResultV1Schema.parse(response.data).sets;
+        };
+        expect(await readTriggers()).toEqual([]);
+        await page.getByRole('button', { name: 'Live events', exact: true }).click();
+        const companion = page.getByTestId('workflow-editor-live-events');
+        await expect(companion.getByTestId('workflow-editor-live-events:listening:live')).toBeVisible();
+        await arrive();
+        await companion.getByText(sourceName, { exact: true }).last().click();
+        await companion.getByRole('button', { name: 'Only when', exact: true }).click();
+        await companion.getByTestId('automation-event-filter-add-clause').click();
+        await companion.locator('[data-testid$="-field-picker"]').click();
+        await companion.locator('[data-testid$="-field-option-/state"]').click();
+        await companion.getByRole('textbox', { name: 'Filter value', exact: true }).fill('"failed"');
+        // Ordinary client reverse dispatch reaches the browser's mounted owner;
+        // this never installs a test executor or reconstructs an editor address.
+        const currentUi = await invokeP04Action(context, 'f2-current-ui', 'ui.current_context.read', {});
+        expect(currentUi.ok).toBe(true);
+        const reference = CurrentUiContextSnapshotV1Schema.parse(currentUi.data).entity?.reference;
+        if (!reference || typeof reference !== 'object' || Array.isArray(reference)) throw new Error('Expected the mounted Workflow reference');
+        const address = WorkflowDraftAddressV1Schema.parse({ scope: reference.scope, draftId: reference.draftId });
+        const mounted = async (label: string) => {
+            const read = await invokeP04Action(context, label, 'workflow.authoring.draft.get', address);
+            expect(read.ok).toBe(true);
+            const result = WorkflowDraftGetResultV1Schema.parse(read.data);
+            if (result.status !== 'available' || result.drafts.length !== 1) throw new Error('Expected the one mounted Workflow');
+            return result.drafts[0]!;
+        };
+        const initial = await mounted('f2-before-placement');
+        const placement = await invokeP04Action(context, 'f2-placement', 'workflow.authoring.draft.edit', {
+            ...address, expectedDraftRevision: initial.draftRevision,
+            settings: { projectTarget: { machineId: context.machineId, directory: context.cliHomeDir } },
+        });
+        expect(WorkflowDraftMutationResultV1Schema.parse(placement.data)).toMatchObject({ status: 'applied' });
+        const beforeAdd = await mounted('f2-before-add');
+        await page.getByRole('button', { name: 'Add to this workflow', exact: true }).click();
+        const when = page.getByTestId('workflow-editor-when-toggle').filter({ visible: true });
+        if (!(await page.getByTestId('workflow-editor-when-body').isVisible())) await when.click();
+        const pending = page.locator('[data-testid^="workflow-editor-trigger:new:"]').filter({ has: page.locator('[data-testid$="-starts"]') });
+        await expect(pending).toHaveCount(1);
+        const staged = await mounted('f2-after-add');
+        const filter = staged.incompleteTriggers?.pending[0]?.deploymentEvent?.filter;
+        expect(filter).toMatchObject({ all: [{ field: '/state', op: 'eq', value: 'failed' }] });
+        expect(await readTriggers()).toEqual([]);
+        const stale = await invokeP04Action(context, 'f2-stale-add', 'workflow.authoring.draft.edit', {
+            ...address, expectedDraftRevision: beforeAdd.draftRevision,
+            settings: { triggers: beforeAdd.settings.triggers },
+        });
+        expect(stale.ok).toBe(true);
+        expect(WorkflowDraftMutationResultV1Schema.parse(stale.data)).toMatchObject({ status: 'refused', reason: 'stale_draft_revision' });
+        await expect(pending).toHaveCount(1);
+        const beforeSave = await invokeP04Action(context, 'f2-before-save', 'workflow.definition.get', { definitionId });
+        expect(WorkflowDefinitionGetResultV1Schema.parse(beforeSave.data).metadata.title).toBe('Companion workflow');
+        await page.getByTestId('workflow-editor-undo').click();
+        await expect(pending).toHaveCount(0);
+        await expect(page.getByTestId('workflow-editor-name')).toHaveValue(renamed);
+        expect((await mounted('f2-after-undo')).incompleteTriggers?.pending ?? []).toEqual([]);
+        await page.getByTestId('workflow-editor-redo').click();
+        await expect(pending).toHaveCount(1);
+        await page.getByTestId('workflow-editor-save').click();
+        await expect.poll(async () => (await readTriggers()).flatMap(set => set.triggers).length).toBe(1);
+        const sets = await readTriggers();
+        expect(sets[0]?.triggers[0]).toMatchObject({ kind: 'pluginEvent', filter });
+        const saved = await invokeP04Action(context, 'f2-saved', 'workflow.definition.get', { definitionId });
+        expect(WorkflowDefinitionGetResultV1Schema.parse(saved.data).metadata.title).toBe(renamed);
+        const readRuns = async () => {
+            const response = await invokeP04Action(context, 'f2-runs', 'workflow.run.list', { automationId: sets[0]!.automationId });
+            expect(response.ok).toBe(true);
+            return WorkflowRunListResultV1Schema.parse(response.data).runs;
+        };
+        expect(await readRuns()).toEqual([]);
+        await arrive();
+        await expect.poll(async () => (await readRuns()).map(row => row.state), { timeout: 180_000 }).toEqual(['succeeded']);
+    });
+
     test('P04.F3 sentence verbs create ordinary Workflows', async ({ page }) => {
         // Four sequential browser Saves and daemon effects use the long UI journey budget.
         test.setTimeout(20 * 60_000);

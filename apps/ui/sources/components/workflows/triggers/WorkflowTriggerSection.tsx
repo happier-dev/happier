@@ -128,6 +128,7 @@ export type WorkflowTriggerSectionProps = Readonly<{
     incomplete?: Readonly<{
         state: WorkflowTriggerIncomplete;
         onChange: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
+        onRemove?: (clientId: string) => void;
     }>;
 }>;
 
@@ -200,6 +201,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const { pending, edits } = incomplete;
     const setPending = (update: (current: readonly PendingStart[]) => readonly PendingStart[]) =>
         updateIncomplete((current) => ({ ...current, pending: update(current.pending) }));
+    const removePending = props.incomplete?.onRemove
+        ?? ((clientId: string) => setPending(current => current.filter(item => item.clientId !== clientId)));
     const setEdits = (update: (current: WorkflowTriggerIncomplete['edits']) => WorkflowTriggerIncomplete['edits']) =>
         updateIncomplete((current) => ({ ...current, edits: update(current.edits) }));
     const [addOpen, setAddOpen] = React.useState(false);
@@ -294,7 +297,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         setPending(current => next === null
             ? current.some(item => item.clientId === clientId)
                 ? current.map(item => item.clientId === clientId
-                    ? { ...item, when, ...(readWorkflowTriggerStartId(item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined, nativeEvent: undefined }) }
+                    ? { ...item, when, ...(readWorkflowTriggerStartId(item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined, nativeEvent: undefined, deploymentEvent: undefined }) }
                     : item) : [...current, { clientId, when }]
             : current.filter(item => item.clientId !== clientId));
         if (next !== null) change(next);
@@ -397,7 +400,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
                 {...placement} workspaceRefId={runsOn?.workspaceRefId} accountLifetime={props.accountLifetime} sessionId={lifetimeSessionId} sessionContext={sessionContext}
                 onChangeWhen={(when) => editPending(item.clientId, when)}
-                onRemove={() => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId))} />
+                onRemove={() => removePending(item.clientId)} />
         )),
     ];
     const addFooter = catalogMachineName === null ? undefined : (
@@ -431,7 +434,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             ...pendingRows.map(({ item, title, nativeSourceName, incomplete }, index): WorkflowTriggerSentenceLine => ({ key: `new:${item.clientId}`,
                 startId: readWorkflowTriggerStartId(item.when), startTitle: title, detail: nativeSourceName ?? null, enabled: item.enabled ?? true, incomplete,
                 onSelectStart: (id) => selectStart(item.when, id, (next) => editPending(item.clientId, next)),
-                onRemove: () => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId)),
+                onRemove: () => removePending(item.clientId),
                 renderRows: () => blocks[rows.length + index] })),
         ];
         return (

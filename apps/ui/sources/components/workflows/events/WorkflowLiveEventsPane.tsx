@@ -15,17 +15,22 @@ import { Text } from '@/components/ui/text/Text';
 import type { TriggerWhenValue } from '@/components/workflows/triggers/sessionTriggerForm';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
+import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
 import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { t } from '@/text';
+import { AUTOMATION_SESSION_LIFECYCLE_FILTER_PAYLOAD_SCHEMA_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import { DeploymentFailedEventV1ProtocolSchema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { AutomationEventFilterFields } from '@/components/automations/editor/AutomationEventFilterFields';
+import { useAutomationEventFilterDraft } from '@/components/automations/editor/useAutomationEventFilterDraft';
 
 import {
   readWorkflowEventWhen,
   readWorkflowEventDraftIntent,
+  readWorkflowEventDeploymentEnvironment,
   type WorkflowEventFilter,
   type WorkflowEventMatchSelection,
 } from './workflowEventFacts';
@@ -84,9 +89,17 @@ export const WorkflowLiveEventsPane = React.memo(
       const clientId = addedRows.get(key);
       return clientId !== undefined && hasTriggerRow !== null && hasTriggerRow(clientId);
     }, [addedRows, hasTriggerRow]);
-    const toggle = useEventCallback((key: string) =>
-      setExpanded((current) => (current === key ? null : key)),
-    );
+    const expandedFact = useWorkflowEventFact(feed.projection, props.active ? expanded : null);
+    const payloadSchema = expandedFact?.kind === 'deployment' ? DeploymentFailedEventV1ProtocolSchema.jsonSchema
+      : expandedFact?.kind === 'session' ? AUTOMATION_SESSION_LIFECYCLE_FILTER_PAYLOAD_SCHEMA_V1 : null;
+    const onlyWhen = useAutomationEventFilterDraft({ payloadSchema });
+    const conditionFilter = payloadSchema === null ? undefined : onlyWhen.filter;
+    const [showOnlyWhen, setShowOnlyWhen] = React.useState(false);
+    const toggle = useEventCallback((key: string) => {
+      setExpanded(current => current === key ? null : key);
+      setShowOnlyWhen(false);
+      onlyWhen.setFilterClauses([]);
+    });
     // The open row and phone bar share the picked subject.
     const [pickedSubject, setPickedSubject] = React.useState<WorkflowEventMatchSelection['pickedSubject']>(null);
     const picked = React.useMemo(() => ({ pickedSubject, setPickedSubject }), [pickedSubject]);
@@ -107,19 +120,27 @@ export const WorkflowLiveEventsPane = React.memo(
             onUndo={canUndoAddedTrigger?.(clientId) ? onUndoAddedTrigger : undefined} />;
         }
         return <LiveEventBody
-          projection={feed.projection}
+          fact={expandedFact}
           active={props.active}
           eventKey={key}
           scope={scope}
           retainedRuns={feed.retained?.runs}
           onAdd={onAddTrigger === null ? null : add}
           picked={picked}
+          onlyWhen={conditionFilter}
+          condition={payloadSchema === null || onAddTrigger === null ? undefined : (
+            <>
+              <RoundButton title={t('workflows.triggers.card.deployOutcome.label')} size="small" display="inverted"
+                testID={`${props.testID}:only-when`} onPress={() => setShowOnlyWhen(current => !current)} />
+              {showOnlyWhen ? <AutomationEventFilterFields key={key} model={onlyWhen} /> : null}
+            </>
+          )}
           barred={barred}
           testID={props.testID}
         />;
       },
-      [feed.projection, feed.retained?.runs, scope, addedRows, isAdded, canUndoAddedTrigger, onUndoAddedTrigger,
-        onAddTrigger, add, picked, barred, props.testID, props.active],
+      [expandedFact, feed.retained?.runs, scope, addedRows, isAdded, canUndoAddedTrigger, onUndoAddedTrigger,
+        onAddTrigger, add, picked, onlyWhen, conditionFilter, payloadSchema, showOnlyWhen, barred, props.testID, props.active],
     );
     return (
       // The pane owns its insets in both hosts: inside the phone sheet its list adds no card gutter of its own, so the
@@ -164,13 +185,14 @@ export const WorkflowLiveEventsPane = React.memo(
         </ItemList>
         {barred && expanded !== null && !isAdded(expanded) ? (
           <LiveEventBar
-            projection={feed.projection}
+            fact={expandedFact}
             active={props.active}
             eventKey={expanded}
             scope={scope}
             retainedRuns={feed.retained?.runs}
             onAdd={onAddTrigger === null ? null : add}
             picked={picked}
+            onlyWhen={conditionFilter}
             testID={props.testID}
           />
         ) : null}
@@ -206,20 +228,20 @@ function AddedLiveEvent({ eventKey, active, clientId, testID, onUndo }: Readonly
 }
 
 type LiveEventProps = Readonly<{
-  projection: WorkflowActivityProjection;
+  fact: WorkflowActivityFact | undefined;
   active: boolean;
   eventKey: string;
   scope: ServerAccountScope | null;
   retainedRuns: readonly WorkflowRunSummaryV1[] | undefined;
   onAdd: ((key: string, ...args: Parameters<WorkflowCompanionAddTrigger>) => Promise<boolean>) | null;
   picked: WorkflowEventMatchSelection;
+  onlyWhen: ReturnType<typeof useAutomationEventFilterDraft>['filter'] | undefined;
   testID: string;
 }>;
 
 /** The expanded row's body: what the event carries (the Session it can match), then its actions unless a bar has them. */
-const LiveEventBody = React.memo(function LiveEventBody(props: LiveEventProps & Readonly<{ barred: boolean }>) {
-  const fact = useWorkflowEventFact(props.projection, props.eventKey);
-  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns, props.active, true);
+const LiveEventBody = React.memo(function LiveEventBody(props: LiveEventProps & Readonly<{ barred: boolean; condition?: React.ReactNode }>) {
+  const presentation = useWorkflowEventPresentation(props.fact, props.scope, props.retainedRuns, props.active, true);
   const match = useWorkflowEventMatch(presentation, props.scope, props.picked);
   if (presentation === null) return null;
   const automatable = props.active && readWorkflowEventDraftIntent(presentation.fact) !== null;
@@ -241,6 +263,7 @@ const LiveEventBody = React.memo(function LiveEventBody(props: LiveEventProps & 
         scope={props.scope}
         testID={`${props.testID}:expanded`}
       />
+      {props.condition}
       {props.barred ? null : <LiveEventActions {...props} presentation={presentation} match={match} bar={false} />}
     </View>
   );
@@ -248,8 +271,7 @@ const LiveEventBody = React.memo(function LiveEventBody(props: LiveEventProps & 
 
 /** The phone sheet's bar over the list: the open row's Add and ⋯ (lab `companion:v:open` 390). */
 const LiveEventBar = React.memo(function LiveEventBar(props: LiveEventProps) {
-  const fact = useWorkflowEventFact(props.projection, props.eventKey);
-  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns, props.active);
+  const presentation = useWorkflowEventPresentation(props.fact, props.scope, props.retainedRuns, props.active);
   const match = useWorkflowEventMatch(presentation, props.scope, props.picked);
   if (presentation === null) return null;
   return <LiveEventActions {...props} presentation={presentation} match={match} bar />;
@@ -265,13 +287,15 @@ function LiveEventActions(props: LiveEventProps & Readonly<{
   const { presentation, onAdd, eventKey } = props;
   const intents = useWorkflowEventIntents(presentation, props.active, { addTo: false, match: props.match.match });
   const seed = !props.active ? null : readWorkflowEventDraftIntent(presentation.fact, undefined, props.match.match);
-  const when: TriggerWhenValue | null = seed?.nativeEvent
-    ? { kind: 'pluginEvent', value: null }
-    : readWorkflowEventWhen(presentation.fact, props.match.match);
+  const environment = readWorkflowEventDeploymentEnvironment(presentation.fact);
+  const draftSeed = seed?.nativeEvent ? { nativeEvent: seed.nativeEvent }
+    : environment && seed?.eventSeed ? { deploymentEvent: { environment, filter: props.onlyWhen?.value ?? null } } : undefined;
+  const when: TriggerWhenValue | null = draftSeed
+    ? { kind: 'pluginEvent', value: null, eventRef: seed?.eventSeed?.eventRef }
+    : readWorkflowEventWhen(presentation.fact, props.match.match, props.onlyWhen?.value);
   const open = presentation.open;
-  const canAdd = props.active && when !== null && onAdd !== null;
-  const add = (caller?: WorkflowCompanionCaller) => canAdd && onAdd(eventKey, when,
-    seed?.nativeEvent ? { nativeEvent: seed.nativeEvent } : undefined, caller);
+  const canAdd = props.active && props.onlyWhen?.valid !== false && when !== null && onAdd !== null;
+  const add = (caller?: WorkflowCompanionCaller) => canAdd && onAdd(eventKey, when, draftSeed, caller);
   useCurrentUiContextLocalCommands(canAdd ? [
     { key: 'add-to-mounted-workflow', title: t('workflows.events.addToWorkflow'), invoke: async (_input, context, invocation) => {
       try {
