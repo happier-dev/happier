@@ -78,10 +78,24 @@ export function readDeploymentPreviewTemplateEnvironmentId(row: Readonly<{
         : row.previewTemplateEnvironmentId) ?? undefined;
 }
 
+/** Database access has one policy owner. Preview targets keep their own custody and inherit their template's policy. */
+export async function readDeploymentDatabasePolicyInTx(tx: Tx, row: AdmittedDeploymentEnvironment['row']) {
+    if (row.purpose === 'standard' && !row.previewCompanionOfEnvironmentId) return row;
+    const templateId = readDeploymentPreviewTemplateEnvironmentId(row);
+    if (!templateId) return null;
+    return tx.deploymentEnvironment.findFirst({
+        where: { id: templateId, projectSourceId: row.projectSourceId, purpose: 'standard',
+            deletedAt: null, previewCompanionOfEnvironmentId: null },
+        select: { id: true, revision: true, deletedAt: true, dataEditorMode: true, dataAgentAccess: true,
+            principals: deploymentEnvironmentPrincipalSelect },
+    });
+}
+
 export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow & Readonly<{
     principals?: readonly DeploymentEnvironmentPrincipalRow[];
     previewCompanionOfEnvironment?: Readonly<{ previewTemplateEnvironmentId: string | null }> | null;
-}>, serverId: string, admission: DeploymentSourceAdmission, admittedBindingsManagement?: true) {
+}>, serverId: string, admission: DeploymentSourceAdmission, admittedBindingsManagement?: true,
+    databasePolicy: (Parameters<typeof canEditDeploymentEnvironmentData>[1] & Pick<DeploymentEnvironmentRow, 'dataAgentAccess'>) | null = row) {
     const canDeploy = canDeployDeploymentEnvironment(admission, row);
     const previewTemplateEnvironmentId = readDeploymentPreviewTemplateEnvironmentId(row);
     return DeploymentEnvironmentHeaderV1Schema.parse({
@@ -93,8 +107,8 @@ export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow
         ...(row.purpose === 'preview' ? { previewRepositoryId: row.previewRepositoryId, previewPullRequestId: row.previewPullRequestId,
             previewTargetLinkId: row.previewTargetLinkId } : {}),
         ...(row.principals ? { deployerPrincipals: readDeploymentEnvironmentPrincipals(row.principals, 'deploy') } : {}),
-        dataEditorMode: row.dataEditorMode, dataAgentAccess: row.dataAgentAccess,
-        ...(row.principals ? { dataEditors: readDeploymentEnvironmentPrincipals(row.principals, 'dataEdit') } : {}),
+        dataEditorMode: databasePolicy?.dataEditorMode ?? 'off', dataAgentAccess: databasePolicy?.dataAgentAccess ?? 'none',
+        ...(databasePolicy?.principals ? { dataEditors: readDeploymentEnvironmentPrincipals(databasePolicy.principals, 'dataEdit') } : {}),
         controllerMachineId: row.controllerMachineId,
         telemetryMachineId: row.telemetryMachineId,
         ...(row.buildMachineId ? { buildMachineId: row.buildMachineId } : {}),
@@ -103,7 +117,8 @@ export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow
         ...(row.runtimeTargetLinkId ? { runtimeTargetLinkId: row.runtimeTargetLinkId } : {}),
         ...deploymentContentReference(row),
         capabilities: { role: admission.canManage ? 'manager' : canDeploy ? 'deployer' : 'reader',
-            read: true, deploy: canDeploy, editData: canEditDeploymentEnvironmentData(admission, row), manage: admission.canManage && !row.deletedAt,
+            read: true, deploy: canDeploy, editData: !row.deletedAt && databasePolicy !== null
+                && canEditDeploymentEnvironmentData(admission, databasePolicy), manage: admission.canManage && !row.deletedAt,
             manageBindings: (admission.canManage || admittedBindingsManagement === true) && !row.deletedAt,
             manageTargets: admission.canManage && !row.deletedAt,
             delete: admission.canManage && !row.deletedAt },

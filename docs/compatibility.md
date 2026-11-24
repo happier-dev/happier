@@ -1643,6 +1643,14 @@ Same-Machine copies and ordinary Account carriers keep their existing envelopes.
 
 ## Database copy and reference components (unreleased 0.3)
 
+The signed exact-target database admission carries the requester's access
+summary, effective agent approval level and owning Environment revision as
+`deploymentDatabaseAccess`. Reload matching Home and daemon builds together
+when moving from the development `deploymentDatabaseEditor` field. The
+Workbench access read keeps its existing result shape and addresses the
+template Environment for a Preview. Existing policy rows use their existing
+storage format.
+
 Managed read-access setup adds Attach and Create Workbench Actions. They reuse
 the managed target's existing `dataRole` binding and `readOnlyPassword` slot.
 Providers that opt in with a direct SQL endpoint store a connection URL in that

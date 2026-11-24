@@ -11,7 +11,7 @@ import type { Tx } from '@/storage/inTx';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,
     canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, admitDeploymentDefinitionMachinesInTx, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
-import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader,
+import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader, readDeploymentDatabasePolicyInTx,
     readDeploymentEnvironmentRequiredSecretUsesInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrantRepository';
 import { DEPLOYMENT_SECRET_SCOPE_PURPOSES_V1 } from '@happier-dev/deployments';
@@ -269,9 +269,10 @@ export async function readDeploymentEnvironmentInTx(tx: Tx, actorAccountId: stri
             reenter: captures?.flatMap(capture => current.get(formatSharedSavedSecretRefV1(capture.resourceId)) === capture.revision
                 ? [] : [capture.resourceId]) ?? [] },
     } : undefined;
+    const databasePolicy = acceptedEnvironment || registryEnvironment ? loaded.row : await readDeploymentDatabasePolicyInTx(tx, loaded.row);
     return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
         environment: projectDeploymentEnvironmentHeader(loaded.row, input.serverId, loaded.admission,
-            acceptedEnvironment ? acceptedRead?.manageBindings : undefined), targetLinks, controller,
+            acceptedEnvironment ? acceptedRead?.manageBindings : undefined, databasePolicy), targetLinks, controller,
         secretScope, ...(runtimeReinstall ? { runtimeReinstall } : {}),
         ...(savedSecretRevisions === undefined ? {} : { savedSecretRevisions }),
         ...(input.includeRetainedTargetLinkCleanup ? { retainedTargetLinkCleanupCompleteIds } : {}),

@@ -1,5 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { isDelegatedActionRequesterV1 } from '@happier-dev/plugin-sdk';
+import { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
 import type {
     DatabaseAccessDecisionV1,
     DatabaseAccessSummaryV1,
@@ -34,31 +34,25 @@ export type DatabaseAccessInputV1 = Readonly<{
  * gets the lesser of its person's class and the database's agent level.
  */
 export function decideDatabaseAccessV1(input: DatabaseAccessInputV1): DatabaseAccessDecisionV1 {
-    if (input.requester === 'agent' && input.agentAccess === 'none') return { ok: false, refusal: 'database_agent_access_none' };
-    if (input.operation === 'read') return { ok: true, access: highestClass(input) };
-    if (!input.person.mayWrite) return refuseWrite(input);
-    if (input.requester === 'agent' && !agentMayWrite(input.agentAccess)) {
-        return { ok: false, refusal: 'database_agent_access_read_only' };
-    }
-    return { ok: true, access: 'write' };
+    const access = summarizeDatabaseAccessV1(input);
+    if (access.reason && (!access.canRead || input.operation === 'write')) return { ok: false, refusal: access.reason };
+    return { ok: true, access: access.canWrite ? 'write' : 'read' };
 }
 
 function agentMayWrite(level: DatabaseAgentLevelV1): boolean {
     return level === 'readWriteAsk' || level === 'readWriteNoApproval';
 }
 
-function highestClass(input: DatabaseAccessInputV1): DatabaseOperationClassV1 {
-    return input.person.mayWrite && (input.requester === 'person' || agentMayWrite(input.agentAccess)) ? 'write' : 'read';
-}
-
-function refuseWrite(input: DatabaseAccessInputV1): DatabaseAccessDecisionV1 {
-    return { ok: false, refusal: input.person.editingOff ? 'database_editing_off' : 'database_not_an_editor' };
-}
-
 /** `database.describe`'s display fold of the same decision. */
 export function summarizeDatabaseAccessV1(input: Omit<DatabaseAccessInputV1, 'operation'>): DatabaseAccessSummaryV1 {
-    const read = decideDatabaseAccessV1({ ...input, operation: 'read' });
-    const write = decideDatabaseAccessV1({ ...input, operation: 'write' });
-    const reason = !read.ok ? read.refusal : !write.ok ? write.refusal : undefined;
-    return { canRead: read.ok, canWrite: write.ok, ...(reason ? { reason } : {}) };
+    if (input.requester === 'agent' && input.agentAccess === 'none') {
+        return { canRead: false, canWrite: false, reason: 'database_agent_access_none' };
+    }
+    if (!input.person.mayWrite) {
+        return { canRead: true, canWrite: false, reason: input.person.editingOff ? 'database_editing_off' : 'database_not_an_editor' };
+    }
+    if (input.requester === 'agent' && !agentMayWrite(input.agentAccess)) {
+        return { canRead: true, canWrite: false, reason: 'database_agent_access_read_only' };
+    }
+    return { canRead: true, canWrite: true };
 }

@@ -21,7 +21,7 @@ import { enableOwnServerPostgresqlStatisticsForHost } from './ownServer/dataRole
 import { withOwnServerDataQueryNativeForHost } from './ownServer/dataQueryNative';
 import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
 import { acquireOwnServerMountedDataServiceForHost, readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
-import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
+import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases/access';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
@@ -193,41 +193,40 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         } catch (error) { dispose(); throw error; }
     };
 
-    const access = (admission: Awaited<ReturnType<typeof readEnvironment>>, operation: DatabaseOperationClassV1,
-        target?: DatabaseOperationInputV1['target'], machineSetup = false) => {
+    const readSignedAccess = (target: DatabaseOperationInputV1['target'], operation: DatabaseOperationClassV1) => {
+        if (!binding) return undefined;
+        if (!read || !('databaseTarget' in read) || !sameStrictJsonValue(read.databaseTarget, target)
+            || operation === 'write' && read.access !== 'write') return refuse('target_mismatch');
+        const admitted = binding.deploymentDatabaseAccess;
+        if (!admitted) return refuse('deployment_target_role_unavailable');
+        if (!admitted.summary.canRead || operation === 'write' && !admitted.summary.canWrite) {
+            return refuse(admitted.summary.reason ?? 'deployment_target_role_unavailable');
+        }
+        return admitted;
+    };
+
+    const access = (admission: Awaited<ReturnType<typeof readEnvironment>>, operation: DatabaseOperationClassV1) => {
         const environment = admission.detail.environment;
         const requester = resolveDatabaseRequesterKindV1({ agentCaller: isAgentCaller(admission.context), authority: admission.context.authority });
         if (!requester) return refuse('deployment_target_role_unavailable');
-        const binding = admission.context.externalActionExecutionAuthorization?.binding;
-        let person = { mayWrite: environment.capabilities.editData, editingOff: environment.dataEditorMode === 'off' };
-        if (machineSetup) {
-            // The setup branch has already consumed Home's exact Machine Manage admission.
-            person = { mayWrite: true, editingOff: false };
-        } else if (operation === 'write' && binding) {
-            const scope = binding.deploymentReadAdmission;
-            if (!scope || !('databaseTarget' in scope) || scope.access !== 'write'
-                || !sameStrictJsonValue(scope.databaseTarget, target)) return refuse('target_mismatch');
-            // The installed Environment read is content custody. Only Home's signed decision grants editing.
-            person = { mayWrite: binding.deploymentDatabaseEditor === 'allowed',
-                editingOff: binding.deploymentDatabaseEditor === 'editing_off' };
-        }
-        const facts = { requester, person, agentAccess: environment.dataAgentAccess };
-        const decision = decideDatabaseAccessV1({ ...facts, operation });
-        if (!decision.ok) return refuse(decision.refusal);
-        return summarizeDatabaseAccessV1(facts);
+        const summary = summarizeDatabaseAccessV1({ requester, agentAccess: environment.dataAgentAccess,
+            person: { mayWrite: environment.capabilities.editData, editingOff: environment.dataEditorMode === 'off' } });
+        if (!summary.canRead || operation === 'write' && !summary.canWrite) return refuse(summary.reason ?? 'deployment_target_role_unavailable');
+        return summary;
     };
 
     const admitTarget = async (request: DatabaseOperationInputV1, operation: DatabaseOperationClassV1) => {
         const target = request.target;
+        const signedAccess = readSignedAccess(target, operation);
         if (target.kind === 'deployment_service') {
             const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId, { nativeMember: true });
-            return { target, admission, summary: access(admission, operation, target) };
+            return { target, admission, signedAccess, summary: signedAccess?.summary ?? access(admission, operation) };
         }
         if (target.kind !== 'managed_deployment') return refuse('target_mismatch');
         const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId);
         const selected = selectLink(admission, target.targetLinkId);
         if (!sameStrictJsonValue(target, { ...selected.target, database: target.database })) return refuse('target_mismatch');
-        return { target, admission, selected, summary: access(admission, operation, target) };
+        return { target, admission, selected, signedAccess, summary: signedAccess?.summary ?? access(admission, operation) };
     };
 
     const bindReadAccess = (admitted: Awaited<ReturnType<typeof admitTarget>>, bound: Awaited<ReturnType<typeof bind>>,
@@ -372,9 +371,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             if (!decision.ok) return refuse(decision.refusal);
         },
         async admit(request, operation) {
-            const { admission, summary } = await admitTarget(request, operation);
+            const { admission, summary, signedAccess } = await admitTarget(request, operation);
             const environment = admission.detail.environment;
-            return { access: summary, environment: { serverId: environment.serverId, environmentId: environment.id, revision: environment.revision } };
+            return { access: summary, environment: { serverId: environment.serverId,
+                environmentId: signedAccess?.policyEnvironmentId ?? environment.id, revision: signedAccess?.policyRevision ?? environment.revision } };
         },
         async listTargets(request) {
             if (request.scope.kind !== 'environment') return { targets: [], completeness: { complete: true } };
@@ -432,12 +432,12 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         async resolve(request, operation) {
             if (request.operation === 'stats.enable' && request.target.kind === 'deployment_service') {
                 if (operation !== 'write' || !DatabaseStatsEnableInputV1Schema.safeParse(request).success) return refuse('target_mismatch');
-                const { target, admission, summary } = await admitTarget(request, 'read');
+                const { target, admission, summary, signedAccess } = await admitTarget(request, 'read');
                 if (target.kind !== 'deployment_service') return refuse('target_mismatch');
                 const { host, context, detail, placement } = admission;
                 const authorization = context.externalActionExecutionAuthorization?.binding;
                 const scope = authorization?.deploymentReadAdmission;
-                if (!authorization || authorization.machineId !== host.machineId || authorization.installationId !== placement.installationId
+                if (!authorization || !signedAccess || authorization.machineId !== host.machineId || authorization.installationId !== placement.installationId
                     || !scope || !('databaseTarget' in scope) || scope.access !== 'write'
                     || formatQualifiedPluginActionId(scope.action) !== DATABASE_STATS_ENABLE_ACTION_ID_V1
                     || !sameStrictJsonValue(scope.databaseTarget, target)) return refuse('target_mismatch');
@@ -448,7 +448,11 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                         if (!sameStrictJsonValue(operand, request)) return setupUnavailable('database_statistics_setup_operand_mismatch', 'Use the reviewed statistics setup for this database.');
                         if (authorization.admittedMachineRole !== 'manage') return setupUnavailable('database_statistics_manage_required',
                             'Ask a manager of this Environment’s database Machine to enable statistics.');
-                        access(admission, 'write', target, true);
+                        const requester = resolveDatabaseRequesterKindV1({ agentCaller: isAgentCaller(context), authority: context.authority });
+                        if (!requester) return refuse('deployment_target_role_unavailable');
+                        const decision = decideDatabaseAccessV1({ requester, operation: 'write', agentAccess: signedAccess.agentLevel,
+                            person: { mayWrite: true, editingOff: false } });
+                        if (!decision.ok) return refuse(decision.refusal);
                         await host.assertCurrent(context);
                         const mounted = await acquireOwnServerMountedDataServiceForHost({ ...host, ensureServiceObservations: input.ensureEnvironmentServices },
                             { ...target.environment, expectedRevision: detail.environment.revision, targetLinkId: target.targetLinkId,

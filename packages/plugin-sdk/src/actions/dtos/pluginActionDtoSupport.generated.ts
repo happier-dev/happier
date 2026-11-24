@@ -19348,7 +19348,16 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     exceptions?: boolean | undefined;
                 };
             }[];
-            deploymentDatabaseEditor?: "allowed" | "editing_off" | "not_an_editor" | undefined;
+            deploymentDatabaseAccess?: undefined | {
+                summary: {
+                    canRead: boolean;
+                    canWrite: boolean;
+                    reason?: "database_agent_access_none" | "database_agent_access_read_only" | "database_editing_off" | "database_not_an_editor" | undefined;
+                };
+                agentLevel: "none" | "read" | "readWriteAsk" | "readWriteNoApproval";
+                policyEnvironmentId: string;
+                policyRevision: number;
+            };
             presetPreparationAdmission?: undefined | {
                 homeId: string;
                 id: string;
@@ -20675,7 +20684,16 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     exceptions?: boolean | undefined;
                 };
             }[];
-            deploymentDatabaseEditor?: "allowed" | "editing_off" | "not_an_editor" | undefined;
+            deploymentDatabaseAccess?: undefined | {
+                summary: {
+                    canRead: boolean;
+                    canWrite: boolean;
+                    reason?: "database_agent_access_none" | "database_agent_access_read_only" | "database_editing_off" | "database_not_an_editor" | undefined;
+                };
+                agentLevel: "none" | "read" | "readWriteAsk" | "readWriteNoApproval";
+                policyEnvironmentId: string;
+                policyRevision: number;
+            };
             presetPreparationAdmission?: undefined | {
                 homeId: string;
                 id: string;
@@ -22056,7 +22074,16 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     exceptions?: boolean | undefined;
                 };
             }[];
-            deploymentDatabaseEditor?: "allowed" | "editing_off" | "not_an_editor" | undefined;
+            deploymentDatabaseAccess?: undefined | {
+                summary: {
+                    canRead: boolean;
+                    canWrite: boolean;
+                    reason?: "database_agent_access_none" | "database_agent_access_read_only" | "database_editing_off" | "database_not_an_editor" | undefined;
+                };
+                agentLevel: "none" | "read" | "readWriteAsk" | "readWriteNoApproval";
+                policyEnvironmentId: string;
+                policyRevision: number;
+            };
             presetPreparationAdmission?: undefined | {
                 homeId: string;
                 id: string;

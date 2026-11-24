@@ -408,6 +408,7 @@ export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
     managedMachineAdmission?: import('@happier-dev/protocol/machines/machineAccessV1').SocketRpcMachineAdmissionContextV1
         & import('./externalActionExecutionAuthorization').ExternalActionExecutionMachineAdmissionFacts;
     browserSessionId?: string;
+    callerAuthority?: import('@happier-dev/protocol/actions/externalActionBindingAuthority').ExternalActionBindingAuthorityV1;
     workflowAdmission?: WorkflowExternalActionAdmission;
     managedCreationAdmission?: import('./externalActionManagedAdmission').ManagedCreationChildAdmission;
     deploymentLinkEnvironmentId?: string;
@@ -907,7 +908,7 @@ class AuthModule {
         let supplied = parsedBinding.data;
         // Link's private input names the Environment; only Home derives its owner.
         if (input.deploymentLinkAdmission) throw refuse('deployment_link_admission_supplied');
-        if (input.deploymentDatabaseEditor !== undefined) throw refuse('deployment_database_editor_supplied');
+        if (input.deploymentDatabaseAccess !== undefined) throw refuse('deployment_database_access_supplied');
         if (input.deploymentTelemetryRead !== undefined) throw refuse('deployment_telemetry_read_supplied');
         let linkEnvironmentId: string | undefined;
         let linkReplacement: import('@happier-dev/protocol/actions/externalActionApi').DeploymentLinkReplacementV1 | undefined;
@@ -931,14 +932,15 @@ class AuthModule {
             authenticationEvidence: 'authentication' in supplied ? supplied.authentication.evidence : undefined,
             linkAuthenticationEvidence: 'authentication' in supplied
                 ? supplied.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
+            callerAuthority: context.callerAuthority,
         });
         if (!bindingAdmission.ok) throw refuse(bindingAdmission.phase ? `root_binding.${bindingAdmission.phase}` : 'root_binding', bindingAdmission.code, { details: bindingAdmission.placement?.details,
             failureCause: bindingAdmission.placement?.failureCause });
-        if (bindingAdmission.deploymentLinkAdmission || bindingAdmission.deploymentDatabaseEditor || bindingAdmission.deploymentTelemetryRead) {
+        if (bindingAdmission.deploymentLinkAdmission || bindingAdmission.deploymentDatabaseAccess || bindingAdmission.deploymentTelemetryRead) {
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
                 ...(bindingAdmission.deploymentLinkAdmission ? { deploymentLinkAdmission: { ...bindingAdmission.deploymentLinkAdmission,
                     ...(linkReplacement ? { replacement: linkReplacement } : {}) } } : {}),
-                ...(bindingAdmission.deploymentDatabaseEditor ? { deploymentDatabaseEditor: bindingAdmission.deploymentDatabaseEditor } : {}),
+                ...(bindingAdmission.deploymentDatabaseAccess ? { deploymentDatabaseAccess: bindingAdmission.deploymentDatabaseAccess } : {}),
                 ...(bindingAdmission.deploymentTelemetryRead ? { deploymentTelemetryRead: bindingAdmission.deploymentTelemetryRead } : {}) });
         }
         const workspaceSyncRequest = context.workspaceSyncAdmission ?? projectWorkspaceSyncAdmissionInputV1(input.actionId, context.input);

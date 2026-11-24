@@ -1,4 +1,5 @@
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { ExternalActionBindingAuthorityV1 } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
@@ -260,7 +261,7 @@ export type DeploymentRootBindingAdmission =
   | Readonly<{
       ok: true;
       deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
-      deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
+      deploymentDatabaseAccess?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseAccess'];
       deploymentTelemetryRead?: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'];
     }>
   | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code']; placement?: ActionExecuteFailure;
@@ -270,7 +271,7 @@ export type DeploymentRootBindingAdmission =
 /**
  * The one admission of a parsed root binding's deployment facts: Link,
  * preparation, registry update and read. Mint runs it once and records the
- * Link and database editor decisions it produces. A new root relay runs the
+ * Link and database access decisions it produces. A new root relay runs the
  * same admission. Signed finite effects consume the recorded decisions.
  */
 export async function admitDeploymentRootBindingInTx(
@@ -283,6 +284,7 @@ export async function admitDeploymentRootBindingInTx(
     workflowAdmitted: boolean;
     authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined;
     linkAuthenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined;
+    callerAuthority?: ExternalActionBindingAuthorityV1;
   }>,
 ): Promise<DeploymentRootBindingAdmission> {
   const authentication = {
@@ -310,18 +312,18 @@ export async function admitDeploymentRootBindingInTx(
   }
   const qualifiedRead = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
     && binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
-  let deploymentDatabaseEditor: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
+  let deploymentDatabaseAccess: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseAccess'];
   let deploymentTelemetryRead: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'];
   if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || qualifiedRead) {
     if (!binding.deploymentReadAdmission) return { ok: false, phase: 'read_admission_missing' };
-    const selected = await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication);
+    const selected = await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication, input.callerAuthority);
     if (!selected) return { ok: false, phase: 'read_admission' };
     if (!selected.ok) return { ...selected, phase: 'read_authorization' };
-    deploymentDatabaseEditor = selected.deploymentDatabaseEditor;
+    deploymentDatabaseAccess = selected.deploymentDatabaseAccess;
     deploymentTelemetryRead = selected.deploymentTelemetryRead;
   }
   return { ok: true, ...(deploymentLinkAdmission ? { deploymentLinkAdmission } : {}),
-    ...(deploymentDatabaseEditor ? { deploymentDatabaseEditor } : {}),
+    ...(deploymentDatabaseAccess ? { deploymentDatabaseAccess } : {}),
     ...(deploymentTelemetryRead ? { deploymentTelemetryRead } : {}) };
 }
 
@@ -335,6 +337,7 @@ export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
   root: ExternalActionExecutionAuthorizationBindingV1,
   nativeAdmission: DeploymentNativeAdmissionV1 | undefined,
   authenticationEvidence: readonly AuthTokenAuthenticationEvidenceV1[] | undefined,
+  callerAuthority?: ExternalActionBindingAuthorityV1,
 ): Promise<DeploymentRootBindingAdmission> {
   if (nativeAdmission) {
     const environment = await admitDeploymentNativeRootEnvironmentInTx(tx, root, nativeAdmission, authenticationEvidence);
@@ -346,10 +349,14 @@ export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
     workflowAdmitted: root.workflowActionOrigin !== undefined,
     authenticationEvidence,
     linkAuthenticationEvidence: authenticationEvidence,
+    callerAuthority,
   });
   if (!admitted.ok) return admitted;
   if (admitted.deploymentLinkAdmission?.environmentId !== recordedLink?.environmentId) return { ok: false, phase: 'link_environment_changed' };
-  if (admitted.deploymentDatabaseEditor !== root.deploymentDatabaseEditor) return { ok: false, phase: 'database_editor_changed' };
+  const currentAccess = admitted.deploymentDatabaseAccess;
+  const recordedAccess = root.deploymentDatabaseAccess;
+  if (currentAccess?.policyEnvironmentId !== recordedAccess?.policyEnvironmentId || currentAccess?.agentLevel !== recordedAccess?.agentLevel
+    || !sameStrictJsonValue(currentAccess?.summary, recordedAccess?.summary)) return { ok: false, phase: 'database_access_changed', code: 'source_changed' };
   if (root.deploymentTelemetryRead && !sameStrictJsonValue(admitted.deploymentTelemetryRead, root.deploymentTelemetryRead)) {
     return { ok: false, code: 'source_changed' };
   }

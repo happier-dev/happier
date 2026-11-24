@@ -3370,7 +3370,13 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             ? { acceptedDeploymentReceipt: { read: { environmentId: input.data.environmentId } } } : false;
     }
     if (!('databaseTarget' in admission) && admission.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
+    // Requester Account mode prepares the typed Action response even when database custody was refused.
+    if (verified.effectActionId === admission.actionId && isAccountEncryptionCurrentnessHttpRead(proof)) return {};
+    const access = verified.binding.deploymentDatabaseAccess?.summary;
+    if ('databaseTarget' in admission && !access?.canRead) return false;
     if (verified.signedChildPurpose.databaseReadAccessBindings) {
+        const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
+        if (setup?.requiresDatabaseWriter && !access?.canWrite) return false;
         return await readDeploymentDatabaseReadAccessBindingHttpPurpose(db, verified.binding, proof) ? {} : false;
     }
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
@@ -3385,7 +3391,7 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
             if (setup && !setup.requiresDatabaseWriter
                 ? !('targetLinkId' in materialization) || materialization.role === 'write'
-                : admission.access === 'write' && verified.binding.deploymentDatabaseEditor !== 'allowed') return false;
+                : admission.access === 'write' && !access?.canWrite) return false;
             if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
                 || body.targetLinkId !== admission.targetLinkId || body.machineId !== verified.binding.machineId
                 || body.installationId !== verified.binding.installationId
@@ -3416,7 +3422,6 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
             contentCustody: true } } };
     }
     if (verified.effectActionId !== admission.actionId || !isReadOnlyArtifactHttpPurpose(proof)) return false;
-    if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
     const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
     if (!artifact) return false;
     const scope = await readAdmittedDeploymentReadScopeInTx(db, admission);

@@ -36,6 +36,8 @@ export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionId
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from '../deployments/deploymentIdentifiersV1.js';
+import { DatabaseAgentLevelV1Schema } from '../deployments/deploymentEnvironmentDeployerV1.js';
+import { DatabaseAccessSummaryV1Schema } from '../databases/databaseAccessSummaryV1.js';
 import { DeploymentTargetMachinesV1Schema } from '../deployments/deploymentEnvironmentCreateV1.js';
 import { ProjectSourceOwnerV1Schema, ProjectSourcesCreateActionInputV1Schema } from '../projects/sources/projectSourceV1.js';
 import { ProjectAccountWorkspaceRefKeyV1Schema } from '../projects/workspaceRefKeyV1.js';
@@ -1557,8 +1559,10 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
     /** Home's metadata decision for the current installed Environment collector. */
     deploymentTelemetryRead: z.optional(DeploymentTelemetryReadFactsV1Schema),
-    /** Home's editor decision for the exact database target of an admitted write. */
-    deploymentDatabaseEditor: z.optional(z.enum(['allowed', 'editing_off', 'not_an_editor'])),
+    /** Home's database access and approval facts for the exact admitted target and requester. */
+    deploymentDatabaseAccess: z.optional(z.strictObject({ summary: DatabaseAccessSummaryV1Schema,
+      agentLevel: DatabaseAgentLevelV1Schema, policyEnvironmentId: DeploymentIdentifierV1Schema,
+      policyRevision: DeploymentRevisionV1Schema })),
     /** Home-signed receipt operand for Observe continuation. */
     deploymentObservationReceiptId: z.optional(DeploymentIdentifierV1Schema),
     presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
@@ -1706,9 +1710,9 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
       value.deploymentTelemetryRead.map(environment => environment.environmentId), telemetry.environmentIds))) {
     context.addIssue({ code: 'custom', path: ['deploymentTelemetryRead'], message: 'Telemetry facts belong to their exact Home and Environment operands.' });
   }
-  if (value.deploymentDatabaseEditor !== undefined && (value.actionId !== ACTION_INVOKE_ACTION_ID_V1
-    || !value.deploymentReadAdmission || !('databaseTarget' in value.deploymentReadAdmission) || value.deploymentReadAdmission.access !== 'write')) {
-    context.addIssue({ code: 'custom', path: ['deploymentDatabaseEditor'], message: 'A database editor decision belongs to an exact write.' });
+  if (value.deploymentDatabaseAccess !== undefined && (value.actionId !== ACTION_INVOKE_ACTION_ID_V1
+    || !value.deploymentReadAdmission || !('databaseTarget' in value.deploymentReadAdmission))) {
+    context.addIssue({ code: 'custom', path: ['deploymentDatabaseAccess'], message: 'A database access decision belongs to an exact target.' });
   }
   if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {
     context.addIssue({ code: 'custom', path: ['approvalDecisionAdmission'], message: 'Approval admission binds only its decision Action' });

@@ -351,14 +351,15 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     try { nativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: body.envelope }); }
     catch { return null; }
     const { readCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
-    const deployment = await readCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence);
+    const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
+    if (!principal) return null;
+    const deployment = await readCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence, principal.authority);
     if (!deployment.ok) return deployment.code && deployment.code !== 'credential_scope_denied'
         ? { refusalCode: deployment.code } : null;
-    const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
     // A signed Account root proves credential provenance, not a higher
     // invocation authority than this authenticated request's lowering ceiling.
     const { kind: _kind, ...machineAdmission } = admission;
-    return principal ? { principal, authorization, machineAdmission, authenticationEvidence: current.authenticationEvidence } : null;
+    return { principal, authorization, machineAdmission, authenticationEvidence: current.authenticationEvidence };
 }
 
 /** Child phases retain the Home-issued root, never the submitting daemon's Account. */
@@ -952,6 +953,7 @@ export function registerExternalActionRoutes(
                     ...('managedCreationRecovery' in admission && admission.managedCreationRecovery === true
                         ? { managedCreationRecovery: true } : {}),
                     managedMachineAdmission: admission,
+                    callerAuthority: principal.authority,
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: projectExternalActionMintInput({
                         actionId: actionId.data, envelope: body.data.envelope,

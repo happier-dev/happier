@@ -1261,6 +1261,14 @@ verified session while the view is open. The target daemon holds native
 admission during session setup and each database operation through settlement.
 An idle session leaves the native keys available to another operation.
 
+Each Workbench database request takes its access decision from the selected
+Environment on its Home. A Preview and its database companions inherit the
+template's database editor selection and agent access level. The signed result
+carries the exact target, the requester's access and the policy owner's
+Environment and revision. Removing an editor takes effect on their next
+request. An admitted finite operation keeps its installed credential custody
+through settlement.
+
 Managed data targets declare their read-only query Action in the plugin's data
 role contribution. The shared UI preserves the recorded credential principal
 and dispatches to the Environment controller with the same result contract.

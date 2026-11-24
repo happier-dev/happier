@@ -6523,7 +6523,8 @@ describe('deployment children retain their controller Action authority', () => {
         const attach = await mint(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, attachInput);
         const terminalAttach = await mint(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, attachInput, 'terminal');
         const preview = await mint(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, { target: databaseTarget, mode: 'preview' });
-        expect(preview.binding.deploymentDatabaseEditor).toBe('allowed');
+        expect(preview.binding.deploymentDatabaseAccess).toMatchObject({ summary: { canRead: true, canWrite: true },
+            policyEnvironmentId: f.environment.id });
         const bindingAction = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
         const selectedBinding = { purpose: 'dataRole', targetLinkId: managedLink.id, role: 'readOnlyPassword',
             source: { kind: 'secret', ref, resourceRevision: 1 } } as const;

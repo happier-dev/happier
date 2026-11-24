@@ -9,6 +9,7 @@ import { readDeploymentTelemetryEnvironmentSourceV1 } from './deploymentReadAdmi
 import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { isDelegatedActionRequesterV1 } from '../actions/delegatedRequesterV1.js';
 import { DatabaseTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import type { DatabaseAgentLevelV1 } from './deploymentEnvironmentDeployerV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { DeploymentIdentifierV1Schema } from './deploymentIdentifiersV1.js';
@@ -186,6 +187,15 @@ async function resolveDatabaseTargetApprovalScope(read: NonNullable<ActionExecut
   if (!target.success) return failure('invalid_parameters');
   if (target.data.kind !== 'deployment_service' && target.data.kind !== 'managed_deployment') return { scope: null };
   const { serverId, environmentId, projectSourceId } = target.data.environment;
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  const signedScope = binding?.deploymentReadAdmission;
+  if (signedScope && 'databaseTarget' in signedScope) {
+    const admitted = binding?.deploymentDatabaseAccess;
+    if (!admitted || !sameStrictJsonValue(signedScope.databaseTarget, target.data)) return failure('deployment_access_denied');
+    const inherited = admitted.policyEnvironmentId !== environmentId;
+    return resolveAdmittedDatabaseApprovalScope(actionId, input, { id: environmentId, purpose: inherited ? 'preview' : 'standard',
+      ...(inherited ? { previewTemplateEnvironmentId: admitted.policyEnvironmentId } : {}), dataAgentAccess: admitted.agentLevel });
+  }
   const current = await readApprovalEnvironment({ read, serverId, environmentId, context });
   if (!current.ok) return current;
   if (current.environment.projectSourceId !== projectSourceId) return failure('deployment_access_denied');

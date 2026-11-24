@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./access": {
+      "happier-source": "./src/access.ts",
+      "types": "./dist/access.d.ts",
+      "default": "./dist/access.js"
+    },
     "./stats-comparisons": {
       "happier-source": "./src/statsComparisons.ts",
       "types": "./dist/statsComparisons.d.ts",

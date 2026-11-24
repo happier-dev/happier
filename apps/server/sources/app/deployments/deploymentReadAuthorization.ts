@@ -2,6 +2,9 @@ import * as deploymentActionIds from '@happier-dev/protocol/deployments/deployme
 import * as registryIds from '@happier-dev/protocol/registries/registryActionIdsV1';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readExternalActionBindingAuthority, type ExternalActionBindingAuthorityV1 } from '@happier-dev/protocol/actions/externalActionBindingAuthority';
+import { DatabaseAgentLevelV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
+import { resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases/access';
 import { readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
@@ -13,7 +16,7 @@ import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actio
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { loadDeploymentEnvironmentInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
+import { loadDeploymentEnvironmentInTx, readDeploymentDatabasePolicyInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { loadDeploymentTargetRowsInTx, readCurrentManagedDataTargetLinksInTx } from './deploymentTargetLinkService';
 import { resolveProjectSourceAccessInTx, resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { canEditDeploymentEnvironmentData, projectDeploymentRuntimeInstallationReplacedFailure, type DeploymentAuthentication } from './deploymentAdmission';
@@ -25,7 +28,7 @@ import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/source
 import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[];
-    deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
+    deploymentDatabaseAccess?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseAccess'];
     deploymentTelemetryRead?: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'] }>
     | Readonly<{ ok: false; code: 'source_changed' | 'source_access_denied' }>
     | Readonly<{ ok: false; placement: ActionExecuteFailure }> | null;
@@ -98,6 +101,7 @@ export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
 /** Resource reads remain Source-authorized. Native occurrence and private builder custody stay with the installed owner. */
 export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: DeploymentReadAdmissionV1, authentication: DeploymentAuthentication = {},
+    callerAuthority?: ExternalActionBindingAuthorityV1,
 ): Promise<DeploymentTargetAuthorization> {
     if ('action' in admission) {
         if (binding.actionId !== admission.actionId || binding.target.kind !== 'machine'
@@ -148,22 +152,26 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         if (!loaded.ok || loaded.row.deletedAt) return null;
         const setup = readDeploymentDatabaseReadAccessSetupV1(admission);
         if (setup && !loaded.admission.canManage) return null;
-        const deploymentDatabaseEditor = admission.access === 'write' && (!setup || setup.requiresDatabaseWriter)
-            ? loaded.row.dataEditorMode === 'off' ? 'editing_off' as const
-                : canEditDeploymentEnvironmentData(loaded.admission, loaded.row) ? 'allowed' as const : 'not_an_editor' as const
-            : undefined;
-        const editor = deploymentDatabaseEditor ? { deploymentDatabaseEditor } : {};
+        let deploymentDatabaseAccess: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseAccess'];
         if ('databaseTarget' in admission) {
             const target = admission.databaseTarget;
             if (target.environment.serverId !== binding.serverIdentityId || target.environment.projectSourceId !== loaded.row.projectSourceId
                 || target.environment.environmentId !== admission.environmentId || target.targetLinkId !== admission.targetLinkId) return null;
+            const policy = await readDeploymentDatabasePolicyInTx(tx, loaded.row);
+            const agentLevel = DatabaseAgentLevelV1Schema.safeParse(policy?.dataAgentAccess);
+            const requester = resolveDatabaseRequesterKindV1({ agentCaller: false,
+                authority: readExternalActionBindingAuthority(binding, callerAuthority) });
+            if (!policy || !agentLevel.success || !requester) return null;
+            deploymentDatabaseAccess = { agentLevel: agentLevel.data, policyEnvironmentId: policy.id, policyRevision: policy.revision,
+                summary: summarizeDatabaseAccessV1({ requester, agentAccess: agentLevel.data,
+                    person: { mayWrite: canEditDeploymentEnvironmentData(loaded.admission, policy), editingOff: policy.dataEditorMode === 'off' } }) };
             if (target.kind === 'deployment_service') {
                 const selected = await readDeploymentTargetAuthorizationInTx(tx, loaded.row, {
                     actionId: ACTION_INVOKE_ACTION_ID_V1, environmentId: admission.environmentId,
                     deploymentId: target.deploymentId, targetLinkId: target.targetLinkId,
                     machineId: binding.machineId, installationId: binding.installationId,
                 }, undefined, binding);
-                return selected?.ok ? { ...selected, ...editor } : selected;
+                return selected?.ok ? { ...selected, deploymentDatabaseAccess } : selected;
             }
         }
         if (loaded.row.controllerMachineId !== binding.machineId) return null;
@@ -171,7 +179,8 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
             installationId: binding.installationId, revokedAt: null, replacedByMachineId: null }, select: { id: true } });
         if (!controller) return null;
         const scope = await readAdmittedDeploymentReadScopeInTx(tx, admission);
-        return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId), ...editor } : null;
+        return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId),
+            ...(deploymentDatabaseAccess ? { deploymentDatabaseAccess } : {}) } : null;
     }
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
         || binding.target.machineId !== binding.machineId
