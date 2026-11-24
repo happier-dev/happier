@@ -601,7 +601,7 @@ export function formatServiceCheckPeriod(ms: number): string {
 }
 
 /**
- * The heading uses a name the Check kind actually owns, an external hostname, or a kind and local subject.
+ * The heading uses the Check's saved name or its kind and checked subject.
  * The Automation name can be a generated storage label, so it is only a fallback for an unopened picker option.
  */
 export function serviceCheckTitle(
@@ -616,10 +616,8 @@ export function serviceCheckTitle(
   const { keyFlow, targetLabel, titleTarget } = definition;
   if (keyFlow?.name) return { title: keyFlow.name, identifier: false };
   if (keyFlow && targetLabel) return { title: targetLabel, identifier: true };
-  if (titleTarget?.kind === 'host') return { title: titleTarget.label, identifier: true };
   const kind = definition.name ?? fallback;
-  const subject = titleTarget?.kind === 'service' ? titleTarget.label
-    : titleTarget?.kind === 'environment' ? environmentNames?.get(titleTarget.id) : null;
+  const subject = titleTarget?.kind === 'environment' ? environmentNames?.get(titleTarget.id) : titleTarget?.label;
   return { title: subject ? [kind, subject].join(' · ') : kind, identifier: false };
 }
 
@@ -640,7 +638,7 @@ export type ServiceCheckCollectorTrend = Readonly<{
 
 export type ServiceCheckListFacts = Readonly<{
   title: string;
-  /** Show a hostname or route in identifier typography. */
+  /** Show an unnamed Key flow's route or metric in identifier typography. */
   titleIdentifier: boolean;
   /** The checked endpoint or routes, available separately from the heading. */
   targetLabel: string | null;

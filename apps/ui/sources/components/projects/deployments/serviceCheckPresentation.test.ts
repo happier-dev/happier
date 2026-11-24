@@ -363,7 +363,7 @@ describe('Services → Checks rows (lab svcChk: named by what they check, Every,
     { endpoint: 'http://[::1]:8080/ready', subject: { kind: 'machineService', machineId: 'machine', serviceId: 'orders-api' },
       title: 'HTTP · orders-api', address: '[::1]:8080/ready' },
     { endpoint: 'https://shop.example:8443/ready', subject: { kind: 'environment', environmentId: 'prod' },
-      title: 'shop.example', address: 'shop.example:8443/ready' },
+      title: 'HTTP · shop.example', address: 'shop.example:8443/ready' },
   ])('names a row from the checked host or local subject and keeps the endpoint secondary ($title)', async ({ endpoint, subject, title, address }) => {
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
     const checks = readServiceCheckDefinitions({ sourceConfig: { v: 1, subject, checks: [{

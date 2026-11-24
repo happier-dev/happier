@@ -67,8 +67,7 @@ it('Monitoring lists what needs the person first, says healthy checks quietly, a
   expect(screen.findHostByTestId('services.checks.row.a-ok.t-ok')).toBeTruthy();
 });
 
-// MONITOR-ACCEPT-1116: a Check opened beside the page is named by what it checks, as its row is ("n8n.acme.dev"),
-// never by the saved automation's name ("n8n.acme.dev availability", live: "Event observation").
+// The row and its opened detail use the Check kind and saved target together.
 it('names an opened Check by what it checks, as its row does', async () => {
   const rows = [row('down', 'n8n.acme.dev', results('down', 900))];
   function Harness() {
@@ -84,9 +83,11 @@ it('names an opened Check by what it checks, as its row does', async () => {
     );
   }
   const screen = await renderScreen(<Harness />);
+  const expectedName = 'HTTP · n8n.acme.dev';
+  expect(screen.getTextContent()).toContain(expectedName);
   await screen.pressByTestIdAsync('services.checks.row.a-down.t-down');
   const title = screen.findHostByTestId('pane.title');
-  expect(title).toBeTruthy();
+  expect(title?.props.children).toBe(expectedName);
   expect(screen.getTextContent()).not.toContain('n8n.acme.dev availability');
   // What it is stands under the name in the pane's band (lab A3), never again as the body's first line (R2-D2).
   expect(screen.findHostByTestId('pane.subtitle')?.props.children).toContain('HTTP');

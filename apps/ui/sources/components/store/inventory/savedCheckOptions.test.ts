@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, onTestFinished } from 'vitest';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { standardCleanup } from '@/dev/testkit';
 import {
@@ -7,6 +7,9 @@ import {
   installProviderSettingsRpcBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createKeyFlowFixture } from '@/dev/testkit/fixtures/serviceCheckRowFixtures';
+import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
+import bundledMachineServices from '../../../../../cli/assets/bundled-plugin-manifests/machine-services.json';
+import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
 
 // The real sync owner, store and stored-content opening under the canonical Account HTTP boundary.
 const rpc = createProviderSettingsHarness({ machines: [] });
@@ -122,6 +125,12 @@ async function savedCheck(
 }
 
 it('names each saved Check as the Checks list does, from its private definition, and releases the definition demand', async () => {
+  const declaration = await projectBundledPluginUiDeclaration({
+    packageName: '@happier-dev/plugins-machine-services', packageVersion: bundledMachineServices.version,
+    manifest: bundledMachineServices, artifactGraphs: [],
+  });
+  if (!declaration) throw new Error('Expected the bundled Machine services declaration');
+  onTestFinished(installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiFirstPaintDeclaration(declaration)]));
   const checkout = createKeyFlowFixture('Checkout', {
     limitMs: 800,
     routes: ['GET /api/cart', 'POST /checkout'],
@@ -159,16 +168,16 @@ it('names each saved Check as the Checks list does, from its private definition,
   expect(listed).toEqual({
     items: [
       {
-        automationId: 'automation-2',
-        triggerId: automations[1]!.triggers[0]!.id,
-        label: 'billing.acme.dev/health',
-        description: 'Billing availability',
-      },
-      {
         automationId: 'automation-1',
         triggerId: automations[0]!.triggers[0]!.id,
         label: 'Checkout',
         description: 'GET /api/cart, POST /checkout',
+      },
+      {
+        automationId: 'automation-2',
+        triggerId: automations[1]!.triggers[0]!.id,
+        label: 'HTTP · billing.acme.dev',
+        description: 'billing.acme.dev/health',
       },
     ],
   });
