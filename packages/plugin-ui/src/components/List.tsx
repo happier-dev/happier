@@ -2082,7 +2082,7 @@ function VirtualizedList<Item>(
           renderSectionHeader: drawsSectionSheets ? renderItemGroupHeading : pageSheets === undefined ? renderVirtualizedSectionHeader : (sectionIndex: number) => {
             const section = virtualizedSections[sectionIndex];
             if (section === undefined) return null;
-            if (section.section === undefined) return renderSectionHeader({ section });
+            if (section.section === undefined || tableSheet !== undefined) return renderSectionHeader({ section });
             const at = indexInPart(sectionIndex);
             return (
               <>

@@ -3720,6 +3720,42 @@ describe('render scope', () => {
       expect(band?.textContent).not.toContain('Retry idempotent payment intents');
     } finally { view.unmount(); }
   });
+  it('keeps the focused row mounted when a windowed shared sheet recomposes for a phone', async () => {
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {},
+      onLayout() {},
+      onContentSizeChange() {},
+      invalidateLayout() {},
+      getLayoutRevision: () => 0,
+      getWindow: () => null,
+      subscribe: () => () => {},
+      measureSpan: async () => ({ top: 0 }),
+    };
+    const view = mount({
+      presentation: 'list', scroll: 'page', scrollTracker: tracker,
+      grouping: { ...groups, axis: groups.axis.map((group) => ({ ...group, section: { key: 'all', title: '' } })) },
+      anatomy: { ...anatomy, fields: [{ key: 'memory', title: 'Memory', minWidth: 64, priority: 1, listColumn: true,
+        render: () => '64 MB' }] },
+    });
+    try {
+      view.measure(900);
+      await act(async () => {});
+      const row = view.query('row:b')!;
+      expect(view.query('row:b:column:memory')).not.toBeNull();
+      await act(async () => { row.focus(); });
+      expect(document.activeElement).toBe(row);
+      view.measure(390);
+      await act(async () => {});
+      expect(view.query('row:b:column:memory')).toBeNull();
+      expect(view.query('row:b') === row).toBe(true);
+      expect(document.activeElement).toBe(row);
+      view.measure(900);
+      await act(async () => {});
+      expect(view.query('row:b:column:memory')).not.toBeNull();
+      expect(view.query('row:b') === row).toBe(true);
+      expect(document.activeElement).toBe(row);
+    } finally { view.unmount(); }
+  });
   it('draws an empty list column cell as the table does: a quiet dash, never a blank', () => {
     const view = mount({
       presentation: 'list', scroll: 'page',

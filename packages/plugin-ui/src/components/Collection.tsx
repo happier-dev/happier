@@ -2611,6 +2611,11 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const onlyGroup = model.declaredGroupCount === 1 && drawnSections.length === 1 ? drawnSections[0]!.group : null;
   const loneGroup = sheetTable && !cards && onlyGroup !== null && onlyGroup.title !== '' ? onlyGroup : null;
   const sections = useMemo(() => {
+    // A declared untitled section spanning the windowed page already is the table's one sheet.
+    // Preserve that row tree on both sides of the responsive transition so a focused row stays mounted.
+    const sharedPageSection = drawnSections[0]?.group?.section;
+    const keepSharedPageSection = pageWindows && pageTracker !== null && sharedPageSection?.title === ''
+      && drawnSections.every((section) => section.group?.section?.key === sharedPageSection.key);
     const nextCells = new Map<string, CollectionCell<Item>>();
     const retainCell = (cell: CollectionCell<Item>): CollectionCell<Item> => {
       const previous = previousCells.current.get(cell.key);
@@ -2655,7 +2660,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
           : (model.sections[index]?.items ?? []).filter((member) => tree.get(model.keyOf(member))?.context !== true).length }),
         ...(group?.description === undefined ? {} : { description: group.description }),
         // Groups that are parts of one page section share its heading and sheet (page sections only).
-        ...(group?.section === undefined || !pageSections || sheetTable ? {} : { section: group.section }),
+        ...(group?.section === undefined || !pageSections || (sheetTable && !keepSharedPageSection) ? {} : { section: group.section }),
         ...(group !== null && collapsedGroups?.has(group.key) === true ? { collapsed: true } : {}),
         data,
       };
@@ -2666,7 +2671,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       nextSections[nextSections.length - 1] = { ...last, data: [...last.data, { kind: 'after', key: AFTER_ROWS_CELL_KEY, content: props.afterRows }] };
     }
     return nextSections;
-  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, loneGroup, model.keyOf, model.sections, pageSections, sheetTable, tree]);
+  }, [props.afterRows, catalogList, closingPeeks, collapsedGroups, drawnSections, expandable, expanded, ghostPeeks, grouped, loneGroup, model.keyOf, model.sections, pageSections, pageTracker, pageWindows, sheetTable, tree]);
   // A page section's last row ends its sheet; on a table's sheet only the very last row does (a band follows the rest).
   const previousDividedKeys = useRef<ReadonlySet<string> | null>(null);
   // A browse list on a phone lies flat on the page (owner 2026-11-15): its sheet divides its rows in the one list-row
