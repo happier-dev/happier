@@ -578,9 +578,18 @@ export async function executeManualSessionSpawnNewAction(
             ...context,
             expectedAccountId: params.scope.accountId,
         }, observation), input.executionTarget);
-    if (!observed && submitted.createdSessionId === null
-        && ((!action.ok && action.errorCode === 'action_failed') || (action.ok && action.result.type === 'pending' && action.result.outcome === 'unknown'))) {
-        action = await reconcileManualSessionCreation(input, submitted, params.sourceAccountLifetime) ?? action;
+    if (!observed && ((!action.ok && action.errorCode === 'action_failed')
+        || (action.ok && action.result.type === 'pending' && action.result.outcome === 'unknown'))) {
+        const retained = readManualSessionSpawnOperation(params.scope, userAttemptId);
+        if (retained?.scope.machineId === input.executionTarget.machineId) {
+            // The Session can exist while the admitted Agent start is settling.
+            const result = await readManualSessionSpawnOperationDetails(params.scope, retained,
+                () => !context.signal?.aborted && params.sourceAccountLifetime?.isCurrent() !== false,
+                context.signal ? { signal: context.signal } : undefined).catch(() => null);
+            if (result) action = projectManualSessionSpawnOperationResult(result, input.executionTarget);
+        } else if (submitted.createdSessionId === null) {
+            action = await reconcileManualSessionCreation(input, submitted, params.sourceAccountLifetime) ?? action;
+        }
     }
     const custody = await settleManualSessionSpawnNewActionCustody({ acquired: { ...acquired, record: submitted }, action,
         committed: readCommittedSessionSpawnNewActionResult(action), executionTarget: input.executionTarget,

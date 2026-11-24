@@ -120,6 +120,28 @@ describe('manual Start acknowledgement reconciliation', () => {
         expect(http.requestsFor('/v2/sessions/lookup-by-tags')).toHaveLength(0);
     });
 
+    it('recovers the retained Agent startup refusal after the birth acknowledgement is lost', async () => {
+        await installCreationCandidates(['committed-before-native']);
+        http.answer(serverId, `/v2/sessions/committed-before-native/messages/by-local-id/${encodeURIComponent(firstTurnLocalId)}`,
+            { status: 404, body: {} });
+        const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+            launchError: { kind: 'launch_error' as const, code: 'agent_signed_out', message: 'agent_signed_out' } };
+        const execute = vi.fn(async () => {
+            actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ version: 1,
+                operationId: 'settled-start', revision: 3, actionId: 'session.spawn_new', state: 'failed',
+                requestId: userAttemptId, scope: { accountId: 'original-account', machineId: 'selected-machine' },
+                title: 'Create session', createdAt: 1, startedAt: 2, finishedAt: 3, cancellation: 'unsupported',
+                error: { errorCode: 'spawn_failed', error: 'spawn_failed' }, result: refusal,
+            }] });
+            return { ok: true as const, result: { type: 'pending' as const, outcome: 'unknown' as const, retryWithSameCreationKey: true as const } };
+        });
+
+        await expect(start(execute, undefined, { kind: 'managed' })).resolves.toMatchObject({ status: 'executed',
+            action: { ok: true, result: refusal } });
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(http.requestsFor('/v2/sessions/lookup-by-tags')).toHaveLength(0);
+    });
+
     it('keeps a committed receipt unknown until same-key native settlement, including the later typed refusal', async () => {
         await installCreationCandidates(['committed-before-native']);
         const pending = { ok: true as const, result: { type: 'pending' as const, retryWithSameCreationKey: true as const, outcome: 'unknown' as const } };
