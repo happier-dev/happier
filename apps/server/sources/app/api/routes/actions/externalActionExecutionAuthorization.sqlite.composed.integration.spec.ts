@@ -4731,6 +4731,35 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it.each([
+        { actionId: 'usage.query', input: { queries: [{ period: { startMs: 10, endMs: 20 } }] }, admitted: true },
+        { actionId: 'usage.prices.get', input: {}, admitted: false },
+    ] as const)('restricts the signed Usage Environment list to its admitted root ($actionId)', async ({ actionId, input, admitted }) => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const serverId = await getOrCreateServerIdentityId();
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, registerDeploymentRoutes);
+        try {
+            const authorization = await mint(app, fixture, actionId, { ...fixture.envelope, input }, token);
+            const effectActionId = 'deployments.environments.list';
+            const spec = getActionSpec(effectActionId);
+            if (!spec.serverTransport || !spec.outputSchema) throw new Error('Environment listing requires its declared transport and response schema');
+            const { method, path } = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
+                input: spec.inputSchema.parse({ serverId }) });
+            const response = await app.inject({ method, url: path, headers: createExternalActionAuthorizedRequestHeaders({
+                authorization, effectActionId, target: authorization.binding.target, installationId: fixture.machine.installationId!,
+                method, path, privateKey: fixture.keyPair.secretKey,
+            }) });
+            if (admitted) {
+                expect(response.statusCode, response.body).toBe(200);
+                expect(spec.outputSchema.parse(response.json())).toMatchObject({ ok: true, items: [], nextCursor: null });
+            } else {
+                expect(response.statusCode, response.body).toBe(401);
+                expect(response.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'effect_family' });
+            }
+        } finally { await app.close(); }
+    });
+
     it('admits scalar and batch accounting and compact Session evidence only as personal Usage read purposes', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const { app } = await createApp(fixture.team.id);

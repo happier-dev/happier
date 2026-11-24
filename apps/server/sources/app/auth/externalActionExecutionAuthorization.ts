@@ -1373,6 +1373,7 @@ function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: 
 
 /** Private Usage evidence reads retain their original signed Action root. */
 function isPersonalUsageReadEffect(rootActionId: string, effectActionId: string): boolean {
+    if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) return rootActionId === 'usage.query';
     if (rootActionId === 'usage.calendar.export') return effectActionId === 'connectedServices.quota.get';
     return (rootActionId === 'usage.query' || rootActionId === 'usage.export'
         || isUsagePrivateRecapActionIdV1(rootActionId)
@@ -3999,6 +4000,8 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         }
     }
     if (verified.signedChildPurpose.sibling.personalUsage) {
+        if (verified.effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1)
+            return isAccountActionHttpOperation(verified.effectActionId, proof);
         if (verified.effectActionId === 'connectedServices.quota.get') return isQuotaReadHttpPurpose(proof);
         if (proof.method.toUpperCase() === 'POST') {
             const admitted = proof.path === accountUsageRoutePaths.analyticsQuery
