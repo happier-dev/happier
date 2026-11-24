@@ -50,7 +50,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { filterReviewChangesComments } from './reviewChangesComments';
-import { ReviewFindingsList, type ReviewFindingsRowSelection } from './ReviewFindingsList';
+import { ReviewFindingsList, ReviewFindingsLoading, type ReviewFindingsRowSelection } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
@@ -62,7 +62,7 @@ import { ReviewSubmitPanel } from './ReviewSubmitPanel';
 import { ReviewPeopleEditor } from './ReviewPeopleEditor';
 import { reviewFindingFacts, reviewHistoryFacts } from './reviewFindingFacts';
 import { projectReviewActivity, type ReviewActivityEvent } from './reviewActivity';
-import { ReviewActivityFeed } from './ReviewActivityFeed';
+import { ReviewActivityFeed, ReviewActivityLoading } from './ReviewActivityFeed';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { useReviewNewRound } from './useReviewNewRound';
 import { projectReviewGlance } from './reviewGlance';
@@ -70,7 +70,6 @@ import { reviewSubjectFact } from '../list/reviewSubjectLabel';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader, type PageHeaderPrimaryAction } from '@/components/ui/layout/PageHeader';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -184,7 +183,6 @@ const VERDICT_KEYS = {
 } as const satisfies Record<ReviewVerdictKindV1, string>;
 
 const EMPTY_PRINCIPALS: readonly PrincipalRefV1[] = Object.freeze([]);
-const LOADING_ROWS: ItemLoadState = Object.freeze({ kind: 'loading' });
 const NO_ACTIVITY: readonly ReviewActivityEvent[] = Object.freeze([]);
 const NO_SELECTED_FINDINGS: ReadonlySet<string> = new Set();
 
@@ -667,7 +665,7 @@ export function ReviewDetailHost(props: Readonly<{
           .map(request => ({ principal: request.principal, required: request.required }))}
         onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
-        {comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
+        {comments.status === 'idle' || comments.status === 'loading' ? <ReviewFindingsLoading />
           : findings.rows.length > 0 ? <ReviewFindingsList rows={findingListRows}
               selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy,
                 active: selecting, onStart: startSelecting } : undefined}
@@ -739,7 +737,7 @@ export function ReviewDetailHost(props: Readonly<{
         workflowRunId={detail.data?.review.workflowRunId ?? null}
         subjectKind={review?.subjectKind ?? null} onRetry={round.ordinal === lastOrdinal ? newRound.retry : null} /> : null}
       {activeTab === 'activity' ? (
-        comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
+        comments.status === 'idle' || comments.status === 'loading' ? <ReviewActivityLoading />
           : <ReviewActivityFeed events={activityEvents} viewerAccountId={scope?.accountId ?? null} names={names} />
       ) : null}
     </ReviewDetailView>

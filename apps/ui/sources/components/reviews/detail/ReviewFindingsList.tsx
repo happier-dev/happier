@@ -25,6 +25,9 @@ import { t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 export type ReviewFindingsListRow = Readonly<{
   rowId: string;
@@ -170,6 +173,29 @@ export function ReviewFindingsList(
   );
 }
 
+const FINDINGS_LOADING: ItemLoadState = Object.freeze({ kind: 'loading' });
+
+/**
+ * The findings while they are read, in the shape they arrive in: the filter line, then a severity section (its title)
+ * with marked two-line rows, so the first finding lands where its placeholder stood instead of under a filter line
+ * and a section title that appear late.
+ */
+export function ReviewFindingsLoading() {
+  return (
+    <View testID="review-findings:loading" style={styles.list}>
+      <View style={styles.filters}>
+        {/* The filter pills stand at the page control's height, as chips do on a page line. */}
+        <SkeletonTitle lineHeight={HAPPIER_PAGE_METRICS.controlHeightPx} />
+      </View>
+      <ItemGroup title={<View style={styles.sectionTitlePending}>
+        <SkeletonTitle lineHeight={happierPageTextMetrics('sectionTitle').lineHeight} />
+      </View>}>
+        <ItemLoadStateRows state={FINDINGS_LOADING} rows={2} hasLeadingMark />
+      </ItemGroup>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create((theme) => ({
   // The severity sections bring their own page section gap; the list adds none on top of it.
   list: {},
@@ -178,4 +204,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'space-between', gap: theme.space.s12 },
   filterTabs: { flexShrink: 1, minWidth: 0 },
   rows: { paddingHorizontal: theme.space.s16 },
+  // A severity's name is a short word: its placeholder bar keeps a short title's length (as a page title's does).
+  sectionTitlePending: { width: 96 },
 }));

@@ -17,6 +17,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
+import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
@@ -186,6 +187,15 @@ function eventSentence(event: ReviewActivityEvent): string {
 }
 
 const LOG_INSET_PX = resolveItemGroupContentHorizontalInsetPx();
+
+/** The log while it is read, in its own shape: marked entries on the log's edge, no sheet and no hairlines. */
+export function ReviewActivityLoading() {
+  return (
+    <View testID="review-activity:loading" style={styles.log}>
+      <SkeletonRows rows={3} />
+    </View>
+  );
+}
 
 const styles = StyleSheet.create((theme) => ({
   log: { paddingHorizontal: LOG_INSET_PX },
