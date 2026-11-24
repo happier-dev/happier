@@ -91,6 +91,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     surfaceId: string;
     hostAction: PluginSurfaceHostActionBinding;
     resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
+    readMountedActionMachineId?(occurrenceId: string): string | undefined;
     projectionScope?: ServerAccountScope;
     signal: AbortSignal;
     isCurrent(): boolean;
@@ -180,7 +181,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         // Consume before resolving: a duplicate reply cannot be applied to this
         // invocation or a later physical press, even while execution is pending.
         binding.pending = undefined;
-        return pending.resolve(payload.preparation, options?.signal);
+        return pending.resolve(payload.preparation, options?.signal).then(projectNativeJsonValueForTransport);
     };
 
     // The one person-admission path, shared by slot buttons and host inline editors.
@@ -189,12 +190,15 @@ export function createPluginSurfaceActionControls(input: Readonly<{
         let execution: PluginUiActionControlExecutionV1;
         if (!hostId?.success && !contributed) execution = { ok: false, errorCode: 'invalid_action', error: 'invalid_action' };
         else {
+            const declaration = contributed?.pluginId === input.pluginId ? input.resolveContributedAction?.(contributed) : null;
+            const occurrenceId = declaration?.execution.target === 'daemon' ? declaration.occurrenceId : undefined;
+            const machineId = occurrenceId ? input.readMountedActionMachineId?.(occurrenceId) : undefined;
             const context = { ...input.hostAction.context, signal, actionRequestId: requestId,
                 surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
-                bypassApprovals: false };
+                bypassApprovals: false,
+                ...(machineId ? { externalActionTarget: { kind: 'machine' as const, machineId } } : {}) };
             // An exact review belongs to the plugin that declares the Action and draws the control.
-            const isReview = reviewedInput !== undefined && contributed?.pluginId === input.pluginId
-                && input.resolveContributedAction?.(contributed)?.confirmation?.mountedReview === 'exact_input';
+            const isReview = reviewedInput !== undefined && declaration?.confirmation?.mountedReview === 'exact_input';
             if (isReview && !sameStrictJsonValue(reviewedInput, preparation.input)) {
                 return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
             }
@@ -203,7 +207,9 @@ export function createPluginSurfaceActionControls(input: Readonly<{
                 return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required', effectAttempted: false };
             }
             const result = await dispatch(hostId?.success ? hostId.data : ACTION_INVOKE_ACTION_ID_V1,
-                hostId?.success ? preparation.input : { action: contributed!, ...(preparation.input === undefined ? {} : { input: preparation.input }) }, context);
+                hostId?.success ? preparation.input : { action: contributed!,
+                    ...(machineId ? { expectedContributorOccurrenceId: occurrenceId } : {}),
+                    ...(preparation.input === undefined ? {} : { input: preparation.input }) }, context);
             execution = PluginUiActionControlExecutionV1Schema.parse(projectNativeJsonValueForTransport(result));
         }
         return execution;
@@ -253,9 +259,9 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             // An exception after dispatch does not establish that no effect ran.
             // Preserve a typed producer code; an untyped lost receipt is unknown.
             const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-            const execution = parseActionExecuteFailure(error) ?? { ok: false as const,
+            const execution = PluginUiActionControlExecutionV1Schema.parse(parseActionExecuteFailure(error) ?? { ok: false,
                 errorCode: typeof code === 'string' ? code : 'action_outcome_unknown',
-                error: typeof code === 'string' ? code : 'action_outcome_unknown' };
+                error: typeof code === 'string' ? code : 'action_outcome_unknown' });
             complete(execution);
             if (live(id, binding)) binding.publish({ kind: 'settled', requestId, execution });
         } finally {

@@ -604,7 +604,7 @@ export function resolveBoundPluginSurfaceContext(
  */
 function resolveDaemonBinding(facts: BoundPluginSurfaceFacts): Readonly<{
     machineId: string;
-    serverId?: string | null;
+    serverId: string | null;
     expectedOccurrenceId: string;
 }> | null {
     const machineId = typeof facts.machineId === 'string' && facts.machineId.trim().length > 0
@@ -1166,7 +1166,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             machineId: daemon?.machineId ?? null, serverId: daemon?.serverId ?? accountLifetime.scope.serverId,
             ...(machineBindingFacts.machineId ? { actionExecutionTarget: { machineId: machineBindingFacts.machineId,
                 serverId: machineBindingFacts.serverId ?? accountLifetime.scope.serverId } }
-                : daemon ? { actionExecutionTarget: daemon } : {}),
+                : daemon ? { actionExecutionTarget: { machineId: daemon.machineId,
+                    serverId: daemon.serverId ?? accountLifetime.scope.serverId } } : {}),
             expectedCallerOccurrenceId: daemon?.expectedOccurrenceId ?? input.facts.occurrenceId ?? '',
             createFallbackStore: createOrdinaryResourceStore,
             get resourceDeclarationsComplete() { return readCompleteResourceDeclarations() !== undefined; },
@@ -1361,6 +1362,14 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ? createPluginSurfaceActionControls({
             pluginId: surfaceContext.pluginId, surfaceId: surfaceContext.surfaceId, hostAction,
             resolveContributedAction: resolveCurrentContributedAction,
+            // AppShell discovery can lag a targeted mount. Carry the mount's
+            // exact source into the existing Machine Action acquisition.
+            readMountedActionMachineId: occurrenceId => {
+                const target = readAdmittedMachineBinding();
+                return target?.expectedOccurrenceId === occurrenceId
+                    && areServerProfileIdentifiersEquivalent(target.serverId ?? homeFamilyScope.serverId, homeFamilyScope.serverId)
+                    ? target.machineId : undefined;
+            },
             ...(areServerAccountScopesEqual(homeFamilyScope, getActiveServerAccountScope()) ? { projectionScope: homeFamilyScope } : {}),
             signal: mountLifetime.signal, isCurrent: isInteractionCurrent,
             isActionAvailable: canManageActions,
