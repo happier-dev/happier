@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { core } from 'zod/mini';
 import { t } from '@/text';
 import { readMachineDisplayNamesById, storage, useArtifact, useMachineDisplayNamesById, useProjectAccountRows, useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -22,7 +23,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { BUILT_IN_REGISTRY_SOURCES_V1 } from '@happier-dev/protocol/registries';
 import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets';
 import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
-import { projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { projectPrivateLabelForRecipientV1, type PrivateLabelReadV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { describeUnnamedApprovalSession, resolveApprovalHomeName, resolveApprovalHomeSentenceName } from './approvalRequesterLabels';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -30,7 +31,7 @@ import { readApprovalProfileDescriptor } from '@/sync/engine/settings/approvalPr
 import { useOpenedTeamCredentialDisplayNames } from '@/components/settings/teams/credentials/teamCredentialPrivateLabels';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readSignInIdentityName } from '@/sync/store/home/governance/homeGovernanceSnapshots';
-import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
+import { createPrivateLabelClientForActionAccountContext, isPrivateLabelLifecycleFailureV1 } from '@/sync/ops/privateLabels/privateLabelClient';
 import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
 import { teamCredentialDisplayNameBinding, teamCredentialExternalApiKeyLabelBinding } from '@/sync/ops/teams/teamCredentialLabels';
 import { readObservedTeamCredentialExternalKey, readObservedTeamCredentialLimit, readObservedTeamExternalGroupBinding, readTeamCredentialResourceApprovalProjection,
@@ -283,10 +284,21 @@ async function readExactPoolForApproval(id: string, account: LazyActionAccountCo
 async function readApprovalPrivateLabel(reference: PrivateLabelReference, account: LazyActionAccountContext,
     signal?: AbortSignal): Promise<string | null> {
     const { owner, id, field } = reference;
-    const label = projectPrivateLabelForRecipientV1({ stored: reference.stored, recipientAccountId: account.accountId });
+    let label: PrivateLabelReadV1;
+    try {
+        label = projectPrivateLabelForRecipientV1({ stored: reference.stored, recipientAccountId: account.accountId });
+    } catch (error) {
+        if (!(error instanceof core.$ZodError)) throw error;
+        return null;
+    }
     if (owner === 'teamGroup') {
-        return await openTeamGroupLabelProjection({ client: createPrivateLabelClientForActionAccountContext(account),
-            groupId: id, field, label, signal });
+        const client = createPrivateLabelClientForActionAccountContext(account);
+        try {
+            return await openTeamGroupLabelProjection({ client, groupId: id, field, label, signal });
+        } catch (error) {
+            if (isPrivateLabelLifecycleFailureV1(error, signal)) throw error;
+            return null;
+        }
     }
     const labels = createMachinePoolPrivateLabelClientForAccount(account);
     const retained = typeof owner === 'object' ? await readExactPoolForApproval(id, account, signal) : null;

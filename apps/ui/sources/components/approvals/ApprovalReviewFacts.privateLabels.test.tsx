@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { describeApprovalActionFields } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
@@ -16,6 +17,8 @@ installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
+const { readApprovalReferenceForConfirmation } = await import('./approvalReferenceReading');
+const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 
 beforeEach(async () => { standardCleanup(); await harness.reset(); });
 afterEach(standardCleanup);
@@ -85,3 +88,37 @@ it.each(cases)('reads pending $actionId private labels with $access', async ({ a
         }
     } finally { await screen.unmount(); }
 });
+
+it.each(['opener throws', 'malformed envelope', 'scope retired'] as const)(
+    'preserves the confirmation boundary when a private Group label is unavailable: %s',
+    async (failure) => {
+        const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://private-label-review.test',
+            accountId, accountEncryptionMode: 'plain' });
+        const actionId = 'teams.groups.create';
+        const actionArgs = getActionSpec(actionId).inputSchema.parse({ v: 1, teamId, groupId: targetId,
+            requestKey: 'create-evening-group', name: sealPrivateLabelV1({ mode: 'plain',
+                binding: teamGroupLabelBinding(targetId, 'name'), value: name }) });
+        const row = describeApprovalActionFields({ actionId, actionArgs }).rows.find(row => row.path === 'name');
+        if (row?.kind !== 'value' || row.reference?.kind !== 'privateLabel') throw new Error('Missing private Group name');
+        expect(row.value).toBe(targetId);
+        expect(actionArgs.groupId).toBe(targetId);
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            const reference = failure === 'malformed envelope' ? { ...row.reference,
+                stored: { ...row.reference.stored, content: { t: 'encrypted' as const, c: '' } } } : row.reference;
+            const error = failure === 'scope retired'
+                ? Object.assign(new Error('Captured Account retired'), { code: 'action_account_scope_changed' })
+                : new Error('Device label opener unavailable');
+            if (failure !== 'malformed envelope') {
+                // Inject a failure at the captured Account boundary called by the real Group opener.
+                vi.spyOn(account, 'assertCurrent').mockImplementationOnce(() => { throw error; });
+            }
+            const reading = readApprovalReferenceForConfirmation(reference, account);
+            if (failure === 'scope retired') {
+                await expect(reading).rejects.toBe(error);
+            } else {
+                await expect(reading).resolves.toMatchObject({ text: t('common.unavailable'), named: false });
+            }
+        } finally { account.dispose(); }
+    },
+);
