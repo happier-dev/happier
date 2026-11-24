@@ -5,10 +5,14 @@ import { readMachineIrohEndpointAuthorityV1, MachineOperationProtocolCapabilitie
 
 export type MachineAvailabilityState = "available" | "revoked" | "replaced" | "missing";
 
-/** Admission may retain offline work; delivery consumes this same online requirement. */
+export const MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC = {
+    reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine',
+} as const satisfies MachineAvailabilityDiagnosticV1;
+
+/** For admissions that require the published online observation. */
 export function readMachineOnlineAvailabilityDiagnostic(machine: Readonly<{ active: boolean }>, requireOnline?: boolean): MachineAvailabilityDiagnosticV1 | undefined {
     return requireOnline === true && !machine.active
-        ? { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } : undefined;
+        ? MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC : undefined;
 }
 
 export function classifyMachineAvailabilityState(

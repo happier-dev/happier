@@ -2970,9 +2970,9 @@ or client presence delivery. The default deadline remains three intervals:
 150 seconds after the last received beat, subject to the existing operator
 override. Home pushes one observation per recipient on each online/offline
 transition; the offline observation retains the last stored `activeAt`.
-An explicit clean socket disconnect persists Offline immediately and releases
-the publisher claim before pushing the transition. An unexpected
-transport loss retains the missed-heartbeat deadline.
+When Home observes the owning socket disconnect, it persists Offline and
+releases the publisher claim before pushing the transition. If Home lacks a
+disconnect observation, the missed-heartbeat deadline still applies.
 
 During graceful daemon shutdown, fresh SCM Machine RPC admissions return
 `daemon_shutting_down` before any effect. The existing drain keeps the socket
@@ -3017,10 +3017,13 @@ requester has access: its closed `reason`, `requiredFact`, and `remedy` distingu
 an offline Machine, a missing installation, revocation, and replacement. External
 Actions keep `target_unavailable` as the failure code and carry this diagnostic in
 V1 execution `details` or pre-open HTTP `diagnostic`, including authorization
-minting. Current clients retain
-those fields through their Action failure projection. This unreleased 0.3 contract
-requires matching Protocol, Home, and client readers; it adds no admission checks,
-presence timers, retries, or persisted fields.
+minting. Current clients retain those fields through their Action failure
+projection. For delivery, Home uses the registered daemon socket. If the method
+is between registrations, Home waits within its existing scoped RPC registration
+grace. A complete Machine-room census showing no daemon after that wait supplies
+the offline diagnostic. A request whose daemon acknowledgment is lost keeps its
+existing unknown outcome. This unreleased 0.3 contract uses the existing wire
+fields, presence timers, and persisted state.
 
 A 0.2 Home omits the projection marker, retaining its existing UI heartbeat grace
 and shared runtime clock. Its ten-minute default Machine timeout accommodates a

@@ -1,5 +1,6 @@
 import type { Server, Socket } from "socket.io";
 import { createHash, randomUUID } from "node:crypto";
+import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -44,6 +45,7 @@ import {
 } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import {
     classifyMachineAvailabilityState,
+    MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC,
 } from "@/app/machines/machineStateGuards";
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
@@ -77,6 +79,7 @@ export type RpcForwardResult =
         errorCode?: string;
         answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[];
         failureCause?: ActionFailureCauseV1;
+        machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1;
       }>
     | Readonly<{ ok: false } & AnyClientUpgradeRequiredV1>;
 
@@ -85,6 +88,7 @@ function recordMethodUnavailable(params: Readonly<{
     callStartedAt: number;
     targetUnavailable?: boolean;
     methodNotFound?: boolean;
+    machineAvailabilityDiagnostic?: MachineAvailabilityDiagnosticV1;
 }>): Extract<RpcForwardResult, { ok: false; error: string }> {
     recordRpcMethodNotAvailable(params.method);
     recordRpcCallFailure(params.method, params.targetUnavailable ? "target_unavailable" : params.methodNotFound ? "method_not_found" : "method_not_available");
@@ -97,6 +101,7 @@ function recordMethodUnavailable(params: Readonly<{
         ok: false,
         error: params.targetUnavailable ? "RPC target unavailable" : params.methodNotFound ? RPC_ERROR_MESSAGES.METHOD_NOT_FOUND : RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
         errorCode: params.targetUnavailable ? "target_unavailable" : params.methodNotFound ? RPC_ERROR_CODES.METHOD_NOT_FOUND : RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        ...(params.machineAvailabilityDiagnostic ? { machineAvailabilityDiagnostic: params.machineAvailabilityDiagnostic } : {}),
     };
 }
 
@@ -359,6 +364,8 @@ async function executeRpcForwardCall(params: Readonly<{
             method: params.method,
             callStartedAt,
             targetUnavailable: params.isTargetUnavailable ? await params.isTargetUnavailable() : presence === 'disconnected',
+            ...(params.admittedMachineTarget && presence === 'disconnected'
+                ? { machineAvailabilityDiagnostic: MACHINE_OFFLINE_AVAILABILITY_DIAGNOSTIC } : {}),
             // A failed census, guard rejection or cancelled wake is not method absence.
             methodNotFound: methodRegistrationAbsent && presence === 'method-absent' && !params.callerLifetime,
         });

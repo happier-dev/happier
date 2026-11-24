@@ -21,7 +21,7 @@ import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { Server } from "socket.io";
 
-import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from "@/app/machines/machineStateGuards";
+import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { auth, ApiTokenOperationError, type ExternalActionGrantEvaluationContext, type ExternalActionExecutionAuthorizationMintInput } from "@/app/auth/auth";
 import { admitManagedAcquire, ExternalActionAdmissionUnexpectedError } from '@/app/machines/managed/managedAcquire';
 import { cancelManagedCreation } from '@/app/machines/managed/managedRead';
@@ -42,7 +42,7 @@ import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { resolveMachineAdmission } from "@/app/machines/machineAccess";
 import { readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
-import { isRetainedMachineOperationRequest, type MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
+import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { getAccountSessionSocketRoom } from "@/app/api/socketRooms";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -141,7 +141,6 @@ type ResolveMachine = (params: Readonly<{
     envelope?: ExternalActionRequestEnvelope;
     requiredExternalActionExecutionAuthorization?: true;
     requiredSessionInputAdmissionProtocolVersion?: 2;
-    requireOnline?: boolean;
     /** Delivery of a root this dispatch already admitted and minted: prove only its exact installation. */
     admittedDelivery?: true;
     /** Retain only the canonical admission produced by this successful resolution. */
@@ -374,7 +373,6 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
             installationId: true,
             revokedAt: true,
             replacedByMachineId: true,
-            active: true,
             operationProtocolCapabilities: true,
             operationProtocolCapabilitiesRevision: true,
         },
@@ -444,8 +442,6 @@ async function resolveMachineFromServer(params: Parameters<ResolveMachine>[0]): 
             return failureCause ? { kind: 'not_owned', failureCause } : 'not_owned';
         }
         if (admission.custodianAccountId !== machine.accountId || admission.installationId !== machine.installationId) return 'unavailable';
-        const diagnostic = readMachineOnlineAvailabilityDiagnostic(machine, params.requireOnline ?? true);
-        if (diagnostic) return { kind: 'unavailable', diagnostic };
         const { kind: _kind, ...context } = admission;
         machineAdmission = context;
     }
@@ -869,8 +865,6 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...((executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission)
                     ? { handoffAdmission: executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission } : {}),
                 requiredExternalActionExecutionAuthorization: true,
-                ...((managedWakeRoot || isRetainedMachineOperationRequest({ actionId: request.actionId }))
-                    ? { requireOnline: false } : {}),
                 ...(requiredSessionInputAdmissionProtocolVersion === undefined
                     ? {}
                     : { requiredSessionInputAdmissionProtocolVersion }),
@@ -1065,6 +1059,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                         : options.signal?.aborted ? 'aborted' : 'daemon_forward_not_ok',
                     requestId: request.envelope.requestId, machineId,
                     ...(cause?.success ? { failureCause: cause.data } : {}),
+                    machineAvailabilityDiagnostic: forwarded.kind === 'ready' && 'machineAvailabilityDiagnostic' in forwarded.value
+                        ? forwarded.value.machineAvailabilityDiagnostic : undefined,
                     ...(forwarded.kind === 'failed' ? { phaseFailure: forwarded } : {}),
                 });
         }
