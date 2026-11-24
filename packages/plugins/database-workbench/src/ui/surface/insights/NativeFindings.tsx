@@ -188,7 +188,7 @@ function NativeFinding({ target, request, recordKey, relation, dismissalKey, onD
     {shape ? <Text>{shape}</Text> : null}
     {finding.coverage.status === 'partial' ? <Text tone="secondary">{finding.coverage.reasons.join(', ')}</Text> : null}
     <Row gap="small" wrap>
-      <FindingBrief target={target} recordKey={recordKey} request={selectedRequest} />
+      <FindingBrief target={target} recordKey={recordKey} request={selectedRequest} finding={finding} />
       {dismissalKey ? <Button size="small" variant="secondary" busy={dismiss.execution.status === 'pending'}
         title={t('plugins.database.insights.dismissFinding', 'Dismiss finding')} onPress={dismissFinding} /> : null}
     </Row>

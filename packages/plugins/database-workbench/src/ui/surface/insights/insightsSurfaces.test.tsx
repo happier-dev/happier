@@ -211,6 +211,7 @@ describe('Database Insights surfaces', () => {
       { recordKey: 'q-lines', dismissalKey, summary: { records: 1, calls: '2100000', totalTimeMs: 441000 } },
     ] }));
     const dismiss = vi.fn(async (_call: PluginUiTestkitExecuteActionInput) => ({ ok: true }));
+    const openAutomationEvent = vi.fn(async (_request: unknown) => {});
     const detail = vi.fn(async (_call: PluginUiTestkitExecuteActionInput) =>
       projectNativeJsonValueForTransport({ ok: true, finding: { ...observation, target: descriptor.target,
         normalizedShape: LINES, summary: { records: 1, calls: '2100000', totalTimeMs: 441000 },
@@ -220,7 +221,7 @@ describe('Database Insights surfaces', () => {
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage, subPath: 'insights',
       surfaceContext: pageContext(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
-      handlers: { ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath,
+      handlers: { ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath, openAutomationEvent,
         executeAction: call => call.action === dismissId ? dismiss(call) : call.action === listId ? list(call)
           : call.action === readId ? detail(call) : nativeRead(call) },
     });
@@ -239,6 +240,13 @@ describe('Database Insights surfaces', () => {
         target: descriptor.target, recordKey: 'q-lines', subscriptionId: expect.any(String),
       });
       expect(await page.queryByText(LINES)).toBeTruthy();
+      const workflow = await page.findByRole('button', { name: 'Create workflow from finding' });
+      await act(async () => { await page.press(workflow); });
+      expect(detail).toHaveBeenCalledTimes(1);
+      expect(openAutomationEvent.mock.lastCall?.[0]).toMatchObject({
+        request: { setupInput: { sourceScope: observation.sourceScope },
+          initialFilter: { v: 1, all: [{ op: 'eq', field: '/observation/kind', value: 'statements' }] } },
+      });
       await page.press(await page.getByRole('button', { name: 'Dismiss finding' }));
       await settle();
       expect(dismiss.mock.calls.map(([call]) => call.input)).toEqual([{ target: descriptor.target, dismissalKey }]);
@@ -759,6 +767,7 @@ describe('Database Insights surfaces', () => {
     }));
     const actionControl = createPluginUiActionControlTestHost(handoff);
     const openSurface = vi.fn(async () => {});
+    const openAutomationEvent = vi.fn(async (_request: unknown) => {});
     const details = await createPluginUiTestkit({
       identity: { instanceId: 'finding', mountNonce: 'finding' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -770,7 +779,7 @@ describe('Database Insights surfaces', () => {
         target: { kind: 'session', sessionId: 'session-1' },
       }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { ...resourceHandlers(), executeAction, actionControl: actionControl.handler, openSurface },
+      handlers: { ...resourceHandlers(), executeAction, actionControl: actionControl.handler, openSurface, openAutomationEvent },
     });
     function findingCalls() {
       return executeAction.mock.calls.map(([call]) => call).filter(call => call.action === readId || call.action === buildId);
@@ -784,6 +793,17 @@ describe('Database Insights surfaces', () => {
         { action: buildId, input: { target: descriptor.target, recordKey: 'q-slow' } },
       ]);
       expect(await details.getByText('Investigate the selected statement')).toBeTruthy();
+      const workflow = await details.findByRole('button', { name: 'Create workflow from finding' });
+      await act(async () => { await details.press(workflow); });
+      expect(findingCalls().at(-1)).toMatchObject({ action: readId, input: { target: descriptor.target, recordKey: 'q-slow' } });
+      expect(openAutomationEvent.mock.lastCall?.[0]).toMatchObject({
+        request: {
+          eventRef: { pluginId: 'happier.database', localId: 'finding-observed' },
+          monitoringMachineId: scope.workspace.machineId,
+          setupInput: { sourceScope: baseline.sourceScope },
+          initialFilter: { v: 1, all: [{ op: 'eq', field: '/observation/kind', value: 'statements' }] },
+        },
+      });
       expect(handoff).not.toHaveBeenCalled();
       await act(async () => { await actionControl.press('Send brief'); });
       expect(handoff).toHaveBeenCalledOnce();

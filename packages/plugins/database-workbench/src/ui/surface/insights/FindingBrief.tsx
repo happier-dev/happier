@@ -3,10 +3,13 @@ import { isPluginError } from '@happier-dev/plugin-sdk';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import {
   DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+  DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
   databaseActionLocalIdV1,
 } from '@happier-dev/database-protocol';
 import {
   DatabaseFindingBriefBuildResultV1Schema,
+  DatabaseFindingReadResultV1Schema,
+  type DatabaseFindingV1,
   type DatabaseFindingBriefBuildResultV1,
   type DatabaseStatsReadV1,
   type DatabaseTargetV1,
@@ -15,37 +18,45 @@ import { projectNativeJsonValueForTransport, ProtocolWorkspaceAddressV1Schema } 
 import { SessionInputHandoffResultV1Schema, type SessionInputHandoffInputV1 } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { Action, Button, ErrorState, Markdown, Row, Stack, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction, usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
+import { buildDatabaseFindingWorkflowSeed } from '../../../insights/findingEventSource.js';
 import { createDatabaseBriefHandoffControl } from '../../../insights/migration.js';
 import { useWorkbenchInstance } from '../../hooks.js';
 import { statementByKey } from './statements.js';
 
 const buildAction = databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1);
+const readAction = databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1);
 type Brief = Extract<DatabaseFindingBriefBuildResultV1, { ok: true }>['brief'];
 
-export function FindingBrief({ target, recordKey, sourceSelection, request }: Readonly<{
+export function FindingBrief({ target, recordKey, sourceSelection, request, finding }: Readonly<{
   target: DatabaseTargetV1; recordKey: string; sourceSelection?: PluginTargetedContributionSelectionV1; request?: DatabaseStatsReadV1;
+  finding?: DatabaseFindingV1;
 }>) {
   const t = usePluginTranslation();
   const surface = useSurfaceContext();
+  const host = usePluginHostApi();
   const { client } = useWorkbenchInstance();
   const build = useExecutePluginAction(buildAction);
+  const read = useExecutePluginAction(readAction);
   const [brief, setBrief] = React.useState<Brief | null>(null);
   const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
   const missing = t('plugins.database.insights.briefUnavailable', 'The finding brief could not be prepared.');
+  const prepareInput = async () => {
+    if (sourceSelection) return projectNativeJsonValueForTransport({ target, recordKey, sourceSelection });
+    const subscriptionId = await client.readDemandSubscriptionId?.(target);
+    return projectNativeJsonValueForTransport({ target, recordKey, request: request ?? statementByKey(recordKey),
+      ...(subscriptionId === undefined ? {} : { subscriptionId }) });
+  };
   const prepare = async () => {
     setError(null);
-    let subscriptionId: string | undefined;
+    let result: Awaited<ReturnType<typeof build.execute>>;
     try {
-      if (!sourceSelection) subscriptionId = await client.readDemandSubscriptionId?.(target);
+      result = await build.execute(await prepareInput());
     } catch (cause) {
       setError({ title: missing, details: isPluginError(cause) ? `${cause.code} (${cause.message})`
         : cause instanceof Error ? cause.message : undefined });
       return;
     }
-    const input = sourceSelection ? { target, recordKey, sourceSelection } : { target, recordKey,
-      request: request ?? statementByKey(recordKey), ...(subscriptionId === undefined ? {} : { subscriptionId }) };
-    const result = await build.execute(projectNativeJsonValueForTransport(input));
     if (result.status === 'pending') return;
     if (result.status !== 'success') {
       setError({ title: 'message' in result ? result.message : missing });
@@ -60,6 +71,33 @@ export function FindingBrief({ target, recordKey, sourceSelection, request }: Re
       return;
     }
     setBrief(prepared.data.brief);
+  };
+  const createWorkflow = async () => {
+    setError(null);
+    const title = t('plugins.database.insights.workflowUnavailable', 'The Workflow editor could not be opened.');
+    try {
+      let selected = finding;
+      if (!selected) {
+        const result = await read.execute(await prepareInput());
+        if (result.status === 'pending') return;
+        if (result.status !== 'success') {
+          setError({ title, details: 'message' in result ? result.message : undefined });
+          return;
+        }
+        const parsed = DatabaseFindingReadResultV1Schema.safeParse(result.result);
+        if (!parsed.success || !parsed.data.ok) {
+          setError({ title, details: parsed.success && !parsed.data.ok ? parsed.data.code : undefined });
+          return;
+        }
+        selected = parsed.data.finding;
+      }
+      const seed = buildDatabaseFindingWorkflowSeed(selected);
+      if (seed) await host.openAutomationEvent(seed);
+      else setError({ title });
+    } catch (cause) {
+      setError({ title, details: isPluginError(cause) ? `${cause.code} (${cause.message})`
+        : cause instanceof Error ? cause.message : undefined });
+    }
   };
   const settled = (execution: PluginUiActionControlExecution) => {
     const result = projectPluginActionControlExecutionV1(execution, t);
@@ -95,6 +133,8 @@ export function FindingBrief({ target, recordKey, sourceSelection, request }: Re
       </Row>
     </> : <Button size="small" variant="secondary" busy={build.execution.status === 'pending'}
       title={t('plugins.database.insights.prepareBrief', 'Prepare brief')} onPress={prepare} />}
+    {!sourceSelection ? <Button size="small" variant="secondary" busy={read.execution.status === 'pending'}
+      title={t('plugins.database.insights.createWorkflow', 'Create workflow from finding')} onPress={createWorkflow} /> : null}
     {error ? <ErrorState layout="line" {...error} /> : null}
   </Stack>;
 }

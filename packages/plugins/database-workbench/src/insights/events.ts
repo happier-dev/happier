@@ -3,22 +3,16 @@ import { AutomationDatabaseSubjectV1ProtocolSchema, automationSubjectKeyV1, proj
     type AutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/events';
 import { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema,
     type PluginEventDispositionV1 } from '@happier-dev/plugin-sdk/events';
-import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 import {
     DatabaseFindingObservationV1ProtocolSchema,
-    DatabaseFindingSourceScopeV1ProtocolSchema,
     type DatabaseFindingObservationV1,
 } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_FINDING_EVENT_REF, DatabaseFindingEventSourceV1Schema, type DatabaseFindingEventSourceV1 } from './findingEventSource.js';
 
-export const DATABASE_FINDING_EVENT_REF = { pluginId: 'happier.database', localId: 'finding-observed' } as const;
+export { DATABASE_FINDING_EVENT_REF } from './findingEventSource.js';
 export const DATABASE_FINDING_SETUP_LOCAL_ID = 'insights/observation/setup';
 export const DATABASE_FINDING_SOURCE_CONTRACT_VERSION = 1;
-
-export const DatabaseFindingEventSourceV1Schema = defineProtocolObject({
-    v: defineProtocolLiteral(1), subject: AutomationDatabaseSubjectV1ProtocolSchema,
-    sourceScope: DatabaseFindingSourceScopeV1ProtocolSchema,
-}, { policy: 'closed' });
-export type DatabaseFindingEventSourceV1 = ReturnType<typeof DatabaseFindingEventSourceV1Schema.parse>;
 
 export const DatabaseFindingEventPayloadV1Schema = defineProtocolObject({
     subject: AutomationDatabaseSubjectV1ProtocolSchema, observation: DatabaseFindingObservationV1ProtocolSchema,
