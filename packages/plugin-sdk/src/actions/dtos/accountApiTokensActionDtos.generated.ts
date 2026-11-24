@@ -198,6 +198,25 @@ export type AccountApiTokensActionInputById = {
                     path: string;
                     content: string;
                 }[];
+            } | {
+                workspaceId: string;
+                kind: 'folder';
+                manifestFingerprint: string;
+                fileCount: number;
+                totalBytes: number;
+                excludedPaths: string[];
+                includeEnvFiles?: true | undefined;
+                compose?: undefined | {
+                    profiles: string[];
+                    services: string[];
+                    path: string;
+                    primaryService?: string | undefined;
+                };
+                unsupportedFilePaths?: string[] | undefined;
+                exclusionReasons?: undefined | {
+                    path: string;
+                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                }[];
             };
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             whenBusy?: 'refuse' | 'supersede' | undefined;
@@ -392,6 +411,25 @@ export type AccountApiTokensActionInputById = {
                 publicFiles?: undefined | {
                     path: string;
                     content: string;
+                }[];
+            } | {
+                workspaceId: string;
+                kind: 'folder';
+                manifestFingerprint: string;
+                fileCount: number;
+                totalBytes: number;
+                excludedPaths: string[];
+                includeEnvFiles?: true | undefined;
+                compose?: undefined | {
+                    profiles: string[];
+                    services: string[];
+                    path: string;
+                    primaryService?: string | undefined;
+                };
+                unsupportedFilePaths?: string[] | undefined;
+                exclusionReasons?: undefined | {
+                    path: string;
+                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
                 }[];
             };
             sourceMethod?: 'gitIntegration' | 'upload' | undefined;

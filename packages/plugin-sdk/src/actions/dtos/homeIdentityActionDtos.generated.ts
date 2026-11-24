@@ -56,33 +56,33 @@ export type HomeIdentityActionInputById = {
             v: 1;
             kind: 'workos_sso';
         };
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.enable": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.disable": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.remove.preview": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.remove": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.test.start": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.test.consume": {
         v: 1;
@@ -100,13 +100,13 @@ export type HomeIdentityActionInputById = {
     };
     readonly "home.identity.workos.reconcile": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.workos.connection.set": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
         workosConnectionId: string;
     };
 };

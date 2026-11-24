@@ -2,12 +2,46 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { InputPredicate, JSONType } from './pluginActionDtoSupport.generated.js';
+import type { InputPredicate, JSONType, SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
 
 export type MachineReachabilityActionInputById = {
     readonly "machines.reachability.inspect": {
         machineId: string;
         change?: undefined | {
+            kind: 'homeRelay';
+            relay: {
+                channel: 'dev' | 'preview' | 'stable';
+                mode: 'system' | 'user';
+            };
+            selection: null | {
+                provider: {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                config: JsonValue;
+                credentialRefs: {
+                    purpose: string;
+                    credentialRef: {
+                        kind: 'connectedAccount';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'savedSecret';
+                    };
+                }[];
+            };
+            hostname?: string | undefined;
+        } | {
             kind: 'posture';
             posture: {
                 revision: number;
@@ -116,10 +150,48 @@ export type MachineReachabilityActionInputById = {
                 }[];
             };
         };
+        homeRelay?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
         serverId?: string | undefined;
     };
     readonly "machines.reachability.configure": {
         change: {
+            kind: 'homeRelay';
+            relay: {
+                channel: 'dev' | 'preview' | 'stable';
+                mode: 'system' | 'user';
+            };
+            selection: null | {
+                provider: {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                config: JsonValue;
+                credentialRefs: {
+                    purpose: string;
+                    credentialRef: {
+                        kind: 'connectedAccount';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'savedSecret';
+                    };
+                }[];
+            };
+            hostname?: string | undefined;
+        } | {
             kind: 'posture';
             posture: {
                 revision: number;
@@ -261,6 +333,40 @@ export type MachineReachabilityActionInputById = {
                 }[];
             }[];
             change: {
+                kind: 'homeRelay';
+                relay: {
+                    channel: 'dev' | 'preview' | 'stable';
+                    mode: 'system' | 'user';
+                };
+                selection: null | {
+                    provider: {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    config: JsonValue;
+                    credentialRefs: {
+                        purpose: string;
+                        credentialRef: {
+                            kind: 'connectedAccount';
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'savedSecret';
+                        };
+                    }[];
+                };
+                hostname?: string | undefined;
+            } | {
                 kind: 'posture';
                 posture: {
                     revision: number;
@@ -1332,6 +1438,49 @@ export type MachineReachabilityActionInputById = {
                     selectedCheckIds?: string[] | undefined;
                 };
             }[];
+            homeRelay?: undefined | {
+                route: {
+                    ownerId: string;
+                    hostname: string;
+                    httpsPort: number;
+                    path: string;
+                    upstream: string;
+                };
+                currentSelection: null | {
+                    provider: {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    config: JsonValue;
+                    credentialRefs: {
+                        purpose: string;
+                        credentialRef: {
+                            kind: 'connectedAccount';
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            ref: string;
+                            resourceRevision: number;
+                            kind: 'savedSecret';
+                        };
+                    }[];
+                };
+                currentRoute?: undefined | {
+                    ownerId: string;
+                    hostname: string;
+                    httpsPort: number;
+                    path: string;
+                    upstream: string;
+                };
+            };
             nativeFirewall?: undefined | {
                 status: 'available';
                 ownedTable: 'absent' | 'present';
@@ -1595,6 +1744,9 @@ export type MachineReachabilityActionInputById = {
                 provider: {
                     kind: 'builtin';
                     id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
                 };
                 profileId: null | string;
                 networkIdentity: null | string;
@@ -1986,6 +2138,40 @@ export type MachineReachabilityActionResultById = {
                     }[];
                 }[];
                 change: {
+                    kind: 'homeRelay';
+                    relay: {
+                        channel: 'dev' | 'preview' | 'stable';
+                        mode: 'system' | 'user';
+                    };
+                    selection: null | {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        config: JsonValue;
+                        credentialRefs: {
+                            purpose: string;
+                            credentialRef: {
+                                kind: 'connectedAccount';
+                                account: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'savedSecret';
+                            };
+                        }[];
+                    };
+                    hostname?: string | undefined;
+                } | {
                     kind: 'posture';
                     posture: {
                         revision: number;
@@ -3057,6 +3243,49 @@ export type MachineReachabilityActionResultById = {
                         selectedCheckIds?: string[] | undefined;
                     };
                 }[];
+                homeRelay?: undefined | {
+                    route: {
+                        ownerId: string;
+                        hostname: string;
+                        httpsPort: number;
+                        path: string;
+                        upstream: string;
+                    };
+                    currentSelection: null | {
+                        provider: {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        config: JsonValue;
+                        credentialRefs: {
+                            purpose: string;
+                            credentialRef: {
+                                kind: 'connectedAccount';
+                                account: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                ref: string;
+                                resourceRevision: number;
+                                kind: 'savedSecret';
+                            };
+                        }[];
+                    };
+                    currentRoute?: undefined | {
+                        ownerId: string;
+                        hostname: string;
+                        httpsPort: number;
+                        path: string;
+                        upstream: string;
+                    };
+                };
                 nativeFirewall?: undefined | {
                     status: 'available';
                     ownedTable: 'absent' | 'present';
@@ -3320,6 +3549,9 @@ export type MachineReachabilityActionResultById = {
                     provider: {
                         kind: 'builtin';
                         id: string;
+                    } | {
+                        pluginId: string;
+                        localId: string;
                     };
                     profileId: null | string;
                     networkIdentity: null | string;
@@ -3333,6 +3565,42 @@ export type MachineReachabilityActionResultById = {
                     groupGid: number;
                     mode: 384;
                 };
+            };
+        };
+        relayAccess?: undefined | {
+            configured: boolean;
+            providerId: null | string;
+            selection: null | {
+                provider: {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                config: JsonValue;
+                credentialRefs: {
+                    purpose: string;
+                    credentialRef: {
+                        kind: 'connectedAccount';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'savedSecret';
+                    };
+                }[];
+            };
+            status: {
+                state: 'disabled' | 'enabled' | 'error' | 'needs_auth' | 'unknown';
+                shareUrl: null | string;
+                details: SystemTaskJsonValue;
             };
         };
     };
@@ -3698,6 +3966,42 @@ export type MachineReachabilityActionResultById = {
             restore?: undefined | {
                 capturedAt: string;
                 commands: string[];
+            };
+        };
+        relayAccess?: undefined | {
+            configured: boolean;
+            providerId: null | string;
+            selection: null | {
+                provider: {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
+                };
+                config: JsonValue;
+                credentialRefs: {
+                    purpose: string;
+                    credentialRef: {
+                        kind: 'connectedAccount';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'savedSecret';
+                    };
+                }[];
+            };
+            status: {
+                state: 'disabled' | 'enabled' | 'error' | 'needs_auth' | 'unknown';
+                shareUrl: null | string;
+                details: SystemTaskJsonValue;
             };
         };
         nextStep?: 'apply_firewall_recipe' | undefined;

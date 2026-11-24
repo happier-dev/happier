@@ -107,6 +107,7 @@ export type WorkflowEventCatalogActionResultById = {
                         prompt?: string | undefined;
                         description?: string | undefined;
                         placeholder?: string | undefined;
+                        unsetLabel?: string | undefined;
                         options?: readonly {
                             value: JsonValue;
                             label: string;
@@ -183,6 +184,7 @@ export type WorkflowEventCatalogActionResultById = {
                         prompt?: string | undefined;
                         description?: string | undefined;
                         placeholder?: string | undefined;
+                        unsetLabel?: string | undefined;
                         options?: readonly {
                             value: JsonValue;
                             label: string;

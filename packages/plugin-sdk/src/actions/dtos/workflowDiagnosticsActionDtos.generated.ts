@@ -125,6 +125,18 @@ export type WorkflowDiagnosticsActionResultById = {
                             providerConnectionId: string;
                             modelId: string;
                         } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
@@ -253,8 +265,6 @@ export type WorkflowDiagnosticsActionResultById = {
                         };
                     };
                     title?: string | undefined;
-                    primaryTeamId?: null | string | undefined;
-                    memoryEnabled?: boolean | undefined;
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
@@ -276,6 +286,8 @@ export type WorkflowDiagnosticsActionResultById = {
                             revision?: number | undefined;
                         }>;
                     };
+                    memoryEnabled?: boolean | undefined;
+                    primaryTeamId?: null | string | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
@@ -511,6 +523,22 @@ export type WorkflowDiagnosticsActionResultById = {
                         localId: string;
                     };
                     accountId: string;
+                };
+                initialFilter?: undefined | {
+                    v: 1;
+                    all: ({
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
                 };
             };
             triggerSeed?: undefined | {
@@ -630,6 +658,18 @@ export type WorkflowDiagnosticsActionResultById = {
                             providerConnectionId: string;
                             modelId: string;
                         } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
@@ -758,8 +798,6 @@ export type WorkflowDiagnosticsActionResultById = {
                         };
                     };
                     title?: string | undefined;
-                    primaryTeamId?: null | string | undefined;
-                    memoryEnabled?: boolean | undefined;
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
@@ -781,6 +819,8 @@ export type WorkflowDiagnosticsActionResultById = {
                             revision?: number | undefined;
                         }>;
                     };
+                    memoryEnabled?: boolean | undefined;
+                    primaryTeamId?: null | string | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
@@ -1016,6 +1056,22 @@ export type WorkflowDiagnosticsActionResultById = {
                         localId: string;
                     };
                     accountId: string;
+                };
+                initialFilter?: undefined | {
+                    v: 1;
+                    all: ({
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
                 };
             };
             triggerSeed?: undefined | {

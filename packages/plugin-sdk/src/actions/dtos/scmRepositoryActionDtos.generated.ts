@@ -518,6 +518,7 @@ export type ScmRepositoryActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -580,6 +581,7 @@ export type ScmRepositoryActionResultById = {
                     pushUrl?: string | undefined;
                 }[];
                 defaultBranch?: null | string | undefined;
+                defaultRef?: null | string | undefined;
             };
             capabilities: {
                 capabilityScope: 'local-backend';
@@ -1169,6 +1171,7 @@ export type ScmRepositoryActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -1542,6 +1545,7 @@ export type ScmRepositoryActionResultById = {
                     pushUrl?: string | undefined;
                 }[];
                 defaultBranch?: null | string | undefined;
+                defaultRef?: null | string | undefined;
             };
             capabilities: {
                 capabilityScope: 'local-backend';
@@ -2131,6 +2135,7 @@ export type ScmRepositoryActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -2506,6 +2511,7 @@ export type ScmRepositoryActionResultById = {
                     pushUrl?: string | undefined;
                 }[];
                 defaultBranch?: null | string | undefined;
+                defaultRef?: null | string | undefined;
             };
             capabilities: {
                 capabilityScope: 'local-backend';
@@ -3157,6 +3163,7 @@ export type ScmRepositoryActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -3176,6 +3183,7 @@ export type ScmRepositoryActionResultById = {
             remediation?: undefined | {
                 [x: string]: unknown;
                 kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                providerDisplayName?: string | undefined;
                 label?: string | undefined;
                 action?: string | undefined;
                 url?: string | undefined;
@@ -3213,6 +3221,7 @@ export type ScmRepositoryActionResultById = {
                 remediation?: undefined | {
                     [x: string]: unknown;
                     kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                    providerDisplayName?: string | undefined;
                     label?: string | undefined;
                     action?: string | undefined;
                     url?: string | undefined;
@@ -3574,6 +3583,7 @@ export type ScmRepositoryActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -3975,6 +3985,7 @@ export type ScmRepositoryActionResultById = {
                     pushUrl?: string | undefined;
                 }[];
                 defaultBranch?: null | string | undefined;
+                defaultRef?: null | string | undefined;
             };
             capabilities: {
                 capabilityScope: 'local-backend';

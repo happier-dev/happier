@@ -363,6 +363,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -468,6 +469,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -573,6 +575,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -678,6 +681,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -783,6 +787,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -888,6 +893,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -993,6 +999,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1098,6 +1105,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1203,6 +1211,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1308,6 +1317,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1413,6 +1423,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1518,6 +1529,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1645,6 +1657,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1750,6 +1763,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1855,6 +1869,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -1960,6 +1975,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2065,6 +2081,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2170,6 +2187,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2275,6 +2293,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2380,6 +2399,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2485,6 +2505,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2590,6 +2611,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2695,6 +2717,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2800,6 +2823,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -2905,6 +2929,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3010,6 +3035,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3131,6 +3157,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3236,6 +3263,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3341,6 +3369,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3446,6 +3475,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3551,6 +3581,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3656,6 +3687,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3761,6 +3793,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3866,6 +3899,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -3971,6 +4005,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4076,6 +4111,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4181,6 +4217,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4286,6 +4323,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4391,6 +4429,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4496,6 +4535,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4601,6 +4641,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4706,6 +4747,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4812,6 +4854,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -4918,6 +4961,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -5023,6 +5067,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };
@@ -5128,6 +5173,7 @@ export type VoiceControlsActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             };
         };

@@ -238,6 +238,7 @@ export type BoardsActionInputById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: unknown;
                                     label: string;
@@ -674,6 +675,7 @@ export type BoardsActionInputById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: unknown;
                                     label: string;
@@ -1037,6 +1039,7 @@ export type BoardsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -1317,6 +1320,7 @@ export type BoardsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;

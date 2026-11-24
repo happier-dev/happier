@@ -21,7 +21,6 @@ export type SkillsActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
-                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -35,6 +34,7 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
+                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -96,7 +96,6 @@ export type SkillsActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
-                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -110,6 +109,7 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
+                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -194,7 +194,6 @@ export type SkillsActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
-                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -208,6 +207,7 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
+                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {

@@ -1136,6 +1136,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         };
                         default?: undefined;
                     })[];
+                    credentialKind?: 'oauth' | 'token' | undefined;
                     browserReachability?: 'unreachable' | undefined;
                     title?: string | undefined | {
                         key: string;
@@ -1594,6 +1595,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         expiresAtMsKey: string;
                         metadataKeys: string[];
                     };
+                    secretCredentialKeys?: string[] | undefined;
                     credentialFieldKeys?: Record<string, string> | undefined;
                     credentialOrigin?: 'authentication' | 'native_import' | undefined;
                     accountDirectSave?: true | undefined | {
@@ -1604,6 +1606,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     kind: 'oauthAuthorizationCode';
                     pkce: 'required';
                     outcomeReconciliation: 'lateEvidence' | 'none' | 'providerCheck';
+                    credentialKind?: 'oauth' | 'token' | undefined;
                     browserReachability?: 'unreachable' | undefined;
                     title?: string | undefined | {
                         key: string;
@@ -2037,10 +2040,12 @@ export type ConnectedServicesConfigurationActionResultById = {
                         expiresAtMsKey: string;
                         metadataKeys: string[];
                     };
+                    secretCredentialKeys?: string[] | undefined;
                 } | {
                     id: string;
                     kind: 'oauthDeviceCode';
                     outcomeReconciliation: 'lateEvidence' | 'none' | 'providerCheck';
+                    credentialKind?: 'oauth' | 'token' | undefined;
                     browserReachability?: 'unreachable' | undefined;
                     title?: string | undefined | {
                         key: string;
@@ -2436,6 +2441,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         expiresAtMsKey: string;
                         metadataKeys: string[];
                     };
+                    secretCredentialKeys?: string[] | undefined;
                 })[];
                 account?: undefined | {
                     artifactId: string;
@@ -2753,6 +2759,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                             };
                             default?: undefined;
                         })[];
+                        credentialKind?: 'oauth' | 'token' | undefined;
                         browserReachability?: 'unreachable' | undefined;
                         title?: string | undefined | {
                             key: string;
@@ -3211,6 +3218,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                             expiresAtMsKey: string;
                             metadataKeys: string[];
                         };
+                        secretCredentialKeys?: string[] | undefined;
                         credentialFieldKeys?: Record<string, string> | undefined;
                         credentialOrigin?: 'authentication' | 'native_import' | undefined;
                         accountDirectSave?: true | undefined | {
@@ -3221,6 +3229,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                         kind: 'oauthAuthorizationCode';
                         pkce: 'required';
                         outcomeReconciliation: 'lateEvidence' | 'none' | 'providerCheck';
+                        credentialKind?: 'oauth' | 'token' | undefined;
                         browserReachability?: 'unreachable' | undefined;
                         title?: string | undefined | {
                             key: string;
@@ -3654,10 +3663,12 @@ export type ConnectedServicesConfigurationActionResultById = {
                             expiresAtMsKey: string;
                             metadataKeys: string[];
                         };
+                        secretCredentialKeys?: string[] | undefined;
                     } | {
                         id: string;
                         kind: 'oauthDeviceCode';
                         outcomeReconciliation: 'lateEvidence' | 'none' | 'providerCheck';
+                        credentialKind?: 'oauth' | 'token' | undefined;
                         browserReachability?: 'unreachable' | undefined;
                         title?: string | undefined | {
                             key: string;
@@ -4053,6 +4064,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                             expiresAtMsKey: string;
                             metadataKeys: string[];
                         };
+                        secretCredentialKeys?: string[] | undefined;
                     })[];
                     account?: undefined | {
                         artifactId: string;
@@ -5398,6 +5410,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 };
                 default?: undefined;
             })[];
+            credentialKind?: 'oauth' | 'token' | undefined;
             browserReachability?: 'unreachable' | undefined;
             title?: string | undefined | {
                 key: string;
@@ -5856,6 +5869,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 expiresAtMsKey: string;
                 metadataKeys: string[];
             };
+            secretCredentialKeys?: string[] | undefined;
             credentialFieldKeys?: Record<string, string> | undefined;
             credentialOrigin?: 'authentication' | 'native_import' | undefined;
             accountDirectSave?: true | undefined | {
@@ -5866,6 +5880,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             kind: 'oauthAuthorizationCode';
             pkce: 'required';
             outcomeReconciliation: 'lateEvidence' | 'none' | 'providerCheck';
+            credentialKind?: 'oauth' | 'token' | undefined;
             browserReachability?: 'unreachable' | undefined;
             title?: string | undefined | {
                 key: string;
@@ -6299,10 +6314,12 @@ export type ConnectedServicesConfigurationActionResultById = {
                 expiresAtMsKey: string;
                 metadataKeys: string[];
             };
+            secretCredentialKeys?: string[] | undefined;
         } | {
             id: string;
             kind: 'oauthDeviceCode';
             outcomeReconciliation: 'lateEvidence' | 'none' | 'providerCheck';
+            credentialKind?: 'oauth' | 'token' | undefined;
             browserReachability?: 'unreachable' | undefined;
             title?: string | undefined | {
                 key: string;
@@ -6698,6 +6715,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 expiresAtMsKey: string;
                 metadataKeys: string[];
             };
+            secretCredentialKeys?: string[] | undefined;
         };
         configuration: {
             status: 'configurationRequired' | 'ready';
@@ -7126,7 +7144,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     appliesToProviderLimitIds: string[];
                     unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
                 }> | undefined;
-                accountLabel?: null | string | undefined;
+                planLabel?: null | string | undefined;
                 recoveryCredits?: undefined | {
                     availableCount: number;
                     credits: {
@@ -7147,7 +7165,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                     confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 };
-                planLabel?: null | string | undefined;
+                accountLabel?: null | string | undefined;
             }[];
             meterDefinitions: {
                 details: {
@@ -7160,13 +7178,13 @@ export type ConnectedServicesConfigurationActionResultById = {
                 };
                 label: string;
                 status: 'estimated' | 'ok' | 'unavailable';
-                unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
                 meterId: string;
+                unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
                 source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                 scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                modelId?: null | string | undefined;
                 providerLimitId?: string | undefined;
                 confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
-                modelId?: null | string | undefined;
                 currency?: string | undefined;
                 resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                 windowDurationMs?: number | undefined;
@@ -8006,6 +8024,7 @@ export type ConnectedServicesConfigurationActionResultById = {
             status: 'complete';
         };
         savedSecretCleanup?: 'incomplete' | undefined;
+        savedSecretCleanupReason?: 'unreadable_references' | undefined;
     } | {
         status: 'revoked';
         account: {

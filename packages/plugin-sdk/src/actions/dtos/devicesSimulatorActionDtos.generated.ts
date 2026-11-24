@@ -111,7 +111,7 @@ export type DevicesSimulatorActionInputById = {
         type: 'simulator.keyframe.request';
         streamId: string;
         sourceId: string;
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -356,6 +356,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -376,7 +379,7 @@ export type DevicesSimulatorActionInputById = {
         type: 'simulator.quality.set';
         streamId: string;
         sourceId: string;
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -621,6 +624,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -677,7 +683,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.tap": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -922,6 +928,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -933,7 +942,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.swipe": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -1178,6 +1187,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1189,7 +1201,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.text": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -1434,6 +1446,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1445,7 +1460,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.key": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -1690,6 +1705,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1701,7 +1719,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.button": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -1946,6 +1964,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1957,7 +1978,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.pinch": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -2202,6 +2223,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -2213,7 +2237,7 @@ export type DevicesSimulatorActionInputById = {
     };
     readonly "devices.simulator.input.rotate": {
         type: 'simulator.control.send';
-        control: {
+        control: ({
             kind: 'browser_input';
             controlEpoch: number;
             event: {
@@ -2458,6 +2482,9 @@ export type DevicesSimulatorActionInputById = {
             button?: 'left' | 'middle' | 'right' | undefined;
             clickCount?: 2 | undefined;
             modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        }) & {
+            [x: string]: unknown;
+            leaseId?: string | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -3600,13 +3627,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -3706,13 +3733,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -3790,13 +3817,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -3874,13 +3901,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -3958,13 +3985,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4042,13 +4069,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4126,13 +4153,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4210,13 +4237,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4294,13 +4321,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4378,13 +4405,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4462,13 +4489,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4546,13 +4573,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4630,13 +4657,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4714,13 +4741,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;
@@ -4798,13 +4825,13 @@ export type DevicesSimulatorActionResultById = {
         lease?: undefined | {
             [x: string]: unknown;
             v: 1;
-            leaseId: string;
             streamId: string;
             sourceId: string;
             holderId: string;
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
+            leaseId: string;
         };
         sideband?: undefined | {
             v: 1;

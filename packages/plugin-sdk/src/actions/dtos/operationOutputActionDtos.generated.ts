@@ -205,6 +205,13 @@ export type OperationOutputActionResultById = {
                         status: 'available' | 'missing';
                         requestedId: string;
                     };
+                    accountErasure?: undefined | {
+                        sharedEnvironments: {
+                            name: string;
+                            environmentId: string;
+                            memberCount: number;
+                        }[];
+                    };
                 };
             };
             result?: unknown;
@@ -258,6 +265,11 @@ export type OperationOutputActionResultById = {
                     authorityCarrier: 'https' | 'iroh';
                     authorityDescriptorPresent: boolean;
                     kind: 'homeAuthorityMismatch';
+                } | {
+                    code: 'session_team_credential_binding_rejected';
+                    reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
+                    type: 'error';
+                    retryable: false;
                 } | {
                     environmentId: string;
                     domainId: string;
@@ -341,6 +353,17 @@ export type OperationOutputActionResultById = {
                     exitCode: null | number;
                     signal: null | number;
                     step?: number | undefined;
+                    failedSetupOperation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                        terminalId?: string | undefined;
+                    };
+                    setupOperation?: undefined | {
+                        operationId: string;
+                        terminalId?: string | undefined;
+                        runId?: string | undefined;
+                    };
                 } | {
                     kind: 'machineSetup';
                     failure: {
@@ -390,8 +413,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            outcome: 'not_applied';
                             reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                            outcome: 'not_applied';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -438,6 +461,11 @@ export type OperationOutputActionResultById = {
                     machineId: string;
                     agentId: string;
                     failure?: undefined | {
+                        code: 'session_team_credential_binding_rejected';
+                        reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
+                        type: 'error';
+                        retryable: false;
+                    } | {
                         organizationPlacement: {
                             sectionId: null | string;
                             tagIds: string[];
@@ -526,6 +554,7 @@ export type OperationOutputActionResultById = {
                             retryAfterMs?: number | undefined;
                             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                         };
                         terminalHostError?: undefined | {
                             kind: 'terminal_host_unavailable';
@@ -708,6 +737,7 @@ export type OperationOutputActionResultById = {
                     category: 'currentness' | 'schema' | 'status' | 'transport';
                     status?: number | undefined;
                     code?: string | undefined;
+                    schemaIssuePath?: (number | string)[] | undefined;
                 } | {
                     kind: 'managedGuestHome';
                     homeOrigin: string;
@@ -1168,6 +1198,10 @@ export type OperationOutputActionResultById = {
                                 metrics?: boolean | undefined;
                                 appLlmCost?: boolean | undefined;
                                 exceptions?: boolean | undefined;
+                            };
+                            telemetryCollector?: null | undefined | {
+                                machineId: string;
+                                installationKeyFingerprint: string;
                             };
                             providerVariables?: undefined | {
                                 useOurs: string[];
@@ -1756,6 +1790,44 @@ export type OperationOutputActionResultById = {
                     code: string;
                     effectAttempted?: boolean | undefined;
                     failureCause?: ActionFailureCauseV1 | undefined;
+                    nativeCause?: undefined | {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'plugin_action_input_schema_invalid';
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        issues: {
+                            path: (number | string)[];
+                            code: string;
+                        }[];
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
                     destinationReview?: undefined | {
                         accountId: string;
                         serverId: string;
@@ -1766,6 +1838,7 @@ export type OperationOutputActionResultById = {
                     retryNotBeforeMs?: number | undefined;
                     remediation?: undefined | {
                         kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                        providerDisplayName?: string | undefined;
                         label?: string | undefined;
                         action?: string | undefined;
                         url?: string | undefined;
@@ -1991,7 +2064,6 @@ export type OperationOutputActionResultById = {
                         phase: 'activate' | 'admission' | 'build' | 'cancel' | 'cleanup' | 'link' | 'observe' | 'restore' | 'send' | 'source' | 'teardown';
                         validation?: undefined | {
                             source: string;
-                            httpStatus: number;
                             issues: {
                                 code: string;
                                 path: (number | string)[];
@@ -2009,6 +2081,7 @@ export type OperationOutputActionResultById = {
                                     maximumSignedDistance: 0;
                                 };
                             }[];
+                            httpStatus?: number | undefined;
                         };
                         sourceAdmission?: undefined | {
                             phase: 'deployment_source_admission';
@@ -2037,7 +2110,6 @@ export type OperationOutputActionResultById = {
                         code: string;
                         validation?: undefined | {
                             source: string;
-                            httpStatus: number;
                             issues: {
                                 code: string;
                                 path: (number | string)[];
@@ -2055,6 +2127,7 @@ export type OperationOutputActionResultById = {
                                     maximumSignedDistance: 0;
                                 };
                             }[];
+                            httpStatus?: number | undefined;
                         };
                         sourceAdmission?: undefined | {
                             phase: 'deployment_source_admission';
@@ -2117,6 +2190,7 @@ export type OperationOutputActionResultById = {
                         retryAfterMs?: number | undefined;
                         reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                         savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                        credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                     };
                     terminalHostError?: undefined | {
                         kind: 'terminal_host_unavailable';
@@ -2396,6 +2470,7 @@ export type OperationOutputActionResultById = {
                     removeItemKeys?: string[] | undefined;
                 };
                 steps?: undefined | {
+                    state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     planIndex: number;
                     stepId: string;
                     label: string | {
@@ -2403,7 +2478,6 @@ export type OperationOutputActionResultById = {
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
                     };
-                    state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     failureCause?: string | undefined;
                     terminalId?: string | undefined;
                 }[];
@@ -2734,8 +2808,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            outcome: 'not_applied';
                             reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                            outcome: 'not_applied';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -3068,6 +3142,13 @@ export type OperationOutputActionResultById = {
                         status: 'available' | 'missing';
                         requestedId: string;
                     };
+                    accountErasure?: undefined | {
+                        sharedEnvironments: {
+                            name: string;
+                            environmentId: string;
+                            memberCount: number;
+                        }[];
+                    };
                 };
             };
             result?: unknown;
@@ -3121,6 +3202,11 @@ export type OperationOutputActionResultById = {
                     authorityCarrier: 'https' | 'iroh';
                     authorityDescriptorPresent: boolean;
                     kind: 'homeAuthorityMismatch';
+                } | {
+                    code: 'session_team_credential_binding_rejected';
+                    reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
+                    type: 'error';
+                    retryable: false;
                 } | {
                     environmentId: string;
                     domainId: string;
@@ -3204,6 +3290,17 @@ export type OperationOutputActionResultById = {
                     exitCode: null | number;
                     signal: null | number;
                     step?: number | undefined;
+                    failedSetupOperation?: undefined | {
+                        serverId: string;
+                        machineId: string;
+                        operationId: string;
+                        terminalId?: string | undefined;
+                    };
+                    setupOperation?: undefined | {
+                        operationId: string;
+                        terminalId?: string | undefined;
+                        runId?: string | undefined;
+                    };
                 } | {
                     kind: 'machineSetup';
                     failure: {
@@ -3253,8 +3350,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            outcome: 'not_applied';
                             reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                            outcome: 'not_applied';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
@@ -3301,6 +3398,11 @@ export type OperationOutputActionResultById = {
                     machineId: string;
                     agentId: string;
                     failure?: undefined | {
+                        code: 'session_team_credential_binding_rejected';
+                        reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
+                        type: 'error';
+                        retryable: false;
+                    } | {
                         organizationPlacement: {
                             sectionId: null | string;
                             tagIds: string[];
@@ -3389,6 +3491,7 @@ export type OperationOutputActionResultById = {
                             retryAfterMs?: number | undefined;
                             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                         };
                         terminalHostError?: undefined | {
                             kind: 'terminal_host_unavailable';
@@ -3571,6 +3674,7 @@ export type OperationOutputActionResultById = {
                     category: 'currentness' | 'schema' | 'status' | 'transport';
                     status?: number | undefined;
                     code?: string | undefined;
+                    schemaIssuePath?: (number | string)[] | undefined;
                 } | {
                     kind: 'managedGuestHome';
                     homeOrigin: string;
@@ -4031,6 +4135,10 @@ export type OperationOutputActionResultById = {
                                 metrics?: boolean | undefined;
                                 appLlmCost?: boolean | undefined;
                                 exceptions?: boolean | undefined;
+                            };
+                            telemetryCollector?: null | undefined | {
+                                machineId: string;
+                                installationKeyFingerprint: string;
                             };
                             providerVariables?: undefined | {
                                 useOurs: string[];
@@ -4619,6 +4727,44 @@ export type OperationOutputActionResultById = {
                     code: string;
                     effectAttempted?: boolean | undefined;
                     failureCause?: ActionFailureCauseV1 | undefined;
+                    nativeCause?: undefined | {
+                        grpcStatusCode: 1 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+                    } | {
+                        httpStatusClass: '3xx' | '4xx' | '5xx' | 'other';
+                        code?: 'bad_gateway' | 'bad_request' | 'conflict' | 'deprecated_api_endpoint' | 'forbidden' | 'insufficient_capacity' | 'invalid_input' | 'json_error' | 'locked' | 'maintenance' | 'method_not_allowed' | 'name_taken' | 'not_found' | 'placement_error' | 'protected' | 'rate_limit_exceeded' | 'resource_limit_exceeded' | 'resource_unavailable' | 'server_error' | 'service_error' | 'timeout' | 'too_many_requests' | 'unauthorized' | 'unavailable' | 'uniqueness_error' | 'unknown' | 'unprocessable_entity' | 'unsupported_error' | 'volume_placement_capacity' | undefined;
+                        fields?: ('automount' | 'firewalls' | 'image' | 'labels' | 'location' | 'name' | 'networks' | 'placement_group' | 'public_net' | 'server_type' | 'ssh_keys' | 'start_after_create' | 'user_data' | 'volumes')[] | undefined;
+                    } | {
+                        localCause: 'native_command_failed';
+                        command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
+                        exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
+                        stderr?: string | undefined;
+                        stderrTruncated?: true | undefined;
+                    } | {
+                        localCause: 'native_configure_refused' | 'native_delete_refused';
+                        httpStatus: 400;
+                    } | {
+                        localCause: 'native_lease_ended' | 'native_macos_vm_limit_reached' | 'native_options_changed' | 'native_route_unavailable' | 'native_ssh_network_unavailable';
+                    } | {
+                        localCause: 'native_route_not_found';
+                        route: 'configure' | 'delete' | 'inspect' | 'pull' | 'run' | 'stop';
+                        httpStatus: 404;
+                    } | {
+                        localCause: 'plugin_action_input_schema_invalid';
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        issues: {
+                            path: (number | string)[];
+                            code: string;
+                        }[];
+                    } | {
+                        localCause: 'ssh_keyscan_failed';
+                        resultClass: 'command_failed' | 'empty' | 'invalid' | 'spawn_failed';
+                    } | {
+                        sdkError: 'AlreadyExistsError' | 'ClientClosedError' | 'ConflictError' | 'ExecutionError' | 'InternalFailure' | 'InvalidError' | 'NotFoundError' | 'RemoteError' | 'ResourceExhaustedError' | 'SandboxTimeoutError' | 'TimeoutError';
+                    };
                     destinationReview?: undefined | {
                         accountId: string;
                         serverId: string;
@@ -4629,6 +4775,7 @@ export type OperationOutputActionResultById = {
                     retryNotBeforeMs?: number | undefined;
                     remediation?: undefined | {
                         kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                        providerDisplayName?: string | undefined;
                         label?: string | undefined;
                         action?: string | undefined;
                         url?: string | undefined;
@@ -4854,7 +5001,6 @@ export type OperationOutputActionResultById = {
                         phase: 'activate' | 'admission' | 'build' | 'cancel' | 'cleanup' | 'link' | 'observe' | 'restore' | 'send' | 'source' | 'teardown';
                         validation?: undefined | {
                             source: string;
-                            httpStatus: number;
                             issues: {
                                 code: string;
                                 path: (number | string)[];
@@ -4872,6 +5018,7 @@ export type OperationOutputActionResultById = {
                                     maximumSignedDistance: 0;
                                 };
                             }[];
+                            httpStatus?: number | undefined;
                         };
                         sourceAdmission?: undefined | {
                             phase: 'deployment_source_admission';
@@ -4900,7 +5047,6 @@ export type OperationOutputActionResultById = {
                         code: string;
                         validation?: undefined | {
                             source: string;
-                            httpStatus: number;
                             issues: {
                                 code: string;
                                 path: (number | string)[];
@@ -4918,6 +5064,7 @@ export type OperationOutputActionResultById = {
                                     maximumSignedDistance: 0;
                                 };
                             }[];
+                            httpStatus?: number | undefined;
                         };
                         sourceAdmission?: undefined | {
                             phase: 'deployment_source_admission';
@@ -4980,6 +5127,7 @@ export type OperationOutputActionResultById = {
                         retryAfterMs?: number | undefined;
                         reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                         savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                        credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                     };
                     terminalHostError?: undefined | {
                         kind: 'terminal_host_unavailable';
@@ -5259,6 +5407,7 @@ export type OperationOutputActionResultById = {
                     removeItemKeys?: string[] | undefined;
                 };
                 steps?: undefined | {
+                    state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     planIndex: number;
                     stepId: string;
                     label: string | {
@@ -5266,7 +5415,6 @@ export type OperationOutputActionResultById = {
                         fallback: string;
                         params?: Record<string, number | string> | undefined;
                     };
-                    state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     failureCause?: string | undefined;
                     terminalId?: string | undefined;
                 }[];
@@ -5597,8 +5745,8 @@ export type OperationOutputActionResultById = {
                             };
                         };
                         setup?: undefined | {
-                            outcome: 'not_applied';
                             reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                            outcome: 'not_applied';
                             failure?: undefined | {
                                 kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
                                 reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;

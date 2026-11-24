@@ -62,7 +62,7 @@ export type ScopeActionInputById = {
     readonly "workflow.library.view.set": {
         clientId?: string | undefined;
         filters?: undefined | {
-            view?: 'all' | 'running' | 'triggered' | undefined;
+            view?: 'all' | 'hunts' | 'running' | 'triggered' | undefined;
             extensions?: Record<string, {
                 kind: 'boolean';
                 value: boolean;
@@ -396,9 +396,9 @@ export type ScopeActionResultById = {
         settingsVersion: number;
     };
     readonly "workflow.library.view.get": {
-        view: 'all' | 'running' | 'triggered';
+        view: 'all' | 'hunts' | 'running' | 'triggered';
         filters: {
-            view: 'all' | 'running' | 'triggered';
+            view: 'all' | 'hunts' | 'running' | 'triggered';
             extensions?: Record<string, {
                 kind: 'boolean';
                 value: boolean;
@@ -422,7 +422,7 @@ export type ScopeActionResultById = {
             }> | undefined;
         };
         searchQuery: string;
-        offeredViews: ('all' | 'running' | 'triggered')[];
+        offeredViews: ('all' | 'hunts' | 'running' | 'triggered')[];
         visibleKeys: string[];
         coverage: 'complete' | 'partial' | 'unavailable';
         selectedSpaceId: string;

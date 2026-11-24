@@ -329,6 +329,18 @@ export type ProjectSourcesActionInputById = {
                             providerConnectionId: string;
                             modelId: string;
                         } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
+                        } | {
                             source: 'native';
                             agentTargetKey: string;
                             modelId: string;
@@ -620,6 +632,7 @@ export type ProjectSourcesActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -724,6 +737,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -867,6 +885,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1009,6 +1032,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1106,6 +1134,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1200,6 +1233,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1302,6 +1340,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1396,6 +1439,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1572,6 +1620,18 @@ export type ProjectSourcesActionResultById = {
                         source: 'account_provider_connection';
                         agentTargetKey: string;
                         providerConnectionId: string;
+                        modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
                         modelId: string;
                     } | {
                         source: 'native';
@@ -1774,6 +1834,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -1868,6 +1933,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -2051,6 +2121,18 @@ export type ProjectSourcesActionResultById = {
                         source: 'account_provider_connection';
                         agentTargetKey: string;
                         providerConnectionId: string;
+                        modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
                         modelId: string;
                     } | {
                         source: 'native';
@@ -2239,6 +2321,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -2333,6 +2420,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;
@@ -2509,6 +2601,18 @@ export type ProjectSourcesActionResultById = {
                         source: 'account_provider_connection';
                         agentTargetKey: string;
                         providerConnectionId: string;
+                        modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
                         modelId: string;
                     } | {
                         source: 'native';
@@ -2697,6 +2801,11 @@ export type ProjectSourcesActionResultById = {
                     headerVersion: number;
                     bodyVersion: number;
                 };
+                publishedBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+                publishedAt?: number | undefined;
             })[] | undefined;
             audienceTeams?: undefined | {
                 teamId: string;

@@ -184,6 +184,7 @@ export type WidgetsActionInputById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: unknown;
                                 label: string;
@@ -1006,6 +1007,7 @@ export type WidgetsActionInputById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: unknown;
                                         label: string;
@@ -1454,6 +1456,7 @@ export type WidgetsActionInputById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: unknown;
                                                 label: string;
@@ -1606,6 +1609,7 @@ export type WidgetsActionInputById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: unknown;
                                             label: string;
@@ -1989,6 +1993,7 @@ export type WidgetsActionInputById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: unknown;
                         label: string;
@@ -2110,6 +2115,7 @@ export type WidgetsActionInputById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: unknown;
                         label: string;
@@ -2228,6 +2234,7 @@ export type WidgetsActionInputById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: unknown;
                         label: string;
@@ -2329,6 +2336,7 @@ export type WidgetsActionInputById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: unknown;
                                             label: string;
@@ -2419,9 +2427,9 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
+                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
-                titleKey?: string | undefined;
             };
             description?: string | undefined;
             origin?: undefined | {
@@ -2476,6 +2484,7 @@ export type WidgetsActionInputById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: unknown;
                         label: string;
@@ -2577,6 +2586,7 @@ export type WidgetsActionInputById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: unknown;
                                             label: string;
@@ -2667,9 +2677,9 @@ export type WidgetsActionInputById = {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
+                titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
                 dividers?: 'hairline' | 'none' | undefined;
-                titleKey?: string | undefined;
             };
             origin?: undefined | {
                 kind: 'corePage' | 'home' | 'pluginArea' | 'project';
@@ -2857,6 +2867,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -2956,6 +2967,7 @@ export type WidgetsActionResultById = {
                 prompt?: string | undefined;
                 description?: string | undefined;
                 placeholder?: string | undefined;
+                unsetLabel?: string | undefined;
                 options?: readonly {
                     value: JsonValue;
                     label: string;
@@ -3100,6 +3112,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -3258,6 +3271,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -3428,6 +3442,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -3591,6 +3606,7 @@ export type WidgetsActionResultById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: JsonValue;
                                                 label: string;
@@ -3746,6 +3762,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -3905,6 +3922,7 @@ export type WidgetsActionResultById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: JsonValue;
                                                 label: string;
@@ -4060,6 +4078,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -4219,6 +4238,7 @@ export type WidgetsActionResultById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: JsonValue;
                                                 label: string;
@@ -4374,6 +4394,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -4534,6 +4555,7 @@ export type WidgetsActionResultById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: JsonValue;
                                                 label: string;
@@ -4689,6 +4711,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -4780,6 +4803,7 @@ export type WidgetsActionResultById = {
         };
         state?: 'missing' | 'present' | undefined;
         isShared?: boolean | undefined;
+        othersCanWrite?: boolean | undefined;
         revision?: null | undefined | {
             headerVersion: number;
             bodyVersion: number;
@@ -4893,6 +4917,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -5046,6 +5071,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -5216,6 +5242,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -5406,6 +5433,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -5559,6 +5587,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -5729,6 +5758,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -5919,6 +5949,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -6072,6 +6103,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -6242,6 +6274,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -6468,6 +6501,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -6621,6 +6655,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -6791,6 +6826,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -6981,6 +7017,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -7134,6 +7171,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -7304,6 +7342,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -7494,6 +7533,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -7647,6 +7687,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -7817,6 +7858,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -8007,6 +8049,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -8160,6 +8203,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -8330,6 +8374,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -8578,6 +8623,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -8731,6 +8777,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -8901,6 +8948,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -9091,6 +9139,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -9244,6 +9293,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -9414,6 +9464,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -9642,6 +9693,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -9795,6 +9847,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -9965,6 +10018,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -10155,6 +10209,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -10308,6 +10363,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -10478,6 +10534,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -10668,6 +10725,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -10821,6 +10879,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -10991,6 +11050,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -11181,6 +11241,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -11334,6 +11395,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -11504,6 +11566,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -11694,6 +11757,7 @@ export type WidgetsActionResultById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: JsonValue;
                                 label: string;
@@ -11847,6 +11911,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -12017,6 +12082,7 @@ export type WidgetsActionResultById = {
                                 prompt?: string | undefined;
                                 description?: string | undefined;
                                 placeholder?: string | undefined;
+                                unsetLabel?: string | undefined;
                                 options?: readonly {
                                     value: JsonValue;
                                     label: string;
@@ -12277,6 +12343,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -12447,6 +12514,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -12673,6 +12741,7 @@ export type WidgetsActionResultById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: JsonValue;
                                                 label: string;
@@ -12828,6 +12897,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -13060,6 +13130,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -13230,6 +13301,7 @@ export type WidgetsActionResultById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: JsonValue;
                                         label: string;
@@ -13456,6 +13528,7 @@ export type WidgetsActionResultById = {
                                             prompt?: string | undefined;
                                             description?: string | undefined;
                                             placeholder?: string | undefined;
+                                            unsetLabel?: string | undefined;
                                             options?: readonly {
                                                 value: JsonValue;
                                                 label: string;
@@ -13611,6 +13684,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -13953,10 +14027,6 @@ export type WidgetsActionResultById = {
         definitions: {
             name: string;
             inputSchema: PluginJsonSchemaV2;
-            sizeDeclaration: {
-                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
-                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
-            };
             inputs: {
                 fields: readonly {
                     path: string;
@@ -13991,6 +14061,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14022,6 +14093,10 @@ export type WidgetsActionResultById = {
                 description?: string | undefined;
                 submitLabel?: string | undefined;
             };
+            sizeDeclaration: {
+                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+            };
             artifactId: string;
             bodyKind: 'builtin' | 'declarative' | 'html' | 'installed';
             resources: {
@@ -14029,6 +14104,7 @@ export type WidgetsActionResultById = {
                 localId: string;
             }[];
             description?: string | undefined;
+            sessionInputPath?: string | undefined;
             publicPresentation?: undefined | {
                 kind: 'declarative';
                 document: Readonly<{
@@ -14036,7 +14112,6 @@ export type WidgetsActionResultById = {
                     root: PluginDeclarativeNodeV2;
                 }>;
             };
-            sessionInputPath?: string | undefined;
             connectedAccountPurposeBindings?: undefined | {
                 path: string;
                 purpose: string;
@@ -14121,6 +14196,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14275,6 +14351,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14391,6 +14468,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14507,6 +14585,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14627,6 +14706,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14733,6 +14813,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -14837,6 +14918,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -14999,6 +15081,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -15103,6 +15186,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -15261,6 +15345,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -15365,6 +15450,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -15523,6 +15609,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -15627,6 +15714,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;
@@ -15785,6 +15873,7 @@ export type WidgetsActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -15889,6 +15978,7 @@ export type WidgetsActionResultById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: JsonValue;
                                             label: string;

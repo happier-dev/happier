@@ -830,6 +830,7 @@ export type ScmGitActionResultById = {
                     pushUrl?: string | undefined;
                 }[];
                 defaultBranch?: null | string | undefined;
+                defaultRef?: null | string | undefined;
             };
             capabilities: {
                 capabilityScope: 'local-backend';

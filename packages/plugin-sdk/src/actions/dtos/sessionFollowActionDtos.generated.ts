@@ -266,6 +266,7 @@ export type SessionFollowActionInputById = {
             ruleId: string;
         };
         ruleDefinition: {
+            v: 1;
             filter: Readonly<{
                 show: 'both' | 'runs' | 'sessions';
                 startedBy: readonly ('agents' | 'triggers' | 'you')[];
@@ -335,7 +336,6 @@ export type SessionFollowActionInputById = {
                 }>[];
                 source: 'all' | 'direct' | 'persisted';
             }>;
-            v: 1;
             enabled: boolean;
         };
         policy: FollowPolicyV1<true>;

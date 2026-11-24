@@ -499,6 +499,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -982,6 +983,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -1465,6 +1467,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -2230,6 +2233,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -2617,6 +2621,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -3367,6 +3372,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;
@@ -4158,6 +4164,7 @@ export type ScmPullRequestActionResultById = {
         remediation?: undefined | {
             [x: string]: unknown;
             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            providerDisplayName?: string | undefined;
             label?: string | undefined;
             action?: string | undefined;
             url?: string | undefined;

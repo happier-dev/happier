@@ -2148,6 +2148,18 @@ export type BotTemplatesActionInputById = {
                                     providerConnectionId: string;
                                     modelId: string;
                                 } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                } | {
                                     source: 'native';
                                     agentTargetKey: string;
                                     modelId: string;
@@ -2276,8 +2288,6 @@ export type BotTemplatesActionInputById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
-                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -2299,6 +2309,8 @@ export type BotTemplatesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -2528,13 +2540,13 @@ export type BotTemplatesActionInputById = {
                     name: string;
                     description: null | string;
                 };
-                approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
+                approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2632,6 +2644,18 @@ export type BotTemplatesActionInputById = {
                                     source: 'account_provider_connection';
                                     agentTargetKey: string;
                                     providerConnectionId: string;
+                                    modelId: string;
+                                } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
                                     modelId: string;
                                 } | {
                                     source: 'native';
@@ -2792,8 +2816,6 @@ export type BotTemplatesActionInputById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
-                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -2815,6 +2837,8 @@ export type BotTemplatesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -3005,6 +3029,18 @@ export type BotTemplatesActionInputById = {
                                         source: 'account_provider_connection';
                                         agentTargetKey: string;
                                         providerConnectionId: string;
+                                        modelId: string;
+                                    } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
                                         modelId: string;
                                     } | {
                                         source: 'native';
@@ -3367,6 +3403,10 @@ export type BotTemplatesActionInputById = {
                         projectKey: string;
                         kind: 'project';
                     };
+                    actionStepRefs?: undefined | {
+                        sourceKey: string;
+                        blockId: string;
+                    }[];
                     childRevisions?: undefined | {
                         sourceKey: string;
                         bodyVersion: number;
@@ -3420,6 +3460,7 @@ export type BotTemplatesActionInputById = {
                     type: 'seq';
                     upToSeqInclusive: number;
                 };
+                continuation?: true | undefined;
             };
             environmentVariables?: Record<string, string> | undefined;
             placementOrigin?: undefined | {
@@ -3442,6 +3483,18 @@ export type BotTemplatesActionInputById = {
                     source: 'account_provider_connection';
                     agentTargetKey: string;
                     providerConnectionId: string;
+                    modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
                     modelId: string;
                 } | {
                     source: 'native';
@@ -4463,6 +4516,11 @@ export type BotTemplatesActionResultById = {
         contentKind: 'binary' | 'utf8';
     };
     readonly "template.instantiate": {
+        code: 'session_team_credential_binding_rejected';
+        reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
+        type: 'error';
+        retryable: false;
+    } | {
         organizationPlacement: {
             sectionId: null | string;
             tagIds: string[];
@@ -4662,6 +4720,7 @@ export type BotTemplatesActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
         terminalHostError?: undefined | {
             kind: 'terminal_host_unavailable';

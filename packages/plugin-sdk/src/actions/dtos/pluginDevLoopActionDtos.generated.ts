@@ -1410,6 +1410,18 @@ export type PluginDevLoopActionResultById = {
                                     providerConnectionId: string;
                                     modelId: string;
                                 } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                } | {
                                     source: 'native';
                                     agentTargetKey: string;
                                     modelId: string;
@@ -1538,7 +1550,6 @@ export type PluginDevLoopActionResultById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -1561,6 +1572,7 @@ export type PluginDevLoopActionResultById = {
                                 }>;
                             };
                             memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -2606,6 +2618,7 @@ export type PluginDevLoopActionResultById = {
                     remediation?: undefined | {
                         [x: string]: unknown;
                         kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                        providerDisplayName?: string | undefined;
                         label?: string | undefined;
                         action?: string | undefined;
                         url?: string | undefined;
@@ -2625,6 +2638,7 @@ export type PluginDevLoopActionResultById = {
                         remediation?: undefined | {
                             [x: string]: unknown;
                             kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                            providerDisplayName?: string | undefined;
                             label?: string | undefined;
                             action?: string | undefined;
                             url?: string | undefined;
@@ -2662,6 +2676,7 @@ export type PluginDevLoopActionResultById = {
                             remediation?: undefined | {
                                 [x: string]: unknown;
                                 kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                                providerDisplayName?: string | undefined;
                                 label?: string | undefined;
                                 action?: string | undefined;
                                 url?: string | undefined;

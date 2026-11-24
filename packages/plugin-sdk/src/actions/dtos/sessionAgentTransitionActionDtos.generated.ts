@@ -24,6 +24,18 @@ export type SessionAgentTransitionActionInputById = {
                 providerConnectionId: string;
                 modelId: string;
             } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
+            } | {
                 source: 'native';
                 agentTargetKey: string;
                 modelId: string;
@@ -76,6 +88,18 @@ export type SessionAgentTransitionActionInputById = {
                 source: 'account_provider_connection';
                 agentTargetKey: string;
                 providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
                 modelId: string;
             } | {
                 source: 'native';
@@ -147,6 +171,37 @@ export type SessionAgentTransitionActionResultById = {
                 ok: false;
                 errorCode: string;
                 error: string;
+                operationCredentialUses?: undefined | {
+                    v: 1;
+                    kind: 'connected_account' | 'team_resource';
+                    label: null | string;
+                    owner: null | {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    why: {
+                        kind: 'purpose_binding';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: 'account' | 'group' | 'listed_account';
+                    };
+                    currentness: {
+                        kind: 'current_at_materialization';
+                        resourceRevision?: number | undefined;
+                    };
+                }[];
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 details?: unknown;
@@ -328,6 +383,47 @@ export type SessionAgentTransitionActionResultById = {
                     code: 'forbidden' | 'same_target' | 'source_not_idle' | 'source_stop_failed' | 'stale_selection' | 'target_unavailable' | 'unsupported_operation';
                     sourceEffect: 'none';
                 };
+                operationCredentialUses?: undefined | {
+                    v: 1;
+                    kind: 'connected_account' | 'team_resource';
+                    label: null | string;
+                    owner: null | {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    why: {
+                        kind: 'purpose_binding';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: 'account' | 'group' | 'listed_account';
+                    };
+                    currentness: {
+                        kind: 'current_at_materialization';
+                        resourceRevision?: number | undefined;
+                    };
+                }[];
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
             };
         }[];
     } | {

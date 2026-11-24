@@ -571,6 +571,18 @@ export type RegistriesActionResultById = {
                                         providerConnectionId: string;
                                         modelId: string;
                                     } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                    } | {
                                         source: 'native';
                                         agentTargetKey: string;
                                         modelId: string;
@@ -699,7 +711,6 @@ export type RegistriesActionResultById = {
                                     };
                                 };
                                 title?: string | undefined;
-                                primaryTeamId?: null | string | undefined;
                                 organizationPlacement?: undefined | {
                                     folderId: null | string;
                                     tagIds: string[];
@@ -722,6 +733,7 @@ export type RegistriesActionResultById = {
                                     }>;
                                 };
                                 memoryEnabled?: boolean | undefined;
+                                primaryTeamId?: null | string | undefined;
                                 teamCredentialBindings?: ({
                                     v: 1;
                                     slot: {
@@ -1212,6 +1224,18 @@ export type RegistriesActionResultById = {
                                         providerConnectionId: string;
                                         modelId: string;
                                     } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                    } | {
                                         source: 'native';
                                         agentTargetKey: string;
                                         modelId: string;
@@ -1340,7 +1364,6 @@ export type RegistriesActionResultById = {
                                     };
                                 };
                                 title?: string | undefined;
-                                primaryTeamId?: null | string | undefined;
                                 organizationPlacement?: undefined | {
                                     folderId: null | string;
                                     tagIds: string[];
@@ -1363,6 +1386,7 @@ export type RegistriesActionResultById = {
                                     }>;
                                 };
                                 memoryEnabled?: boolean | undefined;
+                                primaryTeamId?: null | string | undefined;
                                 teamCredentialBindings?: ({
                                     v: 1;
                                     slot: {

@@ -83,6 +83,18 @@ export type WorkflowEffectsActionResultById = {
                         providerConnectionId: string;
                         modelId: string;
                     } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
@@ -348,6 +360,18 @@ export type WorkflowEffectsActionResultById = {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';

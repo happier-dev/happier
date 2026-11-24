@@ -365,6 +365,8 @@ export type SettingsDeclarationsActionInputById = {
                         workflowId?: string | undefined;
                         needsDecision?: boolean | undefined;
                         sharedWithTeamId?: string | undefined;
+                        workflowRunId?: string | undefined;
+                        sourceSessionId?: string | undefined;
                     };
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'review';
@@ -401,6 +403,8 @@ export type SettingsDeclarationsActionInputById = {
                         workflowId?: string | undefined;
                         needsDecision?: boolean | undefined;
                         sharedWithTeamId?: string | undefined;
+                        workflowRunId?: string | undefined;
+                        sourceSessionId?: string | undefined;
                     };
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };
@@ -627,7 +631,7 @@ export type SettingsDeclarationsActionInputById = {
                         };
                     };
                     filter: {
-                        view: 'all' | 'running' | 'triggered';
+                        view: 'all' | 'hunts' | 'running' | 'triggered';
                         extensions?: Record<string, {
                             kind: 'boolean';
                             value: boolean;
@@ -672,7 +676,7 @@ export type SettingsDeclarationsActionInputById = {
                         };
                     };
                     filter?: undefined | {
-                        view: 'all' | 'running' | 'triggered';
+                        view: 'all' | 'hunts' | 'running' | 'triggered';
                         extensions?: Record<string, {
                             kind: 'boolean';
                             value: boolean;

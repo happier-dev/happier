@@ -82,6 +82,10 @@ export type InternalTasksActionInputById = {
                 taskId: string;
             }[];
         };
+        parent?: undefined | {
+            ownerAccountId: string;
+            taskId: string;
+        };
     };
     readonly "tasks.internal.create": {
         fields: {
@@ -94,8 +98,6 @@ export type InternalTasksActionInputById = {
                 title?: string | undefined;
             }[];
             notes?: string | undefined;
-            dueAt?: number | undefined;
-            createdBy?: string | undefined;
             blockedBy?: (Readonly<{
                 source: Readonly<{
                     pluginId: string;
@@ -105,6 +107,8 @@ export type InternalTasksActionInputById = {
                 collisionScope: string;
                 entryId: string;
             }> | string)[] | undefined;
+            dueAt?: number | undefined;
+            createdBy?: string | undefined;
             parentId?: Readonly<{
                 source: Readonly<{
                     pluginId: string;

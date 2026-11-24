@@ -1164,6 +1164,18 @@ export type ThemesActionResultById = {
                                         providerConnectionId: string;
                                         modelId: string;
                                     } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                    } | {
                                         source: 'native';
                                         agentTargetKey: string;
                                         modelId: string;
@@ -1292,7 +1304,6 @@ export type ThemesActionResultById = {
                                     };
                                 };
                                 title?: string | undefined;
-                                primaryTeamId?: null | string | undefined;
                                 organizationPlacement?: undefined | {
                                     folderId: null | string;
                                     tagIds: string[];
@@ -1315,6 +1326,7 @@ export type ThemesActionResultById = {
                                     }>;
                                 };
                                 memoryEnabled?: boolean | undefined;
+                                primaryTeamId?: null | string | undefined;
                                 teamCredentialBindings?: ({
                                     v: 1;
                                     slot: {

@@ -17,6 +17,8 @@ export type ReviewReadsActionInputById = {
         workflowId?: string | undefined;
         needsDecision?: boolean | undefined;
         sharedWithTeamId?: string | undefined;
+        workflowRunId?: string | undefined;
+        sourceSessionId?: string | undefined;
     };
     readonly "review.get": {
         reviewId: string;
@@ -56,6 +58,9 @@ export type ReviewReadsActionResultById = {
             currentRoundOrdinal: number;
             startedAt: number;
             finishedAt: null | number;
+            workflowRunId?: null | string | undefined;
+            sourceSessionId?: null | string | undefined;
+            sourceSessionSeq?: null | number | undefined;
         }[];
         cursor: null | string;
     };
@@ -76,6 +81,9 @@ export type ReviewReadsActionResultById = {
             currentRoundOrdinal: number;
             startedAt: number;
             finishedAt: null | number;
+            workflowRunId?: null | string | undefined;
+            sourceSessionId?: null | string | undefined;
+            sourceSessionSeq?: null | number | undefined;
         };
         human: {
             reviewId: string;

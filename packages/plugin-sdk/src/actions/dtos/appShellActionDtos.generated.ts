@@ -108,6 +108,18 @@ export type AppShellActionInputById = {
                 providerConnectionId: string;
                 modelId: string;
             } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
+            } | {
                 source: 'native';
                 agentTargetKey: string;
                 modelId: string;
@@ -127,6 +139,35 @@ export type AppShellActionInputById = {
                     placeholderRef: string;
                     sourceRevision: string;
                     providerTicket: string;
+                };
+            };
+            connectedAccountBinding?: undefined | {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                target: {
+                    kind: 'account';
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'group';
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
                 };
             };
         } | {
@@ -214,6 +255,18 @@ export type AppShellActionInputById = {
                         providerConnectionId: string;
                         modelId: string;
                     } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
+                    } | {
                         source: 'native';
                         agentTargetKey: string;
                         modelId: string;
@@ -249,6 +302,35 @@ export type AppShellActionInputById = {
                         modelId: string;
                     };
                     updatedAt: number;
+                };
+                connectedAccountBinding?: undefined | {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    target: {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
                 };
                 modelLabel?: null | string | undefined;
             };

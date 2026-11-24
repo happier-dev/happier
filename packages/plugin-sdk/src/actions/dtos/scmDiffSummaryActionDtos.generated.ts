@@ -227,6 +227,18 @@ export type ScmDiffSummaryActionInputById = {
                 providerConnectionId: string;
                 modelId: string;
             } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
+            } | {
                 source: 'native';
                 agentTargetKey: string;
                 modelId: string;
@@ -408,6 +420,18 @@ export type ScmDiffSummaryActionInputById = {
                 source: 'account_provider_connection';
                 agentTargetKey: string;
                 providerConnectionId: string;
+                modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
                 modelId: string;
             } | {
                 source: 'native';
@@ -2812,6 +2836,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -2862,6 +2898,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -3419,6 +3465,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -3469,6 +3527,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -4026,6 +4094,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -4076,6 +4156,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -4633,6 +4723,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -4683,6 +4785,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -5240,6 +5352,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -5290,6 +5414,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -5378,6 +5512,10 @@ export type ScmDiffSummaryActionResultById = {
             v: 1;
             scopeId: string;
             reviewedChangeKeys: string[];
+            viewedFiles?: undefined | {
+                path: string;
+                changeKeys: string[];
+            }[];
         };
         version?: number | undefined;
     } | {
@@ -5386,6 +5524,10 @@ export type ScmDiffSummaryActionResultById = {
             v: 1;
             scopeId: string;
             reviewedChangeKeys: string[];
+            viewedFiles?: undefined | {
+                path: string;
+                changeKeys: string[];
+            }[];
         };
         version: number;
     };
@@ -5402,6 +5544,10 @@ export type ScmDiffSummaryActionResultById = {
             v: 1;
             scopeId: string;
             reviewedChangeKeys: string[];
+            viewedFiles?: undefined | {
+                path: string;
+                changeKeys: string[];
+            }[];
         };
         version?: number | undefined;
     } | {
@@ -5410,6 +5556,10 @@ export type ScmDiffSummaryActionResultById = {
             v: 1;
             scopeId: string;
             reviewedChangeKeys: string[];
+            viewedFiles?: undefined | {
+                path: string;
+                changeKeys: string[];
+            }[];
         };
         version: number;
     };
@@ -5895,6 +6045,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -5945,6 +6107,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -6502,6 +6674,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -6552,6 +6736,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -7109,6 +7303,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -7159,6 +7365,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -7731,6 +7947,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -7781,6 +8009,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -8338,6 +8576,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -8388,6 +8638,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };
@@ -8945,6 +9205,18 @@ export type ScmDiffSummaryActionResultById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -8995,6 +9267,16 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
+                    }>;
+                };
+                sessionConfigOptionOverrides?: undefined | {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: boolean | null | number | string;
                     }>;
                 };
             };

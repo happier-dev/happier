@@ -13,7 +13,20 @@ export type PluginCollectionSharingActionInputById = {
         };
         cursor?: string | undefined;
         limit?: number | undefined;
+        projection?: 'identity' | undefined;
         sharedWithTeamId?: string | undefined;
+        query?: undefined | {
+            order: 'asc' | 'desc';
+            index: string;
+            prefix?: (boolean | null | number | string)[] | undefined;
+            prefixes?: (boolean | null | number | string)[][] | undefined;
+            range?: undefined | {
+                lower?: boolean | null | number | string | undefined;
+                upper?: boolean | null | number | string | undefined;
+            };
+            cursor?: string | undefined;
+            limit?: number | undefined;
+        };
     } & {
         clientId?: string | undefined;
     };
@@ -108,6 +121,12 @@ export type PluginCollectionSharingActionResultById = {
             rowId: string;
             access: 'admin' | 'edit' | 'owner' | 'view';
             ownerAccountId: string;
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
+        }[];
+        identities?: undefined | {
+            rowId: string;
+            ownerAccountId: string;
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
         }[];
         nextCursor?: string | undefined;
     };
@@ -126,6 +145,7 @@ export type PluginCollectionSharingActionResultById = {
         ownerAccountId: string;
     };
     readonly "plugins.collections.shared.grants.list": {
+        access: 'admin' | 'edit' | 'owner' | 'view';
         grants: {
             principal: {
                 kind: 'account';
@@ -165,7 +185,6 @@ export type PluginCollectionSharingActionResultById = {
                 kind: 'unavailable';
             };
         }[];
-        access: 'admin' | 'edit' | 'owner' | 'view';
         ownerAccountId: string;
     };
     readonly "plugins.collections.shared.grants.set": {

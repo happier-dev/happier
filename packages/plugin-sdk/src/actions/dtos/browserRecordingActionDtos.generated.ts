@@ -206,6 +206,7 @@ export type BrowserRecordingActionResultById = {
             };
         };
         reason: 'capture_failed' | 'capture_unavailable' | 'expired' | 'logout' | 'media_persistence_failed' | 'permission_denied' | 'policy_revoked' | 'retention_limit' | 'session_closed' | 'unsupported' | 'user_canceled' | 'user_discarded' | 'user_stopped';
+        saveFailure?: 'transcript_attach_failed' | 'workspace_write_failed' | undefined;
     } | {
         status: 'finalized';
         recording: {

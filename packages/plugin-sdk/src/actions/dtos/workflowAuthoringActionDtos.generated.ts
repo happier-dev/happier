@@ -53,6 +53,18 @@ export type WorkflowAuthoringActionInputById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -211,8 +223,6 @@ export type WorkflowAuthoringActionInputById = {
                 };
             };
             title?: string | undefined;
-            primaryTeamId?: null | string | undefined;
-            memoryEnabled?: boolean | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -234,6 +244,8 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            memoryEnabled?: boolean | undefined;
+            primaryTeamId?: null | string | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -389,6 +401,18 @@ export type WorkflowAuthoringActionInputById = {
                     providerConnectionId: string;
                     modelId: string;
                 } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                } | {
                     source: 'native';
                     agentTargetKey: string;
                     modelId: string;
@@ -547,8 +571,6 @@ export type WorkflowAuthoringActionInputById = {
                 };
             };
             title?: string | undefined;
-            primaryTeamId?: null | string | undefined;
-            memoryEnabled?: boolean | undefined;
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
@@ -570,6 +592,8 @@ export type WorkflowAuthoringActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            memoryEnabled?: boolean | undefined;
+            primaryTeamId?: null | string | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1950,6 +1974,22 @@ export type WorkflowAuthoringActionInputById = {
                     canDelegateToOtherRoles?: boolean | undefined;
                 }[];
                 visibleTeamId?: null | string | undefined;
+            };
+        };
+        triggerEdit?: undefined | {
+            kind: 'removeAdded';
+            clientId: string;
+        } | {
+            kind: 'stageMachineEvent';
+            clientId: string;
+            nativeEvent: {
+                kind: 'machine';
+                key: string;
+                machineId: string;
+                event: 'offline' | 'online';
+                sourceRevision: number;
+                occurredAt: number;
+                coverage: 'live' | 'retained';
             };
         };
     } & {

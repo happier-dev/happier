@@ -291,6 +291,37 @@ export type SessionCapabilitiesActionResultById = {
                 ok: false;
                 errorCode: string;
                 error: string;
+                operationCredentialUses?: undefined | {
+                    v: 1;
+                    kind: 'connected_account' | 'team_resource';
+                    label: null | string;
+                    owner: null | {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    why: {
+                        kind: 'purpose_binding';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: 'account' | 'group' | 'listed_account';
+                    };
+                    currentness: {
+                        kind: 'current_at_materialization';
+                        resourceRevision?: number | undefined;
+                    };
+                }[];
                 requestId?: string | undefined;
                 effectAttempted?: boolean | undefined;
                 details?: unknown;
@@ -335,6 +366,47 @@ export type SessionCapabilitiesActionResultById = {
                         t: 'session_not_running';
                     };
                 };
+                operationCredentialUses?: undefined | {
+                    v: 1;
+                    kind: 'connected_account' | 'team_resource';
+                    label: null | string;
+                    owner: null | {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    why: {
+                        kind: 'purpose_binding';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: 'account' | 'group' | 'listed_account';
+                    };
+                    currentness: {
+                        kind: 'current_at_materialization';
+                        resourceRevision?: number | undefined;
+                    };
+                }[];
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
             };
         }[];
     } | {

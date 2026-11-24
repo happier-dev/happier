@@ -33,10 +33,10 @@ export type ProvidersActionInputById = {
         machineId?: string | undefined;
         displayName: null | string;
         action: 'createContribution';
-        connectionId: string;
         contributionKey: string;
-        savedSecretId: null | string;
+        connectionId: string;
         enable: boolean;
+        savedSecretId: null | string;
         authoringReview?: undefined | {
             candidateId: null | string;
             fingerprint: string;
@@ -83,6 +83,7 @@ export type ProvidersActionInputById = {
     readonly "providers.connections.create_custom": {
         action: 'createCustom';
         connectionId: string;
+        enable: boolean;
         template: {
             v: 1;
             name: string;
@@ -167,7 +168,6 @@ export type ProvidersActionInputById = {
             };
         };
         savedSecretId: null | string;
-        enable: boolean;
         manualModels?: undefined | {
             id: string;
             name?: string | undefined;
@@ -192,6 +192,7 @@ export type ProvidersActionInputById = {
     readonly "providers.connections.update": {
         displayName?: string | undefined;
         action: 'update';
+        expectedRevision: number;
         deployment?: undefined | {
             kind: 'external';
         } | {
@@ -217,8 +218,8 @@ export type ProvidersActionInputById = {
                 groupId: string;
             }>;
         };
-        connectionId: string;
         roleModels?: Record<string, string> | null | undefined;
+        connectionId: string;
         template?: undefined | {
             v: 1;
             name: string;
@@ -308,7 +309,6 @@ export type ProvidersActionInputById = {
         } | {
             kind: 'sessionMachine';
         };
-        expectedRevision: number;
         displayNameMode?: 'automatic' | 'custom' | undefined;
         modelSettings?: Record<string, null | {
             temperature?: null | number | undefined;
@@ -318,17 +318,17 @@ export type ProvidersActionInputById = {
     };
     readonly "providers.connections.endpoint.set": {
         scope: 'account' | 'machine';
-        baseUrl?: null | string | undefined;
         action: 'setEndpointOverride';
+        baseUrl?: null | string | undefined;
         endpointTemplateId: string;
+        expectedRevision: number;
         connectionId: string;
         publicHeaders?: Record<string, string> | null | undefined;
-        expectedRevision: number;
         machineId?: string | undefined;
     };
     readonly "providers.connections.duplicate": {
-        mode: 'asCustom' | 'sameSource';
         displayName: string;
+        mode: 'asCustom' | 'sameSource';
         action: 'duplicate';
         connectionId: string;
         newConnectionId: string;
@@ -341,8 +341,8 @@ export type ProvidersActionInputById = {
     };
     readonly "providers.connections.enabled.set": {
         scope: 'account' | 'connection' | 'machine';
-        enabled: boolean;
         action: 'setEnabled';
+        enabled: boolean;
         connectionId: string;
         machineId?: string | undefined;
     };
@@ -350,8 +350,8 @@ export type ProvidersActionInputById = {
         scope: 'account' | 'machine';
         action: 'bindSecret';
         connectionId: string;
-        savedSecretId: null | string;
         credentialSlotId: string;
+        savedSecretId: null | string;
         machineId?: string | undefined;
     };
     readonly "providers.models.list": {
@@ -360,7 +360,6 @@ export type ProvidersActionInputById = {
     };
     readonly "providers.models.projection": {
         mode?: 'management' | 'picker' | undefined;
-        refreshPolicy?: 'current_only' | undefined;
         agentTargetKey: string;
         connectedServices?: undefined | {
             v: 2;
@@ -426,11 +425,27 @@ export type ProvidersActionInputById = {
             };
             groupId: string;
         };
+        currentSelection?: undefined | {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        };
         includeDirectMaterialization?: true | undefined;
         includeTeamCredentialRequestPolicySupport?: true | undefined;
         providerConnection?: undefined | {
             connectionId: string;
             expectedConnectionSecurityFingerprint: string;
+        };
+        connectedAccountSourcePurpose?: undefined | {
+            consumer: {
+                pluginId: string;
+                localId: string;
+            };
+            purpose: string;
         };
         sourceCatalog?: true | undefined;
         teamCredentialResources?: undefined | {
@@ -751,16 +766,8 @@ export type ProvidersActionInputById = {
             providerConnectionId: string;
             modelId: string;
         })[] | undefined;
+        refreshPolicy?: 'current_only' | undefined;
         forceRefresh?: undefined;
-        currentSelection?: undefined | {
-            agentTargetKey: string;
-            providerConnectionId: null;
-            modelId: string;
-        } | {
-            agentTargetKey: string;
-            providerConnectionId: string;
-            modelId: string;
-        };
         machineId?: string | undefined;
     };
     readonly "providers.models.refresh": {
@@ -801,6 +808,13 @@ export type ProvidersActionInputById = {
                 localId: string;
             };
             groupId: string;
+        };
+        connectedAccountSourcePurpose?: undefined | {
+            consumer: {
+                pluginId: string;
+                localId: string;
+            };
+            purpose: string;
         };
         connectedServices?: undefined | {
             v: 2;
@@ -1174,19 +1188,19 @@ export type ProvidersActionInputById = {
     };
     readonly "providers.models.manual.add": {
         action: 'manualAdd';
+        connectionId: string;
         models: {
             id: string;
             name?: string | undefined;
             reasoningEffortLevels?: ('high' | 'low' | 'max' | 'medium' | 'xhigh')[] | undefined;
         }[];
-        connectionId: string;
         expectedConnectionRevision: number;
         machineId?: string | undefined;
     };
     readonly "providers.models.manual.remove": {
+        modelId: string;
         action: 'manualRemove';
         connectionId: string;
-        modelId: string;
         expectedConnectionRevision: number;
         machineId?: string | undefined;
     };
@@ -1249,10 +1263,10 @@ export type ProvidersActionInputById = {
         shown: boolean | null;
     };
     readonly "providers.models.experimental.confirm": {
-        action: 'confirmExperimental';
-        connectionId: string;
         modelId: null | string;
+        action: 'confirmExperimental';
         agentTargetKey: string;
+        connectionId: string;
         connectedAccountTarget?: undefined | {
             kind: 'account';
             account: {
@@ -1385,6 +1399,26 @@ export type ProvidersActionInputById = {
     readonly "providers.usage.refresh": {
         connectionId: string;
         machineId: string;
+    } | {
+        machineId: string;
+        connectedAccountSource: {
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            endpointTemplateId: string;
+            usageSourceId: string;
+        };
     };
     readonly "providers.binding.status": {
         machineId: string;
@@ -1701,27 +1735,6 @@ export type ProvidersActionInputById = {
                     managedRuntime: {
                         kind: 'managed';
                         endpointTemplateIds: string[];
-                        credentialRequired?: true | undefined;
-                        sharing?: 'connectionMachine' | undefined;
-                        sourceEnvelopeTransport?: 'cpx-v1' | undefined;
-                        dependencies?: string[] | undefined;
-                        unavailableConnectedAccounts?: readonly {
-                            purpose: string;
-                            service: string | {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            unavailableReason: string | {
-                                key: string;
-                                fallback: string;
-                                params?: Record<string, number | string> | undefined;
-                            };
-                            title?: string | undefined | {
-                                key: string;
-                                fallback: string;
-                                params?: Record<string, number | string> | undefined;
-                            };
-                        }[] | undefined;
                         connectedAccounts?: undefined | {
                             purpose: string;
                             service: string | {
@@ -1729,14 +1742,6 @@ export type ProvidersActionInputById = {
                                 localId: string;
                             };
                             nativeModelIdPrefix?: string | undefined;
-                            managedProviderEndpoint?: undefined | {
-                                provider: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                purpose: string;
-                                modelIdPrefix?: string | undefined;
-                            };
                             title?: string | undefined | {
                                 key: string;
                                 fallback: string;
@@ -1824,17 +1829,39 @@ export type ProvidersActionInputById = {
                                 };
                             };
                         }[];
-                        connectedAccountPurposeBindingPolicy?: undefined | {
-                            minimumBound: 1;
-                        };
                         requestAuthUses?: undefined | {
                             purpose: string;
                             materialization: {
                                 kind: 'httpHeaders';
                                 origin: string;
                                 headerNames: readonly string[];
+                                queryParameterNames?: readonly string[] | undefined;
                             };
                         }[];
+                        credentialRequired?: true | undefined;
+                        sharing?: 'connectionMachine' | undefined;
+                        sourceEnvelopeTransport?: 'cpx-v1' | undefined;
+                        dependencies?: string[] | undefined;
+                        unavailableConnectedAccounts?: readonly {
+                            purpose: string;
+                            service: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            unavailableReason: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            title?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[] | undefined;
+                        connectedAccountPurposeBindingPolicy?: undefined | {
+                            minimumBound: 1;
+                        };
                     };
                     purposeBindings: unknown;
                     gatewayPlacement?: undefined | {
@@ -1972,6 +1999,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -2194,6 +2222,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2413,6 +2442,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -2636,6 +2666,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -2712,6 +2743,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -2935,6 +2967,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3011,6 +3044,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -3234,6 +3268,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3310,6 +3345,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -3533,6 +3569,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3609,6 +3646,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -3832,6 +3870,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -3908,6 +3947,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -4131,6 +4171,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -4207,6 +4248,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -4430,6 +4472,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -4506,6 +4549,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -4729,6 +4773,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -4805,6 +4850,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -5028,6 +5074,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -5104,6 +5151,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -5327,6 +5375,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             revision: number;
             probeObservationIdentity: (string) | null;
@@ -5403,6 +5452,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -5573,6 +5623,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -5620,6 +5671,7 @@ export type ProvidersActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             } | {
                 authorized: true;
@@ -5635,6 +5687,18 @@ export type ProvidersActionResultById = {
                 } | {
                     agentTargetKey: string;
                     providerConnectionId: string;
+                    modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
                     modelId: string;
                 };
                 descriptor: {
@@ -6441,6 +6505,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             displaySnapshot: null | {
                 providerName?: string | undefined;
@@ -6483,6 +6548,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
         }[];
     };
@@ -6521,6 +6587,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'error';
@@ -6557,6 +6624,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -6604,6 +6672,7 @@ export type ProvidersActionResultById = {
                     retryAfterMs?: number | undefined;
                     reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                     savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                    credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                 };
             } | {
                 authorized: true;
@@ -6619,6 +6688,18 @@ export type ProvidersActionResultById = {
                 } | {
                     agentTargetKey: string;
                     providerConnectionId: string;
+                    modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
                     modelId: string;
                 };
                 descriptor: {
@@ -7425,6 +7506,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
             displaySnapshot: null | {
                 providerName?: string | undefined;
@@ -7467,6 +7549,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
         }[];
     } | {
@@ -7638,6 +7721,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -7678,6 +7762,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -7718,6 +7803,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -7758,6 +7844,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -7798,6 +7885,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -7841,6 +7929,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'success';
@@ -7884,6 +7973,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'loaded';
@@ -7930,6 +8020,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'loaded';
@@ -7973,6 +8064,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'not_supported';
@@ -8052,6 +8144,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'not_supported';
@@ -8093,6 +8186,7 @@ export type ProvidersActionResultById = {
                 retryAfterMs?: number | undefined;
                 reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                 savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
             };
         } | {
             sourceId: string;
@@ -8280,6 +8374,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'current';
@@ -8319,6 +8414,7 @@ export type ProvidersActionResultById = {
             retryAfterMs?: number | undefined;
             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
         };
     } | {
         status: 'partial';

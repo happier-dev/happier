@@ -13,7 +13,6 @@ export type CapabilityRulesActionInputById = {
         change: {
             kind: 'replace';
             rules: {
-                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -27,6 +26,7 @@ export type CapabilityRulesActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
+                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -60,7 +60,6 @@ export type CapabilityRulesActionInputById = {
         change: {
             kind: 'replace';
             rules: {
-                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -74,6 +73,7 @@ export type CapabilityRulesActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
+                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {

@@ -25,6 +25,7 @@ export type MachineRolesActionInputById = {
         isolation?: undefined | {
             environment: 'managed-guest';
             provisionerId: string;
+            supportsAgentNativeSandbox?: boolean | undefined;
         };
     };
 };

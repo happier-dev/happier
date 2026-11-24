@@ -7902,11 +7902,11 @@ export type UsageActionResultById = {
                             };
                             eventCount: number;
                             label?: string | undefined;
+                            requestCount?: number | undefined;
                             context?: undefined | {
                                 usedTokens?: null | number | undefined;
                                 windowTokens?: null | number | undefined;
                             };
-                            requestCount?: number | undefined;
                             latestContextUsedTokens?: number | undefined;
                             latestContextWindowTokens?: number | undefined;
                         };
@@ -10334,7 +10334,7 @@ export type UsageActionResultById = {
                             appliesToProviderLimitIds: string[];
                             unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
                         }> | undefined;
-                        accountLabel?: null | string | undefined;
+                        planLabel?: null | string | undefined;
                         recoveryCredits?: undefined | {
                             availableCount: number;
                             credits: {
@@ -10355,7 +10355,7 @@ export type UsageActionResultById = {
                             source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                             confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                         };
-                        planLabel?: null | string | undefined;
+                        accountLabel?: null | string | undefined;
                     }[];
                     meterDefinitions: {
                         details: {
@@ -10368,13 +10368,13 @@ export type UsageActionResultById = {
                         };
                         label: string;
                         status: 'estimated' | 'ok' | 'unavailable';
-                        unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
                         meterId: string;
+                        unit: 'count' | 'credits' | 'requests' | 'tokens' | 'unknown' | 'usd';
                         source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                         scope?: 'daily' | 'five_hour' | 'model' | 'monthly' | 'primary' | 'requests' | 'rolling' | 'secondary' | 'session' | 'seven_day' | 'tokens' | 'unknown' | 'weekly' | undefined;
+                        modelId?: null | string | undefined;
                         providerLimitId?: string | undefined;
                         confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
-                        modelId?: null | string | undefined;
                         currency?: string | undefined;
                         resetSource?: 'body' | 'computed' | 'header' | 'in_band_snapshot' | 'manual' | 'provider' | 'provider_event' | 'provider_probe' | 'retry_after' | 'unknown' | undefined;
                         windowDurationMs?: number | undefined;
@@ -12723,11 +12723,11 @@ export type UsageActionResultById = {
                                 };
                                 eventCount: number;
                                 label?: string | undefined;
+                                requestCount?: number | undefined;
                                 context?: undefined | {
                                     usedTokens?: null | number | undefined;
                                     windowTokens?: null | number | undefined;
                                 };
-                                requestCount?: number | undefined;
                                 latestContextUsedTokens?: number | undefined;
                                 latestContextWindowTokens?: number | undefined;
                             };
@@ -15966,8 +15966,8 @@ export type UsageActionResultById = {
                             };
                         };
                         evidenceSeries?: undefined | {
-                            unit: 'bytes' | 'count' | 'currency' | 'milliseconds' | 'tokens';
                             metric: 'cache_cost_share' | 'cache_hit_ratio' | 'cache_read_tokens' | 'cache_replacement_premium' | 'cache_write_tokens' | 'cached_history_cost' | 'compactions' | 'composed_tokens' | 'context_window_tokens' | 'duplicate_bytes' | 'duplicate_injections' | 'failed_repetitions' | 'fanout_multiplier' | 'input_tokens' | 'loaded_schema_tokens' | 'observed_cost_difference' | 'output_tokens' | 'outside_tokens' | 'parent_tokens' | 'permission_requests' | 'permission_wait' | 'subagent_tokens' | 'thinking_tokens' | 'unchanged_reads' | 'unused_mcp_bindings' | 'unused_schema_bytes';
+                            unit: 'bytes' | 'count' | 'currency' | 'milliseconds' | 'tokens';
                             points: {
                                 evidenceId: string;
                                 observedAtMs: number;
@@ -16293,8 +16293,8 @@ export type UsageActionResultById = {
                         };
                     };
                     evidenceSeries?: undefined | {
-                        unit: 'bytes' | 'count' | 'currency' | 'milliseconds' | 'tokens';
                         metric: 'cache_cost_share' | 'cache_hit_ratio' | 'cache_read_tokens' | 'cache_replacement_premium' | 'cache_write_tokens' | 'cached_history_cost' | 'compactions' | 'composed_tokens' | 'context_window_tokens' | 'duplicate_bytes' | 'duplicate_injections' | 'failed_repetitions' | 'fanout_multiplier' | 'input_tokens' | 'loaded_schema_tokens' | 'observed_cost_difference' | 'output_tokens' | 'outside_tokens' | 'parent_tokens' | 'permission_requests' | 'permission_wait' | 'subagent_tokens' | 'thinking_tokens' | 'unchanged_reads' | 'unused_mcp_bindings' | 'unused_schema_bytes';
+                        unit: 'bytes' | 'count' | 'currency' | 'milliseconds' | 'tokens';
                         points: {
                             evidenceId: string;
                             observedAtMs: number;
@@ -16492,6 +16492,18 @@ export type UsageActionResultById = {
                                         providerConnectionId: string;
                                         modelId: string;
                                     } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
+                                        modelId: string;
+                                    } | {
                                         source: 'native';
                                         agentTargetKey: string;
                                         modelId: string;
@@ -16620,8 +16632,6 @@ export type UsageActionResultById = {
                                     };
                                 };
                                 title?: string | undefined;
-                                primaryTeamId?: null | string | undefined;
-                                memoryEnabled?: boolean | undefined;
                                 organizationPlacement?: undefined | {
                                     folderId: null | string;
                                     tagIds: string[];
@@ -16643,6 +16653,8 @@ export type UsageActionResultById = {
                                         revision?: number | undefined;
                                     }>;
                                 };
+                                memoryEnabled?: boolean | undefined;
+                                primaryTeamId?: null | string | undefined;
                                 teamCredentialBindings?: ({
                                     v: 1;
                                     slot: {

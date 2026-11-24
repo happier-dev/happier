@@ -293,18 +293,23 @@ export type ManagedMachinesActionInputById = {
                 };
             };
             roleId?: string | undefined;
-            primaryTeamId?: null | string | undefined;
-            memoryEnabled?: boolean | undefined;
-            approvalProfileId?: null | string | undefined;
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            manager?: undefined | {
-                sessionId: string;
-            };
             modelSelection?: undefined | {
                 ref: {
                     source: 'account_provider_connection';
                     agentTargetKey: string;
                     providerConnectionId: string;
+                    modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
                     modelId: string;
                 } | {
                     source: 'native';
@@ -404,21 +409,9 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
-            configuration?: unknown;
-            capabilitySelection?: undefined | {
-                mcp?: undefined | {
-                    v?: 1 | undefined;
-                    managedServersEnabled?: boolean | undefined;
-                    happierToolsEnabled?: boolean | undefined;
-                    forceIncludeServerIds?: string[] | undefined;
-                    forceExcludeServerIds?: string[] | undefined;
-                };
-                skills?: undefined | {
-                    v?: 1 | undefined;
-                    forceIncludeSkillIds?: string[] | undefined;
-                    forceExcludeSkillIds?: string[] | undefined;
-                    excludeNativeSkillNames?: string[] | undefined;
-                };
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
             };
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
@@ -438,6 +431,7 @@ export type ManagedMachinesActionInputById = {
                     sourceId: string;
                 };
             };
+            approvalProfileId?: null | string | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -445,8 +439,25 @@ export type ManagedMachinesActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             agentModeId?: string | undefined;
+            configuration?: unknown;
             unlistedTools?: 'ask' | 'deny' | undefined;
+            capabilitySelection?: undefined | {
+                mcp?: undefined | {
+                    v?: 1 | undefined;
+                    managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
+                    forceIncludeServerIds?: string[] | undefined;
+                    forceExcludeServerIds?: string[] | undefined;
+                };
+                skills?: undefined | {
+                    v?: 1 | undefined;
+                    forceIncludeSkillIds?: string[] | undefined;
+                    forceExcludeSkillIds?: string[] | undefined;
+                    excludeNativeSkillNames?: string[] | undefined;
+                };
+            };
             transcriptStorage?: 'direct' | 'persisted' | undefined;
             checkoutCreationDraft?: null | undefined | {
                 kind: 'git_worktree';
@@ -454,6 +465,8 @@ export type ManagedMachinesActionInputById = {
                 baseRef: null | string;
                 branchMode?: 'existing' | 'new' | undefined;
             };
+            memoryEnabled?: boolean | undefined;
+            primaryTeamId?: null | string | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1321,6 +1334,13 @@ export type ManagedMachinesActionInputById = {
                     displayText: string;
                 };
             };
+            manager?: undefined | {
+                sessionId: string;
+            };
+            attestedContext?: undefined | {
+                externalPrincipalId: string;
+                sourceMessageId: string;
+            };
             sessionPlacement?: undefined | {
                 kind: 'in_place';
                 workspace: {
@@ -1568,6 +1588,18 @@ export type ManagedMachinesActionInputById = {
                     directory: string;
                 };
             };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+                continuation?: true | undefined;
+            };
             promptStack?: undefined | {
                 id: string;
                 ref: {
@@ -1582,14 +1614,6 @@ export type ManagedMachinesActionInputById = {
                 skillMigrationV1?: true | undefined;
                 plan?: true | undefined;
             }[];
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
-            };
-            attestedContext?: undefined | {
-                externalPrincipalId: string;
-                sourceMessageId: string;
-            };
             managedCreation?: undefined | {
                 homeId: string;
                 managedId: string;
@@ -2230,6 +2254,18 @@ export type ManagedMachinesActionInputById = {
                                     providerConnectionId: string;
                                     modelId: string;
                                 } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                } | {
                                     source: 'native';
                                     agentTargetKey: string;
                                     modelId: string;
@@ -2358,8 +2394,6 @@ export type ManagedMachinesActionInputById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
-                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -2381,6 +2415,8 @@ export type ManagedMachinesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -2610,13 +2646,13 @@ export type ManagedMachinesActionInputById = {
                     name: string;
                     description: null | string;
                 };
-                approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
+                approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2714,6 +2750,18 @@ export type ManagedMachinesActionInputById = {
                                     source: 'account_provider_connection';
                                     agentTargetKey: string;
                                     providerConnectionId: string;
+                                    modelId: string;
+                                } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
                                     modelId: string;
                                 } | {
                                     source: 'native';
@@ -2874,8 +2922,6 @@ export type ManagedMachinesActionInputById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
-                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -2897,6 +2943,8 @@ export type ManagedMachinesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -3087,6 +3135,18 @@ export type ManagedMachinesActionInputById = {
                                         source: 'account_provider_connection';
                                         agentTargetKey: string;
                                         providerConnectionId: string;
+                                        modelId: string;
+                                    } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
                                         modelId: string;
                                     } | {
                                         source: 'native';
@@ -3449,6 +3509,10 @@ export type ManagedMachinesActionInputById = {
                         projectKey: string;
                         kind: 'project';
                     };
+                    actionStepRefs?: undefined | {
+                        sourceKey: string;
+                        blockId: string;
+                    }[];
                     childRevisions?: undefined | {
                         sourceKey: string;
                         bodyVersion: number;
@@ -3489,17 +3553,6 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
         reviewedFacts?: undefined | {
             launch: {
@@ -3707,6 +3760,7 @@ export type ManagedMachinesActionInputById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -3731,6 +3785,10 @@ export type ManagedMachinesActionInputById = {
                     when: unknown;
                     optionsWhen?: unknown;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -4039,18 +4097,23 @@ export type ManagedMachinesActionInputById = {
                 };
             };
             roleId?: string | undefined;
-            primaryTeamId?: null | string | undefined;
-            memoryEnabled?: boolean | undefined;
-            approvalProfileId?: null | string | undefined;
-            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            manager?: undefined | {
-                sessionId: string;
-            };
             modelSelection?: undefined | {
                 ref: {
                     source: 'account_provider_connection';
                     agentTargetKey: string;
                     providerConnectionId: string;
+                    modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
                     modelId: string;
                 } | {
                     source: 'native';
@@ -4150,21 +4213,9 @@ export type ManagedMachinesActionInputById = {
                     };
                 }> | undefined;
             };
-            configuration?: unknown;
-            capabilitySelection?: undefined | {
-                mcp?: undefined | {
-                    v?: 1 | undefined;
-                    managedServersEnabled?: boolean | undefined;
-                    happierToolsEnabled?: boolean | undefined;
-                    forceIncludeServerIds?: string[] | undefined;
-                    forceExcludeServerIds?: string[] | undefined;
-                };
-                skills?: undefined | {
-                    v?: 1 | undefined;
-                    forceIncludeSkillIds?: string[] | undefined;
-                    forceExcludeSkillIds?: string[] | undefined;
-                    excludeNativeSkillNames?: string[] | undefined;
-                };
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
             };
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
@@ -4184,6 +4235,7 @@ export type ManagedMachinesActionInputById = {
                     sourceId: string;
                 };
             };
+            approvalProfileId?: null | string | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -4191,8 +4243,25 @@ export type ManagedMachinesActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             agentModeId?: string | undefined;
+            configuration?: unknown;
             unlistedTools?: 'ask' | 'deny' | undefined;
+            capabilitySelection?: undefined | {
+                mcp?: undefined | {
+                    v?: 1 | undefined;
+                    managedServersEnabled?: boolean | undefined;
+                    happierToolsEnabled?: boolean | undefined;
+                    forceIncludeServerIds?: string[] | undefined;
+                    forceExcludeServerIds?: string[] | undefined;
+                };
+                skills?: undefined | {
+                    v?: 1 | undefined;
+                    forceIncludeSkillIds?: string[] | undefined;
+                    forceExcludeSkillIds?: string[] | undefined;
+                    excludeNativeSkillNames?: string[] | undefined;
+                };
+            };
             transcriptStorage?: 'direct' | 'persisted' | undefined;
             checkoutCreationDraft?: null | undefined | {
                 kind: 'git_worktree';
@@ -4200,6 +4269,8 @@ export type ManagedMachinesActionInputById = {
                 baseRef: null | string;
                 branchMode?: 'existing' | 'new' | undefined;
             };
+            memoryEnabled?: boolean | undefined;
+            primaryTeamId?: null | string | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -5067,6 +5138,13 @@ export type ManagedMachinesActionInputById = {
                     displayText: string;
                 };
             };
+            manager?: undefined | {
+                sessionId: string;
+            };
+            attestedContext?: undefined | {
+                externalPrincipalId: string;
+                sourceMessageId: string;
+            };
             sessionPlacement?: undefined | {
                 kind: 'in_place';
                 workspace: {
@@ -5314,6 +5392,18 @@ export type ManagedMachinesActionInputById = {
                     directory: string;
                 };
             };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+                continuation?: true | undefined;
+            };
             promptStack?: undefined | {
                 id: string;
                 ref: {
@@ -5328,14 +5418,6 @@ export type ManagedMachinesActionInputById = {
                 skillMigrationV1?: true | undefined;
                 plan?: true | undefined;
             }[];
-            discussionParticipant?: undefined | {
-                discussionId: string;
-                participantSlotId: string;
-            };
-            attestedContext?: undefined | {
-                externalPrincipalId: string;
-                sourceMessageId: string;
-            };
             managedCreation?: undefined | {
                 homeId: string;
                 managedId: string;
@@ -5976,6 +6058,18 @@ export type ManagedMachinesActionInputById = {
                                     providerConnectionId: string;
                                     modelId: string;
                                 } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                } | {
                                     source: 'native';
                                     agentTargetKey: string;
                                     modelId: string;
@@ -6104,8 +6198,6 @@ export type ManagedMachinesActionInputById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
-                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -6127,6 +6219,8 @@ export type ManagedMachinesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -6356,13 +6450,13 @@ export type ManagedMachinesActionInputById = {
                     name: string;
                     description: null | string;
                 };
-                approvalProfileId?: null | string | undefined;
-                inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
+                approvalProfileId?: null | string | undefined;
+                inputs?: Record<string, unknown> | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -6460,6 +6554,18 @@ export type ManagedMachinesActionInputById = {
                                     source: 'account_provider_connection';
                                     agentTargetKey: string;
                                     providerConnectionId: string;
+                                    modelId: string;
+                                } | {
+                                    source: 'connected_account';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    agentTargetKey: string;
                                     modelId: string;
                                 } | {
                                     source: 'native';
@@ -6620,8 +6726,6 @@ export type ManagedMachinesActionInputById = {
                                 };
                             };
                             title?: string | undefined;
-                            primaryTeamId?: null | string | undefined;
-                            memoryEnabled?: boolean | undefined;
                             organizationPlacement?: undefined | {
                                 folderId: null | string;
                                 tagIds: string[];
@@ -6643,6 +6747,8 @@ export type ManagedMachinesActionInputById = {
                                     revision?: number | undefined;
                                 }>;
                             };
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
                             teamCredentialBindings?: ({
                                 v: 1;
                                 slot: {
@@ -6833,6 +6939,18 @@ export type ManagedMachinesActionInputById = {
                                         source: 'account_provider_connection';
                                         agentTargetKey: string;
                                         providerConnectionId: string;
+                                        modelId: string;
+                                    } | {
+                                        source: 'connected_account';
+                                        purpose: {
+                                            consumer: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            purpose: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        agentTargetKey: string;
                                         modelId: string;
                                     } | {
                                         source: 'native';
@@ -7195,6 +7313,10 @@ export type ManagedMachinesActionInputById = {
                         projectKey: string;
                         kind: 'project';
                     };
+                    actionStepRefs?: undefined | {
+                        sourceKey: string;
+                        blockId: string;
+                    }[];
                     childRevisions?: undefined | {
                         sourceKey: string;
                         bodyVersion: number;
@@ -7235,22 +7357,11 @@ export type ManagedMachinesActionInputById = {
                 id: string;
                 revision: number;
             }> | undefined;
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
-                };
-            };
         };
     };
     readonly "machines.managed.list": {
         homeId: string;
-        archived?: boolean | undefined;
+        archived?: 'all' | boolean | undefined;
         presetId?: string | undefined;
         enrolledMachineId?: string | undefined;
     };
@@ -7273,6 +7384,16 @@ export type ManagedMachinesActionInputById = {
         homeId: string;
         managedId: string;
         includeGuestDiagnostics?: true | undefined;
+    };
+    readonly "machines.managed.exec": {
+        argv: [
+            string,
+            ...string[]
+        ];
+        homeId: string;
+        managedId: string;
+        cwd?: string | undefined;
+        env?: Record<string, string> | undefined;
     };
     readonly "machines.managed.bootstrap.retry": {
         expectedIntentRevision: number;
@@ -7379,6 +7500,25 @@ export type ManagedMachinesActionInputById = {
                             publicFiles?: undefined | {
                                 path: string;
                                 content: string;
+                            }[];
+                        } | {
+                            workspaceId: string;
+                            kind: 'folder';
+                            manifestFingerprint: string;
+                            fileCount: number;
+                            totalBytes: number;
+                            excludedPaths: string[];
+                            includeEnvFiles?: true | undefined;
+                            compose?: undefined | {
+                                profiles: string[];
+                                services: string[];
+                                path: string;
+                                primaryService?: string | undefined;
+                            };
+                            unsupportedFilePaths?: string[] | undefined;
+                            exclusionReasons?: undefined | {
+                                path: string;
+                                reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
                             }[];
                         };
                         requestKey: string;
@@ -7930,9 +8070,9 @@ export type ManagedMachinesActionInputById = {
                 intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
+                    groupGrants?: string[] | undefined;
                     accountGrants?: string[] | undefined;
                     teamGrants?: string[] | undefined;
-                    groupGrants?: string[] | undefined;
                 };
                 connectTo?: undefined | {
                     service: string;
@@ -8039,6 +8179,25 @@ export type ManagedMachinesActionInputById = {
                                 publicFiles?: undefined | {
                                     path: string;
                                     content: string;
+                                }[];
+                            } | {
+                                workspaceId: string;
+                                kind: 'folder';
+                                manifestFingerprint: string;
+                                fileCount: number;
+                                totalBytes: number;
+                                excludedPaths: string[];
+                                includeEnvFiles?: true | undefined;
+                                compose?: undefined | {
+                                    profiles: string[];
+                                    services: string[];
+                                    path: string;
+                                    primaryService?: string | undefined;
+                                };
+                                unsupportedFilePaths?: string[] | undefined;
+                                exclusionReasons?: undefined | {
+                                    path: string;
+                                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
                                 }[];
                             };
                             requestKey: string;
@@ -8590,9 +8749,9 @@ export type ManagedMachinesActionInputById = {
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
+                        groupGrants?: string[] | undefined;
                         accountGrants?: string[] | undefined;
                         teamGrants?: string[] | undefined;
-                        groupGrants?: string[] | undefined;
                     };
                     connectTo?: undefined | {
                         service: string;
@@ -10619,6 +10778,25 @@ export type ManagedMachinesActionInputById = {
                                     path: string;
                                     content: string;
                                 }[];
+                            } | {
+                                workspaceId: string;
+                                kind: 'folder';
+                                manifestFingerprint: string;
+                                fileCount: number;
+                                totalBytes: number;
+                                excludedPaths: string[];
+                                includeEnvFiles?: true | undefined;
+                                compose?: undefined | {
+                                    profiles: string[];
+                                    services: string[];
+                                    path: string;
+                                    primaryService?: string | undefined;
+                                };
+                                unsupportedFilePaths?: string[] | undefined;
+                                exclusionReasons?: undefined | {
+                                    path: string;
+                                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                                }[];
                             };
                             requestKey: string;
                             targetLinkId: string;
@@ -11169,9 +11347,9 @@ export type ManagedMachinesActionInputById = {
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
+                        groupGrants?: string[] | undefined;
                         accountGrants?: string[] | undefined;
                         teamGrants?: string[] | undefined;
-                        groupGrants?: string[] | undefined;
                     };
                     connectTo?: undefined | {
                         service: string;
@@ -14282,6 +14460,7 @@ export type ManagedMachinesActionResultById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -14306,6 +14485,10 @@ export type ManagedMachinesActionResultById = {
                     when: InputPredicate;
                     optionsWhen?: InputPredicate | undefined;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -15652,6 +15835,7 @@ export type ManagedMachinesActionResultById = {
                 kind: 'guestProcess';
                 role: 'sandbox';
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             reviewedFacts?: undefined | {
                 launch: {
                     provider: {
@@ -15873,6 +16057,7 @@ export type ManagedMachinesActionResultById = {
                         snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
+                    nestedChild?: true | undefined;
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                     kindTitle?: string | undefined | {
                         key: string;
@@ -15897,6 +16082,10 @@ export type ManagedMachinesActionResultById = {
                         when: InputPredicate;
                         optionsWhen?: InputPredicate | undefined;
                         resourceIdentityPaths?: string[] | undefined;
+                        bootstrapCredential?: undefined | {
+                            kind: 'remote-host-ssh';
+                            remoteHostIdPath: string;
+                        };
                     };
                     resize?: undefined | {
                         cpuCores: {
@@ -16476,6 +16665,7 @@ export type ManagedMachinesActionResultById = {
                         accountId: string;
                     };
                 };
+                guestActivityRole?: 'manage' | 'use' | undefined;
                 bootstrapCredentialRef?: undefined | {
                     kind: 'shared_resource';
                     resourceId: string;
@@ -16654,6 +16844,7 @@ export type ManagedMachinesActionResultById = {
             kind: 'guestProcess';
             role: 'sandbox';
         };
+        guestActivityRole?: 'manage' | 'use' | undefined;
         reviewedFacts?: undefined | {
             launch: {
                 provider: {
@@ -16875,6 +17066,7 @@ export type ManagedMachinesActionResultById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -16899,6 +17091,10 @@ export type ManagedMachinesActionResultById = {
                     when: InputPredicate;
                     optionsWhen?: InputPredicate | undefined;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -18835,6 +19031,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -19236,6 +19433,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -19260,6 +19458,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -19608,6 +19810,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -19683,12 +19891,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -19762,6 +19981,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -20460,6 +20680,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -20484,6 +20705,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -20832,6 +21057,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -20902,12 +21133,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -20981,6 +21223,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -21023,6 +21266,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -21054,6 +21310,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -21103,16 +21360,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -21210,6 +21479,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -21259,6 +21532,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -21268,6 +21600,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -21329,25 +21673,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -21358,6 +21683,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -21388,10 +21737,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -21399,10 +21748,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -21410,10 +21759,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -21421,10 +21770,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -21441,10 +21790,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -21454,10 +21803,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -21477,12 +21826,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -21512,12 +21861,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -21545,13 +21894,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -21584,6 +21933,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     } | {
@@ -21666,6 +22016,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -23154,6 +23505,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -23555,6 +23907,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -23579,6 +23932,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -23927,6 +24284,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -24002,12 +24365,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -24081,6 +24455,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -24779,6 +25154,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -24803,6 +25179,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -25151,6 +25531,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -25221,12 +25607,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -25300,6 +25697,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -25342,6 +25740,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -25373,6 +25784,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -25422,16 +25834,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -25529,6 +25953,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -25578,6 +26006,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -25587,6 +26074,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -25648,25 +26147,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -25677,6 +26157,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -25707,10 +26211,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -25718,10 +26222,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -25729,10 +26233,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -25740,10 +26244,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -25760,10 +26264,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -25773,10 +26277,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -25796,12 +26300,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -25831,12 +26335,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -25864,13 +26368,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -25903,6 +26407,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     };
@@ -25936,6 +26441,7 @@ export type ManagedMachinesActionResultById = {
             }>[] | undefined;
         }>[];
         readonly unavailable: readonly ('artifacts' | 'assignments' | 'deployments' | 'pools' | 'profiles' | 'requester_authority' | 'target')[];
+        readonly failureCause?: ActionFailureCauseV1 | undefined;
     };
     readonly "machines.managed.inspect": {
         machine: {
@@ -26063,6 +26569,7 @@ export type ManagedMachinesActionResultById = {
                 kind: 'guestProcess';
                 role: 'sandbox';
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             reviewedFacts?: undefined | {
                 launch: {
                     provider: {
@@ -26284,6 +26791,7 @@ export type ManagedMachinesActionResultById = {
                         snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
+                    nestedChild?: true | undefined;
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                     kindTitle?: string | undefined | {
                         key: string;
@@ -26308,6 +26816,10 @@ export type ManagedMachinesActionResultById = {
                         when: InputPredicate;
                         optionsWhen?: InputPredicate | undefined;
                         resourceIdentityPaths?: string[] | undefined;
+                        bootstrapCredential?: undefined | {
+                            kind: 'remote-host-ssh';
+                            remoteHostIdPath: string;
+                        };
                     };
                     resize?: undefined | {
                         cpuCores: {
@@ -26886,6 +27398,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -26968,6 +27481,13 @@ export type ManagedMachinesActionResultById = {
             requestId?: string | undefined;
             exitCode?: number | undefined;
         };
+    };
+    readonly "machines.managed.exec": {
+        exitCode: null | number;
+        stdout: string;
+        stderr: string;
+        stdoutTruncated: boolean;
+        stderrTruncated: boolean;
     };
     readonly "machines.managed.bootstrap.retry": {
         managedId: string;
@@ -27103,6 +27623,7 @@ export type ManagedMachinesActionResultById = {
                 kind: 'guestProcess';
                 role: 'sandbox';
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             reviewedFacts?: undefined | {
                 launch: {
                     provider: {
@@ -27324,6 +27845,7 @@ export type ManagedMachinesActionResultById = {
                         snapshot?: string | undefined;
                         renew?: string | undefined;
                     };
+                    nestedChild?: true | undefined;
                     enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                     kindTitle?: string | undefined | {
                         key: string;
@@ -27348,6 +27870,10 @@ export type ManagedMachinesActionResultById = {
                         when: InputPredicate;
                         optionsWhen?: InputPredicate | undefined;
                         resourceIdentityPaths?: string[] | undefined;
+                        bootstrapCredential?: undefined | {
+                            kind: 'remote-host-ssh';
+                            remoteHostIdPath: string;
+                        };
                     };
                     resize?: undefined | {
                         cpuCores: {
@@ -27926,6 +28452,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -28113,6 +28640,7 @@ export type ManagedMachinesActionResultById = {
             kind: 'guestProcess';
             role: 'sandbox';
         };
+        guestActivityRole?: 'manage' | 'use' | undefined;
         reviewedFacts?: undefined | {
             launch: {
                 provider: {
@@ -28334,6 +28862,7 @@ export type ManagedMachinesActionResultById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -28358,6 +28887,10 @@ export type ManagedMachinesActionResultById = {
                     when: InputPredicate;
                     optionsWhen?: InputPredicate | undefined;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -30294,6 +30827,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -30695,6 +31229,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -30719,6 +31254,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -31067,6 +31606,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -31142,12 +31687,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -31221,6 +31777,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -31919,6 +32476,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -31943,6 +32501,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -32291,6 +32853,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -32361,12 +32929,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -32440,6 +33019,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -32482,6 +33062,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -32513,6 +33106,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -32562,16 +33156,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -32669,6 +33275,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -32718,6 +33328,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -32727,6 +33396,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -32788,25 +33469,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -32817,6 +33479,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -32847,10 +33533,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -32858,10 +33544,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -32869,10 +33555,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -32880,10 +33566,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -32900,10 +33586,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -32913,10 +33599,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -32936,12 +33622,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -32971,12 +33657,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -33004,13 +33690,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -33043,6 +33729,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     } | {
@@ -33125,6 +33812,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -34613,6 +35301,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -35014,6 +35703,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -35038,6 +35728,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -35386,6 +36080,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -35461,12 +36161,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -35540,6 +36251,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -36238,6 +36950,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -36262,6 +36975,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -36610,6 +37327,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -36680,12 +37403,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -36759,6 +37493,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -36801,6 +37536,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -36832,6 +37580,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -36881,16 +37630,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -36988,6 +37749,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -37037,6 +37802,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -37046,6 +37870,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -37107,25 +37943,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -37136,6 +37953,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -37166,10 +38007,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -37177,10 +38018,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -37188,10 +38029,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -37199,10 +38040,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -37219,10 +38060,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -37232,10 +38073,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -37255,12 +38096,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -37290,12 +38131,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -37323,13 +38164,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -37362,6 +38203,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     };
@@ -39488,6 +40330,25 @@ export type ManagedMachinesActionResultById = {
                                 path: string;
                                 content: string;
                             }[];
+                        } | {
+                            workspaceId: string;
+                            kind: 'folder';
+                            manifestFingerprint: string;
+                            fileCount: number;
+                            totalBytes: number;
+                            excludedPaths: string[];
+                            includeEnvFiles?: true | undefined;
+                            compose?: undefined | {
+                                profiles: string[];
+                                services: string[];
+                                path: string;
+                                primaryService?: string | undefined;
+                            };
+                            unsupportedFilePaths?: string[] | undefined;
+                            exclusionReasons?: undefined | {
+                                path: string;
+                                reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                            }[];
                         };
                         requestKey: string;
                         targetLinkId: string;
@@ -40038,9 +40899,9 @@ export type ManagedMachinesActionResultById = {
                 intent?: 'add' | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 generatedSecretAudience?: undefined | {
+                    groupGrants?: string[] | undefined;
                     accountGrants?: string[] | undefined;
                     teamGrants?: string[] | undefined;
-                    groupGrants?: string[] | undefined;
                 };
                 connectTo?: undefined | {
                     service: string;
@@ -40321,6 +41182,15 @@ export type ManagedMachinesActionResultById = {
             administratorUnavailable?: undefined | {
                 reasonCode: 'mode_none';
             };
+            steps?: undefined | {
+                planIndex: number;
+                stepId: string;
+                label: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+            }[];
             presetUpdateEffects?: undefined | {
                 toolchain: boolean;
                 scripts: {
@@ -40343,6 +41213,10 @@ export type ManagedMachinesActionResultById = {
                 itemIndex: number;
                 kind: 'completed' | 'failed' | 'new' | 'not_completed' | 'unknown';
                 environmentId?: string | undefined;
+                retry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
             }[];
             host?: undefined | {
                 machineId: null | string;
@@ -43442,6 +44316,25 @@ export type ManagedMachinesActionResultById = {
                                         path: string;
                                         content: string;
                                     }[];
+                                } | {
+                                    workspaceId: string;
+                                    kind: 'folder';
+                                    manifestFingerprint: string;
+                                    fileCount: number;
+                                    totalBytes: number;
+                                    excludedPaths: string[];
+                                    includeEnvFiles?: true | undefined;
+                                    compose?: undefined | {
+                                        profiles: string[];
+                                        services: string[];
+                                        path: string;
+                                        primaryService?: string | undefined;
+                                    };
+                                    unsupportedFilePaths?: string[] | undefined;
+                                    exclusionReasons?: undefined | {
+                                        path: string;
+                                        reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                                    }[];
                                 };
                                 requestKey: string;
                                 targetLinkId: string;
@@ -43992,9 +44885,9 @@ export type ManagedMachinesActionResultById = {
                         intent?: 'add' | undefined;
                         managedRetention?: 'keep' | 'until-delete' | undefined;
                         generatedSecretAudience?: undefined | {
+                            groupGrants?: string[] | undefined;
                             accountGrants?: string[] | undefined;
                             teamGrants?: string[] | undefined;
-                            groupGrants?: string[] | undefined;
                         };
                         connectTo?: undefined | {
                             service: string;
@@ -44275,6 +45168,15 @@ export type ManagedMachinesActionResultById = {
                     administratorUnavailable?: undefined | {
                         reasonCode: 'mode_none';
                     };
+                    steps?: undefined | {
+                        planIndex: number;
+                        stepId: string;
+                        label: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
                     presetUpdateEffects?: undefined | {
                         toolchain: boolean;
                         scripts: {
@@ -44297,6 +45199,10 @@ export type ManagedMachinesActionResultById = {
                         itemIndex: number;
                         kind: 'completed' | 'failed' | 'new' | 'not_completed' | 'unknown';
                         environmentId?: string | undefined;
+                        retry?: undefined | {
+                            runId: string;
+                            invocationId: string;
+                        };
                     }[];
                     host?: undefined | {
                         machineId: null | string;
@@ -45319,6 +46225,25 @@ export type ManagedMachinesActionResultById = {
                                     path: string;
                                     content: string;
                                 }[];
+                            } | {
+                                workspaceId: string;
+                                kind: 'folder';
+                                manifestFingerprint: string;
+                                fileCount: number;
+                                totalBytes: number;
+                                excludedPaths: string[];
+                                includeEnvFiles?: true | undefined;
+                                compose?: undefined | {
+                                    profiles: string[];
+                                    services: string[];
+                                    path: string;
+                                    primaryService?: string | undefined;
+                                };
+                                unsupportedFilePaths?: string[] | undefined;
+                                exclusionReasons?: undefined | {
+                                    path: string;
+                                    reason: 'env' | 'gitIgnore' | 'repositoryMetadata' | 'symlink';
+                                }[];
                             };
                             requestKey: string;
                             targetLinkId: string;
@@ -45869,9 +46794,9 @@ export type ManagedMachinesActionResultById = {
                     intent?: 'add' | undefined;
                     managedRetention?: 'keep' | 'until-delete' | undefined;
                     generatedSecretAudience?: undefined | {
+                        groupGrants?: string[] | undefined;
                         accountGrants?: string[] | undefined;
                         teamGrants?: string[] | undefined;
-                        groupGrants?: string[] | undefined;
                     };
                     connectTo?: undefined | {
                         service: string;
@@ -46448,6 +47373,7 @@ export type ManagedMachinesActionResultById = {
             kind: 'guestProcess';
             role: 'sandbox';
         };
+        guestActivityRole?: 'manage' | 'use' | undefined;
         reviewedFacts?: undefined | {
             launch: {
                 provider: {
@@ -46669,6 +47595,7 @@ export type ManagedMachinesActionResultById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -46693,6 +47620,10 @@ export type ManagedMachinesActionResultById = {
                     when: InputPredicate;
                     optionsWhen?: InputPredicate | undefined;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -48629,6 +49560,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -49030,6 +49962,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -49054,6 +49987,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -49402,6 +50339,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -49477,12 +50420,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -49556,6 +50510,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -50254,6 +51209,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -50278,6 +51234,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -50626,6 +51586,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -50696,12 +51662,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -50775,6 +51752,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -50817,6 +51795,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -50848,6 +51839,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -50897,16 +51889,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -51004,6 +52008,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -51053,6 +52061,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -51062,6 +52129,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -51123,25 +52202,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -51152,6 +52212,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -51182,10 +52266,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -51193,10 +52277,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -51204,10 +52288,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -51215,10 +52299,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -51235,10 +52319,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -51248,10 +52332,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -51271,12 +52355,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -51306,12 +52390,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -51339,13 +52423,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -51378,6 +52462,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     } | {
@@ -51460,6 +52545,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -52948,6 +54034,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -53349,6 +54436,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -53373,6 +54461,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -53721,6 +54813,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -53796,12 +54894,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -53875,6 +54984,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -54573,6 +55683,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -54597,6 +55708,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -54945,6 +56060,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -55015,12 +56136,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -55094,6 +56226,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -55136,6 +56269,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -55167,6 +56313,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -55216,16 +56363,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -55323,6 +56482,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -55372,6 +56535,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -55381,6 +56603,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -55442,25 +56676,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -55471,6 +56686,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -55501,10 +56740,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -55512,10 +56751,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -55523,10 +56762,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -55534,10 +56773,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -55554,10 +56793,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -55567,10 +56806,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -55590,12 +56829,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -55625,12 +56864,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -55658,13 +56897,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -55697,6 +56936,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     };
@@ -55719,6 +56959,7 @@ export type ManagedMachinesActionResultById = {
                 }>[] | undefined;
             }>[];
             unavailable: readonly ('artifacts' | 'assignments' | 'deployments' | 'pools' | 'profiles' | 'requester_authority' | 'target')[];
+            failureCause?: ActionFailureCauseV1 | undefined;
         }>;
         kind: 'accepted';
         managedId: string;
@@ -55747,6 +56988,7 @@ export type ManagedMachinesActionResultById = {
                 }>[] | undefined;
             }>[];
             unavailable: readonly ('artifacts' | 'assignments' | 'deployments' | 'pools' | 'profiles' | 'requester_authority' | 'target')[];
+            failureCause?: ActionFailureCauseV1 | undefined;
         }>;
         kind: 'conflict';
         currentRevision: number;
@@ -55769,6 +57011,7 @@ export type ManagedMachinesActionResultById = {
                 }>[] | undefined;
             }>[];
             unavailable: readonly ('artifacts' | 'assignments' | 'deployments' | 'pools' | 'profiles' | 'requester_authority' | 'target')[];
+            failureCause?: ActionFailureCauseV1 | undefined;
         }>;
         kind: 'refused';
         code: 'account_mode_mismatch' | 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'pool_no_available_machine' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
@@ -55898,6 +57141,7 @@ export type ManagedMachinesActionResultById = {
             kind: 'guestProcess';
             role: 'sandbox';
         };
+        guestActivityRole?: 'manage' | 'use' | undefined;
         reviewedFacts?: undefined | {
             launch: {
                 provider: {
@@ -56119,6 +57363,7 @@ export type ManagedMachinesActionResultById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -56143,6 +57388,10 @@ export type ManagedMachinesActionResultById = {
                     when: InputPredicate;
                     optionsWhen?: InputPredicate | undefined;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -58079,6 +59328,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -58480,6 +59730,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -58504,6 +59755,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -58852,6 +60107,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -58927,12 +60188,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -59006,6 +60278,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -59704,6 +60977,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -59728,6 +61002,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -60076,6 +61354,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -60146,12 +61430,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -60225,6 +61520,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -60267,6 +61563,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -60298,6 +61607,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -60347,16 +61657,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -60454,6 +61776,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -60503,6 +61829,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -60512,6 +61897,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -60573,25 +61970,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -60602,6 +61980,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -60632,10 +62034,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -60643,10 +62045,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -60654,10 +62056,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -60665,10 +62067,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -60685,10 +62087,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -60698,10 +62100,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -60721,12 +62123,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -60756,12 +62158,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -60789,13 +62191,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -60828,6 +62230,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     } | {
@@ -60910,6 +62313,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -62398,6 +63802,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -62799,6 +64204,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -62823,6 +64229,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -63171,6 +64581,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -63246,12 +64662,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -63325,6 +64752,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -64023,6 +65451,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -64047,6 +65476,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -64395,6 +65828,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -64465,12 +65904,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -64544,6 +65994,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -64586,6 +66037,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -64617,6 +66081,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -64666,16 +66131,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -64773,6 +66250,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -64822,6 +66303,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -64831,6 +66371,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -64892,25 +66444,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -64921,6 +66454,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -64951,10 +66508,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -64962,10 +66519,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -64973,10 +66530,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -64984,10 +66541,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -65004,10 +66561,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -65017,10 +66574,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -65040,12 +66597,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -65075,12 +66632,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -65108,13 +66665,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -65147,6 +66704,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     };
@@ -65275,6 +66833,7 @@ export type ManagedMachinesActionResultById = {
             kind: 'guestProcess';
             role: 'sandbox';
         };
+        guestActivityRole?: 'manage' | 'use' | undefined;
         reviewedFacts?: undefined | {
             launch: {
                 provider: {
@@ -65496,6 +67055,7 @@ export type ManagedMachinesActionResultById = {
                     snapshot?: string | undefined;
                     renew?: string | undefined;
                 };
+                nestedChild?: true | undefined;
                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                 kindTitle?: string | undefined | {
                     key: string;
@@ -65520,6 +67080,10 @@ export type ManagedMachinesActionResultById = {
                     when: InputPredicate;
                     optionsWhen?: InputPredicate | undefined;
                     resourceIdentityPaths?: string[] | undefined;
+                    bootstrapCredential?: undefined | {
+                        kind: 'remote-host-ssh';
+                        remoteHostIdPath: string;
+                    };
                 };
                 resize?: undefined | {
                     cpuCores: {
@@ -67456,6 +69020,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -67857,6 +69422,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -67881,6 +69447,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -68229,6 +69799,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -68304,12 +69880,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -68383,6 +69970,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -69081,6 +70669,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -69105,6 +70694,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -69453,6 +71046,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -69523,12 +71122,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -69602,6 +71212,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -69644,6 +71255,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -69675,6 +71299,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -69724,16 +71349,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -69831,6 +71468,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -69880,6 +71521,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -69889,6 +71589,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -69950,25 +71662,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -69979,6 +71672,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -70009,10 +71726,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -70020,10 +71737,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -70031,10 +71748,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -70042,10 +71759,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -70062,10 +71779,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -70075,10 +71792,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -70098,12 +71815,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -70133,12 +71850,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -70166,13 +71883,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -70205,6 +71922,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     } | {
@@ -70287,6 +72005,7 @@ export type ManagedMachinesActionResultById = {
                     accountId: string;
                 };
             };
+            guestActivityRole?: 'manage' | 'use' | undefined;
             bootstrapCredentialRef?: undefined | {
                 kind: 'shared_resource';
                 resourceId: string;
@@ -71775,6 +73494,7 @@ export type ManagedMachinesActionResultById = {
                     expectedGeneration: string;
                 };
                 registryThemeContent?: true | undefined;
+                selectedActionInputDigest?: string | undefined;
                 pluginInvocation?: undefined | {
                     kind: 'clientPluginAction';
                     clientActionBinding: {
@@ -72176,6 +73896,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -72200,6 +73921,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -72548,6 +74273,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -72623,12 +74354,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -72702,6 +74444,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -73400,6 +75143,7 @@ export type ManagedMachinesActionResultById = {
                                     snapshot?: string | undefined;
                                     renew?: string | undefined;
                                 };
+                                nestedChild?: true | undefined;
                                 enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
                                 kindTitle?: string | undefined | {
                                     key: string;
@@ -73424,6 +75168,10 @@ export type ManagedMachinesActionResultById = {
                                     when: InputPredicate;
                                     optionsWhen?: InputPredicate | undefined;
                                     resourceIdentityPaths?: string[] | undefined;
+                                    bootstrapCredential?: undefined | {
+                                        kind: 'remote-host-ssh';
+                                        remoteHostIdPath: string;
+                                    };
                                 };
                                 resize?: undefined | {
                                     cpuCores: {
@@ -73772,6 +75520,12 @@ export type ManagedMachinesActionResultById = {
                     };
                     authority?: 'creator_recovery' | undefined;
                 } | {
+                    actionId: 'machines.managed.exec';
+                    input: {
+                        homeId: string;
+                        managedId: string;
+                    };
+                } | {
                     actionId: 'machines.managed.inspect';
                     input: {
                         homeId: string;
@@ -73842,12 +75596,23 @@ export type ManagedMachinesActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     modelSelection?: undefined | {
                         ref: {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -73921,6 +75686,7 @@ export type ManagedMachinesActionResultById = {
                         folderId: null | string;
                         tagIds: string[];
                     };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     managedPresetAcquisition?: undefined | {
                         selection: {
                             kind: 'preset';
@@ -73963,6 +75729,19 @@ export type ManagedMachinesActionResultById = {
                         localId: string;
                     };
                     environmentId: string;
+                    databaseEnvironment: {
+                        serverId: string;
+                        projectSourceId: string;
+                        environmentId: string;
+                        previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                    };
+                } | {
+                    actionId: 'action.invoke';
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environmentId: string;
                     targetLinkId: string;
                     databaseTarget: {
                         kind: 'deployment_service';
@@ -73994,6 +75773,7 @@ export type ManagedMachinesActionResultById = {
                         database: string;
                     };
                     access: 'read' | 'write';
+                    databaseReadAccessMode?: 'apply' | 'preview' | undefined;
                 } | {
                     actionId: 'action.invoke';
                     action: {
@@ -74043,16 +75823,28 @@ export type ManagedMachinesActionResultById = {
                 } | {
                     machineId: string;
                     service: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     actionId: 'deployments.data.size';
                 };
                 deploymentLinkEnvironmentId?: string | undefined;
+                deploymentLinkReplacement?: undefined | {
+                    replacesLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    machines: {
+                        machineId: string;
+                        installationId: string;
+                    }[];
+                };
                 deploymentMetadataEnvironmentId?: string | undefined;
                 deploymentMetadataReceiptId?: string | undefined;
+                deploymentStopReceipt?: undefined | {
+                    deploymentId: string;
+                    expectedReceiptRevision: number;
+                };
                 presetPreparationAdmission?: undefined | {
                     homeId: string;
                     id: string;
@@ -74150,6 +75942,10 @@ export type ManagedMachinesActionResultById = {
                         environmentId: string;
                         expectedRevision: number;
                     };
+                    workspace?: undefined | {
+                        kind: 'workspace-ref';
+                        id: string;
+                    };
                     preview?: undefined | {
                         templateEnvironmentId: string;
                         expectedTemplateRevision: number;
@@ -74199,6 +75995,65 @@ export type ManagedMachinesActionResultById = {
                             id: string;
                         };
                     }[];
+                    catalogApps?: undefined | {
+                        operation: 'template';
+                        mode: 'apply' | 'preview';
+                        machineId: string;
+                        environment: {
+                            kind: 'create';
+                            requestKey: string;
+                            protection: 'nonProduction' | 'production';
+                            purpose: 'standard';
+                            deployerMode: 'chosen' | 'managers' | 'members';
+                            controllerMachineId: string;
+                            deployerPrincipals?: ({
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'group';
+                                teamId: string;
+                                groupId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            })[] | undefined;
+                            buildMachineId?: string | undefined;
+                        } | {
+                            kind: 'existing';
+                            environmentId: string;
+                            expectedRevision: number;
+                        };
+                        target: {
+                            kind: 'existing';
+                            targetLinkId: string;
+                            expectedRevision: number;
+                            installationId: string;
+                        } | {
+                            kind: 'new';
+                            installationId: string;
+                        };
+                        source?: undefined | {
+                            id: string;
+                        };
+                        newProject?: undefined | {
+                            name: string;
+                            requestKey: string;
+                            owner: {
+                                kind: 'account';
+                                accountId: string;
+                            } | {
+                                kind: 'team';
+                                teamId: string;
+                            };
+                        };
+                        workspace?: undefined | {
+                            kind: 'workspace-ref';
+                            id: string;
+                        };
+                        deploy?: undefined | {
+                            requestKey: string;
+                        };
+                    }[];
                     connectorGrants?: undefined | {
                         machineId: string;
                         grantRef: string;
@@ -74208,6 +76063,18 @@ export type ManagedMachinesActionResultById = {
                         machineId: string;
                         inputDigest: string;
                     }[];
+                } | {
+                    operation: 'targetCheck';
+                    source: {
+                        id: string;
+                    };
+                    target: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    environment?: undefined | {
+                        id: string;
+                    };
                 } | {
                     operation: 'template';
                     mode: 'apply' | 'preview';
@@ -74269,25 +76136,6 @@ export type ManagedMachinesActionResultById = {
                 };
                 deploymentNativeAdmission?: undefined | {
                     environmentId: string;
-                    expectedRevision: number;
-                    kind: 'telemetry';
-                    actionId: 'deployments.environments.telemetry.set';
-                    inputDigest: string;
-                    rotate?: true | undefined;
-                    collector?: null | undefined | {
-                        machineId: string;
-                    };
-                    confirmDelete?: true | undefined;
-                } | {
-                    environmentId: string;
-                    expectedRevision: number;
-                    targetLinkId: string;
-                    expectedTargetLinkRevision: number;
-                    requestKey: string;
-                    kind: 'domainDns';
-                    actionId: 'deployments.domains.verify';
-                } | {
-                    environmentId: string;
                     inputDigest: string;
                     authoredMetadataDigest: string;
                     mode?: 'preview' | undefined;
@@ -74298,6 +76146,30 @@ export type ManagedMachinesActionResultById = {
                     };
                 } | {
                     environmentId: string;
+                } | {
+                    expectedRevision: number;
+                    environmentId: string;
+                    kind: 'telemetry';
+                    actionId: 'deployments.environments.telemetry.set';
+                    inputDigest: string;
+                    rotate?: true | undefined;
+                    collector?: null | undefined | {
+                        machineId: string;
+                    };
+                    publicCollectorDomain?: undefined | {
+                        environmentId: string;
+                        targetLinkId: string;
+                        domainId: string;
+                    };
+                    confirmDelete?: true | undefined;
+                } | {
+                    expectedRevision: number;
+                    requestKey: string;
+                    environmentId: string;
+                    targetLinkId: string;
+                    expectedTargetLinkRevision: number;
+                    kind: 'domainDns';
+                    actionId: 'deployments.domains.verify';
                 } | {
                     kind: 'backupConfigure';
                     actionId: 'deployments.backups.configure';
@@ -74328,10 +76200,10 @@ export type ManagedMachinesActionResultById = {
                     installationId: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.history';
@@ -74339,10 +76211,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.inventory';
@@ -74350,10 +76222,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.run';
@@ -74361,10 +76233,10 @@ export type ManagedMachinesActionResultById = {
                     inputDigest: string;
                 } | {
                     machineId: string;
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.test';
@@ -74381,10 +76253,10 @@ export type ManagedMachinesActionResultById = {
                     } | {
                         kind: 'keepEverything';
                     };
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     actionId: 'deployments.backups.prune';
@@ -74394,10 +76266,10 @@ export type ManagedMachinesActionResultById = {
                     snapshotId: string;
                     machineId: string;
                     level: 'manifestReadBack' | 'repositoryCheck';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     configRevision: number;
                     backupOperationId: string;
@@ -74417,12 +76289,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'confirm';
                     machineId: string;
+                    mode: 'confirm';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     prepareOperationId: string;
                     kind: 'restore';
@@ -74452,12 +76324,12 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'prepare';
                     machineId: string;
+                    mode: 'prepare';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -74485,13 +76357,13 @@ export type ManagedMachinesActionResultById = {
                         kind: 'upload';
                         transferId: string;
                     };
-                    mode: 'recover';
                     machineId: string;
+                    operationId: string;
+                    mode: 'recover';
+                    expectedRevision: number;
+                    installationId: string;
                     environmentId: string;
                     deploymentId: string;
-                    operationId: string;
-                    installationId: string;
-                    expectedRevision: number;
                     targetLinkId: string;
                     kind: 'restore';
                     actionId: 'deployments.backups.restore';
@@ -74524,6 +76396,7 @@ export type ManagedMachinesActionResultById = {
                         sourceId: string;
                     };
                 };
+                projectSourceCheckoutId?: string | undefined;
             };
         };
     };

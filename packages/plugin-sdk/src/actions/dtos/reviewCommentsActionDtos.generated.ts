@@ -138,17 +138,17 @@ export type ReviewCommentsActionInputById = {
             id: string;
             title: string;
             summary: string;
-            severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
             category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+            severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
             publicationPlacement?: 'summary' | undefined;
-            confidence?: number | undefined;
             evidence?: string | undefined;
-            filePath?: string | undefined;
-            suggestion?: string | undefined;
+            confidence?: number | undefined;
             startLine?: number | undefined;
             endLine?: number | undefined;
-            scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
             extensions?: unknown;
+            filePath?: string | undefined;
+            suggestion?: string | undefined;
+            scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
             whyItMatters?: string | undefined;
             patch?: string | undefined;
             attributionConfidence?: string | undefined;
@@ -199,6 +199,9 @@ export type ReviewCommentsActionInputById = {
             kind: 'agentMessage';
             sessionId: string;
             messageId: string;
+        } | {
+            kind: 'commit';
+            sha: string;
         } | {
             kind: 'diff';
             diffRef: string;
@@ -272,6 +275,9 @@ export type ReviewCommentsActionInputById = {
             kind: 'agentMessage';
             sessionId: string;
             messageId: string;
+        } | {
+            kind: 'commit';
+            sha: string;
         } | {
             kind: 'diff';
             diffRef: string;
@@ -353,6 +359,9 @@ export type ReviewCommentsActionInputById = {
             kind: 'agentMessage';
             sessionId: string;
             messageId: string;
+        } | {
+            kind: 'commit';
+            sha: string;
         } | {
             kind: 'diff';
             diffRef: string;
@@ -439,6 +448,9 @@ export type ReviewCommentsActionInputById = {
             sessionId: string;
             messageId: string;
         } | {
+            kind: 'commit';
+            sha: string;
+        } | {
             kind: 'diff';
             diffRef: string;
             summary?: string | undefined;
@@ -485,6 +497,9 @@ export type ReviewCommentsActionInputById = {
             kind: 'agentMessage';
             sessionId: string;
             messageId: string;
+        } | {
+            kind: 'commit';
+            sha: string;
         } | {
             kind: 'diff';
             diffRef: string;
@@ -932,6 +947,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -974,17 +992,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -1003,6 +1021,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -1304,6 +1325,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -1346,17 +1370,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -1375,6 +1399,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -1676,6 +1703,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -1718,17 +1748,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -1747,6 +1777,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -2047,6 +2080,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -2089,17 +2125,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -2118,6 +2154,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -2418,6 +2457,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -2460,17 +2502,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -2489,6 +2531,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -2789,6 +2834,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -2831,17 +2879,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -2860,6 +2908,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -3158,6 +3209,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -3200,17 +3254,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -3229,6 +3283,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -3529,6 +3586,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -3571,17 +3631,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -3600,6 +3660,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -3900,6 +3963,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -3942,17 +4008,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -3971,6 +4037,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -4271,6 +4340,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -4313,17 +4385,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -4342,6 +4414,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;
@@ -4643,6 +4718,9 @@ export type ReviewCommentsActionResultById = {
                     sessionId: string;
                     messageId: string;
                 } | {
+                    kind: 'commit';
+                    sha: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
@@ -4685,17 +4763,17 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 title: string;
                 summary: string;
-                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
                 publicationPlacement?: 'summary' | undefined;
-                confidence?: number | undefined;
                 evidence?: string | undefined;
-                filePath?: string | undefined;
-                suggestion?: string | undefined;
+                confidence?: number | undefined;
                 startLine?: number | undefined;
                 endLine?: number | undefined;
-                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 extensions?: Record<string, JSONType> | undefined;
+                filePath?: string | undefined;
+                suggestion?: string | undefined;
+                scopeAttribution?: 'in_selected_changes' | 'pre_existing' | 'unknown' | undefined;
                 whyItMatters?: string | undefined;
                 patch?: string | undefined;
                 attributionConfidence?: string | undefined;
@@ -4714,6 +4792,9 @@ export type ReviewCommentsActionResultById = {
                 kind: 'agentMessage';
                 sessionId: string;
                 messageId: string;
+            } | {
+                kind: 'commit';
+                sha: string;
             } | {
                 kind: 'diff';
                 diffRef: string;

@@ -17,6 +17,14 @@ export type ExecutionRunControlActionInputById = {
         kind?: 'scm_commit_message.v1' | 'scm_diff_summary.v1' | undefined;
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
+        runnerAgentTarget?: undefined | {
+            kind: 'agent';
+            identity: {
+                pluginId: string;
+                localId: string;
+            };
+            definitionId?: string | undefined;
+        };
         instructions?: string | undefined;
         initialInput?: undefined | {
             kind: 'deferred_session_pending';
@@ -686,6 +694,18 @@ export type ExecutionRunControlActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
+        } | {
+            source: 'connected_account';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            endpointTemplateId: string;
+            agentTargetKey: string;
+            modelId: string;
         };
         childSelection?: 'agentDefault' | undefined;
         accountSettings?: undefined;
@@ -862,6 +882,14 @@ export type ExecutionRunControlActionInputById = {
             kind?: 'scm_commit_message.v1' | 'scm_diff_summary.v1' | undefined;
             roleId?: string | undefined;
             launchProfileId?: string | undefined;
+            runnerAgentTarget?: undefined | {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            };
             instructions?: string | undefined;
             initialInput?: undefined | {
                 kind: 'deferred_session_pending';
@@ -1531,6 +1559,18 @@ export type ExecutionRunControlActionInputById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
             };
             childSelection?: 'agentDefault' | undefined;
             accountSettings?: undefined;
@@ -1789,6 +1829,18 @@ export type ExecutionRunControlActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
                     };
                     teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
@@ -1899,6 +1951,7 @@ export type ExecutionRunControlActionInputById = {
                         configuration?: boolean | undefined;
                         functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
+                        forkWorkspace?: 'source' | undefined;
                         compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
@@ -2182,6 +2235,18 @@ export type ExecutionRunControlActionResultById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
             };
             teamCredentialModel?: undefined | {
                 kind: 'team_credential_provider_model';
@@ -2329,6 +2394,18 @@ export type ExecutionRunControlActionResultById = {
                         } | {
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         };
                         teamCredentialModel?: undefined | {
@@ -2686,6 +2763,7 @@ export type ExecutionRunControlActionResultById = {
                             configuration?: boolean | undefined;
                             functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
+                            forkWorkspace?: 'source' | undefined;
                             compaction?: undefined | {
                                 events: true;
                                 manual?: true | undefined;
@@ -3177,6 +3255,18 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
                         };
                         teamCredentialModel?: undefined | {
                             kind: 'team_credential_provider_model';
@@ -3533,6 +3623,7 @@ export type ExecutionRunControlActionResultById = {
                             configuration?: boolean | undefined;
                             functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
+                            forkWorkspace?: 'source' | undefined;
                             compaction?: undefined | {
                                 events: true;
                                 manual?: true | undefined;
@@ -4023,6 +4114,18 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
                         };
                         teamCredentialModel?: undefined | {
                             kind: 'team_credential_provider_model';
@@ -4379,6 +4482,7 @@ export type ExecutionRunControlActionResultById = {
                             configuration?: boolean | undefined;
                             functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
+                            forkWorkspace?: 'source' | undefined;
                             compaction?: undefined | {
                                 events: true;
                                 manual?: true | undefined;
@@ -4870,6 +4974,18 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
                         };
                         teamCredentialModel?: undefined | {
                             kind: 'team_credential_provider_model';
@@ -5226,6 +5342,7 @@ export type ExecutionRunControlActionResultById = {
                             configuration?: boolean | undefined;
                             functionTools?: true | undefined;
                             workspaceWrites?: 'deny' | undefined;
+                            forkWorkspace?: 'source' | undefined;
                             compaction?: undefined | {
                                 events: true;
                                 manual?: true | undefined;
@@ -5769,6 +5886,18 @@ export type ExecutionRunControlActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
                 };
                 teamCredentialModel?: undefined | {
                     kind: 'team_credential_provider_model';
@@ -6125,6 +6254,7 @@ export type ExecutionRunControlActionResultById = {
                     configuration?: boolean | undefined;
                     functionTools?: true | undefined;
                     workspaceWrites?: 'deny' | undefined;
+                    forkWorkspace?: 'source' | undefined;
                     compaction?: undefined | {
                         events: true;
                         manual?: true | undefined;
@@ -6486,6 +6616,18 @@ export type ExecutionRunControlActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
                 };
                 teamCredentialModel?: undefined | {
                     kind: 'team_credential_provider_model';
@@ -6842,6 +6984,7 @@ export type ExecutionRunControlActionResultById = {
                     configuration?: boolean | undefined;
                     functionTools?: true | undefined;
                     workspaceWrites?: 'deny' | undefined;
+                    forkWorkspace?: 'source' | undefined;
                     compaction?: undefined | {
                         events: true;
                         manual?: true | undefined;
@@ -7397,8 +7540,8 @@ export type ExecutionRunControlActionResultById = {
             }> | undefined;
             usageLimitRecovery?: undefined | {
                 authSelectionKind: 'group' | 'native' | 'profile';
-                status: 'armed' | 'cancelled' | 'checking' | 'exhausted' | 'paused' | 'waiting';
                 v: 1;
+                status: 'armed' | 'cancelled' | 'checking' | 'exhausted' | 'paused' | 'waiting';
                 resetAtMs: null | number;
                 issueFingerprint: string;
                 armedAtMs: number;
@@ -7574,6 +7717,18 @@ export type ExecutionRunControlActionResultById = {
                     } | {
                         agentTargetKey: string;
                         providerConnectionId: string;
+                        modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
                         modelId: string;
                     };
                     teamCredentialModel?: undefined | {
@@ -7931,6 +8086,7 @@ export type ExecutionRunControlActionResultById = {
                         configuration?: boolean | undefined;
                         functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
+                        forkWorkspace?: 'source' | undefined;
                         compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
@@ -8422,6 +8578,18 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
                     };
                     teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
@@ -8778,6 +8946,7 @@ export type ExecutionRunControlActionResultById = {
                         configuration?: boolean | undefined;
                         functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
+                        forkWorkspace?: 'source' | undefined;
                         compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
@@ -9268,6 +9437,18 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
                     };
                     teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
@@ -9624,6 +9805,7 @@ export type ExecutionRunControlActionResultById = {
                         configuration?: boolean | undefined;
                         functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
+                        forkWorkspace?: 'source' | undefined;
                         compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
@@ -10115,6 +10297,18 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
                     };
                     teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
@@ -10471,6 +10665,7 @@ export type ExecutionRunControlActionResultById = {
                         configuration?: boolean | undefined;
                         functionTools?: true | undefined;
                         workspaceWrites?: 'deny' | undefined;
+                        forkWorkspace?: 'source' | undefined;
                         compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;

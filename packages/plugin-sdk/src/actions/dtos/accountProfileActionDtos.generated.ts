@@ -358,6 +358,7 @@ export type AccountProfileActionInputById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: unknown;
                                             label: string;
@@ -525,6 +526,7 @@ export type AccountProfileActionInputById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: unknown;
                                         label: string;
@@ -643,12 +645,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
-                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -1010,6 +1012,7 @@ export type AccountProfileActionInputById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: unknown;
                                             label: string;
@@ -1177,6 +1180,7 @@ export type AccountProfileActionInputById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: unknown;
                                         label: string;
@@ -1295,12 +1299,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
-                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -1664,6 +1668,7 @@ export type AccountProfileActionInputById = {
                                         prompt?: string | undefined;
                                         description?: string | undefined;
                                         placeholder?: string | undefined;
+                                        unsetLabel?: string | undefined;
                                         options?: readonly {
                                             value: unknown;
                                             label: string;
@@ -1831,6 +1836,7 @@ export type AccountProfileActionInputById = {
                                     prompt?: string | undefined;
                                     description?: string | undefined;
                                     placeholder?: string | undefined;
+                                    unsetLabel?: string | undefined;
                                     options?: readonly {
                                         value: unknown;
                                         label: string;
@@ -1949,12 +1955,12 @@ export type AccountProfileActionInputById = {
                             src?: number | undefined;
                             at?: number | undefined;
                         };
+                        hour: number;
                         focus: {
                             x?: number | undefined;
                             y?: number | undefined;
                             zoom?: number | undefined;
                         };
-                        hour: number;
                         grades: {
                             light: number;
                             dusk: number;
@@ -2559,12 +2565,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -2672,12 +2678,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -2702,7 +2708,6 @@ export type AccountProfileActionResultById = {
                 theme: 'auto' | 'dark' | 'light';
             };
             v: 1;
-            state: 'published';
             layout: {
                 v: 1;
                 items: ({
@@ -2859,6 +2864,7 @@ export type AccountProfileActionResultById = {
                     title?: string | undefined;
                 })[];
             };
+            state: 'published';
             snapshot: {
                 v: 1;
                 computedAtMs: number;
@@ -3600,12 +3606,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -4133,12 +4139,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -4665,12 +4671,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -5198,12 +5204,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -5730,12 +5736,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;
@@ -6262,12 +6268,12 @@ export type AccountProfileActionResultById = {
                                 src?: number | undefined;
                                 at?: number | undefined;
                             };
+                            hour: number;
                             focus: {
                                 x?: number | undefined;
                                 y?: number | undefined;
                                 zoom?: number | undefined;
                             };
-                            hour: number;
                             grades: {
                                 light: number;
                                 dusk: number;

@@ -736,6 +736,18 @@ export type MachineConnectionActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
                 };
                 teamCredentialModel?: undefined | {
                     kind: 'team_credential_provider_model';

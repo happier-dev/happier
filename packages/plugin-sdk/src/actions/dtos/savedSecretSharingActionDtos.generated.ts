@@ -1220,7 +1220,6 @@ export type SavedSecretSharingActionInputById = {
                             };
                             catalogSourceKey?: string | undefined;
                         }[];
-                        modelPickerVisibilityByConnectionId?: Record<string, boolean> | undefined;
                         migration?: undefined | {
                             v: 1;
                             completedSources: ({
@@ -1265,6 +1264,7 @@ export type SavedSecretSharingActionInputById = {
                             }[];
                             migratedAt?: number | undefined;
                         };
+                        modelPickerVisibilityByConnectionId?: Record<string, boolean> | undefined;
                     };
                 };
                 referencedSavedSecretIds: string[];

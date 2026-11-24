@@ -123,6 +123,7 @@ export type DiscoveryActionInputById = {
                             prompt?: string | undefined;
                             description?: string | undefined;
                             placeholder?: string | undefined;
+                            unsetLabel?: string | undefined;
                             options?: readonly {
                                 value: unknown;
                                 label: string;
@@ -268,6 +269,7 @@ export type DiscoveryActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -456,6 +458,7 @@ export type DiscoveryActionResultById = {
                     prompt?: string | undefined;
                     description?: string | undefined;
                     placeholder?: string | undefined;
+                    unsetLabel?: string | undefined;
                     options?: readonly {
                         value: JsonValue;
                         label: string;
@@ -2019,6 +2022,9 @@ export type DiscoveryActionResultById = {
                         kind: 'input';
                         path: string;
                     } | {
+                        kind: 'openPorts';
+                        path: string;
+                    } | {
                         kind: 'targetFact';
                         fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
@@ -2339,6 +2345,11 @@ export type DiscoveryActionResultById = {
                             params?: Record<string, number | string> | undefined;
                         };
                         placeholder?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        unsetLabel?: string | undefined | {
                             key: string;
                             fallback: string;
                             params?: Record<string, number | string> | undefined;
@@ -3988,6 +3999,9 @@ export type DiscoveryActionResultById = {
                         kind: 'input';
                         path: string;
                     } | {
+                        kind: 'openPorts';
+                        path: string;
+                    } | {
                         kind: 'targetFact';
                         fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                     } | {
@@ -4373,6 +4387,7 @@ export type DiscoveryActionResultById = {
                             retryAfterMs?: number | undefined;
                             reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                             savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                            credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                         };
                     } | {
                         authorized: true;
@@ -4388,6 +4403,18 @@ export type DiscoveryActionResultById = {
                         } | {
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         };
                         descriptor: {
@@ -5194,6 +5221,7 @@ export type DiscoveryActionResultById = {
                         retryAfterMs?: number | undefined;
                         reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                         savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                        credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                     };
                     displaySnapshot: null | {
                         providerName?: string | undefined;
@@ -5236,6 +5264,7 @@ export type DiscoveryActionResultById = {
                         retryAfterMs?: number | undefined;
                         reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
                         savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
+                        credentialKindRecovery?: 'reconnect_token' | 'refresh_sign_in' | 'refresh_sign_in_or_reconnect_token' | undefined;
                     };
                 }[];
             };

@@ -82,6 +82,18 @@ export type SessionTerminalsActionInputById = {
                 workspaceId: string;
                 machineId: string;
                 rootPath: string;
+                kind?: undefined;
+            } | {
+                v: 2;
+                kind: 'managed';
+                serverId: string;
+                workspaceId: string;
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                rootPath: string;
             };
         };
         title?: string | undefined;
@@ -160,6 +172,18 @@ export type SessionTerminalsActionInputById = {
                 serverId: string;
                 workspaceId: string;
                 machineId: string;
+                rootPath: string;
+                kind?: undefined;
+            } | {
+                v: 2;
+                kind: 'managed';
+                serverId: string;
+                workspaceId: string;
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
                 rootPath: string;
             };
         };
@@ -327,6 +351,18 @@ export type SessionTerminalsActionResultById = {
                             serverId: string;
                             workspaceId: string;
                             machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
                             rootPath: string;
                         };
                     };
