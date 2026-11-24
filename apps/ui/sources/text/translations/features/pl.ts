@@ -20608,7 +20608,6 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         findingsReported: 'zgłoszono ustalenia',
         reviewDidNotConverge: ({ count }: { count: number }) => `Przegląd nie osiągnął zbieżności po ${count} ${count === 1 ? 'rundzie' : 'rundach'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: 'po zakończeniu tury', sessionStarts: 'przy starcie sesji', needsYou: 'gdy sesja cię potrzebuje', sessionArchived: 'przy archiwizacji', schedule: 'według harmonogramu' },
     },
     map: {
         yes: 'Tak',

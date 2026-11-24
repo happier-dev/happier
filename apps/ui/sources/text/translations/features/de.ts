@@ -20078,7 +20078,6 @@ const de = translated(workflowValueReferenceTranslations.de, {
         findingsReported: 'Befunde gemeldet',
         reviewDidNotConverge: ({ count }: { count: number }) => `Prüfung nach ${count} ${count === 1 ? 'Runde' : 'Runden'} nicht angeglichen`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: 'am Ende eines Zugs', sessionStarts: 'beim Start der Session', needsYou: 'wenn die Session dich braucht', sessionArchived: 'beim Archivieren', schedule: 'nach Zeitplan' },
     },
     map: {
         yes: 'Ja',

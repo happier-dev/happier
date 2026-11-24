@@ -20609,7 +20609,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         findingsReported: 'замечания переданы',
         reviewDidNotConverge: ({ count }: { count: number }) => `Проверка не сошлась после раундов: ${count}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: 'в конце хода', sessionStarts: 'при запуске сессии', needsYou: 'когда сессии нужны вы', sessionArchived: 'при архивации', schedule: 'по расписанию' },
     },
     map: {
         yes: 'Да',

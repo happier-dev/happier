@@ -20520,7 +20520,6 @@ const es = translated(workflowValueReferenceTranslations.es, {
         findingsReported: 'hallazgos informados',
         reviewDidNotConverge: ({ count }: { count: number }) => `La revisión no convergió tras ${count} ${count === 1 ? 'ronda' : 'rondas'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: 'al terminar un turno', sessionStarts: 'al iniciar la sesión', needsYou: 'cuando la sesión te necesita', sessionArchived: 'al archivar', schedule: 'según un horario' },
     },
     map: {
         yes: 'Sí',

@@ -20519,7 +20519,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         findingsReported: '指摘を報告',
         reviewDidNotConverge: ({ count }: { count: number }) => `${count} ラウンド後もレビューが収束しませんでした`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: 'ターン終了時', sessionStarts: 'セッション開始時', needsYou: 'セッションがあなたを必要とするとき', sessionArchived: 'アーカイブ時', schedule: 'スケジュールで' },
     },
     map: {
         yes: 'はい',

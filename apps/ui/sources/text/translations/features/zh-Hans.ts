@@ -20459,7 +20459,6 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         findingsReported: '已报告发现',
         reviewDidNotConverge: ({ count }: { count: number }) => `审查在 ${count} 轮后仍未收敛`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: '回合结束时', sessionStarts: '会话开始时', needsYou: '会话需要你时', sessionArchived: '归档时', schedule: '按计划' },
     },
     map: {
         yes: '是',
