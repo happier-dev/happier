@@ -3679,9 +3679,12 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
         t('settingsPlugins.targetSelection.unreachableThisHome'),
         expect.arrayContaining([
           expect.objectContaining({ text: t('common.retry'), onPress: expect.any(Function) }),
-          expect.objectContaining({ text: t('common.dismiss'), style: 'cancel' }),
+          expect.objectContaining({ text: expect.any(String), style: 'cancel' }),
         ]),
       );
+      const dismissLabel = notice.mock.lastCall?.[2]?.find(button => button.style === 'cancel')?.text;
+      expect(dismissLabel).not.toMatch(/^[\w-]+(?:\.[\w-]+)+$/);
+      expect(dismissLabel).toBe(t('common.close'));
       vi.doUnmock('@/sync/ops/actions/voiceConversationAction');
       online.mockReturnValue(true);
       const retry = notice.mock.lastCall?.[2]?.find(button => button.text === t('common.retry'))?.onPress;

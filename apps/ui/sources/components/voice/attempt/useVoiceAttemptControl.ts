@@ -260,7 +260,7 @@ export function useVoiceAttemptControl(idleTarget: VoiceAttemptIdleTarget): Voic
             if (error instanceof HappyError && error.code === SERVER_UNREACHABLE_ERROR_CODE && error.effectAttempted === false) {
                 if (isCurrent()) {
                     Modal.alert(t('voiceAssistant.connectionError'), t('settingsPlugins.targetSelection.unreachableThisHome'), [
-                        { text: t('common.dismiss'), style: 'cancel' },
+                        { text: t('common.close'), style: 'cancel' },
                         { text: t('common.retry'), onPress: () => executeVoiceControl(actionId, input, tag, operation) },
                     ]);
                 }
