@@ -169,7 +169,8 @@ describe.skipIf(process.platform !== 'linux')('installed Machine filesystem nati
     expect(result).toMatchObject({ ok: true });
     expect(await readAgentIsolationMemberBindingForAccount(scope, 'member-a'))
       .toMatchObject({ username: f.identity.username, uid: 2401 });
-    expect(nativeOs.readinessProbes).toBe(1);
+    // Member preparation runs the one real shim probe at its own OS boundary.
+    expect(nativeOs.readinessProbes + (f.preparation?.permissionQueries.length ?? 0)).toBe(1);
     assertNativeInvocation(f);
   }, 120_000);
 
