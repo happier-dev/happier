@@ -37,6 +37,7 @@ function providerError(
     | 'rate_limited'
     | 'provider_response_invalid'
     | 'voice_account_operation_cancelled'
+    | 'voice_account_operation_outcome_unknown'
     | 'voice_not_found',
   stage?: ElevenLabsProvisionStage,
 ): Error {
@@ -568,6 +569,11 @@ async function runElevenLabsProvision(
   } catch (error) {
     const hasCreatedTools = createdToolIds.length > 0;
     const authorityCancelled = isVoiceAccountOperationCancelled(error);
+    const verificationCancelledAfterWrite = finalAgentWriteStarted && authorityCancelled
+      && error !== null && typeof error === 'object' && 'stage' in error && error.stage === 'read_agent';
+    const failure = verificationCancelledAfterWrite
+      ? Object.assign(providerError('voice_account_operation_outcome_unknown', 'read_agent'), { cause: error })
+      : error;
     let cleanupIncomplete = mayHaveCreatedToolWithoutId
       || (hasCreatedTools && finalAgentWriteStarted)
       || (hasCreatedTools && (authorityCancelled || !isCleanupAuthorityCurrent()));
@@ -590,14 +596,14 @@ async function runElevenLabsProvision(
         }
       }
     }
-    if (cleanupIncomplete && error && typeof error === 'object') {
+    if (cleanupIncomplete && failure && typeof failure === 'object') {
       try {
-        Object.assign(error, { cleanupIncomplete: true });
+        Object.assign(failure, { cleanupIncomplete: true });
       } catch {
         // Existing provisioning errors remain the primary failure when immutable.
       }
     }
-    throw error;
+    throw failure;
   }
 }
 

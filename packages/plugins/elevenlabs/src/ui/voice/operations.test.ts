@@ -272,6 +272,27 @@ describe('ElevenLabs public account operations', () => {
     expect(written).toBe(true);
   });
 
+  it.each(['create', 'update'] as const)('preserves an accepted %s as unconfirmed when verification loses credential authority', async kind => {
+    let written = false;
+    const request = vi.fn(async (input: Parameters<VoiceAccountOperationService['request']>[0]) => {
+      if (input.operationId === 'agent' && written) {
+        throw Object.assign(new Error('voice_account_operation_cancelled'), { code: 'voice_account_operation_cancelled' });
+      }
+      if (input.operationId === 'create-agent' || input.operationId === 'update-agent') written = true;
+      const body = input.operationId === 'voices' ? ACCOUNT_VOICE_CATALOG
+        : input.operationId === 'tools' ? { tools: [] }
+        : { agent_id: 'agent_1', tags: ['happier_voice_config_v2'] };
+      return { status: 200, finalUrl: 'https://api.elevenlabs.io/v1/convai/agents/agent_1', headers: {},
+        body: new TextEncoder().encode(JSON.stringify(body)) };
+    });
+    await expect(provisionElevenLabsWithAccountOperations({
+      accountOperations: { request },
+      request: { kind, ...(kind === 'update' ? { agentId: 'agent_1' } : {}), prompt: 'Current prompt', tools: [], tts: createProvisionTtsSettings() },
+      signal: new AbortController().signal,
+    })).rejects.toMatchObject({ code: 'voice_account_operation_outcome_unknown', stage: 'read_agent' });
+    expect(written).toBe(true);
+  });
+
   it('provisions and exactly reuses generated session.spawn_new tool metadata', async () => {
     const spec = getActionSpec('session.spawn_new');
     const tool = {
