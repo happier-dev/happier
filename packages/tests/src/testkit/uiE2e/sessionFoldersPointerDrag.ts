@@ -22,7 +22,9 @@ async function scrollConnectedTestIdIntoView(
       // Query and scroll in one browser task. Playwright's locator action waits
       // for stability while retaining an element handle, which is unsafe for
       // this intentionally re-rendering/virtualized tree during drag setup.
-      element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      // Keep the drop point inside the viewport, away from the fixed footer
+      // and the edge band that activates drag autoscroll.
+      element.scrollIntoView({ block: 'center', inline: 'nearest' });
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       return document.querySelector<HTMLElement>(selector)?.isConnected === true;
     }, testId);
