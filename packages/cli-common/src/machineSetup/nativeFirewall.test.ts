@@ -672,22 +672,28 @@ describe('native owned firewall', () => {
     });
 
     it.each([
-        { selector: 'ip', address: '192.168.5.2', hostPrefix: 32, subnet: '192.168.5.0/24' },
-        { selector: 'ip6', address: '2001:db8::2', hostPrefix: 128, subnet: '2001:db8::/64' },
-    ])('verifies and rolls back an SSH host rule rendered without its $selector host prefix', async ({ selector, address, hostPrefix, subnet }) => {
-        const host = `${address}/${hostPrefix}`;
+        { selector: 'ip', host: '192.168.5.2/32', nativeHost: '192.168.5.2',
+            differentHost: '192.168.5.3', subnet: '192.168.5.0/24' },
+        { selector: 'ip6', host: '2001:0DB8:0:0:0:0:0:2/128', nativeHost: '2001:db8::2',
+            differentHost: '2001:db8::3', subnet: '2001:db8::/64' },
+    ])('verifies and rolls back a canonical nftables $selector host rule and rejects real drift', async ({
+        selector, host, nativeHost, differentHost, subnet,
+    }) => {
         const hostRules = rules.replace('    ct state new drop',
             `    iifname "eth0" ${selector} saddr ${host} tcp dport 22 accept\n    ct state new drop`);
-        const f = await fixture(undefined, table => table.replace(host, address));
+        const f = await fixture(undefined, table => table.replace(host, nativeHost));
         const step = { ...f.step, rules: hostRules };
         const staged = await stage(f, step);
         expect(await staged.verify()).toBe(true);
 
-        f.setEffectiveTable(hostRules.replace(host, subnet));
-        await expect(staged.undo()).rejects.toMatchObject({ reasonCode: 'foreign_effect_conflict' });
-        expect(f.readEffectiveTable()).toContain(subnet);
+        for (const drift of [differentHost, subnet]) {
+            f.setEffectiveTable(hostRules.replace(host, drift));
+            expect(await staged.verify()).toBe(false);
+            await expect(staged.undo()).rejects.toMatchObject({ reasonCode: 'foreign_effect_conflict' });
+            expect(f.readEffectiveTable()).toContain(drift);
+        }
 
-        f.setEffectiveTable(hostRules.replace(host, address));
+        f.setEffectiveTable(hostRules.replace(host, nativeHost));
         await staged.undo();
         expect(f.readEffectiveTable()).toBeUndefined();
         await expect(f.fs.lstat(f.disk(rulesPath))).rejects.toMatchObject({ code: 'ENOENT' });

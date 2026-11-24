@@ -64,12 +64,15 @@ function equivalentTable(left: string, right: string) {
         const table = confinedTable(value);
         let result = '', ordinary = '', quoted = false, escaped = false, comment = false;
         const flush = () => {
-            // nft lists a full-length host prefix as a bare address.
-            const normalized = ordinary.replace(/\b(ip6?\s+[sd]addr\s+)([\da-fA-F:.]+)\/(32|128)(?=[\s;]|$)/g,
-                (match, selector: string, address: string, prefix: string) => {
-                    const family = selector.startsWith('ip6') ? 6 : 4;
-                    return isIP(address) === family && prefix === (family === 4 ? '32' : '128')
-                        ? selector + address : match;
+            // nft canonicalizes addresses and omits a full-length host prefix.
+            const normalized = ordinary.replace(/\b((ip6?)\s+[sd]addr\s+)([\da-fA-F:.]+)(?:\/(\d+))?(?=[\s;]|$)/g,
+                (match, selector: string, protocol: string, address: string, prefixText: string | undefined) => {
+                    const family = protocol === 'ip6' ? 6 : 4;
+                    const hostPrefix = family === 4 ? 32 : 128;
+                    const prefix = prefixText === undefined ? hostPrefix : Number(prefixText);
+                    if (prefix > hostPrefix || isIP(address) !== family) return match;
+                    const canonicalAddress = normalizedIp(address);
+                    return canonicalAddress === null ? match : `${selector}${canonicalAddress}/${prefix}`;
                 });
             result += normalized.replace(/[\s;]/g, '').replace(/priorityfilter-10/g, 'priority-10');
             ordinary = '';
