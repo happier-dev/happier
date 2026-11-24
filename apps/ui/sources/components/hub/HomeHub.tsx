@@ -60,7 +60,7 @@ import { useIsTablet } from '@/utils/platform/responsive';
 import { HubStatusLine } from './header/HubStatusLine';
 import { useHomeGreeting } from './header/homeGreeting';
 import { findHomeHubBuiltinSection, homeChildTitle, homeHubSectionTitle } from './homeHubSections';
-import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubCardPresentation, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
+import { HOME_HUB_ATTENTION_SECTION_ID, HOME_HUB_COMPOSER_SECTION_ID, HOME_HUB_SETUP_SECTION_ID, HomeHubReadingColumn, HomeHubSectionList, resolveHomeHubCardPresentation, resolveHomeHubFirstRunLeadId } from './HomeHubSectionList';
 import { WidgetMachineAddRecoveryContext } from '@/components/widgets/surface/WidgetMachineNotice';
 import type { HubComposerSuggestionsPresentation } from './composer/HubComposerSection';
 import { HubWidgetSection } from './HubWidgetSection';
@@ -576,6 +576,21 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // It leaves once Home has arrived (ready and presented, its planet arriving under the fade) or says it cannot be
     // reached; a Home that is not the one on screen (another tab, the Personal Home setup over it) does not hold it.
     const homeArrived = React.useSyncExternalStore(subscribeHomeArrival, isHomeArrivalSettled, isHomeArrivalSettled);
+    // Only the acknowledged Account layout can place the composer in the hero.
+    const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;
+    const belowHeroTop = heroFrame.hero?.nextTop;
+    const readBelowHeroVisible = React.useCallback(() => belowHeroTop != null
+        && belowHeroTop < (visibleWindow.getVisibleWindow()?.bottom ?? heroFrame.pane.height),
+        [belowHeroTop, heroFrame.pane.height, visibleWindow]);
+    const belowHeroVisible = React.useSyncExternalStore(visibleWindow.subscribeVisibleWindow, readBelowHeroVisible, readBelowHeroVisible);
+    const [belowHeroSectionsAdmitted, setBelowHeroSectionsAdmitted] = React.useState(false);
+    // The first frame can see these sections on a tall pane. Once shown, keep their state through
+    // layout and focus changes, as for the rest of Home.
+    const showBelowHeroSections = belowHeroSectionsAdmitted || Platform.OS !== 'web' || !heroComposer
+        || belowHeroVisible || homeArrived || homeUnavailable || customizeOpen || briefOpen;
+    React.useLayoutEffect(() => {
+        if (hubShown && layout.hasSnapshot && showBelowHeroSections) setBelowHeroSectionsAdmitted(true);
+    }, [hubShown, layout.hasSnapshot, showBelowHeroSections]);
     useLaunchCurtainHold(arrivalPresented && !homeUnavailable && !homeArrived);
     useMarkLaunchDestinationBodyMounted(focused && presented);
     const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn }),
@@ -664,8 +679,6 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const composerSuggestions = heroActive || firstRun ? atmosphereSuggestions : 'tiles' as const;
     const slotProps = { layout, topLevelIds, onCustomize: openCustomize, placeholder: greeting.subtitle, composerSuggestions, onMachineSetupOpenChange: setMachineSetupOpen, tracker, widgetDrag,
         customizing: customizeOpen, showGrips: customizeOpen, groupOperations, movementSourceItem: movement.sourceItem, homeSurface: surface };
-    // Only the acknowledged Account layout can place the composer in the hero.
-    const heroComposer = heroActive && layout.sections.find(section => !section.hidden)?.id === HOME_HUB_COMPOSER_SECTION_ID;
     // Desktop Brief me sits on the greeting's line (lab B0): the hero's headline, or the page header's
     // actions; phone gives it the page's width under the Bots' faces (lab B0p).
     const briefEntry = phone ? null : <VoiceBriefButton open={briefOpen} />;
@@ -710,14 +723,18 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                     : layout.sections}
                 // With no machine yet, where agents will run is the one question: Machines leads the cards (58d AF1).
                 leadCardId={firstRunLeadId}
-                renderSection={(section, index, placement) => section.kind === 'builtin' ? (
-                    <HubSectionSlot key={section.id} section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />
-                ) : (
-                    // Ungroup fans its widgets out to their own cards; Group with merges cards into one.
-                    <WidgetGroupMembershipArrivalView key={section.id} arrival={arrivals.get(section.id)} style={styles.card}>
-                        <HubSectionSlot section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />
-                    </WidgetGroupMembershipArrivalView>
-                )}
+                renderSection={(section, index, placement) => {
+                    if (section.kind === 'builtin') {
+                        if (!showBelowHeroSections && (section.id === HOME_HUB_SETUP_SECTION_ID || section.id === HOME_HUB_ATTENTION_SECTION_ID)) return null;
+                        return <HubSectionSlot key={section.id} section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />;
+                    }
+                    return (
+                        // Ungroup fans its widgets out to their own cards; Group with merges cards into one.
+                        <WidgetGroupMembershipArrivalView key={section.id} arrival={arrivals.get(section.id)} style={styles.card}>
+                            <HubSectionSlot section={section} index={index} ownsRow={placement.ownsRow} inRowOfThree={placement.inRowOfThree} leads={placement.leads} {...slotProps} />
+                        </WidgetGroupMembershipArrivalView>
+                    );
+                }}
             />
             {customizeOpen && widgetDrag && surface ? (
                 <HomeNewRowTarget widgetDrag={widgetDrag} surface={surface} layout={layout} topLevelIds={topLevelIds} sourceItem={movement.sourceItem} />

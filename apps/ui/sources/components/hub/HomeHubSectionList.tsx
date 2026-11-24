@@ -193,7 +193,7 @@ export const HOME_HUB_COMPOSER_SECTION_ID = 'start';
 /** Needs your attention: the page's list of what waits on the person. */
 export const HOME_HUB_ATTENTION_SECTION_ID = 'attention';
 /** Get set up: with no machine yet it follows the cards, which carry the first steps, at their width. */
-const HOME_HUB_SETUP_SECTION_ID = 'setup';
+export const HOME_HUB_SETUP_SECTION_ID = 'setup';
 /** Reviews: the Reviews waiting on the person's decision, a list of things to do like Needs your attention. */
 const HOME_HUB_REVIEWS_SECTION_ID = 'reviews';
 

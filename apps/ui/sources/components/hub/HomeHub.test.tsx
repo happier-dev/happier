@@ -20,7 +20,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getHomeHubDefaultLayoutV1, type HomeHubLayoutValue } from '@happier-dev/protocol/home';
@@ -42,6 +42,7 @@ import { GlyphSurface, type GlyphSurfaceProps } from '@/components/atmosphere/gl
 import { HomeCompletedBots } from './HomeCompletedBots';
 import { HomeBotFaces } from './HomeBotFaces';
 import { HOME_HUB_COMPOSER_SECTION_ID } from './HomeHubSectionList';
+import { setHomeArrivalMotionPending } from './homeArrival';
 import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
 import { AtmosphereLayer } from '@/components/atmosphere/AtmosphereLayer';
 import { AtmosphereSurfaceFrame } from '@/components/atmosphere/AtmosphereSurfaceFrame';
@@ -269,12 +270,15 @@ function RoutedHomeBoundary({ children }: React.PropsWithChildren) {
     return <NavigationContext.Provider value={useNavigation()}>{children}</NavigationContext.Provider>;
 }
 
-async function renderHome(request = artifact.request, initial: 'stored' | 'missing' = 'stored', wrapper?: React.ComponentType<React.PropsWithChildren>) {
+async function renderHome(request = artifact.request, initial: 'stored' | 'missing' = 'stored', wrapper?: React.ComponentType<React.PropsWithChildren>, connected = false) {
     if (!connection) {
         if (initial === 'stored') artifact.seed({ v: 1, items: [], ...settings.layout });
         restoreSyncLoader = (await loadSyncSingletonForTests()).dispose;
         restoreActionLoader = await installRealActionExecutorModuleLoader();
-        connection = await restoreServerAccountForTest({ serverUrl: 'https://home-layout.test', accountId: 'account-home', request });
+        connection = await restoreServerAccountForTest({
+            serverUrl: 'https://home-layout.test', accountId: 'account-home', request,
+            ...(connected ? { configureSocket: configureConnectedServerSocketBoundary } : {}),
+        });
         const scope = { serverId: connection.home.id, accountId: 'account-home' };
         storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
     }
@@ -429,6 +433,36 @@ describe('HomeHub', () => {
             await focus(true);
             expect(screen.findHostByTestId('home-hub')).toBe(content);
         } finally { await screen.unmount(); }
+    });
+
+    it.each([false, true])('admits setup and attention during arrival when the hero leaves them in view (%s)', async (inView) => {
+        settings.measureAtmosphere = true;
+        settings.viewport = { width: 800, height: 600 };
+        settings.belowHeroTop = inView ? 350 : 750;
+        settings.layout = { order: [HOME_HUB_COMPOSER_SECTION_ID, 'attention', 'setup'], hidden: [] };
+        setHomeArrivalMotionPending(true);
+        let screen: Awaited<ReturnType<typeof renderHome>> | undefined;
+        try {
+            screen = await renderHome(async (input, init) =>
+                createEmptyAccountBootstrapHttpResponse(new URL(String(input)).pathname, init) ?? artifact.request(input, init),
+                'stored', undefined, true);
+            await vi.waitFor(() => expect(screen!.findByTestId('home-hero')).not.toBeNull());
+            await act(async () => {
+                screen!.findHostByTestId('home-hub.below-hero')?.props.onLayout({ nativeEvent: {
+                    layout: { x: 0, y: settings.belowHeroTop, ...settings.viewport },
+                } });
+            });
+            expect(Boolean(screen.findHostByTestId('home-hub.section.setup'))).toBe(inView);
+            expect(Boolean(screen.findHostByTestId('home-hub.section.attention'))).toBe(inView);
+            if (!inView) expect(widgets.setupRenders).toBe(0);
+
+            await act(async () => { setHomeArrivalMotionPending(false); });
+            await vi.waitFor(() => expect(screen!.findHostByTestId('home-hub.section.setup')).not.toBeNull());
+            expect(screen.findHostByTestId('home-hub.section.attention')).not.toBeNull();
+        } finally {
+            await screen?.unmount();
+            setHomeArrivalMotionPending(false);
+        }
     });
 
     it('ends the Horizon planet above Done while you were away', async () => {
