@@ -4,6 +4,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
+import { t } from '@/text';
 
 /**
  * Everything a Team section needs, resolved once by the shared Team shell.
@@ -68,10 +69,13 @@ export type TeamSectionContext = Readonly<{
 export function teamPageHeaderMeta(input: Readonly<{
     pageTitle: string;
     teamName: string | null;
+    /** No name is known yet while the Team is read: a quiet bar holds the name's place before the Home. */
+    teamNamePending?: boolean;
     homeName?: string;
 }>): readonly PageHeaderMetaFact[] {
     return [
-        ...(input.teamName && input.teamName !== input.pageTitle ? [{ key: 'team', text: input.teamName }] : []),
+        ...(input.teamName && input.teamName !== input.pageTitle ? [{ key: 'team', text: input.teamName }]
+            : !input.teamName && input.teamNamePending ? [{ key: 'team', text: t('teams.title'), pending: true }] : []),
         ...(input.homeName !== undefined ? [{ key: 'home', icon: 'house' as const, text: input.homeName }] : []),
     ];
 }

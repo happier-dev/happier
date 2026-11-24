@@ -21,7 +21,6 @@ import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSte
 import { PageHeader, PageHeaderPlaceholder } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
@@ -317,7 +316,7 @@ const TeamAttentionSection = React.memo(function TeamAttentionSection(
  * row rather than guessed.
  */
 const TeamOverviewBody = React.memo(function TeamOverviewBody(
-  props: Readonly<{ context: TeamSectionContext; sharedBeside?: SharedBeside }>,
+  props: Readonly<{ context: TeamSectionContext; sharedBeside?: SharedBeside; trailing: React.ReactNode }>,
 ) {
   const router = useRouter();
   const { context } = props;
@@ -499,6 +498,8 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
         ) : null}
       </ItemGroup>}
 
+      {/* What closes the page (a member's Leave Team) arrives with the sections above it, never under the wait. */}
+      {sharedPending ? null : props.trailing}
     </>
   );
 });
@@ -541,10 +542,6 @@ const TeamOverviewLoadingHeader = React.memo(function TeamOverviewLoadingHeader(
     />
   );
 });
-
-function TeamOverviewLoading() {
-  return <SurfaceStateCard testID="team-loading" size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />;
-}
 
 /**
  * The Team entry surface.
@@ -600,22 +597,25 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
       serverId={props.serverId}
       teamId={props.teamId}
       renderHeader={(context) => <TeamOverviewHeader context={context} />}
-      renderLoading={TeamOverviewLoading}
       renderLoadingHeader={(known) => (
         <TeamOverviewLoadingHeader address={createTeamAddress(props.serverId, props.teamId)} homeName={known.homeName} scope={known.scope} />
       )}
     >
-      {(context) => (
-        <>
-          {context.team.capabilities.viewTeam ? <TeamOverviewBody context={context} sharedBeside={sharedBeside} /> : null}
-          {isTeamViewerSuspended(context.team) ? <TeamSuspendedNotice /> : null}
-          {/* Leave-only viewers retain the Team identity and self-removal without mounting
-              the content's readers or ordinary member guidance. */}
-          {!context.team.capabilities.manageMembers && !context.team.capabilities.manageInvitations ? (
-            <TeamLeaveAction context={context} testID="team-overview-leave" />
-          ) : null}
-        </>
-      )}
+      {(context) => {
+        const trailing = (
+          <>
+            {isTeamViewerSuspended(context.team) ? <TeamSuspendedNotice /> : null}
+            {/* Leave-only viewers retain the Team identity and self-removal without mounting
+                the content's readers or ordinary member guidance. */}
+            {!context.team.capabilities.manageMembers && !context.team.capabilities.manageInvitations ? (
+              <TeamLeaveAction context={context} testID="team-overview-leave" />
+            ) : null}
+          </>
+        );
+        return context.team.capabilities.viewTeam
+          ? <TeamOverviewBody context={context} sharedBeside={sharedBeside} trailing={trailing} />
+          : trailing;
+      }}
     </TeamSection>
       )}
     />

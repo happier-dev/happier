@@ -14,7 +14,8 @@ export type HappierPageHeaderPlaceholderProps = Pick<HappierPageHeaderProps,
  * already knows its mark and meta facts (a Team's artwork and Home) passes them, so they stand where they land.
  */
 export function HappierPageHeaderPlaceholder({ color, reducedMotion, ...props }: HappierPageHeaderPlaceholderProps) {
-  const lineHeight = happierPageTextMetrics(props.largeTitle ? 'heroTitle' : 'pageTitle').lineHeight;
+  // The header's own title role: a hero title only without a leading mark (a marked title keeps the page size).
+  const lineHeight = happierPageTextMetrics(props.largeTitle && !props.leading ? 'heroTitle' : 'pageTitle').lineHeight;
   return <HappierPageHeader {...props} title={<View style={{ height: lineHeight, justifyContent: 'center' }}>
     <HappierSkeletonBlock width={96} height={10} radius={5} color={color} reducedMotion={reducedMotion} />
   </View>} />;

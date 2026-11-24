@@ -328,6 +328,23 @@ describe('Team overview: Shared with this Team', () => {
     expect(order.indexOf('team-overview-role')).toBeLessThan(order.indexOf('team-overview-home'));
   });
 
+  it('keeps a member\'s Leave Team under the sections: it arrives with them, never above where they land', async () => {
+    const serverId = await addHome([]);
+    let answerSummary!: () => void;
+    harness.answer(serverId, '/v1/teams/get', {
+      body: teamSummaryFixture({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ leave: true }) }),
+    });
+    harness.answer(serverId, SUMMARY.path, {
+      body: { teamId: 'team-1', kinds: [] },
+      respondAfter: new Promise<void>((resolve) => { answerSummary = resolve; }),
+    });
+    const screen = await renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-identity'));
+    expect(ids(screen)).not.toContain('team-overview-leave');
+    await act(async () => { answerSummary(); });
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-leave'));
+  });
+
   it('keeps the last-known invitation to share while a refresh runs', async () => {
     const serverId = await addHome([
       { kind: 'sessions', status: 'available', count: 0 },

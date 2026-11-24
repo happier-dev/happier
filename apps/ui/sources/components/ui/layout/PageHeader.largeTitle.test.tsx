@@ -82,3 +82,26 @@ it('a drawn title keeps its "·" separator with the word before it, so a wrapped
   // The page's name for tabs and assistive technology stays the plain title.
   expect(chrome.setPageTitle).toHaveBeenCalledWith('Set session title · Review the storefront guide');
 });
+
+it('a held entity header under a large-title bar stands where its arriving header lands (same top, same title line)', async () => {
+  const { PageHeaderPlaceholder } = await import('@/components/ui/layout/PageHeader');
+  const { HappierPageHeader, happierPageTextMetrics } = await import('@happier-dev/plugin-ui/presentation');
+  const { View } = await import('react-native');
+  const mark = <View testID="mark" style={{ width: 44, height: 44 }} />;
+  const headerProps = async (element: React.ReactElement) => {
+    const rendered = await renderScreen(
+      <NavigationTitleChromeProvider showsTitle publisher={publisher()}>
+        <NavigationLargeTitleProvider largeTitle>{element}</NavigationLargeTitleProvider>
+      </NavigationTitleChromeProvider>,
+    );
+    const props = rendered.findAllByType(HappierPageHeader)[0]!.props;
+    await rendered.unmount();
+    return props;
+  };
+  const arriving = await headerProps(<PageHeader testID="header" title="Northwind Field Survey" alwaysShowTitle leading={mark} />);
+  const held = await headerProps(<PageHeaderPlaceholder testID="held" alwaysShowTitle leading={mark} />);
+  // The top inset follows `largeTitle`: both headers must agree, or the identity rises when the Team answers.
+  expect(held.largeTitle).toBe(arriving.largeTitle);
+  // A marked title keeps the page title's size, so the held bar sits on a page-title line.
+  expect(held.title.props.style.height).toBe(happierPageTextMetrics('pageTitle').lineHeight);
+});

@@ -5,10 +5,13 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList, type ItemListProps } from '@/components/ui/lists/ItemList';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
+import { useTeamsDirectoryRow } from '@/hooks/teams/useTeamsDirectoryRow';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { Modal } from '@/modal';
 import { serverAccountScopedTeamKey } from '@/sync/domains/teams/teamAddress';
@@ -38,6 +41,9 @@ export type TeamPageStaleRead = Readonly<{
 export type TeamSectionRenderHeader = (pageReads?: readonly TeamPageStaleRead[]) => React.ReactNode;
 
 const NO_PAGE_READS: readonly TeamPageStaleRead[] = Object.freeze([]);
+/** A virtualized Team page's condition is its one row. */
+const CONDITION_ROWS: readonly string[] = Object.freeze(['condition']);
+const conditionRowKey = (row: string) => row;
 
 /**
  * The page head of a Team destination: a sub-page names itself (`title`, `description`); an entity
@@ -59,6 +65,8 @@ export function TeamSectionPageHeader(props: Readonly<{
     actions?: React.ReactNode;
     alwaysShowTitle?: boolean;
     teamName: string | null;
+    /** The Team is still being read and no row names it yet: its name holds its place as a pending fact. */
+    teamNamePending?: boolean;
     homeName?: string;
 }>): React.ReactElement {
     return <PageHeader
@@ -67,7 +75,7 @@ export function TeamSectionPageHeader(props: Readonly<{
         description={props.description}
         actions={props.actions}
         alwaysShowTitle={props.alwaysShowTitle}
-        meta={teamPageHeaderMeta({ pageTitle: props.title, teamName: props.teamName, homeName: props.homeName })}
+        meta={teamPageHeaderMeta({ pageTitle: props.title, teamName: props.teamName, teamNamePending: props.teamNamePending, homeName: props.homeName })}
     />;
 }
 
@@ -76,7 +84,7 @@ export function TeamSectionPageHeader(props: Readonly<{
  * The page header stays above it, so the page does not change shape when the Team arrives.
  */
 const TeamStateCard = React.memo(function TeamStateCard(props: Readonly<{
-    kind: 'loading' | 'unavailable' | 'error' | 'warning';
+    kind: 'unavailable' | 'error' | 'warning';
     title: string;
     body?: string;
     action?: Readonly<{ label: string; onPress: () => void }>;
@@ -89,7 +97,7 @@ const TeamStateCard = React.memo(function TeamStateCard(props: Readonly<{
             title={props.title}
             reason={props.body}
             action={props.action}
-            accessibilitySemantics={props.kind === 'loading' ? 'status' : 'alert'}
+            accessibilitySemantics="alert"
         />
     );
 });
@@ -185,6 +193,9 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     });
 
     const readyTeamName = projection?.state.kind === 'ready' ? projection.state.team.name : null;
+    // While the Team is read, the row the Teams rail already draws names it, so the header that arrives stands
+    // where this one stood. One key-scoped subscription to that row.
+    const directoryRow = useTeamsDirectoryRow(projection?.scope ?? null, props.teamId);
     const resolvedTitle = props.title ?? readyTeamName ?? t('teams.title');
 
     // An entity page (the Team, a member, a Group) names itself in its own header, and the
@@ -197,31 +208,42 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
         navigation.setOptions({ title: resolvedTitle });
     }, [embedded, navigation, resolvedTitle]);
 
-    const renderPlainHeader = (actions?: React.ReactNode) => (
+    const renderPlainHeader = (actions?: React.ReactNode, reading = false) => (
         <TeamSectionPageHeader
             title={resolvedTitle}
             description={props.description}
             actions={actions}
             alwaysShowTitle={headsItself}
-            teamName={readyTeamName}
+            teamName={readyTeamName ?? (reading ? directoryRow?.name ?? null : null)}
+            teamNamePending={reading && readyTeamName === null && directoryRow === null}
             homeName={projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined)}
         />
     );
     const plainHeader = renderPlainHeader();
 
-    // A page with nothing to show but its condition: the header, then the condition.
-    const conditionPage = (condition: React.ReactNode, header: React.ReactNode = plainHeader) => embedded ? condition : (
-        <ItemList pageColumn={props.pageColumn}>
-            {header}
-            {condition}
-        </ItemList>
-    );
+    // A page with nothing to show but its condition: the header, then the condition, in the same list the loaded
+    // page draws, so its header (and its Back) is measured against the same pane and keeps its place on arrival.
+    const conditionPage = (condition: React.ReactNode, header: React.ReactNode = plainHeader) => embedded ? condition
+        : props.presentation === 'virtualized-list' ? (
+            <VirtualizedItemList
+                data={CONDITION_ROWS}
+                keyExtractor={conditionRowKey}
+                renderItem={() => <ItemGroup surface="none">{condition}</ItemGroup>}
+                ListHeaderComponent={<>{header}</>}
+            />
+        ) : (
+            <ItemList pageColumn={props.pageColumn}>
+                {header}
+                {condition}
+            </ItemList>
+        );
+    // While the Team is read, one quiet line waits where the page's sections begin (as on the Team's Overview).
     const loadingPage = (testID: string) => conditionPage(
-        props.renderLoading?.() ?? <TeamStateCard kind="loading" title={t('teams.loading')} testID={testID} />,
+        props.renderLoading?.() ?? <SurfaceStateCard testID={testID} size="line" kind="loading" title={t('teams.loading')} accessibilitySemantics="status" />,
         props.renderLoadingHeader?.({
             homeName: projection?.homeName ?? ('homeName' in binding ? binding.homeName : undefined),
             scope: projection?.scope ?? null,
-        }) ?? plainHeader,
+        }) ?? renderPlainHeader(undefined, true),
     );
 
     if (!projection) {

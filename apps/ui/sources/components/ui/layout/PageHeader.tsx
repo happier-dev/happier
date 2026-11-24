@@ -368,7 +368,8 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
         <HappierPageHeaderPlaceholder
             color={theme.colors.surface.skeleton}
             reducedMotion={reducedMotion}
-            largeTitle={largeTitle && props.leading == null}
+            // The same rule as the header that replaces it, so it stands at the same top.
+            largeTitle={largeTitle}
             showTitle={props.alwaysShowTitle === true || !chromeShowsTitle}
             columnMaxWidthPx={maxWidth}
             renderText={renderPageHeaderText}

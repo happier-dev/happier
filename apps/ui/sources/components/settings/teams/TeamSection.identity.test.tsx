@@ -176,3 +176,58 @@ describe('exact Home and Team header identity', () => {
         if (kind !== 'account') expect(screen.getTextContent()).toContain('Shared Team');
     });
 });
+
+const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+const { VirtualizedItemList } = await import('@/components/ui/lists/VirtualizedItemList');
+
+describe('a Team sub-page while its Team is read', () => {
+
+    async function heldSubPage(options: Readonly<{ directoryRow: boolean }>) {
+        const { target } = await addHomes();
+        if (options.directoryRow) {
+            const { applyTeamsDirectoryPage } = await import('@/sync/store/teams/teamsSnapshots');
+            const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
+            const { teamDirectoryQueryKeyV1 } = await import('@happier-dev/protocol/teams');
+            const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+            applyTeamsDirectoryPage({
+                scope: createServerAccountScope(resolveServerProfileScopeIdForIdentifier(target), 'viewer')!,
+                queryKey: teamDirectoryQueryKeyV1({ v: 1, scope: 'member', archived: 'active' }),
+                items: [teamSummaryFixture({ name: 'Northwind Field Survey', viewerRole: 'owner' })],
+                observedAt: 1,
+            });
+        }
+        harness.answer(target, TEAM_GET, { body: teamSummaryFixture({ name: 'Northwind Field Survey' }), respondAfter: new Promise<void>(() => {}) });
+        const screen = await renderScreen(
+            <TeamSection serverId={target} teamId="team-1" title="Groups" description="Named sets of members." presentation="virtualized-list">
+                {(_context, header) => <VirtualizedItemList data={[]} renderItem={() => null} ListHeaderComponent={<>{header}</>} />}
+            </TeamSection>,
+        );
+        await waitForHomeGovernance(() => expect(harness.requestsFor(TEAM_GET).length).toBeGreaterThan(0));
+        await waitForHomeGovernance(() => expect(screen.findHostByTestId('team-page-header')).not.toBeNull());
+        return screen;
+    }
+    const headerMeta = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+        screen.findAllByType(PageHeader).find((node) => node.props.testID === 'team-page-header')!.props.meta;
+
+    it('names the Team from the directory row the rail draws, so nothing is inserted when the Team answers', async () => {
+        const screen = await heldSubPage({ directoryRow: true });
+        expect(headerMeta(screen)).toEqual([
+            { key: 'team', text: 'Northwind Field Survey' },
+            { key: 'home', icon: 'house', text: 'Research Home' },
+        ]);
+    });
+
+    it('holds the Team name as a pending fact when no directory row is known', async () => {
+        const screen = await heldSubPage({ directoryRow: false });
+        const meta = headerMeta(screen);
+        expect(meta.map((fact: { key: string; pending?: boolean }) => [fact.key, fact.pending === true])).toEqual([['team', true], ['home', false]]);
+    });
+
+    it('waits on one quiet line in the same list the loaded page draws, so Back keeps its place', async () => {
+        const screen = await heldSubPage({ directoryRow: true });
+        // The loaded page is a virtualized list whose header measures the whole pane; the held page is the same list.
+        expect(screen.findAllByType(VirtualizedItemList).length).toBeGreaterThan(0);
+        const waiting = screen.findAllByType(SurfaceStateCard).filter((node) => node.props.kind === 'loading');
+        expect(waiting.map((node) => node.props.size)).toEqual(['line']);
+    });
+});
