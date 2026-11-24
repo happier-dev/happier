@@ -11,6 +11,11 @@ import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/cont
 import { projectSessionAccessCapabilitiesV1, type SessionEffectiveAccessV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
+import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { finishLaunchCurtain, holdLaunchCurtain, useLaunchCurtainState } from '@/boot/launchCurtain';
+import { useSessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
+import { useSessionListPaneProjection } from '@/components/sessions/shell/useSessionListPaneProjection';
+import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 
 import {
     createPlainSessionCurrentProjectionRecordFixture,
@@ -84,6 +89,13 @@ const QUERY_PAGE = {
     nextCursor: 'query-page-2', hasNext: true, attentionNextCursor: null, attentionHasNext: false,
 };
 
+const accountId = 'cold-page-one';
+const spaceId = 'saved-space';
+const spaceTagId = 'manual-member';
+const spaceRow = row('space-only', 200_500);
+const retainedSpaceSessionId = OWNED[0];
+let savedSpaceSettings: Record<string, unknown> | null = null;
+let heldSpacePage: ReturnType<typeof createDeferred<void>> | null = null;
 let advertiseOrdinaryPage = false;
 const listReads: string[] = [];
 let heldBoot: Readonly<{
@@ -107,12 +119,13 @@ async function respond(url: Parameters<typeof fetch>[0], init?: RequestInit) {
     if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
     if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return Response.json({
         ...features, features: { ...features.features, sessions: { ...features.features.sessions,
-            filteredListing: { enabled: true, ...(advertiseOrdinaryPage ? { ordinaryPageVersion: 1 } : {}) } } },
+            filteredListing: { enabled: true, membershipSelectorVersion: 1,
+                ...(advertiseOrdinaryPage ? { ordinaryPageVersion: 1 } : {}) } } },
     });
     if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
     if (target.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
     if (target.pathname === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({
-        content: { t: 'plain', v: {} }, version: 1,
+        content: { t: 'plain', v: savedSpaceSettings ?? {} }, version: 1,
     }));
     if (target.pathname === '/v2/cursor') {
         await heldBoot?.cursor.promise;
@@ -120,15 +133,30 @@ async function respond(url: Parameters<typeof fetch>[0], init?: RequestInit) {
     }
     if (target.pathname === '/v2/session-organization') return Response.json(SessionOrganizationSnapshotResponseSchema.parse({
         snapshot: { schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION, version: 0, pins: [], folders: [],
-            folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [] },
+            folderAssignments: [],
+            tags: savedSpaceSettings ? [{
+                tagId: spaceTagId, tagKey: spaceTagId, sortKey: null, display: { t: 'plain', v: { label: 'Member' } },
+                archivedAt: null, createdAt: 1, updatedAt: 1,
+            }] : [],
+            tagAssignments: savedSpaceSettings ? [retainedSpaceSessionId, spaceRow.id].map(sessionId => ({
+                sessionId, tagIds: [spaceTagId],
+            })) : [],
+            orderEntries: [], labels: [] },
     }));
     if (target.pathname === '/v1/machines') return Response.json([]);
     if (target.pathname === '/v2/sessions/active') return Response.json(V2SessionListResponseSchema.parse({
         sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
     }));
     if (target.pathname === '/v2/sessions/query') {
-        const body = JSON.parse(String(init?.body)) as { cursor?: string; ordinaryPage?: unknown };
+        const body = JSON.parse(String(init?.body)) as { cursor?: string; ordinaryPage?: unknown; membership?: unknown };
         if (body.cursor) throw new Error('Cold load must not page the query');
+        if (body.membership) {
+            listReads.push('POST /v2/sessions/query+membership');
+            expect(body.membership).toMatchObject({ mode: 'manual_only', tagIds: [spaceTagId] });
+            await heldSpacePage?.promise;
+            return Response.json({ sessions: [{ ...spaceRow, viewer: { ...spaceRow.viewer, tagIds: [spaceTagId] } }],
+                nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+        }
         listReads.push(body.ordinaryPage ? 'POST /v2/sessions/query+ordinary' : 'POST /v2/sessions/query');
         if (heldBoot) await (listReads.length === 1 ? heldBoot.firstPage : heldBoot.replacement).promise;
         return Response.json(body.ordinaryPage ? carryOrdinaryPage() : QUERY_PAGE);
@@ -148,12 +176,15 @@ type ColdLoadResult = Readonly<{
     frontier: unknown;
     rows: Record<string, unknown>;
     visibleQueryPageCommits: readonly string[];
+    readsBeforeUsableHome?: readonly string[];
+    spacePhase?: string;
+    firstVisibleSpaceRows?: readonly (string | null)[];
 }>;
 
 let dispose: (() => Promise<void>) | null = null;
 
 /** The app's cold load on one Home: Sync's restore plus the personal list a mounted Activity surface reads. */
-async function coldLoad(advertise: boolean, holdResponses = false): Promise<ColdLoadResult> {
+async function coldLoad(advertise: boolean, holdResponses = false, withSavedSpace = false): Promise<ColdLoadResult> {
     const boot = holdResponses ? { cursor: createDeferred<void>(), firstPage: createDeferred<void>(),
         replacement: createDeferred<void>() } : null;
     heldBoot = boot;
@@ -171,9 +202,24 @@ async function coldLoad(advertise: boolean, holdResponses = false): Promise<Cold
             });
         });
     });
-    const connection = await restoreServerAccountForTest({ serverUrl: homeUrl, accountId: 'cold-page-one', request: respond });
+    const connection = await restoreServerAccountForTest({ serverUrl: homeUrl, accountId, request: respond });
     await connected;
     const serverId = connection.home.id;
+    let releaseLaunch: (() => void) | undefined;
+    const spacePage = withSavedSpace ? createDeferred<void>() : null;
+    heldSpacePage = spacePage;
+    if (withSavedSpace) {
+        document.documentElement.classList.add('launch-planet');
+        releaseLaunch = holdLaunchCurtain();
+        selectCollectionSpace({ serverId, accountId }, 'sessionWork', spaceId);
+        savedSpaceSettings = { collectionSpacesEnabled: true, sessionSpacesEnabled: true, collectionSpacesV1: {
+            v: 1, spaces: [{ entityKind: 'sessionWork', id: spaceId, name: 'Saved space',
+                icon: { kind: 'icon', name: 'filter' },
+                filter: normalizeSessionListFilterV1({ homeServerIds: [serverId], scope: 'all_accessible', show: 'sessions' }),
+                includeNeedsYouEverywhere: false,
+                membership: { mode: 'manual_only', tags: [{ serverId, accountId, tagId: spaceTagId }] } }],
+        } };
+    }
     const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
     const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
     actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
@@ -186,9 +232,29 @@ async function coldLoad(advertise: boolean, holdResponses = false): Promise<Cold
         membership.current = useActivityPersonalSessionMembership();
         return <ul>{membership.current.membershipByServerId[serverId]?.map(id => <li key={id}>{id}</li>)}</ul>;
     }
+    let spaceQueryKey: string | undefined;
+    let spacePhase: string | undefined;
+    function SavedSpacePane() {
+        const curtain = useLaunchCurtainState();
+        const controller = useSessionListViewFilterController('active', undefined, undefined, {
+            holdSpaceQuery: curtain !== 'gone',
+        });
+        const home = controller.queryHomes[0];
+        spaceQueryKey = controller.activeSpace?.id === spaceId && home?.query.membership ? home.queryKey : undefined;
+        const pane = useSessionListPaneProjection('persisted', controller);
+        spacePhase = pane.query?.statesByServerId[serverId]?.phase;
+        return <ol>{pane.visibleSessionListIndex?.map(item => item.type === 'session'
+            ? <li key={item.sessionId}>{item.sessionId}</li>
+            : null)}</ol>;
+    }
+    let firstVisibleSpaceRows: readonly (string | null)[] | undefined;
+    const readSpaceRows = () => Array.from(container.querySelectorAll('ol li'), row => row.textContent);
     function onCommit() {
+        if (spacePage && !document.documentElement.classList.contains('launch-planet')) {
+            firstVisibleSpaceRows ??= readSpaceRows();
+        }
         const phase = membership.current?.statesByServerId[serverId]?.phase;
-        if (phase && container.querySelector('li')) visibleQueryPageCommits.push(phase);
+        if (phase && container.querySelector('ul li')) visibleQueryPageCommits.push(phase);
     }
     dispose = async () => {
         await act(async () => {
@@ -196,7 +262,14 @@ async function coldLoad(advertise: boolean, holdResponses = false): Promise<Cold
             boot?.cursor.resolve();
             boot?.firstPage.resolve();
             boot?.replacement.resolve();
+            spacePage?.resolve();
         });
+        if (releaseLaunch) {
+            finishLaunchCurtain();
+            releaseLaunch();
+        }
+        savedSpaceSettings = null;
+        heldSpacePage = null;
         heldBoot = null;
         container.remove();
         actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
@@ -208,6 +281,7 @@ async function coldLoad(advertise: boolean, holdResponses = false): Promise<Cold
     await act(async () => root.render(
         <React.Profiler id="cold-session-list" onRender={onCommit}>
             <ActivityPersonalSessionMembershipProvider enabled><Observer /></ActivityPersonalSessionMembershipProvider>
+            {withSavedSpace && <SavedSpacePane />}
         </React.Profiler>,
     ));
     if (boot) {
@@ -218,24 +292,50 @@ async function coldLoad(advertise: boolean, holdResponses = false): Promise<Cold
             expect(listReads).toHaveLength(0);
         });
         await act(async () => boot.cursor.resolve());
-        await vi.waitFor(() => expect(listReads).toEqual(['POST /v2/sessions/query+ordinary']));
+        await vi.waitFor(() => expect(listReads[0]).toBe('POST /v2/sessions/query+ordinary'));
         await act(async () => boot.firstPage.resolve());
     }
     await vi.waitFor(async () => {
         await act(async () => {});
         if (boot) {
-            expect(Array.from(container.querySelectorAll('li'), row => row.textContent)).toEqual(QUERY_PAGE.sessions.map(row => row.id));
+            expect(Array.from(container.querySelectorAll('ul li'), row => row.textContent)).toEqual(QUERY_PAGE.sessions.map(row => row.id));
         } else {
             expect(membership.current?.statesByServerId[serverId]).toMatchObject({ phase: 'ready' });
         }
         expect(storage.getState().ordinarySessionListMembershipByServerId[serverId]?.length).toBeGreaterThan(0);
         expect(sync.readOrdinarySessionListLifecycle().fetchInFlight).toBe(false);
     });
+    let readsBeforeUsableHome: string[] | undefined;
+    if (spacePage) {
+        expect(readSpaceRows()).toEqual([]);
+        const queryKey = spaceQueryKey;
+        if (!queryKey) throw new Error('Saved Space did not resolve to a membership query');
+        await act(async () => storage.getState().commitSessionListQueryMembership(queryKey, {
+            serverId,
+            accountId,
+            sessionIds: [retainedSpaceSessionId],
+            lastKnown: true,
+        }));
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(readSpaceRows()).toEqual([retainedSpaceSessionId]);
+        });
+        readsBeforeUsableHome = [...listReads];
+        await act(async () => finishLaunchCurtain());
+        await act(async () => spacePage.resolve());
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(readSpaceRows()).toEqual([spaceRow.id]);
+        });
+    }
     const ids = new Set([...ORDINARY_PAGE.sessions, ...QUERY_PAGE.sessions].map(session => session.id));
     const rows = storage.getState().sessionListRowsByServerId[serverId] ?? {};
     const result: ColdLoadResult = {
         listReads: [...listReads],
         visibleQueryPageCommits,
+        readsBeforeUsableHome,
+        spacePhase,
+        firstVisibleSpaceRows,
         ordinaryMembership: storage.getState().ordinarySessionListMembershipByServerId[serverId],
         activityMembership: membership.current?.membershipByServerId[serverId],
         frontier: sync.readOrdinarySessionListLifecycle().frontier,
@@ -270,6 +370,21 @@ describe('cold Session-list page one', () => {
             reads: ['POST /v2/sessions/query+ordinary'],
             firstVisiblePhase: 'ready',
             refreshingCommits: 0,
+        });
+    });
+
+    it('reads the personal page once before Home is usable with a saved membership Space', async () => {
+        const observed = await coldLoad(true, true, true);
+        expect({
+            before: observed.readsBeforeUsableHome,
+            all: observed.listReads,
+            spacePhase: observed.spacePhase,
+            firstVisibleSpaceRows: observed.firstVisibleSpaceRows,
+        }).toEqual({
+            before: ['POST /v2/sessions/query+ordinary'],
+            all: ['POST /v2/sessions/query+ordinary', 'POST /v2/sessions/query+membership'],
+            spacePhase: 'ready',
+            firstVisibleSpaceRows: [retainedSpaceSessionId],
         });
     });
 

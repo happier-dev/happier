@@ -142,6 +142,7 @@ type ControllerInput = Readonly<{
     readMode?: 'complete';
     selectSession?: SessionListPageSelection;
     selected: boolean;
+    deferRead?: boolean;
     /** `null` means the selected Home's transport ownership is being transferred. */
     online: boolean | null;
     supported?: boolean | null;
@@ -181,7 +182,7 @@ type PageRequestPlan = Readonly<{
  * is chosen from the Home's feature decision before any request is issued.
  */
 function resolvePageRequestPlan(input: ControllerInput | null): PageRequestPlan | null {
-    if (!input || !input.selected || !input.online) return null;
+    if (!input || !input.selected || input.deferRead || !input.online) return null;
     if (input.supported === true) {
         return {
             source: { kind: 'query', body: stripCursorState(input.query), allowV1Fallback: false },
@@ -650,7 +651,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
             if (previousQueryKey !== nextQueryKey || readModeChanged || nextInput.online !== true) {
                 coveredCorpus = null;
             }
-            if (!nextInput.selected) {
+            if (!nextInput.selected || nextInput.deferRead) {
                 if (previousInput?.selected) {
                     const previousPlan = resolvePageRequestPlan(previousInput);
                     const corpusRevision = params.readCorpusRevision?.();
@@ -664,11 +665,11 @@ export function createSessionListQueryHomeController(params: Readonly<{
                         : null;
                 }
                 revision += 1;
-                activeAbortController?.abort('session-list-query-home-not-selected');
+                activeAbortController?.abort(nextInput.deferRead ? 'session-list-query-deferred' : 'session-list-query-home-not-selected');
                 activeAbortController = null;
                 inFlight = null;
                 refreshQueued = false;
-                publishPhase(nextQueryKey, 'not_selected');
+                publishPhase(nextQueryKey, nextInput.deferRead ? 'idle' : 'not_selected');
                 return;
             }
             if (nextInput.online === false) {
@@ -774,7 +775,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
         },
         invalidate: (scope, rowFacets) => {
             if (disposed || !input) return Promise.resolve();
-            if (!input.selected) {
+            if (!input.selected || input.deferRead) {
                 if (scope !== 'recover') coveredCorpus = null;
                 return Promise.resolve();
             }
@@ -800,7 +801,7 @@ export function createSessionListQueryHomeController(params: Readonly<{
         place: (rows, readSortKey) => {
             // A held offline corpus still takes rows read over HTTP (presence recovery).
             if (disposed || !input) return true;
-            if (!input.selected) {
+            if (!input.selected || input.deferRead) {
                 coveredCorpus = null;
                 return true;
             }

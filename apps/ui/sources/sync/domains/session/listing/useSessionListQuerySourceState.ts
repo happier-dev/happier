@@ -67,6 +67,8 @@ export type SessionListQueryHomeInput = Readonly<{
      */
     queryKey?: string;
     query: SessionListQueryV1;
+    /** Keep the selected corpus and its retained rows while the surface holds page reads. */
+    deferRead?: boolean;
     /** Apply only exhausted relations for consumers that need the whole corpus. */
     readMode?: 'complete';
     selectSession?: SessionListPageSelection;
@@ -199,6 +201,7 @@ type NormalizedQueryHome = Readonly<{
     serverId: string;
     queryKey: string;
     query: SessionListQueryV1;
+    deferRead: boolean;
     readMode?: 'complete';
     selectSession?: SessionListPageSelection;
     queryMembership: 'query' | 'rowOnly';
@@ -266,6 +269,7 @@ function normalizeHomes(homes: readonly SessionListQueryHomeInput[]): readonly N
             serverId,
             query: home.query,
             queryKey: buildSessionListQueryKey(serverId, home.query),
+            deferRead: home.deferRead === true,
             readMode: home.readMode,
             selectSession: home.selectSession,
             queryMembership: home.queryMembership ?? 'query',
@@ -393,6 +397,7 @@ export function useSessionListQueryHomeStates(input: SessionListQueryInput): Ses
 
 function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): SessionListQueryHomeStatesLayer {
     const homes = React.useMemo(() => normalizeHomes(input.homes), [input.homes]);
+    const readableHomes = React.useMemo(() => homes.filter((home) => !home.deferRead), [homes]);
     const homeServerIds = React.useMemo(() => homes.map((home) => home.serverId), [homes]);
     const queriesByServerId = React.useMemo(() => new Map(homes.map(home => [home.serverId, home.query])), [homes]);
     const supportByServerId = useSessionListQueryHomeSupportByServerId(homeServerIds, input.enabled, queriesByServerId);
@@ -530,6 +535,7 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
                 readMode: home.readMode,
                 selectSession: home.selectSession,
                 selected: input.enabled,
+                deferRead: home.deferRead,
                 online: availability === 'pending' ? null : availability === 'online',
                 supported: resolveSessionListQueryHomeAdmissionSupport(
                     supportByServerId[home.serverId],
@@ -561,14 +567,14 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
         });
     }, [managedOrdinaryHomes]);
     const loadNext = React.useCallback(async () => {
-        await Promise.all(homes.map((home) => (
+        await Promise.all(readableHomes.map((home) => (
             managedOrdinaryHomes.has(home.serverId)
                 ? loadNextOrdinarySessionListPage(home.serverId)
                 : controllersRef.current.get(home.serverId)?.loadNext()
         )));
-    }, [homes, managedOrdinaryHomes]);
+    }, [readableHomes, managedOrdinaryHomes]);
     const recover = React.useCallback(async (retryFailedOperation: boolean) => {
-        const retryableHomes = homes.filter((home) => {
+        const retryableHomes = readableHomes.filter((home) => {
             const state = readHomeState(home);
             return state?.phase === 'offline'
                 || (state?.phase === 'error' && state.failureReason === 'network'
@@ -580,14 +586,14 @@ function useSessionListQueryHomeStatesLayer(input: SessionListQueryInput): Sessi
         await Promise.allSettled(retryableHomes.map((home) => (
             retrySessionListQueryHome(home.serverId)
         )));
-        await Promise.all(homes.map((home) => (
+        await Promise.all(readableHomes.map((home) => (
             managedOrdinaryHomes.has(home.serverId)
                 ? refreshOrdinarySessionList(home.serverId)
                 : retryFailedOperation
                     ? controllersRef.current.get(home.serverId)?.retry()
                     : controllersRef.current.get(home.serverId)?.refresh()
         )));
-    }, [homes, readHomeState, managedOrdinaryHomes]);
+    }, [readableHomes, readHomeState, managedOrdinaryHomes]);
     const refresh = React.useCallback(() => recover(false), [recover]);
     const retry = React.useCallback(() => recover(true), [recover]);
 

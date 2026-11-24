@@ -9,7 +9,7 @@ import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope
 import { useSetting, useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
-import { type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { getDefaultCollectionSpaceIdV1, type CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { useCollectionSpaceBinding } from '@/components/ui/lists/collection/useCollectionSpaceBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { t } from '@/text';
@@ -44,6 +44,7 @@ export type SessionListCorpusStorage = 'active' | 'archived';
 export type SessionListCorpusPresentation = 'semantic_query' | 'legacy_owner_or_direct';
 
 const GLOBAL_SESSION_LIST_VIEW_CONTEXT: SessionListViewContext = { kind: 'global' };
+const DEFAULT_SESSION_SPACE_ID = getDefaultCollectionSpaceIdV1('sessionWork');
 
 export function resolveSelectedHomeFeatureAvailability(
     selectedServerIds: readonly string[],
@@ -128,6 +129,7 @@ export function useSessionListViewFilterController(
     corpusStorage: SessionListCorpusStorage = 'active',
     viewContext: SessionListViewContext = GLOBAL_SESSION_LIST_VIEW_CONTEXT,
     fixedShow?: SessionListViewFilters['show'],
+    options: Readonly<{ holdSpaceQuery?: boolean }> = {},
 ): SessionListViewFilterController {
     const selection = useSessionListSelectionState();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
@@ -193,7 +195,7 @@ export function useSessionListViewFilterController(
         accountScopeResolutions,
         // Global Homes mount asynchronously; a Team context is fixed to its Home.
         followDefaultHomeSelection: viewContext.kind === 'global'
-            && (!activeSpace || activeSpace.id === 'my-work' && !admittedSpaces.spaces.some(space => space.id === 'my-work')),
+            && (!activeSpace || activeSpace.id === DEFAULT_SESSION_SPACE_ID && !admittedSpaces.spaces.some(space => space.id === DEFAULT_SESSION_SPACE_ID)),
         authoritativeHomeServerIds,
         savedSpace: spacesReady ? savedSpace ?? null : undefined,
         spaceSettingsAccountScopeKey: spaceSettingsScope ? spaceAccountScopeKey : null,
@@ -265,11 +267,19 @@ export function useSessionListViewFilterController(
         queryEnabled,
         hasOrdinaryAdapter: queryHomes.some((home) => home.ordinaryAdapter !== null),
     });
-    const pagingHomes = useQuerySource ? queryHomes : undefined;
+    // While a saved desktop Home selection is unresolved, keep the query surface pending
+    // so a slow Settings reply cannot briefly reveal the personal list in its place.
+    const savedSpacePending = options.holdSpaceQuery !== undefined && !spacesReady && selectedSpaceId !== DEFAULT_SESSION_SPACE_ID;
+    const holdSpaceQuery = options.holdSpaceQuery === true && spaceMembership !== undefined;
+    const pagingHomes = React.useMemo(() => {
+        if (savedSpacePending) return [];
+        if (!useQuerySource) return undefined;
+        return holdSpaceQuery ? queryHomes.map((home) => ({ ...home, deferRead: true })) : queryHomes;
+    }, [holdSpaceQuery, queryHomes, savedSpacePending, useQuerySource]);
     const corpusPresentation: SessionListCorpusPresentation = queryEnabled || spaceMembership
         ? 'semantic_query'
         : 'legacy_owner_or_direct';
-    const emptyQuerySelectionComplete = isSessionListEmptyQuerySelectionComplete({
+    const emptyQuerySelectionComplete = !savedSpacePending && isSessionListEmptyQuerySelectionComplete({
         useQuerySource,
         mountedHomeCount: mountedHomeServerIds.length,
         queryHomeCount: queryHomes.length,

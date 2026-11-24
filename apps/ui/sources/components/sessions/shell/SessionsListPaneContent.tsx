@@ -48,6 +48,7 @@ type SessionsListPaneContentProps = Readonly<{
     pathname?: string;
     surfaceRoutePathname?: string;
     sessionListSurfaceDataActive?: boolean;
+    holdSpaceQuery?: boolean;
     surfaceOwnership?: Partial<SessionListSurfaceOwnership>;
     /**
      * The column's own rows (pinned boards, its destinations). The list draws them under its title, which leads the
@@ -282,7 +283,7 @@ const SessionsListPaneContentView = React.memo(function SessionsListPaneContentV
 
 export const SessionsListPaneContent = React.memo((props: SessionsListPaneContentProps) => {
     const attentionInteraction = useSessionListAttentionInteractionOwner();
-    const filterController = useSessionListViewFilterController('active');
+    const filterController = useSessionListViewFilterController('active', undefined, undefined, { holdSpaceQuery: props.holdSpaceQuery });
     const storageKind = filterController.sourceAvailable ? filterController.displayFilters.source : 'persisted';
     const surfaceOwnership = normalizeSessionListSurfaceOwnership(props.surfaceOwnership);
     const sessionListSurfaceDataActive = props.sessionListSurfaceDataActive ?? surfaceOwnership.dataActive;

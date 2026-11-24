@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
-import { useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
+import { useLaunchCurtainState, useMarkLaunchDestinationBodyMounted } from '@/boot/launchCurtain';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { HomeHub } from '@/components/hub/HomeHub';
 import { useSessionListViewFilterController } from '@/components/sessions/shell/search/useSessionListViewFilterController';
@@ -107,6 +107,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
     const pathname = usePathname();
+    const launchCurtain = useLaunchCurtainState();
 
     if (variant === 'sidebar') {
         const surfaceOwnership = resolveSessionListSurfaceOwnership({
@@ -121,6 +122,7 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
                     <View style={styles.sidebarContentContainer}>
                         <SessionsListPaneContent
                             fallbackGuidanceVariant="sidebar"
+                            holdSpaceQuery={Platform.OS === 'web' && pathname === '/' ? launchCurtain !== 'gone' : undefined}
                             surfaceOwnership={surfaceOwnership}
                             leading={SIDEBAR_COLUMN_ROWS}
                         />
