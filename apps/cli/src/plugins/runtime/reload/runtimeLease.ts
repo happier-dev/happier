@@ -51,13 +51,22 @@ export function readAuthoritativePluginSlotOccurrence(
     return resolveAuthoritativeController(params)?.readPluginSlot?.(pluginId)?.current ?? null;
 }
 
+export class PluginDaemonRuntimeUnavailableError extends Error {
+    readonly code = 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE';
+
+    constructor() {
+        super('The daemon-applied plugin runtime is unavailable. Check the Machine daemon log for the cause.');
+        this.name = 'PluginDaemonRuntimeUnavailableError';
+    }
+}
+
 export async function acquireAuthoritativePluginRuntimeRegistryLease(
     params?: AuthoritativeControllerParams,
 ): Promise<PluginRuntimeRegistryLease> {
     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease(params);
     if (lease) return lease;
 
-    throw createRuntimeUnavailableError();
+    throw new PluginDaemonRuntimeUnavailableError();
 }
 
 /** Executable demand joins daemon restoration; advisory reads never wait on it. */
@@ -68,14 +77,7 @@ export async function acquireExecutableAuthoritativePluginRuntimeRegistryLease(
         params?.signal, { recoverAccountCensus: true },
     );
     if (lease) return lease;
-    throw createRuntimeUnavailableError();
-}
-
-function createRuntimeUnavailableError(): Error {
-    return Object.assign(new Error(
-        'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE: The canonical daemon-applied plugin runtime is unavailable in this process. '
-        + 'Run this operation through the Machine daemon. For a Session, open its managed terminal or use `happier resume <session-id>` to continue.',
-    ), { code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' as const });
+    throw new PluginDaemonRuntimeUnavailableError();
 }
 
 export function tryAcquireAuthoritativePluginRuntimeRegistryLease(

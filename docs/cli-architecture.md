@@ -2809,6 +2809,14 @@ and credential variables are excluded from the native launch. If the Home
 address is unavailable, the terminal returns `requester_home_unavailable`
 before PTY spawn.
 
+The separated member's CLI and its autostarted daemon use the member's
+Happier home for writable install, tools and plugin state. The published
+CLI payload under `/opt` supplies the executable and bundled code. The
+Machine can register and serve its control API if its plugin runtime is
+unavailable. Foreground Agent admission needs the daemon-applied Agent
+registration and returns `PLUGIN_DAEMON_RUNTIME_UNAVAILABLE` when that
+runtime is unavailable.
+
 Withdrawal applies at the next admission and cancellation stays
 local. The ACL owner writes the complete access ACL, closing normal group/other
 grants and replacing directory defaults in the same `setfacl` invocation. Its

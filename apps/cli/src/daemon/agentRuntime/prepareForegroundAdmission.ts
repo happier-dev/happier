@@ -52,7 +52,10 @@ import {
   resolveForegroundProfileSavedSecretEnvironment,
 } from './resolveForegroundProfileSavedSecretEnvironment';
 
-import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import {
+  acquireAuthoritativePluginRuntimeRegistryLease, PluginDaemonRuntimeUnavailableError,
+} from '@/plugins/runtime/reload/runtimeLease';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { attestFreshRunnerAgentBinding } from '@/plugins/runtime/retainedPluginSourceAttestation';
@@ -628,9 +631,15 @@ export async function prepareForegroundAgentRuntimeAdmission(
       ));
     }
   }
-  const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
-    happyHomeDir: configuration.happyHomeDir,
-  });
+  let lease: PluginRuntimeRegistryLease;
+  try {
+    lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+      happyHomeDir: configuration.happyHomeDir,
+    });
+  } catch (error) {
+    if (!(error instanceof PluginDaemonRuntimeUnavailableError)) throw error;
+    return refusal({ kind: 'launch_error', code: error.code, message: error.message });
+  }
   let transferred = false;
   let cleanupPromise: Promise<void> | null = null;
   let providerCleanup: (() => void | Promise<void>) | null = null;

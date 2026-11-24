@@ -1,6 +1,17 @@
 import { chmod, lstat, mkdir, realpath, rm } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { resolveHappyHomeDirFromEnvironment, resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
+import { FIRST_PARTY_INSTALL_HOME_ENV_KEY, MANAGED_TOOLS_ROOT_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
 import { normalizeMaterializationKeyForPath } from '../connectedServices/materialize/normalizeMaterializationKeyForPath';
+
+/** Member-owned install and tools state for both native installers and CLI launches. */
+export function resolveMemberAgentWritableInstallEnvironment(home: string) {
+  const environment = { HOME: home };
+  return {
+    [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: resolveHappyHomeDirFromEnvironment(environment),
+    [MANAGED_TOOLS_ROOT_ENV_KEY]: resolveManagedToolsRoot(environment),
+  };
+}
 
 const operationParent = (agentHome: string) => join(agentHome, 'runtime', 'operations');
 

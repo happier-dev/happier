@@ -7,6 +7,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { join } from 'node:path';
 import { FIRST_PARTY_INSTALL_HOME_ENV_KEY, MANAGED_TOOLS_ROOT_ENV_KEY } from '@happier-dev/cli-common/firstPartyRuntime';
 import { isSessionControlEnvKey } from '@/session/runtime/control/sessionControlEnvironment';
+import { resolveMemberAgentWritableInstallEnvironment } from './agentLaunchRuntime';
 
 const managedInstallHomeKey = FIRST_PARTY_INSTALL_HOME_ENV_KEY;
 const ambientEnvironmentKeys = ['PATH', 'LANG', 'LC_ALL', 'TERM', 'COLORTERM', 'TZ', managedInstallHomeKey, MANAGED_TOOLS_ROOT_ENV_KEY] as const;
@@ -58,11 +59,14 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
       retryable: false, details: { phase: 'materialization', reason: 'not_materialized' },
     });
   }
-  const environment: Record<string, string> = {};
+  const environment: Record<string, string> = member ? resolveMemberAgentWritableInstallEnvironment(member.home) : {};
   const selectedEnvironmentKeys = new Set(input.selectedEnvironmentKeys);
   const providerEnvironmentKeys = new Set(input.providerEnvironmentKeys);
   for (const key of new Set([...ambientEnvironmentKeys, ...input.selectedEnvironmentKeys, ...providerEnvironmentKeys, sessionContextFileKey])) {
     if (isSessionControlEnvKey(key)) continue;
+    // The absolute published executable selects member code. These two variables
+    // also select writable state, so the admitted member home owns their values.
+    if (member && (key === managedInstallHomeKey || key === MANAGED_TOOLS_ROOT_ENV_KEY)) continue;
     // Happier's custodian/control/Account context never becomes Agent authority.
     // The bridge reference names selected transient material; the public install
     // home is the canonical nonsecret layout input for Agent tools.
@@ -73,8 +77,7 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
         if (!materialization.selectedMaterials.some(file => join(materialization.runtimeHome, file.relativePath) === materialization.environment[key])) continue;
       } else if (!selectedEnvironmentKeys.has(key)) continue;
     }
-    // The published install location is machine-wide runtime code, independent
-    // of the member HOME. Native finite operations do not select it as material.
+    // The shared Agent path keeps its configured install layout.
     const value = materialization.environment[key]
       ?? (key === managedInstallHomeKey || key === MANAGED_TOOLS_ROOT_ENV_KEY ? process.env[key] : undefined);
     if (typeof value === 'string') environment[key] = value;

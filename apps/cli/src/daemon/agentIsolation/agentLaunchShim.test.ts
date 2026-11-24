@@ -11,15 +11,35 @@ import { readAgentLaunchFrame, type AgentLaunchPayload } from './agentLaunchFram
 import { createUnixAgentIdentityLaunch } from './unixAgentIdentityAdapter';
 import { userInfo } from 'node:os';
 import { runAgentLaunchShim } from '../../cli/commands/agentLaunch';
+import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
+import {
+  FIRST_PARTY_INSTALL_HOME_ENV_KEY,
+  MANAGED_TOOLS_ROOT_ENV_KEY,
+  applyPersistedManagedToolsRoot,
+  resolveHappierCliChoiceStatePath,
+} from '@happier-dev/cli-common/firstPartyRuntime';
+import { resolveCliHappyHomeDir } from '@/configuration/resolveCliHappyHomeDir';
+import { resolveCliHomeStoragePaths } from '@/configuration/homeStoragePaths';
+import { resolvePluginStorePathLayout } from '@/plugins/store/pathLayout';
+import { ensurePluginGenerationDirectories } from '@/plugins/store/generationDirectories';
+import { listManagedAcpInstalls } from '@/agent/acp/catalog/registry/managedAgentInstalls';
+import { createAgentRuntimeDaemonServiceAuthorityPath } from '../agentRuntime/sessionBridgeAuthorization';
+import { deriveAgentIsolationMemberIdentity } from './provisioning';
 
 const publicationFailure = vi.hoisted(() => ({
   destination: '', previouslyPublished: '', observedBytes: undefined as Uint8Array | undefined,
+  custodianTools: '',
 }));
 // Fail only the final OS publication of the second file. The first selected
 // credential and all validation/atomic-write/cleanup logic use the real disk.
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, rename: async (...args: Parameters<typeof actual.rename>) => {
+  return { ...actual, mkdir: async (...args: Parameters<typeof actual.mkdir>) => {
+    if (publicationFailure.custodianTools && String(args[0]).startsWith(publicationFailure.custodianTools + '/')) {
+      throw Object.assign(new Error('fixture member cannot write custodian tools'), { code: 'EACCES' });
+    }
+    return actual.mkdir(...args);
+  }, rename: async (...args: Parameters<typeof actual.rename>) => {
     if (String(args[1]) === publicationFailure.destination) {
       publicationFailure.observedBytes = await actual.readFile(publicationFailure.previouslyPublished);
       throw Object.assign(new Error('publication failed'), { code: 'EIO' });
@@ -38,6 +58,8 @@ afterEach(async () => {
   publicationFailure.destination = '';
   publicationFailure.previouslyPublished = '';
   publicationFailure.observedBytes = undefined;
+  publicationFailure.custodianTools = '';
+  vi.unstubAllEnvs();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -58,6 +80,53 @@ async function expectTransientMaterialRemoved(launch: AgentLaunchPayload): Promi
 }
 
 describe('Agent launch runtime home', () => {
+  it.skipIf(process.platform !== 'linux')('starts a separated member CLI with writable managed state under its own home', async () => {
+    const agentHome = await home();
+    const custodian = await home();
+    const custodianInstall = join(custodian, 'first-party');
+    const custodianTools = join(custodian, 'tools');
+    publicationFailure.custodianTools = custodianTools;
+    vi.stubEnv(FIRST_PARTY_INSTALL_HOME_ENV_KEY, custodianInstall);
+    vi.stubEnv(MANAGED_TOOLS_ROOT_ENV_KEY, custodianTools);
+    const requester = { serverId: 'fixture-server', accountId: 'fixture-member',
+      machineId: 'fixture-machine', installationId: 'fixture-installation' };
+    const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ requester, homeServerIdentityId: 'fixture-home' }),
+      home: agentHome, agentUid: process.getuid!(), agentGid: process.getgid!() };
+    const runtimeHome = join(agentHome, 'runtime', 'foreground');
+    const publishedCli = '/opt/happier-member-cli-fixture/current/happier';
+    const launch = createUnixAgentIdentityLaunch({
+      managedHappierBinaryPath: publishedCli, executable: process.execPath,
+      args: ['-e', 'process.stdout.write(JSON.stringify(process.env))'], cwd: agentHome, runtimeHome,
+      environment: { HAPPIER_HOME_DIR: custodian, HAPPIER_DAEMON_TOKEN: 'fixture-custodian-secret' },
+      selectedEnvironmentKeys: ['HAPPIER_HOME_DIR', 'HAPPIER_DAEMON_TOKEN'],
+      selectedMaterials: [], memberIdentity,
+    });
+    expect(launch.args).toContain(publishedCli);
+    const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
+    const output = new PassThrough();
+    const chunks: Buffer[] = [];
+    output.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    expect(await executeAgentLaunchPayload(frame, { agentHome, input: Readable.from([]), stdout: output,
+      stderr: new PassThrough() })).toEqual({ code: 0, signal: null });
+    const environment: NodeJS.ProcessEnv = JSON.parse(Buffer.concat(chunks).toString());
+    const happyHomeDir = resolveCliHappyHomeDir(environment);
+    applyPersistedManagedToolsRoot({ env: environment, happyHomeDir });
+    const pluginPaths = resolvePluginStorePathLayout(happyHomeDir, environment);
+    // Model the cross-UID mkdir refusal at the same writable owner used by daemon startup.
+    await ensurePluginGenerationDirectories(pluginPaths);
+    await expect(listManagedAcpInstalls({ env: environment })).resolves.toEqual([]);
+    const runtimeLease = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir, publicReleaseRing: 'stable' });
+    expect(Object.values({
+      ...resolveCliHomeStoragePaths(happyHomeDir), ...pluginPaths, runtimeLease,
+      tools: resolveManagedToolsRoot(environment), cliChoice: resolveHappierCliChoiceStatePath({ processEnv: environment }),
+    }).every(path => path === happyHomeDir || path.startsWith(happyHomeDir + '/'))).toBe(true);
+    expect(happyHomeDir).toBe(join(agentHome, '.happier'));
+    expect(environment).toMatchObject({ HOME: agentHome, XDG_CACHE_HOME: join(agentHome, '.cache'),
+      XDG_CONFIG_HOME: join(runtimeHome, '.config'), XDG_DATA_HOME: join(runtimeHome, '.local/share'),
+      XDG_STATE_HOME: join(runtimeHome, '.local/state') });
+    expect(environment).not.toHaveProperty('HAPPIER_DAEMON_TOKEN');
+  });
+
   it('keeps admitted native source roots across independent finite reads and preserves selected-account roots', async () => {
     const agentHome = await home();
     const nativeRoots = { XDG_CONFIG_HOME: join(agentHome, '.config'),
