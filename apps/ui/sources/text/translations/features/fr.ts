@@ -16537,7 +16537,7 @@ const shareSheetTranslations = { fr: {
                 teamRuns: 'L’équipe voit chaque exécution.',
                 roleLive: 'Tes changements atteignent toutes les personnes avec qui il est partagé.',
                 profileSecrets: 'Les profils font référence aux Secrets enregistrés ; leurs valeurs ne sont pas transmises.',
-                dashboardAccess: 'Les personnes ajoutées l’ouvrent avec leur propre identité. Widgets, définitions, connexions, machines et dépôts nécessitent chacun leur propre accès.',
+                dashboardAccess: 'Pour ouvrir le tableau de bord de ce projet, il faut avoir accès au projet. Les personnes ajoutées l’ouvrent avec leur propre identité. Widgets, définitions, connexions, machines et dépôts nécessitent chacun leur propre accès.',
             },
             privateChoices: {
                 title: 'Choix de connexion privés',

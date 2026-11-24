@@ -206,7 +206,7 @@ export const shareSheetTranslationsEnglish = { en: {
                 teamRuns: 'The team sees every run.',
                 roleLive: 'Changes you make reach everyone it’s shared with.',
                 profileSecrets: 'Profiles refer to Saved Secrets; their values never travel.',
-                dashboardAccess: 'People you add open it as themselves. Widgets, definitions, connections, machines and repositories each need their own access.',
+                dashboardAccess: 'People need access to this Project to open its Dashboard. People you add open it as themselves. Widgets, definitions, connections, machines and repositories each need their own access.',
             },
             privateChoices: {
                 title: 'Private connection choices',

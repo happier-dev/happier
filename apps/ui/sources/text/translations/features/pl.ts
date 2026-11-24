@@ -16504,7 +16504,7 @@ const shareSheetTranslations = { pl: {
                 teamRuns: 'Zespół widzi każde uruchomienie.',
                 roleLive: 'Twoje zmiany docierają do wszystkich, którym udostępniono.',
                 profileSecrets: 'Profile odwołują się do zapisanych sekretów; ich wartości nie są przesyłane.',
-                dashboardAccess: 'Dodane osoby otwierają go we własnym imieniu. Widżety, definicje, połączenia, maszyny i repozytoria wymagają osobnych uprawnień.',
+                dashboardAccess: 'Aby otworzyć pulpit tego projektu, trzeba mieć dostęp do projektu. Dodane osoby otwierają go we własnym imieniu. Widżety, definicje, połączenia, maszyny i repozytoria wymagają osobnych uprawnień.',
             },
             privateChoices: {
                 title: 'Prywatne wybory połączeń',

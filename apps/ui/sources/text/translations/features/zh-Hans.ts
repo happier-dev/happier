@@ -16356,7 +16356,7 @@ const shareSheetTranslations = { 'zh-Hans': {
                 teamRuns: '团队能看到每次运行。',
                 roleLive: '你的更改会同步给所有共享对象。',
                 profileSecrets: '配置引用已保存的机密；机密值不会传输。',
-                dashboardAccess: '你添加的人会以自己的身份打开它。组件、定义、连接、机器和仓库各自需要独立访问权限。',
+                dashboardAccess: '要打开此项目的仪表板，需要拥有该项目的访问权限。你添加的人会以自己的身份打开它。组件、定义、连接、机器和仓库各自需要独立访问权限。',
             },
             privateChoices: {
                 title: '私人连接选择',

@@ -932,6 +932,8 @@ describe('DocumentShareSheet', () => {
         const screen = await renderScreen(<DocumentShareSheet artifactId={dashboard.artifactId} kind="widget-area-layout.v1"
             linkPath={`/artifacts/${dashboard.artifactId}`} />);
         await settle();
+        await screen.pressByTestIdAsync('document-share-help');
+        expect(screen.getTextContent()).toContain('People need access to this Project to open its Dashboard.');
         expect(screen.findByTestId('document-share-grant-account:ana')).not.toBeNull();
         expect(renderedTestIds(screen, 'document-share-public-link')).toEqual([]);
         expect(host.publicRequests).toEqual([]);

@@ -114,6 +114,8 @@ describe('SessionAccessEditor', () => {
         installBrowserClipboardBoundary(async value => { clipboard.written.push(value); });
         clipboard.written = [];
         const screen = await renderScreen(<SessionAccessEditor model={model()} actions={actions()} presentation="full" linkPath="/session/s-1" />);
+        await screen.pressByTestIdAsync('session-access-help');
+        expect(screen.getTextContent()).not.toContain('People need access to this Project to open its Dashboard.');
         await screen.pressByTestIdAsync('session-access-copy-link');
         await flushHookEffects();
         expect(clipboard.written).toHaveLength(1);

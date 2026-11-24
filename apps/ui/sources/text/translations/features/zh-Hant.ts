@@ -16356,7 +16356,7 @@ const shareSheetTranslations = { 'zh-Hant': {
                 teamRuns: '團隊能看到每次執行。',
                 roleLive: '你的變更會同步給所有共享對象。',
                 profileSecrets: '設定檔參照已儲存的機密；機密值不會傳輸。',
-                dashboardAccess: '你新增的人會以自己的身分開啟它。元件、定義、連線、機器及儲存庫各自需要獨立的存取權限。',
+                dashboardAccess: '要開啟此專案的儀表板，需要擁有該專案的存取權限。你新增的人會以自己的身分開啟它。元件、定義、連線、機器及儲存庫各自需要獨立的存取權限。',
             },
             privateChoices: {
                 title: '私人連線選擇',

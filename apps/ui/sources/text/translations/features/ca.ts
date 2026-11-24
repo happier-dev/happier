@@ -16494,7 +16494,7 @@ const shareSheetTranslations = { ca: {
                 teamRuns: 'L’equip veu cada execució.',
                 roleLive: 'Els teus canvis arriben a tothom amb qui es comparteix.',
                 profileSecrets: 'Els perfils fan referència a Secrets desats; els seus valors no es transmeten.',
-                dashboardAccess: 'Les persones que afegeixes l’obren amb la seva identitat. Els widgets, les definicions, les connexions, les màquines i els repositoris necessiten accés independent.',
+                dashboardAccess: 'Per obrir el tauler d’aquest projecte, cal tenir accés al projecte. Les persones que afegeixes l’obren amb la seva identitat. Els widgets, les definicions, les connexions, les màquines i els repositoris necessiten accés independent.',
             },
             privateChoices: {
                 title: 'Opcions de connexió privades',
