@@ -1,3 +1,5 @@
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../../packages/protocol/src/actions/actionIds.ts';
+
 // Exact source operands audited at their canonical forwarding or presentation owner.
 // Unknown siblings remain findings; a file is never exempt as a whole.
 // WorkflowBlockListEditor.onChange is controlled, unsaved document editing:
@@ -9,6 +11,21 @@
 export const SOURCE_PARITY_EXCLUSIONS: readonly Readonly<{
   filePath: string; operation: string; reason: string;
 }>[] = [
+  {
+    filePath: 'apps/ui/sources/components/reviews/useReviewHumanActions.ts',
+    operation: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+    reason: 'Reviews plan 02 U6 reserves verdict submission for the requested person; the shared controls enter the present-user Action and agents cannot submit a person’s verdict, including through approval.',
+  },
+  {
+    filePath: 'apps/ui/sources/components/settings/teams/identity/identityAdministrationClient.ts',
+    operation: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+    reason: 'The shared Home Action adapter forwards verdict submission with present-user authority; Reviews plan 02 U6 intentionally forbids agent submission even after approval.',
+  },
+  {
+    filePath: 'apps/ui/sources/sync/domains/reviews/humanApi.ts',
+    operation: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+    reason: 'The Review human HTTP executor forwards the authenticated person’s verdict below Action admission; Reviews plan 02 U6 intentionally forbids agent submission even after approval.',
+  },
   {
     filePath: 'apps/ui/sources/components/sessions/new/hooks/useCreateNewSession.ts',
     operation: 'seedAndOpenNewSession:submittedPoolRecovery',

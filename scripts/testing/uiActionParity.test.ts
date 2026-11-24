@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readCurrentActionDispatchParity, readCurrentUiActionParity } from './validateUiActionParity.ts';
 import { listActionSpecsForCatalogSurface } from '../../packages/protocol/src/actions/actionCatalog.ts';
-import { ACTION_ID_FAMILIES_V1, MACHINE_LIST_ACTION_ID_V1, isWorkflowRunActionIdV1 } from '../../packages/protocol/src/actions/actionIds.ts';
+import { ACTION_ID_FAMILIES_V1, MACHINE_LIST_ACTION_ID_V1, REVIEW_HUMAN_ACTION_IDS_V1, isWorkflowRunActionIdV1 } from '../../packages/protocol/src/actions/actionIds.ts';
 import { listActionSpecs } from '../../packages/protocol/src/actions/actionSpecs.ts';
 import { PROJECT_SOURCE_ACTION_SPECS_V1 } from '../../packages/protocol/src/actions/specs/projectSources.ts';
 import { PROJECT_CONTEXT_ACTION_SPECS } from '../../packages/protocol/src/actions/specs/projects.ts';
@@ -112,6 +112,25 @@ test('Store controls and shared Add effects use agent-visible Action admission',
 });
 
 // Filesystem/source analysis belongs to the Node tooling harness, not a loaded UI worker.
+test('person-only Review verdict controls retain exact parity dispositions', () => {
+  const paths = [
+    'apps/ui/sources/components/reviews/useReviewHumanActions.ts',
+    'apps/ui/sources/components/settings/teams/identity/identityAdministrationClient.ts',
+    'apps/ui/sources/sync/domains/reviews/humanApi.ts',
+  ];
+  const actionId = REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict;
+  const verdictSites = report().actions.filter(site => site.actionId === actionId && paths.includes(site.filePath));
+  assert.deepEqual(verdictSites.map(site => site.filePath).sort(), [...paths].sort());
+  assert.deepEqual(report().findings.filter(site => site.operation === actionId && paths.includes(site.filePath)), []);
+  for (const site of verdictSites) {
+    assert.ok(report().exclusions.some(excluded => excluded.filePath === site.filePath && excluded.line === site.line));
+  }
+  for (const surface of ['agent', 'mcp'] as const) {
+    assert.equal(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === actionId), false);
+    assert.ok(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === REVIEW_HUMAN_ACTION_IDS_V1.setReviewers));
+  }
+});
+
 test('maps current UI Action invocations, registrations and settings mutations to agent-visible canonical specs', () => {
   assert.ok(report().actions.length > 0);
   assert.ok(report().settings.length > 0);
