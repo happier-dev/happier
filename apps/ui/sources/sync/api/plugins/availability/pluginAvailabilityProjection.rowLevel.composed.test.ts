@@ -14,6 +14,7 @@ import {
     readPluginAccountAvailability,
 } from '@/sync/domains/plugins/availability/projection';
 import { refreshPluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/refreshProjection';
+import { InvalidateSync } from '@/utils/sessions/sync';
 
 import { createActivePluginAccountAvailabilityProjectionHydrator } from './pluginAvailabilityProjection';
 
@@ -36,6 +37,7 @@ function jsonResponse(body: unknown): Response {
 function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) {
     let cursor = 10;
     let failedCensusPluginId: string | undefined;
+    let censusUnavailable = false;
     const pluginIds = Array.from({ length: input.plugins }, (_, index) => `com.acme.p${String(index).padStart(2, '0')}`);
     const machineIds = Array.from({ length: input.machines }, (_, index) => `machine-${String(index).padStart(2, '0')}`);
     const rows = new Map<string, PluginMachineMaterializationV1[]>(machineIds.map(machineId => [machineId, pluginIds.map(pluginId => ({
@@ -79,6 +81,7 @@ function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) 
                     intentReads: named.map(pluginId => ({ pluginId, response: intentResponse(pluginId) })) });
             }
             served.intentListReads += 1;
+            if (censusUnavailable) return new Response(null, { status: 503 });
             const ids = [...new Set([...pluginIds, ...(parsed.knownPluginIds ?? [])])].sort();
             return respond({ availabilityCursor: cursor, pluginIds: ids, nextCursor: null,
                 failedPluginIds: failedCensusPluginId ? [failedCensusPluginId] : [],
@@ -98,6 +101,7 @@ function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) 
         served,
         request,
         failCensusFor: (pluginId: string) => { failedCensusPluginId = pluginId; },
+        setCensusUnavailable: (unavailable: boolean) => { censusUnavailable = unavailable; },
         resetCounts: () => Object.assign(served, { fullMaterializationReads: 0, materializationRows: 0, intentListReads: 0, intentReads: 0, bytes: 0 }),
         /** One Machine report that reinstalls `pluginId` on one Machine and removes it from another. */
         changePlugin: (pluginId: string, reinstalledOn: string, removedFrom: string) => {
@@ -142,6 +146,60 @@ afterEach(() => {
 });
 
 describe('row-level Account Availability refresh', () => {
+    it('reuses the accepted Machine census during an intent outage, then reads changed rows on push', async () => {
+        const home = createFakeHome({ machines: 370, plugins: 2 });
+        const hydrator = createHydrator(home);
+        const queue = new InvalidateSync(() => refreshPluginAccountAvailabilityProjection(hydrator));
+        vi.useFakeTimers();
+        try {
+            home.setCensusUnavailable(true);
+            queue.invalidate();
+            await vi.advanceTimersByTimeAsync(60_000);
+
+            expect(home.served.intentListReads).toBeGreaterThan(1);
+            expect(home.served).toMatchObject({ fullMaterializationReads: 1, materializationRows: 740 });
+
+            home.setCensusUnavailable(false);
+            await vi.advanceTimersByTimeAsync(30_000);
+            expect(home.served).toMatchObject({ fullMaterializationReads: 1, materializationRows: 740 });
+            expect(publishedFacts().intentReads).toHaveLength(2);
+
+            home.resetCounts();
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(home.served).toMatchObject({ materializationRows: 0, intentListReads: 0, intentReads: 0 });
+
+            const pluginId = home.pluginIds[0]!;
+            const change = home.changePlugin(pluginId, home.machineIds[0]!, home.machineIds[1]!);
+            expect(hydrator.invalidate([change])).toEqual([pluginId]);
+            queue.invalidate();
+            await vi.advanceTimersByTimeAsync(0);
+            expect(home.served).toMatchObject({ fullMaterializationReads: 0, materializationRows: 369, intentReads: 1 });
+            expect(publishedFacts().materializations.find(row => row.pluginId === pluginId
+                && row.machineId === home.machineIds[0])?.version).toBe('1.1.0');
+        } finally {
+            queue.stop();
+            vi.useRealTimers();
+        }
+    });
+
+    it.each(['an Availability change', 'a structural refresh'])('reacquires Machine evidence after %s during an intent outage', async (trigger) => {
+        const home = createFakeHome({ machines: 3, plugins: 4 });
+        const hydrator = createHydrator(home);
+        home.setCensusUnavailable(true);
+        await expect(refreshPluginAccountAvailabilityProjection(hydrator)).rejects.toMatchObject({ status: 503 });
+
+        const pluginId = home.pluginIds[0]!;
+        const change = home.changePlugin(pluginId, home.machineIds[0]!, home.machineIds[1]!);
+        if (trigger === 'an Availability change') hydrator.invalidate([change]);
+        else hydrator.requireFullRefresh();
+        home.setCensusUnavailable(false);
+        await refreshPluginAccountAvailabilityProjection(hydrator);
+
+        expect(home.served).toMatchObject({ fullMaterializationReads: 2, materializationRows: 23 });
+        expect(publishedFacts().materializations.find(row => row.pluginId === pluginId
+            && row.machineId === home.machineIds[0])?.version).toBe('1.1.0');
+    });
+
     it('does not detach identical materializations again on a full refresh', async () => {
         const home = createFakeHome({ machines: 3, plugins: 4 });
         const hydrator = createHydrator(home);

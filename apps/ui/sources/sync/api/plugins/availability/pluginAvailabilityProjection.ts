@@ -5,6 +5,7 @@ import {
     PluginAvailabilityMaterializationsReadActionOutputV1Schema,
     PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
     type PluginAccountDeclarationBodyV1,
+    type PluginAvailabilityMaterializationsReadActionOutputV1,
 } from '@happier-dev/protocol/plugins/availability';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes';
 
@@ -185,13 +186,24 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
     // still gets its own complete read afterwards.
     let fullRefreshRequests = 1;
     let fullRefreshesSatisfied = 0;
+    // An intent census retry continues the last full acquisition. An
+    // Availability change, a new full request or scope retirement starts over.
+    let materializationsForIntentRetry: Readonly<{
+        serverSnapshot: ProjectionServerSnapshot;
+        result: PluginAvailabilityMaterializationsReadActionOutputV1;
+    }> | null = null;
+
+    const requireFullRefresh = (): void => {
+        fullRefreshRequests += 1;
+        materializationsForIntentRetry = null;
+    };
 
     const reset = (): void => {
         requestEpoch += 1;
         trackedScope = null;
         knownPluginIds = new Set<string>();
         pendingPluginIds = new Set<string>();
-        fullRefreshRequests += 1;
+        requireFullRefresh();
     };
 
     const ensureScope = (scope: ServerAccountScope): void => {
@@ -199,12 +211,8 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         trackedScope = scope;
         knownPluginIds = new Set<string>();
         pendingPluginIds = new Set<string>();
-        fullRefreshRequests += 1;
+        requireFullRefresh();
         requestEpoch += 1;
-    };
-
-    const requireFullRefresh = (): void => {
-        fullRefreshRequests += 1;
     };
 
     const isCurrent = (
@@ -230,7 +238,10 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
             knownPluginIds.add(pluginId);
             pendingPluginIds.add(pluginId);
         }
-        if (pluginIds.length > 0) requestEpoch += 1;
+        if (pluginIds.length > 0) {
+            requestEpoch += 1;
+            materializationsForIntentRetry = null;
+        }
     };
 
     const invalidate = (changes: readonly unknown[]): readonly string[] => {
@@ -356,10 +367,13 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         const fullRequestsAtStart = fullRefreshRequests;
         const takenPluginIds = [...pendingPluginIds].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
         pendingPluginIds = new Set<string>();
+        let materializations = materializationsForIntentRetry
+            && sameServerSnapshot(materializationsForIntentRetry.serverSnapshot, serverSnapshot)
+            ? materializationsForIntentRetry.result : null;
         // Only hint-named plugins are read row-level, and only into a held
         // complete projection. Structural, unknown and gap requests (and any
-        // refresh without named plugins) read the whole Account inventory.
-        const rowLevel = takenPluginIds.length > 0
+        // refresh without named plugins) acquire the whole Account inventory.
+        const rowLevel = materializations === null && takenPluginIds.length > 0
             && fullRefreshesSatisfied >= fullRequestsAtStart
             && options?.canMergePlugins?.(lifetime.scope) === true;
         let returned = false;
@@ -389,18 +403,20 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
                 // An omitted Machine cannot be merged row-level: read everything.
             }
 
-            const materializationsBody = await postJson(
-                capturedAuthority,
-                PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
-                {},
-                controller.signal,
-                'materializations',
-                lifetime.scope,
-            );
-            // Admission (manifest validation) is the cost of a read: a superseded body is dropped unread.
-            if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
-            const materializations = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema,
-                materializationsBody, 'materializations', lifetime.scope);
+            if (!materializations) {
+                const materializationsBody = await postJson(
+                    capturedAuthority,
+                    PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
+                    {},
+                    controller.signal,
+                    'materializations',
+                    lifetime.scope,
+                );
+                // Admission (manifest validation) is the cost of a read: a superseded body is dropped unread.
+                if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
+                materializations = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+                    materializationsBody, 'materializations', lifetime.scope);
+            }
 
             const pluginIds = new Set(knownPluginIds);
             for (const snapshot of materializations.snapshots) {
@@ -486,6 +502,9 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
             for (const pluginId of failedPluginIds) pluginIds.add(pluginId);
             knownPluginIds = pluginIds;
             fullRefreshesSatisfied = Math.max(fullRefreshesSatisfied, fullRequestsAtStart);
+            materializationsForIntentRetry = intentCensusIncomplete && terminalFailure?.retryable !== false
+                && materializations.inventoryComplete !== false && fullRequestsAtStart === fullRefreshRequests
+                ? { serverSnapshot, result: materializations } : null;
             returned = true;
             return Object.freeze({
                 scope: lifetime.scope,
