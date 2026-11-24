@@ -6,6 +6,17 @@ import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1, readConnectedServicesAc
 /** Retained for clients that consume the Account-wide allowance invalidation. */
 export const PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'provider-account-usage' as const;
 const RECORD_PREFIX = 'provider-account-usage-record:';
+export const PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER = 'x-happier-usage-content-cursor';
+
+export function buildProviderAccountUsageChangeRecordEntityIdV1(recordId: string): string {
+  return `${RECORD_PREFIX}${ProviderAccountUsageRecordIdSchema.parse(recordId)}`;
+}
+
+export function readProviderAccountUsageContentCursorHeaderV1(value: string | null): number | undefined {
+  if (value === null || !/^[1-9][0-9]*$/.test(value)) return undefined;
+  const cursor = Number(value);
+  return Number.isSafeInteger(cursor) ? cursor : undefined;
+}
 
 export function readProviderAccountUsageChangeRecordIdV1(entityId: string): string | null {
   if (!entityId.startsWith(RECORD_PREFIX)) return null;
@@ -28,9 +39,39 @@ export const ProviderAccountUsageObservationV1Schema = lazyZodSchema(() => z.str
   // can also mean a sealed body or a writer that did not report this clock.
   subscriptionObservedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))),
   contentChanged: z.boolean(),
+  contentCursor: z.optional(z.number().check(z.int(), z.positive())),
 }));
 
 export type ProviderAccountUsageObservationV1 = z.infer<typeof ProviderAccountUsageObservationV1Schema>;
+
+export const ProviderAccountUsageClockContentCursorsV1Schema = lazyZodSchema(() => z.record(
+  ProviderAccountUsageRecordIdSchema, z.number().check(z.int(), z.positive()),
+));
+type ProviderAccountUsageClockContentCursorsV1 = z.infer<typeof ProviderAccountUsageClockContentCursorsV1Schema>;
+
+/** Keep the strict predecessor observation objects readable by older clients.
+ * The optional sibling cursor map admits the clock-only disposition. */
+export function encodeProviderAccountUsageWakeObservationsV1(observations: readonly ProviderAccountUsageObservationV1[]) {
+  const contentCursors: ProviderAccountUsageClockContentCursorsV1 = {};
+  const providerAccountUsageObservations = observations.map(({ contentCursor, ...observation }) => {
+    if (!observation.contentChanged && contentCursor !== undefined) contentCursors[observation.recordId] = contentCursor;
+    return { ...observation, contentChanged: true };
+  });
+  return { providerAccountUsageObservations,
+    ...(Object.keys(contentCursors).length ? { providerAccountUsageClockContentCursors: contentCursors } : {}) };
+}
+
+export function readProviderAccountUsageWakeObservationsV1(wake: Readonly<{
+  providerAccountUsageObservations?: readonly ProviderAccountUsageObservationV1[];
+  providerAccountUsageClockContentCursors?: ProviderAccountUsageClockContentCursorsV1;
+}>): readonly ProviderAccountUsageObservationV1[] | undefined {
+  const { providerAccountUsageClockContentCursors: cursors, providerAccountUsageObservations: observations } = wake;
+  if (!cursors) return observations;
+  return observations?.map(observation => {
+    const contentCursor = cursors[observation.recordId];
+    return contentCursor === undefined ? observation : { ...observation, contentChanged: false, contentCursor };
+  });
+}
 
 export function coalesceProviderAccountUsageObservationV1(previous: ProviderAccountUsageObservationV1,
   next: ProviderAccountUsageObservationV1): ProviderAccountUsageObservationV1 {
@@ -78,7 +119,7 @@ export function buildProviderAccountUsageMaterialChangesV1(recordId: string,
         ...(day.history ? { providerAccountUsageHistoryChange: day.history } : {}),
         ...(day.publication ? { providerAccountUsageDayPublication: day.publication } : {}),
       } : {}) } },
-    { kind: 'account', entityId: `${RECORD_PREFIX}${id}`, hint: observation ? { providerAccountUsageObservation: observation.observation,
+    { kind: 'account', entityId: buildProviderAccountUsageChangeRecordEntityIdV1(id), hint: observation ? { providerAccountUsageObservation: observation.observation,
       previousContentCursor: observation.previousContentCursor } : {} },
   ] as const;
 }
@@ -101,8 +142,16 @@ export function readProviderAccountUsageObservationRowV1(row: UsageChangeRow) {
   const recordId = readProviderAccountUsageChangeRecordIdV1(row.entityId);
   if (recordId === null) return undefined;
   const hint = ObservationRowHintSchema.safeParse(row.hint);
-  return hint.success && hint.data.providerAccountUsageObservation.recordId === recordId
-    && hint.data.previousContentCursor < row.cursor ? hint.data : undefined;
+  if (!hint.success || hint.data.providerAccountUsageObservation.recordId !== recordId
+    || hint.data.previousContentCursor >= row.cursor) return undefined;
+  const { previousContentCursor, providerAccountUsageObservation } = hint.data;
+  // Use the exact Account Change row as the authority. A clocks-only row
+  // belongs to the last material write, even when the durable row coalesces.
+  const contentCursor = providerAccountUsageObservation.contentChanged ? row.cursor : previousContentCursor;
+  return {
+    previousContentCursor,
+    providerAccountUsageObservation: { ...providerAccountUsageObservation, contentCursor: contentCursor > 0 ? contentCursor : undefined },
+  };
 }
 
 /** Coalesced storage must not hide material writes after the reader's last checkpoint. */

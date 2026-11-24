@@ -2340,11 +2340,10 @@ preference changes do not discard an existing failure deadline.
 
 Accepted quota freshness remains readable from the exact usage record's
 `fetchedAt` metadata. The existing bodyless Account hint can update the separate
-stored clocks of a retained plaintext reading when all its other facts match.
-For sealed readings the hint publishes the accepted fetch metadata, and a
-changed ciphertext, fetch time or opaque facet requires an addressed read.
-The client verifies the sealed snapshot and its bound metadata when it opens the
-record. Equal material fingerprints can still accompany different authenticated
+stored clocks of a retained plaintext reading when its content cursor matches
+the cursor the admitted GET returned alongside that body. A sealed wake carries
+the accepted fetch metadata. The client opens the addressed record to verify
+the sealed snapshot and its bound metadata. Equal material fingerprints can still accompany different authenticated
 clocks. The history comparison and mode and credential admission remain at
 their existing owners.
 

@@ -1,3 +1,4 @@
+import { PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { errorCodes, type FastifyBodyParser, type FastifyInstance } from "fastify";
 import type { FastifyCorsOptions } from "@fastify/cors";
 import { SERVER_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
@@ -126,6 +127,7 @@ export const API_CORS_ALLOWED_HEADERS = [
     SESSION_SYSTEM_RECORDS_PROTOCOL_HTTP_HEADER,
 ];
 export const API_CORS_EXPOSED_HEADERS = [
+    PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER,
     ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER,
     ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER,
     CHANGES_AFTER_CURSOR_HTTP_HEADER,

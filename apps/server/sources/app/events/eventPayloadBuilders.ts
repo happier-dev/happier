@@ -27,6 +27,7 @@ import type { ManagedMachineRefV1, ManagedMachineInputRuntimeV1 } from "@happier
 import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { ChangeKind } from '@happier-dev/protocol/changes';
+import { encodeProviderAccountUsageWakeObservationsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { resolveAccountRemoteAlertPolicyCurrentness } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
@@ -511,7 +512,8 @@ export function buildAccountChangeWakeUpdate(
         id: updateId,
         seq: changeCursor,
         ...(changes?.discussionSettingsChangedIds ? { discussionSettingsChangedIds: [...changes.discussionSettingsChangedIds] } : {}),
-        ...(changes?.providerAccountUsageObservations ? { providerAccountUsageObservations: [...changes.providerAccountUsageObservations] } : {}),
+        ...(changes?.providerAccountUsageObservations
+            ? encodeProviderAccountUsageWakeObservationsV1(changes.providerAccountUsageObservations) : {}),
         body: { t: 'account-change', ...(changes ? {
             changeKinds: [...changes.changeKinds], entityIds: [...changes.entityIds],
             ...(changes.artifactKinds !== undefined ? { artifactKinds: [...changes.artifactKinds] } : {}),

@@ -2720,8 +2720,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const value = retainUsageQueryResultReferences(batch, currentBatch, ownPrevious);
                     // Reuse the entry's content as well as its decoded value. A
                     // terminal read commonly repeats its last progress revision.
+                    allowance = retainUsageAllowance(batch, allowance);
                     if (current && value === currentBatch) return keepContent(current, currentBatch);
-                    allowance = retainUsageAllowance(value, allowance);
                     return keepContent(createUsageQueryResourceContent(value), value, true);
                 };
                 let queuedProgress: UsageQueryReprojection | null = null;

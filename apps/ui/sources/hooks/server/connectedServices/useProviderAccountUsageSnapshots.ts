@@ -21,7 +21,8 @@ import {
     type ProviderAccountUsageCacheState,
 } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageCache';
 import { openProviderAccountUsageSnapshot } from '@/sync/domains/connectedServices/accountUsage/openProviderAccountUsageSnapshot';
-import { applyUsageObservationTime, observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { applyUsageObservationTime } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 import {
     buildProviderAccountUsageScopeKey,
     readProviderAccountUsageSnapshotForMode,
@@ -138,6 +139,7 @@ function createUsageRowObserver(input: Readonly<{
                 const retained = readEntry();
                 if (!current() || !retained?.snapshot || retained.hadError || snapshotMode !== 'plain') return false;
                 const snapshot = applyUsageObservationTime(retained.snapshot, observation);
+                if (!snapshot) return false;
                 if (snapshot !== retained.snapshot) updateProviderAccountUsageCacheEntries(input.credentialScope,
                     entries => ({ ...entries, [recordId]: { ...retained, snapshot } }), 'account-observation');
                 return true;

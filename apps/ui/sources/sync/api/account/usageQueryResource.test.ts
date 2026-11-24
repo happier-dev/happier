@@ -4489,7 +4489,7 @@ describe('usage query captured Resource adapter', () => {
         meters: [{ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
           unit: 'requests', status: 'ok', resetsAt: start + 2 * minute, details: {} }],
       });
-      return { source, snapshot, resolves: 0, records: 0 };
+      return { source, snapshot, resolves: 0, records: 0, contentCursor: 2 };
     });
     const rowsByAccountId = new Map(rows.map(row => [row.source.ref.accountId, row]));
     const rowsByRecordId = new Map<string, typeof rows[number]>(rows.map(row => [row.snapshot.recordId, row]));
@@ -4513,7 +4513,8 @@ describe('usage query captured Resource adapter', () => {
         // just one key, with delay to measure repeated work over a finite span.
         if (scenario === 'feed-after-read' && row === rows[0]) setTimeout(() => publish([row]), 5_000);
         return Response.json({ content: { t: 'plain', v: row.snapshot },
-          metadata: { fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: minute, status: 'ok' }, sources: [row.source] });
+          metadata: { fetchedAt: row.snapshot.fetchedAtMs, staleAfterMs: minute, status: 'ok' }, sources: [row.source] },
+          { headers: { 'x-happier-usage-content-cursor': String(row.contentCursor) } });
       }
       return undefined;
     }, { connectedAccountsV4: rows.map(({ source: { ref } }) => ({
@@ -4523,19 +4524,24 @@ describe('usage query captured Resource adapter', () => {
     publish = selected => {
       const recordIds = selected.map(row => row.snapshot.recordId);
       if (typedObservation) {
-        const observations = selected.map(({ snapshot }) => ({ recordId: snapshot.recordId, observedAtMs: snapshot.observedAtMs,
-          fetchedAtMs: snapshot.fetchedAtMs, subscriptionObservedAtMs: snapshot.subscription!.observedAtMs, contentChanged }));
+        const afterCursor = cursor;
+        const changes = selected.flatMap(row => {
+          const { snapshot, contentCursor } = row;
+          const observation = { recordId: snapshot.recordId, observedAtMs: snapshot.observedAtMs,
+            fetchedAtMs: snapshot.fetchedAtMs, subscriptionObservedAtMs: snapshot.subscription!.observedAtMs, contentChanged,
+            contentCursor: contentChanged ? cursor + 2 : contentCursor };
+          row.contentCursor = observation.contentCursor;
+          return buildProviderAccountUsageMaterialChangesV1(observation.recordId, undefined, { observation, previousContentCursor: contentCursor })
+            .map(change => ({ ...change, cursor: ++cursor }));
+        });
+        const exact = changes.filter((change, index) => index % 2 === 1 || index === changes.length - 2);
+        const observations = readProviderAccountUsageObservationsV1(exact, afterCursor);
         const { serverId } = captured.accountLifetime.scope;
         if (scenario.startsWith('secondary')) {
           const wake = { t: 'account-change' as const, changeKinds: ['account' as const],
             entityIds: ['provider-account-usage', ...recordIds.map(id => `provider-account-usage-record:${id}`)], sessionSystemRecords: [] };
           publishHomeAccountChangeWake(serverId, wake, 'socket', undefined, undefined, observations);
         } else {
-          const afterCursor = cursor;
-          const changes = observations.flatMap(observation =>
-            buildProviderAccountUsageMaterialChangesV1(observation.recordId, undefined, { observation, previousContentCursor: 2 })
-              .map(change => ({ ...change, cursor: ++cursor })));
-          const exact = changes.filter((change, index) => index % 2 === 1 || index === changes.length - 2);
           publishHomeAccountChange(serverId, exact.map(change => change.entityId), { feedPageConsumed: true, changeKinds: ['account'],
             usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(exact),
             providerAccountUsageObservations: readProviderAccountUsageObservationsV1(exact, afterCursor) });
@@ -4641,6 +4647,122 @@ describe('usage query captured Resource adapter', () => {
       }
     } finally {
       releases.forEach(release => release());
+      vi.useRealTimers();
+    }
+  });
+
+  const quotaDeliveries = [
+    ['material then clocks', [0, 1]],
+    ['clocks then material', [1, 0]],
+    ['material lost', [1]],
+    ['clocks lost', [0]],
+    ['duplicated', [0, 0, 1, 1]],
+    ['material in the middle', [2, 0, 1]],
+  ] as const;
+
+  it.each((['primary', 'secondary'] as const).flatMap(homeKind =>
+    quotaDeliveries.map(([caseName, delivery]) => ({ homeKind, caseName, delivery }))),
+  )('matches a cold quota read on $homeKind Home when $caseName', async ({ homeKind, delivery }) => {
+    const start = Date.now();
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'delivery-account' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const recordId = buildProviderAccountUsageRecordId(recordKey);
+    const sample = (tick: number, used: number) => ProviderAccountUsageSnapshotV1Schema.parse({
+      v: 1, recordId, recordKey, providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId },
+      observedAtMs: start + tick, fetchedAtMs: start + tick, staleAfterMs: 60_000,
+      source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      subscription: { status: 'subscribed', renewal: 'on', observedAtMs: start + tick, staleAfterMs: 5_000,
+        currentPeriodStartAtMs: start, currentPeriodEndAtMs: start + 60_000,
+        monetaryFacts: [{ kind: 'paid', currency: 'USD', amount: 20, effectiveAtMs: start, asOfMs: start,
+          source: { kind: 'provider', id: 'fixture', version: '1' }, period: { startAtMs: start, endAtMs: start + 60_000 } }] },
+      meters: [{ meterId: 'weekly', label: 'Weekly', used, limit: 100, remaining: 100 - used, utilizationPct: used,
+        unit: 'requests', status: 'ok', resetsAt: start + 60_000, details: {} }],
+    });
+    let reading = sample(0, 40);
+    let bodyCursor = 2;
+    const recordResponse = () => ({
+      content: { t: 'plain' as const, v: reading },
+      metadata: { fetchedAt: reading.fetchedAtMs, staleAfterMs: reading.staleAfterMs, status: 'ok' as const },
+      sources: [source],
+    });
+    const captured = await context(async request => {
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
+        return Response.json({ source, recordId, providerAccountId: ref.accountId,
+          fetchedAt: reading.fetchedAtMs, staleAfterMs: reading.staleAfterMs });
+      }
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') {
+        expect(request.url.searchParams.get('recordId')).toBe(recordId);
+        return Response.json(recordResponse(), { headers: { 'x-happier-usage-content-cursor': String(bodyCursor) } });
+      }
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    const { readProviderAccountUsageObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
+    const { openProviderAccountUsageRecordV4, projectProviderAccountUsageQuotaReadV1 } =
+      await import('@happier-dev/protocol/connect/providerAccountUsageHistory');
+    const { projectProviderAccountSubscriptionMonetaryFacts } = await import('@happier-dev/protocol/connect/accountSubscription');
+    const query = normalizeUsageQuery({ includeQuotaHistory: false, includeAccounting: false, includeCoach: false,
+      includeSessionEvidence: false, includeWorkEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    vi.useFakeTimers();
+    vi.setSystemTime(start);
+    const release = entry.subscribe(() => {}, true);
+    const settle = async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      await flushHookEffects({ cycles: 100 });
+      await vi.advanceTimersByTimeAsync(0);
+    };
+    try {
+      await settle();
+      const mounted = () => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota![0]!;
+      expect(mounted().current?.meters[0]?.used).toBe(40);
+      vi.setSystemTime(start + 3_100);
+      reading = sample(3_000, 70);
+      bodyCursor = 6;
+      const observations = [
+        { reading: sample(2_000, 70), cursor: 6, previousContentCursor: 2, contentCursor: 6, contentChanged: true },
+        { reading, cursor: 8, previousContentCursor: 6, contentCursor: 6, contentChanged: false },
+        { reading: sample(1_000, 40), cursor: 4, previousContentCursor: 2, contentCursor: 2, contentChanged: false },
+      ];
+      let checkpoint = 2;
+      for (const index of delivery) {
+        const sample = observations[index]!;
+        const observation = { recordId, observedAtMs: sample.reading.observedAtMs, fetchedAtMs: sample.reading.fetchedAtMs,
+          subscriptionObservedAtMs: sample.reading.subscription!.observedAtMs,
+          contentChanged: sample.contentChanged, contentCursor: sample.contentCursor };
+        const rows = buildProviderAccountUsageMaterialChangesV1(recordId, undefined, { observation,
+          previousContentCursor: sample.previousContentCursor }).map((row, index) => ({ ...row, cursor: sample.cursor - 1 + index }));
+        const { serverId } = captured.accountLifetime.scope;
+        const entityIds = rows.map(row => row.entityId);
+        const precedingRequests = home!.requests.length;
+        if (homeKind === 'secondary') {
+          publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['account'], entityIds, sessionSystemRecords: [] },
+            'socket', undefined, undefined, [observation]);
+        } else {
+          publishHomeAccountChange(serverId, entityIds, { feedPageConsumed: true, changeKinds: ['account'],
+            usageQueryAffects: true, usageAccountingAffects: false, providerAccountUsageRecordIds: [recordId],
+            providerAccountUsageObservations: readProviderAccountUsageObservationsV1(rows, checkpoint) });
+          checkpoint = Math.max(checkpoint, sample.cursor);
+        }
+        await settle();
+        const routes = home!.requests.slice(precedingRequests).map(request => `${request.method} ${request.path}`);
+        expect(routes.length).toBeLessThanOrEqual(1);
+        if (routes.length) expect(routes).toEqual(['GET /v4/connect/qualified/provider-account-usage/record']);
+        if (index === 1) expect(mounted().current?.meters[0]?.used).toBe(70);
+      }
+      const current = openProviderAccountUsageRecordV4({ recordId, accountMode: 'plain', record: recordResponse() });
+      const cold = projectProviderAccountUsageQuotaReadV1({ input: { source }, current, nowMs: Date.now() });
+      expect(mounted().current).toEqual(cold.current);
+      expect(mounted().pace).toEqual(cold.pace);
+      const price = (read: typeof cold) => projectProviderAccountSubscriptionMonetaryFacts({
+        subscription: read.current?.subscription, nowMs: start + 6_500,
+      }).paid;
+      expect(price(cold)).toMatchObject({ amount: 20, currency: 'USD' });
+      expect(price(mounted())).toEqual(price(cold));
+    } finally {
+      release();
       vi.useRealTimers();
     }
   });

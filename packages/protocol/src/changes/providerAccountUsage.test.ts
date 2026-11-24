@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from './index.js';
 import { buildProviderAccountUsageMaterialChangesV1, readProviderAccountUsageChangedRecordIdsV1,
-  readProviderAccountUsageChangeRecordIdV1 } from './providerAccountUsage.js';
+  readProviderAccountUsageChangeRecordIdV1, readProviderAccountUsageObservationsV1 } from './providerAccountUsage.js';
 
 describe('Provider usage change scope', () => {
   const first = 'paug_v1_abcdefgh';
@@ -14,6 +14,16 @@ describe('Provider usage change scope', () => {
     expect(readProviderAccountUsageChangedRecordIdsV1([page(first)[1]!, ...page(second, 3)]))
       .toEqual([first, second]);
     expect(readProviderAccountUsageChangeRecordIdV1(page(first)[1]!.entityId)).toBe(first);
+  });
+
+  it('names the same material body on socket and durable clock-only observations', () => {
+    const observation = { recordId: first, fetchedAtMs: 3_000, observedAtMs: 2_500,
+      subscriptionObservedAtMs: 3_000, contentChanged: false };
+    const changes = buildProviderAccountUsageMaterialChangesV1(first, undefined, { observation, previousContentCursor: 6 })
+      .map((change, index) => ({ ...change, cursor: 7 + index }));
+    expect(readProviderAccountUsageObservationsV1(changes, 6)).toEqual([{ ...observation, contentCursor: 6 }]);
+    expect(readProviderAccountUsageObservationsV1(changes, 2))
+      .toEqual([{ ...observation, contentChanged: true, contentCursor: 6 }]);
   });
 
   it('keeps legacy, incomplete, malformed and mixed unknown scopes full', () => {

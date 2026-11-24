@@ -9,6 +9,7 @@ import {
 } from "vitest";
 
 import { buildProviderAccountUsageRecordId } from "@happier-dev/protocol";
+import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { buildProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
@@ -493,7 +494,10 @@ describe("provider account usage record storage (integration)", () => {
     it('publishes freshness separately from current quota content and retains coalesced material changes', async () => {
         const { eventRouter } = await import('@/app/events/connectionEventRouter');
         const { UpdateContainerSchema } = await import('@happier-dev/protocol/updates');
-        const { readProviderAccountUsageObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
+        const { ProviderAccountUsageObservationV1Schema, readProviderAccountUsageObservationsV1, readProviderAccountUsageWakeObservationsV1 } =
+            await import('@happier-dev/protocol/changes/providerAccountUsage');
+        const { z } = await import('zod/mini');
+        const predecessorObservation = z.omit(ProviderAccountUsageObservationV1Schema, { contentCursor: true });
         const emitted = vi.spyOn(eventRouter, 'emitUpdate');
         try {
             const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
@@ -505,17 +509,23 @@ describe("provider account usage record storage (integration)", () => {
                 writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: snapshot.recordId,
                     recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok',
                     snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, client });
-            const wake = () => UpdateContainerSchema.parse(emitted.mock.calls.filter(([event]) =>
-                event.userId === account.id && event.payload.body.t === 'account-change').at(-1)?.[0].payload);
+            const wireWake = () => emitted.mock.calls.filter(([event]) =>
+                event.userId === account.id && event.payload.body.t === 'account-change').at(-1)?.[0].payload;
+            const wake = () => UpdateContainerSchema.parse(wireWake());
+            const observations = () => readProviderAccountUsageWakeObservationsV1(wake());
             const fact = (offset: number, contentChanged: boolean, includesClocks = !contentChanged) => ({ recordId: initial.recordId,
                 fetchedAtMs: initial.fetchedAtMs + offset, observedAtMs: initial.observedAtMs + offset,
                 ...(includesClocks ? { subscriptionObservedAtMs: null } : {}), contentChanged });
             await write(initial);
             const firstCursor = wake().seq;
-            expect(wake().providerAccountUsageObservations).toEqual([fact(0, true)]);
+            expect(observations()).toEqual([fact(0, true)]);
             await write(reading(1000));
             const freshCursor = wake().seq;
-            expect(wake().providerAccountUsageObservations).toEqual([fact(1000, false)]);
+            expect(observations()).toEqual([{ ...fact(1000, false), contentCursor: firstCursor }]);
+            // The preceding client reads the same wire wake with a strict
+            // observation schema. It must receive a read, not drop the wake.
+            expect(predecessorObservation.parse(wireWake()?.providerAccountUsageObservations?.[0]))
+                .toEqual(fact(1000, true, true));
             await expect(write(reading(500, 1))).resolves.toBe('stale');
             expect(wake().seq).toBe(freshCursor);
             await inTx(async tx => {
@@ -523,16 +533,18 @@ describe("provider account usage record storage (integration)", () => {
                 await write(reading(3000), tx);
                 await write(reading(4000), tx);
             });
-            expect(wake().providerAccountUsageObservations).toEqual([fact(4000, true, true)]);
             const throughCursor = wake().seq;
+            const contentCursor = throughCursor - 2;
+            expect(observations()).toEqual([fact(4000, true, true)]);
             const page = await db.accountChange.findMany({ where: { accountId: account.id, kind: 'account' } });
-            expect(readProviderAccountUsageObservationsV1(page, firstCursor)).toEqual([fact(4000, true, true)]);
-            expect(readProviderAccountUsageObservationsV1(page, throughCursor - 1)).toEqual([fact(4000, false)]);
+            expect(readProviderAccountUsageObservationsV1(page, firstCursor)).toEqual([{ ...fact(4000, true, true), contentCursor }]);
+            expect(readProviderAccountUsageObservationsV1(page, throughCursor - 1)).toEqual([{ ...fact(4000, false), contentCursor }]);
         } finally { emitted.mockRestore(); }
     });
 
     it('publishes all accepted plain clocks and reads when an independent error clock changes', async () => {
         const { eventRouter } = await import('@/app/events/connectionEventRouter');
+        const { readProviderAccountUsageWakeObservationsV1 } = await import('@happier-dev/protocol/changes/providerAccountUsage');
         const emitted = vi.spyOn(eventRouter, 'emitUpdate');
         try {
             const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
@@ -542,16 +554,18 @@ describe("provider account usage record storage (integration)", () => {
             const first = { ...createUsageSnapshot({ fetchedAt: start }), subscription };
             const write = (snapshot: typeof first) => writeProviderAccountUsageRecordWithPolicy({
                 accountId: account.id, recordId: first.recordId, recordKey: first.recordKey,
-                payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+                payloadMode: 'plain_json_v1', status: 'ok', snapshot: ProviderAccountUsageSnapshotV1Schema.parse(snapshot),
                 fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
             });
             const latest = () => emitted.mock.calls.filter(([event]) => event.userId === account.id
                 && event.payload.body.t === 'account-change').at(-1)?.[0].payload;
             await write(first);
             expect(latest()?.providerAccountUsageObservations?.[0]?.contentChanged).toBe(true);
+            let contentCursor = latest()?.seq;
             // A write at the same fetch can update ancillary facets, but it
             // cannot replace the provider observation owned by that fetch.
             await write({ ...first, observedAtMs: start + 250 });
+            expect(latest()?.seq).toBe(contentCursor);
             await expect(readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId }))
                 .resolves.toMatchObject({ snapshot: { observedAtMs: first.observedAtMs } });
             let reading = first;
@@ -569,9 +583,10 @@ describe("provider account usage record storage (integration)", () => {
                         lastRefreshError: { ...subscription.lastRefreshError, observedAtMs: start + error } } };
                 await expect(write(reading)).resolves.toBe('written');
                 expect.soft(latest()?.seq).toBeGreaterThan(cursor!);
-                expect.soft(latest()?.providerAccountUsageObservations).toEqual([{
+                if (contentChanged) contentCursor = latest()?.seq;
+                expect.soft(readProviderAccountUsageWakeObservationsV1(latest() ?? {})).toEqual([{
                     recordId: first.recordId, fetchedAtMs: reading.fetchedAtMs, observedAtMs: reading.observedAtMs,
-                    ...(contentChanged ? {} : { subscriptionObservedAtMs: reading.subscription.observedAtMs }),
+                    ...(contentChanged ? {} : { subscriptionObservedAtMs: reading.subscription.observedAtMs, contentCursor }),
                     contentChanged,
                 }]);
                 await expect(readProviderAccountUsageRecord({ accountId: account.id, recordId: first.recordId }))
@@ -608,8 +623,9 @@ describe("provider account usage record storage (integration)", () => {
                 return openProviderAccountUsageRecordV4({ recordId: first.recordId, accountMode: 'e2ee', material,
                     record: projectProviderAccountUsageRecordV4(stored, []) });
             };
-            const fact = () => emitted.mock.calls.filter(([event]) => event.userId === account.id
-                && event.payload.body.t === 'account-change').at(-1)?.[0].payload.providerAccountUsageObservations;
+            const wake = () => emitted.mock.calls.filter(([event]) => event.userId === account.id
+                && event.payload.body.t === 'account-change').at(-1)?.[0].payload;
+            const fact = () => wake()?.providerAccountUsageObservations;
             await write(first);
             expect(fact()).toEqual([{ recordId: first.recordId, fetchedAtMs: first.fetchedAtMs, contentChanged: true }]);
             let mounted = await open();

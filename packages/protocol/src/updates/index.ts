@@ -3,7 +3,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { PushTokensRemoteAlertProjectionV2Schema } from '../push/pushTokenRegistration.js';
 import { SessionSystemRecordInvalidationV1Schema } from '../sessions/board/changeHint.js';
 import { PushedAccountChangesPageV1Schema } from '../changes/index.js';
-import { ProviderAccountUsageObservationV1Schema } from '../changes/providerAccountUsage.js';
+import { ProviderAccountUsageClockContentCursorsV1Schema, ProviderAccountUsageObservationV1Schema } from '../changes/providerAccountUsage.js';
 import { MachineKindFromLegacyProjectionSchema } from '../machines/machineKind.js';
 import { ManagedMachineRefV1Schema, ManagedMachineInputRuntimeV1Schema } from '../machines/managed/managedMachineV1.js';
 import { RunnerMachineContentKeyBindingV1Schema } from '../ephemeralRunner/machineContentKeyBinding.js';
@@ -386,7 +386,8 @@ export const UpdateContainerSchema = lazyZodSchema(() => z.looseObject({
   // Advisory Account wake routing for Homes that do not consume a changes page.
   // Older readers still accept the unchanged strict Account wake body.
   discussionSettingsChangedIds: z.optional(z.array(z.string())),
-  providerAccountUsageObservations: z.optional(z.array(ProviderAccountUsageObservationV1Schema)),
+  providerAccountUsageObservations: z.optional(z.array(z.omit(ProviderAccountUsageObservationV1Schema, { contentCursor: true }))),
+  providerAccountUsageClockContentCursors: z.optional(ProviderAccountUsageClockContentCursorsV1Schema),
 }));
 
 export type UpdateContainer = z.infer<typeof UpdateContainerSchema>;

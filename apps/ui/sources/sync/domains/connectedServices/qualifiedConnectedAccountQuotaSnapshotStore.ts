@@ -18,6 +18,7 @@ import {
     resolveConnectedServiceSettingsErrorMessage,
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
+import { applyUsageObservationTime, readUsageContentCursor } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readQuotaProfileChanges } from './quotaProfileChanges';
@@ -192,7 +193,8 @@ function getOrCreateEntry(key: string): InternalEntry {
 
 function publish(key: string, entry: InternalEntry): void {
     const nowMs = Date.now();
-    if (sameStrictJsonValue(entry.snapshot, entry.view.snapshot)) entry.snapshot = entry.view.snapshot;
+    if (readUsageContentCursor(entry.snapshot) === readUsageContentCursor(entry.view.snapshot)
+        && sameStrictJsonValue(entry.snapshot, entry.view.snapshot)) entry.snapshot = entry.view.snapshot;
     const next = {
         snapshot: entry.snapshot,
         usageRecordId: entry.usageRecordId,
@@ -234,11 +236,12 @@ function reconcilePolling(key: string, initialReadCompleted?: boolean): void {
             && entry.error === null && !entry.producerRefreshPending
             && Date.now() <= entry.snapshot.fetchedAt + entry.snapshot.staleAfterMs),
         readRecordId: () => entry.usageRecordId,
-        applyObservation({ fetchedAtMs }) {
+        applyObservation(observation) {
             if (!entry.snapshot || entry.openedContent !== 'plain' || entry.error !== null || entry.producerRefreshPending) return false;
-            if (fetchedAtMs > entry.snapshot.fetchedAt) {
-                entry.snapshot = { ...entry.snapshot, fetchedAt: fetchedAtMs, fetchedAtMs,
-                    staleAtMs: fetchedAtMs + entry.snapshot.staleAfterMs };
+            const next = applyUsageObservationTime(entry.snapshot, observation);
+            if (!next) return false;
+            if (next !== entry.snapshot) {
+                entry.snapshot = next;
                 publish(key, entry);
             }
             return true;

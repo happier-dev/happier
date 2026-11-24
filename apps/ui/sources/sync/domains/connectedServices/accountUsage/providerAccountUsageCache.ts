@@ -1,5 +1,6 @@
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readUsageContentCursor } from './usageObservation';
 import { resolveProviderAccountUsageReadState, type ProviderAccountUsageEmptyRead } from './providerAccountUsageSelectors';
 
 export type ProviderAccountUsageCacheEntry = Readonly<{
@@ -96,20 +97,6 @@ export function retainProviderAccountUsageCacheEntries(
 }
 
 /**
- * A re-read that observed the same usage again only advances `observedAtMs` (when the Home last
- * looked). That stamp is not usage: presentation ages on `fetchedAtMs + staleAfterMs`, so the
- * retained snapshot keeps its identity so readers can ignore activity-only writes.
- */
-function sameProviderAccountUsage(
-    previous: ProviderAccountUsageSnapshotV1 | null,
-    incoming: ProviderAccountUsageSnapshotV1 | null,
-): boolean {
-    if (!previous || !incoming) return previous === incoming;
-    if (previous.observedAtMs === incoming.observedAtMs) return sameStrictJsonValue(previous, incoming);
-    return sameStrictJsonValue({ ...previous, observedAtMs: 0 }, { ...incoming, observedAtMs: 0 });
-}
-
-/**
  * Commits usage entries for the credential scope that is currently active, and
  * drops every superseded scope.
  *
@@ -145,7 +132,8 @@ export function updateProviderAccountUsageCacheEntries(
     for (const [recordId, incoming] of Object.entries(incomingEntries)) {
         const previous = currentEntries[recordId];
         const next = previous && incoming.snapshot !== previous.snapshot
-            && sameProviderAccountUsage(previous.snapshot, incoming.snapshot)
+            && readUsageContentCursor(previous.snapshot) === readUsageContentCursor(incoming.snapshot)
+            && sameStrictJsonValue(previous.snapshot, incoming.snapshot)
             ? { ...incoming, snapshot: previous.snapshot }
             : incoming;
         const equal = previous && previous.snapshot === next.snapshot && sameStrictJsonValue(previous, next)

@@ -7947,15 +7947,21 @@ same bodyless fact travels on the existing Account wake for secondary Homes.
 Coalescing keeps the latest accepted clock and preserves any material change.
 The durable row lets primary Home detect a material change since its cursor.
 
-With an admitted plaintext reading, a complete clock-only fact updates quota
-fetch time, quota provider observation time and subscription observation time
-from their separate stored values without a quota GET. The subscription clock
-is null when the record has no stored subscription. A material fact reads that
-record directly. A change to an independently aged fact the hint cannot
-reproduce requires that read. For a sealed reading, the wake carries the
-accepted fetch clock and readers open the addressed record to verify its clocks.
-An older publisher that omits the fact keeps the previous read behavior. An
-incomplete clock-only fact requires a read. A legacy/unscoped key, an incomplete
+A complete clock-only fact names the last material Account Change cursor for
+its record. The V4 record and quota GETs return that same cursor in
+`X-Happier-Usage-Content-Cursor` for admitted plaintext readings, captured in
+the same database snapshot as the body. A matching cursor lets readers update
+quota fetch time, quota provider observation time and subscription observation
+time from their separate stored values without a GET. A null subscription
+clock means no stored subscription. A missing or different cursor, a material
+change or a clock the hint cannot reproduce triggers one addressed record GET.
+On a socket wake the cursor travels in the optional Account envelope field
+`providerAccountUsageClockContentCursors`. The strict predecessor observation
+keeps its existing shape and requests a read. A client that understands the
+cursor field can apply the clocks after matching its body.
+For a sealed reading, the wake carries the accepted fetch clock and readers
+open the addressed record to verify its clocks. An older publisher that omits
+the cursor also triggers a read. A legacy/unscoped key, an incomplete
 pair, unknown scope, snapshot, foreground or explicit recovery keeps the full
 reread. An older UI still consumes the global key. Replacing a source's record
 binding publishes the existing Connected Service change fact so readers

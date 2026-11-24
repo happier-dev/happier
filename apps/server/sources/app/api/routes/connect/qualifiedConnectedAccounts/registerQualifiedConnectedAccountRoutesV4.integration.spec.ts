@@ -1792,6 +1792,13 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     headers,
                 });
                 expect(readUsageRecord.statusCode).toBe(200);
+                const change = await db.accountChange.findUniqueOrThrow({
+                    where: { accountId_kind_entityId: { accountId: account.id, kind: "account",
+                        entityId: `provider-account-usage-record:${snapshot.recordId}` } },
+                    select: { cursor: true },
+                });
+                const contentCursorHeader = "x-happier-usage-content-cursor";
+                expect(readUsageRecord.headers[contentCursorHeader]).toBe(String(change.cursor));
                 expect(readUsageRecord.json()).toMatchObject({
                     content: {
                         t: "plain",
@@ -1975,6 +1982,8 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     headers,
                 });
                 expect(sealedQuotaRead.statusCode).toBe(200);
+                expect(sealedRecordRead.headers[contentCursorHeader]).toBeUndefined();
+                expect(sealedQuotaRead.headers[contentCursorHeader]).toBeUndefined();
                 expect(sealedQuotaRead.json().content).toEqual(sealedRecordRead.json().content);
                 await db.account.update({
                     where: { id: account.id },
@@ -2023,6 +2032,7 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                     headers,
                 });
                 expect(readQuota.statusCode).toBe(200);
+                expect(readQuota.headers[contentCursorHeader]).toBe(String(change.cursor));
                 expect(readQuota.json()).toMatchObject({
                     ref,
                     content: {

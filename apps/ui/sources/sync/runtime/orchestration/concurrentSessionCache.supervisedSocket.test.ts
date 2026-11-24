@@ -688,7 +688,11 @@ describe('concurrent session cache supervised sockets', () => {
         let asOf = 1;
         let reads = 0;
         const quota = observeUsageProjection({ serverId: h.homeB.id, initialReadCompleted: true,
-            readRecordId: () => recordId, applyObservation: observation => { asOf = observation.fetchedAtMs; return true; },
+            readRecordId: () => recordId, applyObservation: observation => {
+                expect(observation.contentCursor).toBe(18);
+                asOf = observation.fetchedAtMs;
+                return true;
+            },
             read: async () => { reads++; }, busy: () => false, nextReadAtMs: () => Number.POSITIVE_INFINITY });
         disposers.push(() => quota.dispose());
         const publish = (cursor: number, contentChanged?: boolean) => h.socket().trigger('update', {
@@ -696,7 +700,8 @@ describe('concurrent session cache supervised sockets', () => {
             body: { t: 'account-change', changeKinds: ['account'],
                 entityIds: ['provider-account-usage', `provider-account-usage-record:${recordId}`], sessionSystemRecords: [] },
             ...(contentChanged === undefined ? {} : { providerAccountUsageObservations: [{ recordId, fetchedAtMs: cursor,
-                observedAtMs: cursor - 1, subscriptionObservedAtMs: null, contentChanged }] }),
+                observedAtMs: cursor - 1, subscriptionObservedAtMs: null, contentChanged: true }],
+                ...(contentChanged ? {} : { providerAccountUsageClockContentCursors: { [recordId]: 18 } }) }),
         });
         publish(20, false);
         expect(asOf).toBe(20);

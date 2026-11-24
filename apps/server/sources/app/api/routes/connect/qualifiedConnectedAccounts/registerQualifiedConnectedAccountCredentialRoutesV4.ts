@@ -1,3 +1,4 @@
+import { PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { z } from "zod/mini";
 import { QualifiedProviderAccountUsageOwnershipErrorV4Schema, QualifiedProviderAccountUsageReadFailureV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createHash } from 'node:crypto';
@@ -619,7 +620,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 error: "connect_quotas_not_found",
             });
         }
-        return reply.send(quota);
+        const { contentCursor, ...body } = quota;
+        if (contentCursor !== undefined) reply.header(PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER, contentCursor);
+        return reply.send(body);
     });
 
     app.delete("/v4/connect/qualified/quotas", {
@@ -1534,6 +1537,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 return reply.code(404).send({
                     error: "provider_account_usage_not_found",
                 });
+            }
+            if (qualifiedRecord.contentCursor !== undefined) {
+                reply.header(PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER, qualifiedRecord.contentCursor);
             }
             return reply.send(projectProviderAccountUsageRecordV4(record, qualifiedRecord.sources));
         },

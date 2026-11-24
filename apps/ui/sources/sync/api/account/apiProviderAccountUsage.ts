@@ -44,12 +44,14 @@ import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { PROVIDER_ACCOUNT_USAGE_DAY_MS, ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryResponseV1Schema,
     buildProviderAccountUsageDaySummaryV1, openProviderAccountUsageDaySummaryV1, type ProviderAccountUsageDaySummaryV1,
     type StoredProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
-import type { ProviderAccountUsageDayChangeV1, ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
-import { applyUsageObservationTime } from './usageQueryInvalidation';
+import { PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER, readProviderAccountUsageContentCursorHeaderV1,
+    type ProviderAccountUsageDayChangeV1, type ProviderAccountUsageObservationV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { applyUsageObservationTime, bindUsageContentCursor, readUsageContentCursor } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 
 type UsageHttpObservation = Readonly<{
     status: number; ok: boolean; json: unknown; jsonFailure?: Readonly<{ error: unknown }>;
     etag: string | null;
+    contentCursor?: number;
     complete: string | null; prefix: string | null;
 }>;
 const usageHttpReads = createScopedResolutionSingleFlight<UsageHttpObservation>();
@@ -181,7 +183,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const addressed = inputOptions.addressedReads?.get(createCanonicalJsonSigningInput(request.source));
     // Address resolution and encrypted-byte acquisition need the captured
     // Account, not its mode. Opening still waits for the authoritative mode.
-    const [{ resolution, recordJson, retainedCurrent, publication }, accountMode] = await Promise.all([(async () => {
+    const [{ resolution, recordRead, retainedCurrent, publication }, accountMode] = await Promise.all([(async () => {
         const day = inputOptions.dayChange;
         const prior = day && inputOptions.projectionDocuments?.get(day.recordId)?.daily;
         let publication: AdmittedDayPublication | undefined;
@@ -193,7 +195,7 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
             const materialBytes = material?.type === 'legacy' ? material.secret : material?.machineKey;
             if (hasUsageProjectionCustody(prior, { ...transportOptions, accountMode: mode, material }, resolveAuthCredentialsScopeKey(credentials), materialBytes)) {
                 if (day.publication.kind === 'summary') {
-                    return { resolution: null, recordJson: null, retainedCurrent: prior.current, publication: { kind: 'summary' as const, prior } };
+                    return { resolution: null, recordRead: null, retainedCurrent: prior.current, publication: { kind: 'summary' as const, prior } };
                 }
                 if (day.history && !prior.missingDays.some(missing => missing.dayStartAtMs === day.dayStartAtMs)) publication = { kind: 'observation', prior };
             }
@@ -203,19 +205,21 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
             const { recordId } = observation;
             const resolution = { recordId, providerAccountId: retained?.recordKey.accountSubjectId };
             if (retained && !observation.contentChanged && await inputOptions.accountMode === 'plain') {
-                return { resolution, recordJson: null, retainedCurrent: applyUsageObservationTime(retained, observation), publication };
+                const patched = applyUsageObservationTime(retained, observation);
+                if (patched) return { resolution, recordRead: null, retainedCurrent: patched, publication };
             }
             const read = await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(recordId), transportOptions);
-            const recordJson = read ? QualifiedProviderAccountUsageRecordResponseV4Schema.parse(read.json) : null;
-            if (recordJson && !recordJson.sources.some(source => sameStrictJsonValue(source, request.source))) {
+            const record = read ? QualifiedProviderAccountUsageRecordResponseV4Schema.parse(read.json) : null;
+            if (record && !record.sources.some(source => sameStrictJsonValue(source, request.source))) {
                 throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
             }
-            return { resolution, recordJson, retainedCurrent: null, publication: recordId === day?.recordId ? publication : undefined };
+            const recordRead = record && read ? { json: record, contentCursor: read.contentCursor } : null;
+            return { resolution, recordRead, retainedCurrent: null, publication: recordId === day?.recordId ? publication : undefined };
         }
         const sourceJson = (await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/sources/resolve?${new URLSearchParams({ source: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedServiceUsageSourceResolveV4Schema, request.source) }).toString()}`, transportOptions))?.json ?? null;
         const resolution = sourceJson === null ? null : QualifiedConnectedServiceUsageSourceResolutionV4Schema.parse(sourceJson);
-        const recordJson = resolution ? (await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(resolution.recordId), transportOptions))?.json ?? null : null;
-        return { resolution, recordJson, retainedCurrent: null, publication: resolution?.recordId === day?.recordId ? publication : undefined };
+        const recordRead = resolution ? await requestProviderAccountUsageRead(credentials, providerAccountUsageRecordPath(resolution.recordId), transportOptions) : null;
+        return { resolution, recordRead, retainedCurrent: null, publication: resolution?.recordId === day?.recordId ? publication : undefined };
     })(), inputOptions.accountMode]);
     // Addressed reads belong to the mounted Usage Resource. Its independent
     // catalog subscription supplies current entered prices during composition.
@@ -225,9 +229,13 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
     const material = options.accountMode === 'e2ee' ? options.material ?? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
     const progressive = options.readAllHistory && (request.history || request.projection) && resolution;
     if (!request.projection && !progressive && options.readPacingTargets) options = { ...options, targets: await options.readPacingTargets() };
+    const recordJson = recordRead?.json ?? null;
     const enteredMonthlyPrice = !request.projection && recordJson !== null && !progressive ? await options.readEnteredMonthlyPrice?.() : undefined;
     options.assertCurrent?.();
-    let current = resolution && recordJson !== null ? openProviderAccountUsageRecordV4({ recordId: resolution.recordId, enteredMonthlyPrice, accountMode: options.accountMode, material, record: recordJson }) : retainedCurrent;
+    let current = resolution && recordJson !== null
+        ? bindUsageContentCursor(openProviderAccountUsageRecordV4({ recordId: resolution.recordId, enteredMonthlyPrice,
+            accountMode, material, record: recordJson }), accountMode === 'plain' ? recordRead?.contentCursor : undefined)
+        : retainedCurrent;
     if (current && resolution?.providerAccountId !== undefined && current.recordKey.accountSubjectId !== resolution.providerAccountId) {
         throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
     }
@@ -260,7 +268,8 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
         const price = initialCurrent && options.readEnteredMonthlyPrice ? options.readEnteredMonthlyPrice().then(enteredMonthlyPrice => {
             if (!active) return;
             throwIfAborted(options.signal); options.assertCurrent?.();
-            current = projectProviderAccountUsageEnteredPriceV1(initialCurrent, enteredMonthlyPrice);
+            current = bindUsageContentCursor(projectProviderAccountUsageEnteredPriceV1(initialCurrent, enteredMonthlyPrice),
+                readUsageContentCursor(initialCurrent));
             publish();
         }) : Promise.resolve();
         const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId: resolution.recordId, range: historyRequest.range },
@@ -418,7 +427,8 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     const price = initialCurrent && options.readEnteredMonthlyPrice ? options.readEnteredMonthlyPrice().then(enteredMonthlyPrice => {
         if (!active) return;
         assertCurrent();
-        current = projectProviderAccountUsageEnteredPriceV1(initialCurrent, enteredMonthlyPrice);
+        current = bindUsageContentCursor(projectProviderAccountUsageEnteredPriceV1(initialCurrent, enteredMonthlyPrice),
+            readUsageContentCursor(initialCurrent));
         publish();
     }) : Promise.resolve();
     const openPage = createProviderAccountUsagePageProjectionOpenerV1();
@@ -924,6 +934,7 @@ async function observeProviderUsageHttp(response: Response): Promise<UsageHttpOb
     }
     return { status: response.status, ok: response.ok, json, ...(jsonFailure ? { jsonFailure } : {}),
         etag: response.headers.get('etag'),
+        contentCursor: readProviderAccountUsageContentCursorHeaderV1(response.headers.get(PROVIDER_ACCOUNT_USAGE_CONTENT_CURSOR_HEADER)),
         complete: response.headers.get('x-happier-usage-projection-complete'),
         prefix: response.headers.get('x-happier-usage-projection-prefix') };
 }
@@ -946,7 +957,7 @@ async function acquireProviderUsageHttp(credentials: AuthCredentials, path: stri
 }
 
 async function requestProviderAccountUsageRead(credentials: AuthCredentials, path: string,
-    options: UsageReadTransportOptions, fresh = false): Promise<Readonly<{ json: unknown; etag: string | null }> | null> {
+    options: UsageReadTransportOptions, fresh = false): Promise<Readonly<{ json: unknown; etag: string | null; contentCursor?: number }> | null> {
     options.assertCurrent?.();
     const response = await acquireProviderUsageHttp(credentials, path, { method: 'GET', signal: options.signal,
         headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json',
@@ -955,7 +966,7 @@ async function requestProviderAccountUsageRead(credentials: AuthCredentials, pat
     return admitProviderAccountUsageRead(response);
 }
 
-function admitProviderAccountUsageRead(response: UsageHttpObservation): Readonly<{ json: unknown; etag: string | null }> | null {
+function admitProviderAccountUsageRead(response: UsageHttpObservation): Readonly<{ json: unknown; etag: string | null; contentCursor?: number }> | null {
     if (response.status === 404) return null;
     if (response.status === 401 || response.status === 403) {
         throw new HappyError('Provider account usage authority refused', false,
@@ -968,7 +979,7 @@ function admitProviderAccountUsageRead(response: UsageHttpObservation): Readonly
         const code = extractErrorCode(json) ?? 'provider_account_usage_read_failed';
         throw new HappyError(code, false, { status: response.status, kind: 'server', code });
     }
-    return { json, etag: response.etag };
+    return { json, etag: response.etag, contentCursor: response.contentCursor };
 }
 
 /** One finite response on current Homes; older JSON Homes retain their existing cursor transport. */
@@ -1166,7 +1177,8 @@ function readSnapshotRecord(response: UsageHttpObservation, recordId: ProviderAc
         throw new Error(`${message}: ${response.status}`);
     }
     if (response.jsonFailure) throw response.jsonFailure.error;
-    return parseQualifiedProviderAccountUsageRecordResponse(response.json, recordId);
+    const record = parseQualifiedProviderAccountUsageRecordResponse(response.json, recordId);
+    return bindUsageContentCursor(record, record.content.t === 'plain' ? response.contentCursor : undefined);
 }
 
 /** Read an already-bound record using the same raw acquisition as its other observers. */
@@ -1188,7 +1200,8 @@ export function openAddressedProviderAccountUsageRecord(
 ): ProviderAccountUsageSnapshotV1 {
     const material = accountMode === 'e2ee' && !isTokenOnlyAuthCredentials(credentials)
         ? resolveAccountScopedCryptoMaterialFromCredentials(credentials) : undefined;
-    return openProviderAccountUsageRecordV4({ recordId, accountMode, record, material });
+    return bindUsageContentCursor(openProviderAccountUsageRecordV4({ recordId, accountMode, record, material }),
+        accountMode === 'plain' ? readUsageContentCursor(record) : undefined);
 }
 
 export async function getProviderAccountUsageSnapshotPlain(
@@ -1204,7 +1217,7 @@ export async function getProviderAccountUsageSnapshotPlain(
             return rejectContentModeMismatch(recordId);
         }
 
-        return openProviderAccountUsageRecordV4({ recordId, accountMode: 'plain', record: parsed });
+        return openAddressedProviderAccountUsageRecord(credentials, recordId, 'plain', parsed);
     });
 }
 

@@ -26,6 +26,7 @@ import { fetchAccountEncryptionMode } from './apiAccountEncryptionMode';
 import { getAddressedProviderAccountUsageRecord, openAddressedProviderAccountUsageRecord } from './apiProviderAccountUsage';
 import { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { resolveConnectedServicePlanLabel } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { bindUsageContentCursor, readUsageContentCursor } from '@/sync/domains/connectedServices/accountUsage/usageObservation';
 
 export type QualifiedConnectedAccountQuotaTransportContext = Readonly<{
     credentials: AuthCredentials;
@@ -76,7 +77,7 @@ export async function readQualifiedConnectedAccountQuota(
             });
             const opened = openAddressedProviderAccountUsageRecord(context.credentials, recordId, mode, record);
             const snapshot = projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot: opened, ref: context.ref });
-            return presentQualifiedQuota(snapshot, recordId, record.metadata, record.content.t);
+            return presentQualifiedQuota(snapshot, recordId, record.metadata, record.content.t, readUsageContentCursor(opened));
         }
     }
     // The server serves and scopes the read; the opened response is checked against `ref`.
@@ -124,13 +125,14 @@ export async function readQualifiedConnectedAccountQuota(
     // V4's numeric quota projection uses zero before any provider observation.
     // Preserve the canonical `not_loaded` snapshot and its record binding: an
     // observation-only provider has answered successfully with no sample yet.
-    return presentQualifiedQuota(opened, response.sourceResolution.recordId, response.metadata, response.content.t);
+    return presentQualifiedQuota(opened, response.sourceResolution.recordId, response.metadata, response.content.t, readUsageContentCursor(response));
 }
 
 function presentQualifiedQuota(opened: QualifiedConnectedAccountQuotaSnapshotV4, recordId: ProviderAccountUsageRecordId,
-    metadata: QualifiedConnectedAccountQuotaResponseV4['metadata'], openedContent: QualifiedConnectedAccountQuotaResponseV4['content']['t']) {
+    metadata: QualifiedConnectedAccountQuotaResponseV4['metadata'], openedContent: QualifiedConnectedAccountQuotaResponseV4['content']['t'],
+    contentCursor: number | undefined) {
     const planLabel = resolveConnectedServicePlanLabel(opened.ref.service, opened.planLabel);
-    const snapshot = planLabel === opened.planLabel ? opened : { ...opened, planLabel };
+    const snapshot = bindUsageContentCursor(planLabel === opened.planLabel ? opened : { ...opened, planLabel }, contentCursor);
     return { snapshot, recordId, status: metadata.status, openedContent,
         ...(opened.diagnostics ? { diagnostics: opened.diagnostics } : {}),
         ...(metadata.refreshRequestedAt === undefined ? {} : { refreshRequestedAt: metadata.refreshRequestedAt }) };
