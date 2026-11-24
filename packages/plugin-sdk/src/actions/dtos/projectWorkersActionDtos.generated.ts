@@ -465,6 +465,7 @@ export type ProjectWorkersActionResultById = {
     };
     readonly "projects.worker.copy.retire": {
         status: 'retired';
+        uncheckedMachineIds?: string[] | undefined;
     };
     readonly "projects.service.placement.get": {
         placement: {

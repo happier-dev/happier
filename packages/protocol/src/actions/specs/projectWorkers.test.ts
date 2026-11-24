@@ -90,6 +90,7 @@ describe('Project worker Actions', () => {
     expect(spec.inputSchema.safeParse({ ...input, removeTargetCopy: { ...removeTargetCopy, workspaceRefId: 'unrelated' } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, expectedRelationship: undefined }).success).toBe(false);
     expect(spec.outputSchema?.safeParse({ status: 'retired' }).success).toBe(true);
+    expect(spec.outputSchema?.safeParse({ status: 'retired', uncheckedMachineIds: ['worker-a'] }).success).toBe(true);
     expect(spec.outputSchema?.safeParse({ status: 'retired', dependencies: [] }).success).toBe(false);
   });
 

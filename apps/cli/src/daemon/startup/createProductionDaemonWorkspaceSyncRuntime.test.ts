@@ -933,7 +933,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
         // dependency census and all registered Sync owners remain real.
         if (offline && raw && typeof raw === 'object' && 'method' in raw && typeof raw.method === 'string'
           && raw.method.startsWith('target-parent:')) {
-          return { ok: false, error: 'Target Machine is offline', errorCode: 'RPC_FORBIDDEN' };
+          return { ok: false, error: 'Target Machine is offline', errorCode: 'peer_unavailable' };
         }
         return undefined;
       },
@@ -1190,11 +1190,83 @@ describe('createProductionDaemonWorkspaceSyncRuntime', () => {
     const retired = await executor.execute('projects.worker.copy.retire', input, context);
     if (!retired.ok) throw new Error(`Definition-only retirement refused: ${retired.errorCode}`);
     expect(retired).toMatchObject({ ok: true, result: { status: 'retired' } });
-    expect(ProjectWorkerActionOutputSchemasV1['projects.worker.copy.retire'].parse(retired.result)).toEqual({ status: 'retired' });
+    expect(ProjectWorkerActionOutputSchemasV1['projects.worker.copy.retire'].parse(retired.result)).toEqual({
+      status: 'retired', uncheckedMachineIds: [fixture.targetRef.machineId],
+    });
     expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);
     if (lifetime === 'committed') {
       expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('committed copy');
     } else await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['idle', 'unavailable', 'running'] as const)('retires a fresh remote copy on both sides (%s)', async scenario => {
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    let offline = false;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, withScmRuntime: true,
+      projectRowsFromHttp: true, separateTargetParent: true, remoteSeed: true, workerRunAtMost: 1,
+      handleAdditionalSocketAck: async raw => {
+        if (offline && raw && typeof raw === 'object' && 'method' in raw && typeof raw.method === 'string'
+          && raw.method.startsWith('target-parent:')) {
+          return { ok: false, error: 'Target Machine is offline', errorCode: 'peer_unavailable' };
+        }
+        return undefined;
+      },
+      readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? await http(url, body) : undefined,
+    });
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
+      readProjectAccountRows({ credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    await fixture.settleProjects();
+    const create = fixture.parentRpcHandlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)!;
+    const created = WorkspaceSyncRelationshipCreateResultV1Schema.parse(await create({ v: 1, operationId: 'fresh-remove', actionInput: {
+      v: 1, sourceWorkspaceRefId: fixture.sourceRef.id, targetMachineId: fixture.targetRef.machineId, targetPath: fixture.targetPath,
+      mode: 'keep_synced', contentPolicy, destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
+    } }));
+    expect(created.status.state).toBe('watching');
+    const expectedRelationship = getActiveProjectAccountRowsSnapshot()!.relationships[0]!;
+    expect(expectedRelationship.enabled).toBe(true);
+    if (scenario === 'running') {
+      const worker = fixture.workerAdmissions.get(fixture.targetRef.machineId)!;
+      let finish!: () => void;
+      const settled = new Promise<void>(resolve => { finish = resolve; });
+      const pending = worker.execute({ operationId: 'live-dependent-work', workspaceRefId: created.targetWorkspaceRefId,
+        relationshipId: created.relationshipId, signal: new AbortController().signal, accept() {},
+        run: async ({ phase }) => { phase('running'); await settled; return { kind: 'process_settled', result: { ok: true, result: {} } }; } });
+      onTestFinished(async () => { finish(); await pending; });
+      await expect.poll(() => worker.dependencies().some(item => item.state === 'running')).toBe(true);
+    }
+    offline = scenario === 'unavailable';
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), projectWorkerAction: createProjectWorkerAction({
+      machineId: fixture.sourceRef.machineId, serverId: fixture.serverId, serverHttpBaseUrl: 'https://bind-child-home.invalid',
+      credentials: fixture.credentials, accountId: 'owner', admission: fixture.workerAdmissions.get(fixture.sourceRef.machineId)!,
+      isFiniteExecutionLive: () => true, workspaceSync: fixture.parent.workspaceSync,
+    }) });
+    const result = await executor.execute('projects.worker.copy.retire', { workspace: { serverId: fixture.serverId, refId: fixture.sourceRef.id },
+      machineId: fixture.sourceRef.machineId, expectedRelationship }, {
+      surface: 'ui', authority: 'present_user', serverId: fixture.serverId, runtimeAccountId: 'owner', actionRequestId: 'fresh-remove-review',
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
+        installationId: fixture.controller.installationId, role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true,
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'projects.worker.copy.retire': { approvalRequiredSurfaces: [] } },
+        approvalWaivedSurfaces: { 'projects.worker.copy.retire': ['ui'] } }),
+      presentUserConfirmation: { actionId: 'projects.worker.copy.retire' },
+    });
+    if (scenario === 'running') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'workspace_sync_relationship_in_use' });
+      expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([expectedRelationship]);
+      expect(await fixture.parentManagedWorkspaceSync.list()).toContainEqual(expect.objectContaining({ relationshipId: created.relationshipId }));
+    } else {
+      expect(result).toMatchObject({ ok: true, result: { status: 'retired' } });
+      if (!result.ok) throw new Error(result.errorCode);
+      expect(ProjectWorkerActionOutputSchemasV1['projects.worker.copy.retire'].parse(result.result)).toEqual({
+        status: 'retired', ...(scenario === 'unavailable' ? { uncheckedMachineIds: [fixture.targetRef.machineId] } : {}),
+      });
+      expect(getActiveProjectAccountRowsSnapshot()?.relationships).toEqual([]);
+      expect(await fixture.parentManagedWorkspaceSync.list()).toEqual([]);
+    }
+    expect(await readFile(join(fixture.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
   });
 
   it.each(['same-machine', 'cross-machine', 'worker-copy', 'other-holder'] as const)(

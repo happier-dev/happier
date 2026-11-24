@@ -85,7 +85,11 @@ export const ProjectWorkerCopyRetireInputV1Schema = lazyZodSchema(() => z.strict
   }
 })));
 /** Only emitted after confirmed Sync reconciliation and any separately requested removal. */
-export const ProjectWorkerCopyRetireResultV1Schema = lazyZodSchema(() => z.strictObject({ status: z.literal('retired') }));
+export const ProjectWorkerCopyRetireResultV1Schema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('retired'),
+  /** Definition-only retirement could not observe dependent work on these Machines. */
+  uncheckedMachineIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+}));
 export type ProjectWorkerCopyRetireInputV1 = z.infer<typeof ProjectWorkerCopyRetireInputV1Schema>;
 export type ProjectWorkerCopyRetireResultV1 = z.infer<typeof ProjectWorkerCopyRetireResultV1Schema>;
 

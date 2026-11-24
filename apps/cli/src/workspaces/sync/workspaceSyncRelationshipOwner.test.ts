@@ -101,10 +101,10 @@ function createHarness(
     terminateRelationshipRuntime,
     commitRelationshipTarget,
     waitForProjectReconciliation,
-    readRelationshipDependencies: async (relationship) => admission.dependencies().filter((dependency) => (
+    readRelationshipDependencies: async (relationship) => ({ dependencies: admission.dependencies().filter((dependency) => (
       dependency.relationshipId === relationship.relationshipId
       || dependency.workspaceRefId === relationship.alphaWorkspaceRefId || dependency.workspaceRefId === relationship.betaWorkspaceRefId
-    )),
+    )) }),
     createId: (() => {
       const values = ['source_ref', 'target_ref'];
       return () => values.shift() ?? 'unexpected_id';

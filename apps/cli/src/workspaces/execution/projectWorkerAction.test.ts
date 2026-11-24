@@ -255,7 +255,7 @@ describe('exact target worker status Action', () => {
       mutateProjectSnapshot: createProjectAccountSnapshotMutation(credentials),
       readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home',
         selection: { kinds: ['workspace-ref', 'relationship-graph'] } }),
-      readRelationshipDependencies: async () => admission.dependencies(),
+      readRelationshipDependencies: async () => ({ dependencies: admission.dependencies() }),
       ensureRelationship: unused, flushRelationship: unused, commitRelationshipTarget: unused,
       terminateRelationshipRuntime: unused, waitForProjectReconciliation: async () => undefined });
     const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'home', serverApiUrl: 'https://home.invalid', machineId: 'controller',
@@ -429,7 +429,7 @@ describe('exact target worker status Action', () => {
       mutateProjectSnapshot: createProjectAccountSnapshotMutation(credentials),
       readProjectSnapshot: () => readProjectAccountRows({ credentials, serverId: 'home',
         selection: { kinds: ['workspace-ref', 'relationship-graph'] } }),
-      readRelationshipDependencies: async () => admission.dependencies(),
+      readRelationshipDependencies: async () => ({ dependencies: admission.dependencies() }),
       ensureRelationship: unused, flushRelationship: unused, commitRelationshipTarget: unused,
       // The external Sync process has no running handle in this fixture.
       terminateRelationshipRuntime: async () => {},

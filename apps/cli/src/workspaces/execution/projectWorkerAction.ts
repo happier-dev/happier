@@ -145,14 +145,14 @@ export function createProjectWorkerAction(options: Readonly<{
         callerInputAuthorization: context.externalActionExecutionAuthorization,
         ...(context.originalActionEnvelope ? { originalActionEnvelope: context.originalActionEnvelope } : {}),
       }) : options.workspaceSync;
-      await workspaceSync.relationshipOwner.stop(request.expectedRelationship.relationshipId, signal, {
+      const observation = await workspaceSync.relationshipOwner.stop(request.expectedRelationship.relationshipId, signal, {
         expectedRelationship: request.expectedRelationship,
         ...(request.removeTargetCopy ? { removeTargetCopy: request.removeTargetCopy,
           approval: { actionReceiptId: context.externalActionExecutionAuthorization
             ? readWorkspaceSyncCopyRetirementReceiptV1(context.externalActionExecutionAuthorization.binding) ?? context.actionRequestId!
             : context.actionRequestId!, actionInput: request } } : {}),
       });
-      return { status: 'retired' };
+      return { status: 'retired', ...(observation?.uncheckedMachineIds ? { uncheckedMachineIds: observation.uncheckedMachineIds } : {}) };
     } catch (error) {
       const projected = normalizeActionExecutorThrownError(error);
       const code = readActionErrorCodeV1(error) ?? projected.errorCode;

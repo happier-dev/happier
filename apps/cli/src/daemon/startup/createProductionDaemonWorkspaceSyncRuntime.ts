@@ -1797,11 +1797,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const relationshipDependencyReader = (credentials: StoredCredentials): NonNullable<WorkspaceSyncRelationshipOwnerOptions['readRelationshipDependencies']> =>
     async (relationship, snapshot, removal) => {
       const serverId = semanticServerId;
-      // Definition retirement preserves remote bytes. Only byte removal needs
-      // component-wide observations; an offline peer cannot veto retirement.
-      const machineIds = removal
-        ? resolveWorkspaceSyncRelationshipDependencyMachines({ ...snapshot, serverId,
-          relationshipId: relationship.relationshipId }) : [input.localMachineId];
+      // Retirement asks every component Machine. Keeping files may proceed when a
+      // Machine cannot be reached, but must report the missing observation.
+      // Byte removal still requires every dependency observation to succeed.
+      const machineIds = resolveWorkspaceSyncRelationshipDependencyMachines({ ...snapshot, serverId,
+        relationshipId: relationship.relationshipId });
+      const uncheckedMachineIds = new Set<string>();
       const dependencies = await Promise.all(machineIds.flatMap(machineId =>
         [relationship.alphaWorkspaceRefId, relationship.betaWorkspaceRefId].map(async workspaceRefId => {
           if (machineId === input.localMachineId) {
@@ -1818,11 +1819,18 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               method: RPC_METHODS.DAEMON_PROJECT_WORKER_DEPENDENCIES, request });
             readMachineActionRpcResult(result);
             return z.array(ProjectWorkerDependencyV1Schema).parse(result);
-          } catch {
+          } catch (error) {
+            const code = readRpcErrorCode(error) ?? (error instanceof Error && 'code' in error ? error.code : undefined);
+            if (!removal && (code === 'peer_unavailable' || code === 'RPC_TRANSPORT_UNAVAILABLE'
+              || code === 'RPC_CLIENT_NOT_AVAILABLE' || code === 'MACHINE_RPC_TIMEOUT')) {
+              uncheckedMachineIds.add(machineId);
+              return [];
+            }
             throw compositionError('workspace_sync_dependencies_unavailable', 'Worker dependency observation is unavailable');
           }
         })));
-      return [...new Map(dependencies.flat().map(dependency => [dependency.operationId, dependency])).values()];
+      return { dependencies: [...new Map(dependencies.flat().map(dependency => [dependency.operationId, dependency])).values()],
+        ...(uncheckedMachineIds.size ? { uncheckedMachineIds: machineIds.filter(id => uncheckedMachineIds.has(id)) } : {}) };
     };
   const requesterRelationshipOwner = (retained: NonNullable<ReturnType<NonNullable<WorkspaceSyncHandoffAdapter['resolvePrivateExecution']>>>,
     retirementContext?: RpcHandlerContext): WorkspaceSyncRelationshipOwner => {

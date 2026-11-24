@@ -63,7 +63,7 @@ export type WorkspaceSyncRelationshipOwner = Readonly<{
   observeCreation(input: WorkspaceSyncRelationshipCreateRpcRequestV1 & Readonly<{ serverId: string }>): Promise<WorkspaceSyncRelationshipCreationObservationV1>;
   setEnabled(relationshipId: string, enabled: boolean, signal?: AbortSignal): Promise<void>;
   /** Settlement failures carry definitionRetired:true only after the graph mutation is confirmed. */
-  stop(relationshipId: string, signal?: AbortSignal, retirement?: WorkspaceSyncRelationshipRetirement): Promise<void>;
+  stop(relationshipId: string, signal?: AbortSignal, retirement?: WorkspaceSyncRelationshipRetirement): Promise<void | Readonly<{ uncheckedMachineIds: readonly string[] }>>;
 }>;
 
 export type WorkspaceSyncRelationshipRetirement = Readonly<{
@@ -94,7 +94,7 @@ export type WorkspaceSyncRelationshipOwnerOptions = Readonly<{
   terminateRelationshipRuntime(relationship: WorkspaceSyncRelationshipV1): Promise<void>;
   waitForProjectReconciliation(settingsVersion: number, signal?: AbortSignal): Promise<void>;
   readRelationshipDependencies?(relationship: WorkspaceSyncRelationshipV1, snapshot: ProjectAccountSnapshotV1,
-    removal?: NonNullable<WorkspaceSyncRelationshipRetirement['removeTargetCopy']>): Promise<readonly ProjectWorkerDependency[]>;
+    removal?: NonNullable<WorkspaceSyncRelationshipRetirement['removeTargetCopy']>): Promise<Readonly<{ dependencies: readonly ProjectWorkerDependency[]; uncheckedMachineIds?: readonly string[] }>>;
   removeCommittedRelationshipTarget?(relationship: WorkspaceSyncRelationshipV1, approval: WorkspaceSyncCommittedCopyTargetV1,
     retirePreparedCopy: () => Promise<void>, signal?: AbortSignal): Promise<void>;
   createId?: () => string;
@@ -377,10 +377,12 @@ export function createWorkspaceSyncRelationshipOwner(
     if (retirement && !options.readRelationshipDependencies) {
       throw ownerError('workspace_sync_dependencies_unavailable', 'Workspace relationship dependencies are unavailable');
     }
-    const dependencies = await options.readRelationshipDependencies?.(relationship, snapshot, retirement?.removeTargetCopy) ?? [];
+    const observation = await options.readRelationshipDependencies?.(relationship, snapshot, retirement?.removeTargetCopy);
+    const dependencies = observation?.dependencies ?? [];
     if (dependencies.length > 0) {
       throw Object.assign(ownerError('workspace_sync_relationship_in_use', 'Workspace relationship has dependent work'), { dependencies });
     }
+    return observation?.uncheckedMachineIds;
   };
 
   const stop: WorkspaceSyncRelationshipOwner['stop'] = async (relationshipId, signal, retirement) => {
@@ -402,10 +404,12 @@ export function createWorkspaceSyncRelationshipOwner(
       return current;
     };
     let definitionRetired = false;
+    let uncheckedMachineIds: readonly string[] | undefined;
+    const observationResult = () => uncheckedMachineIds?.length ? { uncheckedMachineIds } : undefined;
     const retire = async () => {
       const result = await mutateProjectSnapshot(async settings => {
         const current = currentRelationship(settings);
-        if (!removal) await assertNoDependencies(current, settings, retirement);
+        if (!removal) uncheckedMachineIds = await assertNoDependencies(current, settings, retirement);
         return admitProjectSnapshotTransition(settings, { ...settings,
           relationships: settings.relationships.filter(relationship => relationship.relationshipId !== relationshipId),
         });
@@ -419,7 +423,7 @@ export function createWorkspaceSyncRelationshipOwner(
     try {
       if (!removal) {
         await retire();
-        return;
+        return observationResult();
       }
       const snapshot = parseProjectAccountSnapshotV1(await options.readProjectSnapshot());
       const relationship = currentRelationship(snapshot);
@@ -449,7 +453,7 @@ export function createWorkspaceSyncRelationshipOwner(
       const error = retirementRefusal ?? cause;
       if (!definitionRetired) throw error;
       // Plain stop has already committed, and a restarting Sync runtime will converge.
-      if (!removal && isReconcilingRefusal(error)) return;
+      if (!removal && isReconcilingRefusal(error)) return observationResult();
       const failure = typeof error === 'object' && error !== null
         ? error : new Error('Workspace relationship retirement settlement failed', { cause: error });
       throw Object.assign(failure, { definitionRetired: true });
