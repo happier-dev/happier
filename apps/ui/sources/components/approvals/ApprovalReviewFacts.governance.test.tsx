@@ -125,10 +125,12 @@ it.each([
         summary: 'Team cleared' },
     { scenario: 'set to an unreadable Team with no direct Team grants', primaryTeamId: team.teamId, grants: [], readable: false,
         summary: 'Now in Unavailable' },
-    { scenario: 'set without the grant projection', primaryTeamId: team.teamId, grants: undefined, readable: true, summary: null },
+    { scenario: 'set without the grant projection', primaryTeamId: team.teamId, grants: undefined, readable: true,
+        summary: 'Completed the request to set the primary Team.', omitAccess: true },
     { scenario: 'clear with a malformed grant projection', primaryTeamId: null, grants: [{ ...retainedTeamGrant, accessLevel: 'invalid' }],
-        readable: true, summary: null },
-    { scenario: 'an executed receipt without results', primaryTeamId: null, grants: undefined, readable: true, summary: null, receiptOnly: true },
+        readable: true, summary: 'Completed the request to clear the primary Team.', omitAccess: true },
+    { scenario: 'an executed record with arguments and without results', primaryTeamId: null, grants: undefined, readable: true,
+        summary: 'Completed the request to clear the primary Team.', receiptOnly: true, omitAccess: true },
     { scenario: 'set to a named Team in French', primaryTeamId: team.teamId, grants: [], readable: true,
         summary: 'Désormais dans Design studio', language: 'fr' },
     { scenario: 'clear with a kept grant in French', primaryTeamId: null, grants: [retainedTeamGrant], readable: true,
@@ -146,13 +148,11 @@ it.each([
             result: { changed: true, primaryTeamId, ...(grants === undefined ? {} : { teamGrants: grants }) } } };
     const screen = await renderScreen(<ApprovalReviewFacts {...request} preview={null} serverId={home} testID="governance-review" />);
     try {
-        if (summary === null) {
-            expect(screen.findByTestId('governance-review.preview')).toBeNull();
-        } else {
-            const access = grants?.length ? `${team.name} — ${t('session.access.edit')}` : t('session.access.noDirectTeamGrants');
-            await vi.waitFor(() => expect(screen.getTextContent()).toContain(`${summary}\n${access}`));
-            expect(screen.getTextContent()).not.toContain(t('session.access.private'));
-            expect(screen.getTextContent()).not.toContain(team.teamId);
-        }
+        const access = grants?.length ? `${team.name} — ${t('session.access.edit')}` : t('session.access.noDirectTeamGrants');
+        const expected = 'omitAccess' in testCase ? summary : `${summary}\n${access}`;
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain(expected));
+        if ('omitAccess' in testCase) expect(screen.getTextContent()).not.toContain(access);
+        expect(screen.getTextContent()).not.toContain(t('session.access.private'));
+        expect(screen.getTextContent()).not.toContain(team.teamId);
     } finally { await screen.unmount(); }
 });

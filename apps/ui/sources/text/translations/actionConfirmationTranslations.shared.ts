@@ -2,11 +2,18 @@
 
 export type ActionConfirmationTranslations = Readonly<{
     governance: Readonly<{
+        status: Readonly<Record<'pending' | 'completed' | 'notApplied' | 'failed' | 'unknown', (params: Readonly<{ change: string }>) => string>>;
+        change: Readonly<Record<'teamPolicy' | 'homeSettings' | 'homeSettingsDiscard' | 'teamArchive' | 'nativeCredentialDelivery'
+            | 'machinePresetPrepare' | 'teamSetup' | 'sessionTeamSet' | 'sessionTeamClear', string>
+            & { teamCreate: (params: Readonly<{ name: string }>) => string }>;
+        sessionTeamGrantsStay: string;
+        sessionTeamPolicyGrant: string;
+        /** Action phrases used inside the status sentence, without sentence punctuation. */
         homeLayout: Readonly<Record<Exclude<import('@happier-dev/protocol/actions/specs/homeHub').HomeLayoutApprovalEffect['kind'], 'groupCreate'>, string>
             & { groupCreateTitle: string; groupCreate: (params: Readonly<{ group: string; widgets: string }>) => string }>;
         teamArchive: string;
         teamPolicyInherit: string;
-        teamPolicyInheritMayExpand: string;
+        teamPolicyMayExpand: string;
         teamPolicyClearTeam: string;
         teamPolicyClearGroup: string;
         machinePresetPrepare: string;
@@ -38,41 +45,62 @@ export type ActionConfirmationTranslations = Readonly<{
 
 export const actionConfirmationTranslationsEnglish = { en: {
         governance: {
+            status: {
+                pending: ({ change }) => `This will ${change}.`,
+                completed: ({ change }) => `Completed the request to ${change}.`,
+                notApplied: ({ change }) => `The change wasn’t made. The request was to ${change}. `,
+                failed: ({ change }) => `It couldn’t be completed. The request was to ${change}. `,
+                unknown: ({ change }) => `The outcome is unknown. The request was to ${change}. `,
+            },
+            change: {
+                teamCreate: ({ name }) => `create the Team “${name}”`,
+                teamPolicy: "update the Team policy",
+                homeSettings: "update Home settings",
+                homeSettingsDiscard: "discard the Home settings waiting for a restart",
+                teamArchive: "archive the Team",
+                nativeCredentialDelivery: "configure the Team credential for native delivery",
+                machinePresetPrepare: "start preparing the image for this preset",
+                teamSetup: "start Team setup",
+                sessionTeamSet: "set the primary Team",
+                sessionTeamClear: "clear the primary Team",
+            },
+            sessionTeamGrantsStay: "Existing grants stay in place.",
+            sessionTeamPolicyGrant: "The selected Team gains access if its policy requires it.",
             homeLayout: {
-                move: "Moves an item on Home.",
-                moveIntoGroup: "Moves an item into a group.",
-                moveOutOfGroup: "Moves an item to the top level of Home.",
-                reorder: "Changes the order of items on Home.",
-                hide: "Hides an item on Home.",
-                show: "Shows an item on Home.",
-                frame: "Changes the frame style.",
-                defaultFrame: "Restores the default frame style.",
-                hideSetup: "Hides a setup step.",
-                showSetup: "Shows a setup step.",
-                restoreSetup: "Shows all setup steps again.",
-                reset: "Restores the default Home layout.",
-                addWidget: "Adds a widget to Home.",
-                removeWidget: "Removes a widget from Home.",
-                rename: "Changes the name.",
-                defaultName: "Restores the default name.",
-                inputs: "Changes what a widget uses.",
-                resetInputs: "Resets what a widget uses.",
-                size: "Changes a widget’s size.",
-                addGroup: "Adds a group to Home.",
-                ungroup: "Ungroups the widgets and keeps them on Home.",
-                groupAppearance: "Changes a group’s appearance.",
-                groupInputs: "Changes the group’s shared inputs.",
-                removeItem: "Removes the selected item from Home, including its widgets if it’s a group.",
-                groupWidth: "Changes a group’s width.",
-                network: "Changes a widget’s network access.",
+                move: "move an item on Home",
+                moveIntoGroup: "move an item into a group",
+                moveOutOfGroup: "move an item to the top level of Home",
+                reorder: "change the order of items on Home",
+                hide: "hide an item on Home",
+                show: "show an item on Home",
+                frame: "change the frame style",
+                defaultFrame: "restore the default frame style",
+                hideSetup: "hide a setup step",
+                showSetup: "show a setup step",
+                restoreSetup: "show all setup steps again",
+                reset: "restore the default Home layout",
+                addWidget: "add a widget to Home",
+                removeWidget: "remove a widget from Home",
+                rename: "change the name",
+                defaultName: "restore the default name",
+                inputs: "change what a widget uses",
+                resetInputs: "reset what a widget uses",
+                size: "change a widget’s size",
+                addGroup: "add a group to Home",
+                ungroup: "ungroup the widgets and keep them on Home",
+                groupAppearance: "change a group’s appearance",
+                groupInputs: "change the group’s shared inputs",
+                removeItem: "remove the selected item from Home, including its widgets if it’s a group",
+                groupWidth: "change a group’s width",
+                network: "change a widget’s network access",
                 groupCreateTitle: "Add a group to Home",
-                groupCreate: ({ group, widgets }) => `Adds the group “${group}” with ${widgets}.`,
+                groupCreate: ({ group, widgets }) => `add the group “${group}” with ${widgets}`,
             },
             teamArchive: "Waiting invitations are permanently revoked. Restoring the Team does not restore them.",
-            teamPolicyInherit: "Use the Home’s sign-in policy.",
-            teamPolicyInheritMayExpand: "Use the Home’s sign-in policy. This may allow more sign-in methods.",
-            teamPolicyClearTeam: "Clear the Team member defaults and all Group overrides.",
-            teamPolicyClearGroup: "Clear the Group member defaults.",
+            teamPolicyInherit: "use the Home’s sign-in policy",
+            teamPolicyMayExpand: "This may allow more sign-in methods.",
+            teamPolicyClearTeam: "clear the Team member defaults and all Group overrides",
+            teamPolicyClearGroup: "clear the Group member defaults",
             machinePresetPrepare: "Build a prepared image for this preset. Provider build and artifact storage charges may apply.",
             setupApply: "Apply Machine setup",
             setupAttach: "Attach",

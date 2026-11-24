@@ -8,7 +8,7 @@ import { MachineSetupApplyInputV1Schema, MachineSetupRemoveInputV1Schema } from 
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MACHINE_SETUP_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupChangeGroupRow } from '@/components/settings/machines/managed/MachineSetupChangeGroupRow';
 import { groupMachineSetupChanges } from '@/components/settings/machines/managed/machineSetupReviewChanges';
-import { formatSettledSessionTeamApproval, readActionApprovalSubject, readApprovalPreviewSummary, type ApprovalSummaryInput } from './actionApprovalPresentation';
+import { presentActionApproval, readActionApprovalSubject, readApprovalPreviewSummary, type ApprovalSummaryInput } from './actionApprovalPresentation';
 import { readSettledSessionTeamApproval, type SettledSessionTeamApproval } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { useApprovalPrincipalName } from './approvalPrincipalReading';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
@@ -17,7 +17,7 @@ import { HOME_HUB_LAYOUT_UPDATE_ACTION_ID, readHomeLayoutApprovalEffect } from '
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
-import { SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -41,19 +41,17 @@ export const ApprovalPreviewCard = React.memo(function ApprovalPreviewCard(props
 /** Hosts may place this sentence in their existing Request section while family facts stay in the shared body. */
 export const ApprovalPreviewSummary = React.memo(function ApprovalPreviewSummary(props: Readonly<{ preview: unknown; request?: ApprovalSummaryInput; serverId?: string | null }>) {
     const language = usePreferredLanguage();
-    const settledTeamChange = props.request?.actionId === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 && props.request.execution?.ok;
-    const summary = React.useMemo(() => settledTeamChange ? null : readApprovalPreviewSummary(props.preview, props.request),
-        [props.preview, props.request, language, settledTeamChange]);
-    if (settledTeamChange && props.request) {
-        const settled = readSettledSessionTeamApproval(props.request);
-        return settled ? <SettledSessionTeamPreview approval={settled} serverId={props.serverId ?? null} /> : null;
+    const { request } = props;
+    const settled = React.useMemo(() => request ? readSettledSessionTeamApproval(request) : null, [request]);
+    const layoutEffect = React.useMemo(() => request?.actionId === HOME_HUB_LAYOUT_UPDATE_ACTION_ID
+        ? readHomeLayoutApprovalEffect(request.actionArgs) : null, [request]);
+    const summary = React.useMemo(() => settled || layoutEffect?.kind === 'groupCreate' ? null : readApprovalPreviewSummary(props.preview, request),
+        [props.preview, request, language, settled, layoutEffect]);
+    if (request && settled) {
+        return <SettledSessionTeamPreview request={request} approval={settled} serverId={props.serverId ?? null} />;
     }
-    if (props.request?.actionId === HOME_HUB_LAYOUT_UPDATE_ACTION_ID
-        && (props.request.status === undefined || props.request.status === 'open')) {
-        const effect = readHomeLayoutApprovalEffect(props.request.actionArgs);
-        if (effect?.kind === 'groupCreate') {
-            return <HomeLayoutGroupPreview {...props} request={props.request} widgetIds={effect.widgetIds} />;
-        }
+    if (request && layoutEffect?.kind === 'groupCreate') {
+        return <HomeLayoutGroupPreview {...props} request={request} widgetIds={layoutEffect.widgetIds} />;
     }
     if (props.request?.actionId === 'scm.diffSummary.result.clear') return <ClearApprovalPreview {...props} request={props.request} />;
     return <ApprovalPreviewText summary={summary} />;
@@ -144,11 +142,11 @@ function ClearApprovalPreview(props: Readonly<{ preview: unknown; request: Appro
     return <ApprovalPreviewText summary={readApprovalPreviewSummary(props.preview, props.request, subject)} />;
 }
 
-function SettledSessionTeamPreview(props: Readonly<{ approval: SettledSessionTeamApproval; serverId: string | null }>) {
+function SettledSessionTeamPreview(props: Readonly<{ request: ApprovalSummaryInput; approval: SettledSessionTeamApproval; serverId: string | null }>) {
     const { approval, serverId } = props;
     const reference = approval.kind === 'teamSet' && approval.teamGrantName === null ? approval.team : undefined;
     const { name } = useApprovalPrincipalName(reference, serverId);
-    return <ApprovalPreviewText summary={formatSettledSessionTeamApproval(approval, name)} />;
+    return <ApprovalPreviewText summary={presentActionApproval({ ...props.request, sessionTeamName: name }).summary} />;
 }
 
 function HomeLayoutGroupPreview(props: Readonly<{

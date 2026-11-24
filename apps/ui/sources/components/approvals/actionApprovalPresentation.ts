@@ -1,5 +1,5 @@
 import { CurrentUiContextCommandInvokeOutputSchema, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { TEAM_CREATE_ACTION_ID_V1, TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { HOME_HUB_LAYOUT_UPDATE_ACTION_ID } from '@happier-dev/protocol/actions/specs/homeHub';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -7,7 +7,7 @@ import { ActionIdSchema, CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID, REGISTRY_S
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { AccountErasureReviewV1Schema } from '@happier-dev/protocol/auth/accountErasureReview';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
-import { formatPendingGovernanceSummary } from './governanceApprovalSummary';
+import { formatGovernanceChange, formatGovernanceSummary, readGovernanceApprovalPhase, type GovernanceApprovalPhase } from './governanceApprovalSummary';
 import { appendTeamCredentialSourceSummary } from '@happier-dev/protocol/actions/specs/teamCredentialApproval';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { describeApprovalActionFields, readSettledSessionTeamApproval, readTeamMemberApprovalPresentation,
@@ -41,6 +41,7 @@ export type ActionApprovalPresentationInput = Readonly<{
     incomingDiscussionNames?: IncomingDiscussionApprovalNames;
     role?: RoleCatalogEntry | null;
     homeLayoutWidgets?: readonly string[];
+    sessionTeamName?: string | null;
     /** The target Machine's readable path form (home-relative), when the presenting app knows its home. */
     formatPath?: ((path: string) => string) | null;
 }>;
@@ -59,7 +60,7 @@ export function readIncomingDiscussionApprovalSource(input: Readonly<{ actionId?
     return parsed.success && 'externalSource' in parsed.data.content ? parsed.data.content.externalSource ?? null : null;
 }
 
-export function formatSettledSessionTeamApproval(approval: SettledSessionTeamApproval, teamName?: string | null): string {
+function formatSettledSessionTeamApproval(approval: SettledSessionTeamApproval, teamName?: string | null): string {
     const summary = approval.kind === 'teamCleared' ? t('session.access.contextCleared')
         : t('session.access.contextSet', { team: approval.teamGrantName ?? teamName ?? t('common.unavailable') });
     const access = approval.grants.length === 0 ? t('session.access.noDirectTeamGrants')
@@ -67,43 +68,59 @@ export function formatSettledSessionTeamApproval(approval: SettledSessionTeamApp
     return `${summary}\n${access}`;
 }
 
+/** These Actions' ordinary operands supply the change even when there is no special consequence. */
+function readGovernanceSummaryFromInput(spec: ReturnType<typeof getActionSpec>, input: ActionApprovalPresentationInput,
+    phase: GovernanceApprovalPhase): string | null {
+    if (spec.id === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 && phase === 'completed') {
+        const settled = readSettledSessionTeamApproval(input);
+        if (settled) return formatSettledSessionTeamApproval(settled, input.sessionTeamName);
+    }
+    const homeSettings = spec.approvalPresentation?.homeSettingMapInputPaths !== undefined;
+    if (!(homeSettings || spec.id === TEAM_CREATE_ACTION_ID_V1 || spec.id === TEAM_POLICY_SET_ACTION_ID_V1
+        || spec.id === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1)) return null;
+    const parsed = spec.inputSchema.safeParse(input.actionArgs);
+    if (!parsed.success) return null;
+    const args = readRecord(parsed.data);
+    if (homeSettings) {
+        return formatGovernanceChange(phase, t(args.discardPendingRestart === true
+            ? 'actionConfirmations.governance.change.homeSettingsDiscard' : 'actionConfirmations.governance.change.homeSettings'));
+    }
+    if (spec.id === TEAM_CREATE_ACTION_ID_V1 && typeof args.name === 'string') {
+        return formatGovernanceChange(phase, t('actionConfirmations.governance.change.teamCreate', { name: args.name }));
+    }
+    if (spec.id === TEAM_POLICY_SET_ACTION_ID_V1) {
+        return formatGovernanceChange(phase, t('actionConfirmations.governance.change.teamPolicy'));
+    }
+    const clearing = args.primaryTeamId === null;
+    const sentence = formatGovernanceChange(phase, t(clearing
+        ? 'actionConfirmations.governance.change.sessionTeamClear' : 'actionConfirmations.governance.change.sessionTeamSet'));
+    if (phase !== 'pending') return sentence;
+    return [sentence, t('actionConfirmations.governance.sessionTeamGrantsStay'),
+        clearing ? null : t('actionConfirmations.governance.sessionTeamPolicyGrant')].filter(Boolean).join(' ');
+}
+
 export type ApprovalSummaryInput = Readonly<{ actionId: string; actionArgs: unknown; status?: ApprovalRequest['status'];
     executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; execution?: ApprovalRequest['execution'] }>;
 
-/** A supplied request summary reads through its domain owner; absent previews remain absent. */
+/** Preserve carried copy for other families while presenting governance from its typed operands. */
 export function readApprovalPreviewSummary(preview: unknown, request?: ApprovalSummaryInput, subject?: string | null,
     homeLayoutWidgets?: readonly string[]): string | null {
-    if (request?.actionId === HOME_HUB_LAYOUT_UPDATE_ACTION_ID && (request.status === undefined || request.status === 'open')) {
-        return presentActionApproval({ ...request, preview, subject, homeLayoutWidgets }).summary;
-    }
-    if (request?.actionId === SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1) {
-        if (request.execution?.ok || request.status === 'executed') {
-            const settled = readSettledSessionTeamApproval(request);
-            return settled ? formatSettledSessionTeamApproval(settled) : null;
-        }
-        return presentActionApproval({ ...request, preview, subject }).summary;
-    }
-    if (!preview || typeof preview !== 'object' || Array.isArray(preview)) return null;
-    const storedSummary = typeof (preview as { summary?: unknown }).summary === 'string'
-        ? (preview as { summary: string }).summary.trim()
-        : '';
-    if (!storedSummary) return null;
+    const stored = readRecord(preview);
+    const storedSummary = typeof stored.summary === 'string' ? stored.summary.trim() : '';
     const actionId = request ? ActionIdSchema.safeParse(request.actionId) : null;
-    if (actionId?.success) {
-        // The library owner captured this name before the mutation. Raw delete
-        // operands contain only an id and cannot re-derive that description.
-        if (WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId.data).success
-            && 'widgetLibraryName' in preview && typeof preview.widgetLibraryName === 'string' && preview.widgetLibraryName.trim()) return storedSummary;
-        const spec = getActionSpec(actionId.data);
-        if (readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length) return presentActionApproval({ actionId: actionId.data,
-            actionArgs: request?.actionArgs, preview, status: request?.status }).summary;
-        const summary = spec.approvalPresentation && (spec.inputSchema.safeParse(request?.actionArgs).success
-            || spec.approvalPresentation.inputSchema?.safeParse(request?.actionArgs).success)
-            ? spec.approvalPresentation?.summary?.(request?.actionArgs) ?? null : null;
-        return presentActionApproval({ actionId: actionId.data, actionArgs: request?.actionArgs,
-            authoredSummary: summary || storedSummary, subject, status: request?.status }).summary;
-    }
-    return storedSummary;
+    if (!request || !actionId?.success) return storedSummary || null;
+    if (!storedSummary && request.actionArgs == null && !request.execution?.ok) return null;
+    // A widget library receipt carries the removed name, which its operands cannot recover.
+    if (storedSummary && WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId.data).success
+        && typeof stored.widgetLibraryName === 'string' && stored.widgetLibraryName.trim()) return storedSummary;
+    const spec = getActionSpec(actionId.data);
+    const hasCapturedCopy = readWidgetApprovalPresentationV1(preview) || readTeamCredentialApprovalSources(preview).length > 0;
+    const canonicalCopy = storedSummary && !hasCapturedCopy && spec.approvalPresentation
+        && (spec.inputSchema.safeParse(request.actionArgs).success || spec.approvalPresentation.inputSchema?.safeParse(request.actionArgs).success)
+        ? spec.approvalPresentation.summary?.(request.actionArgs) : null;
+    const presentation = presentActionApproval({ ...request, preview, subject, homeLayoutWidgets,
+        authoredSummary: hasCapturedCopy ? null : canonicalCopy || storedSummary });
+    return storedSummary || presentation.governance ? presentation.summary : null;
 }
 
 /** Only the Account override Actions name an Account catalog Role. */
@@ -162,7 +179,9 @@ function readNewSessionDraftActionIdentity(actionId: string, actionArgs: unknown
 }
 
 /** One UI copy boundary for confirmation, Inbox, page and preview; authored plugin copy stays authored. */
-export function presentActionApproval(input: ActionApprovalPresentationInput): Readonly<{ title: string | null; summary: string | null; confirmLabel: string | null; destructive?: boolean }> {
+export function presentActionApproval(input: ActionApprovalPresentationInput): Readonly<{
+    title: string | null; summary: string | null; confirmLabel: string | null; destructive?: boolean; governance?: true;
+}> {
     const serviceControl = presentLocalServiceControlApproval({ actionId: input.actionId, actionArgs: input.actionArgs, subject: input.subject });
     const parsed = ActionIdSchema.safeParse(input.actionId);
     if (!parsed.success) {
@@ -264,26 +283,26 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const spawnCredentialSuffix = spec.id === SESSION_SPAWN_NEW_ACTION_ID_V1
         ? appendTeamCredentialSourceSummary('', teamCredentialSources) : '';
     let canonicalCopySummary: string | null = null;
-    let canonicalGovernanceSummary: string | null = null;
+    let governanceSummary: string | null = null;
     let homeLayoutTitle: string | null = null;
+    const phase = readGovernanceApprovalPhase(input);
     const summarySource = buildApprovalPreviewSummary(spec, input.actionArgs, {
         ...(input.formatPath ? { formatPath: input.formatPath } : {}), ...(widgetPresentation ? { widgetPresentation } : {}),
         teamCredentialSources: spawnCredentialSuffix ? [] : teamCredentialSources,
         ...(teamMember ? { teamMemberPresentation: teamMember } : {}),
-        ...(input.status === undefined || input.status === 'open' || input.kind === 'confirmation' ? {
-            formatGovernanceSummary: (review, legacy) => {
-                canonicalGovernanceSummary = legacy()?.trim() ?? null;
-                if (review.kind === 'homeLayout' && (review.effect.kind === 'groupCreate' || review.effect.kind === 'addGroup')) {
-                    homeLayoutTitle = t('actionConfirmations.governance.homeLayout.groupCreateTitle');
-                }
-                return formatPendingGovernanceSummary(review, input.homeLayoutWidgets);
-            },
-        } : {}),
+        formatGovernanceSummary: review => {
+            if (review.kind === 'homeLayout' && (review.effect.kind === 'groupCreate' || review.effect.kind === 'addGroup')) {
+                homeLayoutTitle = t('actionConfirmations.governance.homeLayout.groupCreateTitle');
+            }
+            governanceSummary = formatGovernanceSummary(review, phase, input.homeLayoutWidgets);
+            return governanceSummary;
+        },
         formatSessionVisualCopySummary: summary => {
             canonicalCopySummary = summary.source;
             return t('actionPresentation.sessionVisualCopySummary', summary);
         },
     });
+    governanceSummary ??= readGovernanceSummaryFromInput(spec, input, phase);
     const savedStartSummary = spawnCredentialSuffix ? readRecord(input.preview).summary : undefined;
     const carriedSummary = input.authoredSummary?.trim()
         || (typeof savedStartSummary === 'string' ? savedStartSummary.trim() : undefined);
@@ -294,8 +313,7 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     // even when a receiver carries it as its summary. The person reads `approvalPresentation.summary` and facts.
     const agentInstructions = authoredSummary === spec.description?.trim() || authoredSummary === spec.inputHints?.description?.trim();
     const distinctAuthoredSummary = authoredSummary && !agentInstructions && authoredSummary !== summarySource
-        && authoredSummary !== canonicalCopySummary && authoredSummary !== canonicalGovernanceSummary
-        && authoredSummary !== (canonicalGovernanceSummary ? `${canonicalGovernanceSummary}.` : null) ? authoredSummary : null;
+        && authoredSummary !== canonicalCopySummary ? authoredSummary : null;
     const summary = distinctAuthoredSummary ? distinctAuthoredSummary
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`
@@ -317,7 +335,8 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     return {
         confirmLabel,
         title,
-        summary: [confirmationDraftSubject, visibleSummary, disclosure, ...shareLoss].filter(Boolean).join('\n\n') || null,
+        summary: [confirmationDraftSubject, governanceSummary ?? visibleSummary, disclosure, ...shareLoss].filter(Boolean).join('\n\n') || null,
+        ...(governanceSummary !== null ? { governance: true } : {}),
         ...(spec.irreversible ? { destructive: true } : {}),
     };
 }

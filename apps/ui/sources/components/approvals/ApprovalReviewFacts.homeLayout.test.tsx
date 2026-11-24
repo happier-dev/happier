@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
 import type { HomeHubLayoutIntent } from '@happier-dev/protocol/actions/specs/homeHub';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -35,41 +36,41 @@ afterEach(async () => {
 
 const summaryWidget = { v: 1, id: 'widget-1', definition: { kind: 'builtin', id: 'usage_capacity' }, bindings: {} } as const;
 const summaryCases = {
-    move: [{ kind: 'move', sectionId: 'reviews', step: 1 }, 'Moves an item on Home.'],
-    move_to: [{ kind: 'move_to', sectionId: 'reviews', position: { nativeIndex: 0 } }, 'Moves an item on Home.'],
-    reorder: [{ kind: 'reorder', sectionIds: ['start', 'reviews'] }, 'Changes the order of items on Home.'],
-    visibility: [{ kind: 'visibility', sectionId: 'reviews', hidden: true }, 'Hides an item on Home.'],
-    frameStyle: [{ kind: 'frameStyle', sectionId: 'reviews', frameStyle: null }, 'Restores the default frame style.'],
-    setup_visibility: [{ kind: 'setup_visibility', stepId: 'addPhone', hidden: false }, 'Shows a setup step.'],
-    restore_setup: [{ kind: 'restore_setup' }, 'Shows all setup steps again.'],
-    reset: [{ kind: 'reset' }, 'Restores the default Home layout.'],
-    widget_add: [{ kind: 'widget_add', instance: summaryWidget }, 'Adds a widget to Home.'],
-    widget_remove: [{ kind: 'widget_remove', instanceId: 'widget-1' }, 'Removes a widget from Home.'],
-    widget_rename: [{ kind: 'widget_rename', instanceId: 'widget-1' }, 'Restores the default name.'],
-    widget_inputs: [{ kind: 'widget_inputs', instanceId: 'widget-1', bindings: {} }, 'Changes what a widget uses.'],
-    widget_inputs_reset: [{ kind: 'widget_inputs_reset', instanceId: 'widget-1' }, 'Resets what a widget uses.'],
-    widget_size: [{ kind: 'widget_size', instanceId: 'widget-1', size: 'medium' }, 'Changes a widget’s size.'],
-    group_create: [{ kind: 'group_create', groupId: 'group-1', instanceIds: ['widget-1'] }, 'Adds the group “Unavailable” with Unavailable.'],
+    move: [{ kind: 'move', sectionId: 'reviews', step: 1 }, 'This will move an item on Home.'],
+    move_to: [{ kind: 'move_to', sectionId: 'reviews', position: { nativeIndex: 0 } }, 'This will move an item on Home.'],
+    reorder: [{ kind: 'reorder', sectionIds: ['start', 'reviews'] }, 'This will change the order of items on Home.'],
+    visibility: [{ kind: 'visibility', sectionId: 'reviews', hidden: true }, 'This will hide an item on Home.'],
+    frameStyle: [{ kind: 'frameStyle', sectionId: 'reviews', frameStyle: null }, 'This will restore the default frame style.'],
+    setup_visibility: [{ kind: 'setup_visibility', stepId: 'addPhone', hidden: false }, 'This will show a setup step.'],
+    restore_setup: [{ kind: 'restore_setup' }, 'This will show all setup steps again.'],
+    reset: [{ kind: 'reset' }, 'This will restore the default Home layout.'],
+    widget_add: [{ kind: 'widget_add', instance: summaryWidget }, 'This will add a widget to Home.'],
+    widget_remove: [{ kind: 'widget_remove', instanceId: 'widget-1' }, 'This will remove a widget from Home.'],
+    widget_rename: [{ kind: 'widget_rename', instanceId: 'widget-1' }, 'This will restore the default name.'],
+    widget_inputs: [{ kind: 'widget_inputs', instanceId: 'widget-1', bindings: {} }, 'This will change what a widget uses.'],
+    widget_inputs_reset: [{ kind: 'widget_inputs_reset', instanceId: 'widget-1' }, 'This will reset what a widget uses.'],
+    widget_size: [{ kind: 'widget_size', instanceId: 'widget-1', size: 'medium' }, 'This will change a widget’s size.'],
+    group_create: [{ kind: 'group_create', groupId: 'group-1', instanceIds: ['widget-1'] }, 'This will add the group “Unavailable” with Unavailable.'],
     group_add: [{ kind: 'group_add', group: { kind: 'group', id: 'group-1', width: 'full',
-        children: [{ kind: 'widget', instance: summaryWidget }] } }, 'Adds a group to Home.'],
-    group_ungroup: [{ kind: 'group_ungroup', instanceId: 'group-1' }, 'Ungroups the widgets and keeps them on Home.'],
-    group_set: [{ kind: 'group_set', instanceId: 'group-1', width: 'full' }, 'Changes a group’s appearance.'],
-    group_inputs: [{ kind: 'group_inputs', instanceId: 'group-1', bindings: {} }, 'Changes the group’s shared inputs.'],
-    add: [{ kind: 'add', instance: summaryWidget }, 'Adds a widget to Home.'],
-    remove: [{ kind: 'remove', instanceId: 'group-1' }, 'Removes the selected item from Home, including its widgets if it’s a group.'],
-    rename: [{ kind: 'rename', instanceId: 'group-1', displayName: 'Status' }, 'Changes the name.'],
-    size: [{ kind: 'size', instanceId: 'widget-1', size: 'medium' }, 'Changes a widget’s size.'],
-    width: [{ kind: 'width', instanceId: 'group-1', width: 'full' }, 'Changes a group’s width.'],
-    frame: [{ kind: 'frame', instanceId: 'widget-1', frameStyle: 'plain' }, 'Changes the frame style.'],
-    inputs: [{ kind: 'inputs', instanceId: 'widget-1', bindings: {} }, 'Changes what a widget uses.'],
-    inputs_reset: [{ kind: 'inputs_reset', instanceId: 'widget-1' }, 'Resets what a widget uses.'],
-    network: [{ kind: 'network', instanceId: 'widget-1', network: { network: 'none' } }, 'Changes a widget’s network access.'],
+        children: [{ kind: 'widget', instance: summaryWidget }] } }, 'This will add a group to Home.'],
+    group_ungroup: [{ kind: 'group_ungroup', instanceId: 'group-1' }, 'This will ungroup the widgets and keep them on Home.'],
+    group_set: [{ kind: 'group_set', instanceId: 'group-1', width: 'full' }, 'This will change a group’s appearance.'],
+    group_inputs: [{ kind: 'group_inputs', instanceId: 'group-1', bindings: {} }, 'This will change the group’s shared inputs.'],
+    add: [{ kind: 'add', instance: summaryWidget }, 'This will add a widget to Home.'],
+    remove: [{ kind: 'remove', instanceId: 'group-1' }, 'This will remove the selected item from Home, including its widgets if it’s a group.'],
+    rename: [{ kind: 'rename', instanceId: 'group-1', displayName: 'Status' }, 'This will change the name.'],
+    size: [{ kind: 'size', instanceId: 'widget-1', size: 'medium' }, 'This will change a widget’s size.'],
+    width: [{ kind: 'width', instanceId: 'group-1', width: 'full' }, 'This will change a group’s width.'],
+    frame: [{ kind: 'frame', instanceId: 'widget-1', frameStyle: 'plain' }, 'This will change the frame style.'],
+    inputs: [{ kind: 'inputs', instanceId: 'widget-1', bindings: {} }, 'This will change what a widget uses.'],
+    inputs_reset: [{ kind: 'inputs_reset', instanceId: 'widget-1' }, 'This will reset what a widget uses.'],
+    network: [{ kind: 'network', instanceId: 'widget-1', network: { network: 'none' } }, 'This will change a widget’s network access.'],
 } as const satisfies { readonly [K in HomeHubLayoutIntent['kind']]: readonly [Extract<HomeHubLayoutIntent, { kind: K }>, string] };
 
 it.each([
     ...Object.values(summaryCases),
-    [{ kind: 'move', instanceId: 'widget-1', groupId: 'group-1', toIndex: 0 }, 'Moves an item into a group.'],
-    [{ kind: 'move', instanceId: 'widget-1', groupId: null, toIndex: 0 }, 'Moves an item to the top level of Home.'],
+    [{ kind: 'move', instanceId: 'widget-1', groupId: 'group-1', toIndex: 0 }, 'This will move an item into a group.'],
+    [{ kind: 'move', instanceId: 'widget-1', groupId: null, toIndex: 0 }, 'This will move an item to the top level of Home.'],
 ] as readonly (readonly [HomeHubLayoutIntent, string])[])('describes the effect of %j', (intent, expected) => {
     const actionId = 'home.hub.layout.update';
     const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent });
@@ -85,7 +86,9 @@ it('presents a Home group request in French even when the stored summary is Engl
     const actionId = 'home.hub.layout.update';
     const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: { ...summaryCases.group_create[0], title: 'W28 label group' } });
     expect(readApprovalPreviewSummary({ summary: 'Customize Home.' }, { actionId, actionArgs, status: 'open' }, undefined,
-        ['Machines', 'Services locaux'])).toBe('Ajoute le groupe « W28 label group » avec Machines et Services locaux.');
+        ['Machines', 'Services locaux'])).toBe('Le changement prévu consiste à ajouter le groupe « W28 label group » avec Machines et Services locaux.');
+    expect(readApprovalPreviewSummary({ summary: 'Customize Home.' }, { actionId, actionArgs, status: 'rejected' }, undefined,
+        ['Machines', 'Services locaux'])).toBe('Le changement n’a pas été effectué. La demande visait à ajouter le groupe « W28 label group » avec Machines et Services locaux.');
 });
 
 it.each([
@@ -207,20 +210,24 @@ it('keeps an allocated Home Group ID technical and names a saved destination on 
             definition: { kind: 'builtin', id: 'usage_capacity' }, displayName: 'Budget Widget', bindings: {} }, size: 'medium' });
         await layout.apply({ kind: 'group_create', groupId, instanceIds: [instanceId], title });
     } finally { account.dispose(); }
-    const review = (intent: unknown, capturedHomeId: string | null = scope.serverId) => <InjectedAuthProvider credentials={credentials}>
+    const review = (intent: unknown, capturedHomeId: string | null = scope.serverId,
+        status: ApprovalRequest['status'] = 'open') => <InjectedAuthProvider credentials={credentials}>
         <ApprovalReviewFacts actionId={actionId} actionArgs={getActionSpec(actionId).inputSchema.parse({ intent })}
-            preview={null} status="open" serverId={capturedHomeId} testID="home-layout-group-review" />
+            preview={null} status={status} serverId={capturedHomeId} testID="home-layout-group-review" />
     </InjectedAuthProvider>;
     const create = await renderScreen(review(createIntent));
     try {
-        await waitForHomeGovernance(() => expect(create.getTextContent()).toContain('Adds the group “Capacity lab” with Capacity Widget and Budget Widget.'));
+        await waitForHomeGovernance(() => expect(create.getTextContent()).toContain('This will add the group “Capacity lab” with Capacity Widget and Budget Widget.'));
         expect(create.getTextContent()).toContain(title);
         expect(create.getTextContent()).toContain('Widgets');
         expect(create.getTextContent()).not.toContain('Instance ids');
         expect(create.getTextContent()).not.toContain('Group create');
         expect(create.getTextContent()).not.toContain(allocatedGroupId);
+        await create.update(review(createIntent, scope.serverId, 'rejected'));
+        await waitForHomeGovernance(() => expect(create.getTextContent()).toContain(
+            'The change wasn’t made. The request was to add the group “Capacity lab” with Capacity Widget and Budget Widget.'));
         await create.update(review(createIntent, null));
-        expect(create.getTextContent()).toContain('Adds the group “Capacity lab” with Unavailable and Unavailable.');
+        expect(create.getTextContent()).toContain('This will add the group “Capacity lab” with Unavailable and Unavailable.');
         expect(create.getTextContent()).not.toContain('Capacity Widget');
         await create.pressByTestIdAsync('approvals.technical-details.header');
         expect(create.getTextContent()).toContain(allocatedGroupId);

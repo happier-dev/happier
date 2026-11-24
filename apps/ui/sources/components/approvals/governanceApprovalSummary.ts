@@ -1,5 +1,6 @@
 import type { GovernanceApprovalSummary } from '@happier-dev/protocol/actions/specs/definition';
 import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { t } from '@/text';
 import { resolveActionTitle } from '@/text/actionTitles';
@@ -42,25 +43,56 @@ function formatSetupSummary(setup: Extract<GovernanceApprovalSummary, { kind: 't
     ].join('\n');
 }
 
-/** The spec selects the consequences. The UI owns the words used to review them. */
-export function formatPendingGovernanceSummary(summary: GovernanceApprovalSummary, homeLayoutWidgets?: readonly string[]): string {
+export function readGovernanceApprovalPhase({ status, execution }: Partial<Pick<ApprovalRequest, 'status' | 'execution'>>):
+    'pending' | 'completed' | 'notApplied' | 'failed' | 'unknown' {
+    switch (status) {
+        case 'rejected':
+        case 'canceled': return 'notApplied';
+        case 'outcome_unknown': return 'unknown';
+        case 'failed': return 'failed';
+        case 'executed': return execution?.ok === false ? 'failed' : 'completed';
+        case undefined: return execution === undefined ? 'pending' : execution.ok ? 'completed' : 'failed';
+        case 'open':
+        case 'approved':
+        case 'executing': return 'pending';
+    }
+}
+
+export type GovernanceApprovalPhase = ReturnType<typeof readGovernanceApprovalPhase>;
+
+export function formatGovernanceChange(phase: GovernanceApprovalPhase, change: string): string {
+    return t(`actionConfirmations.governance.status.${phase}`, { change });
+}
+
+/** The spec selects the consequences. The UI owns the words and whether they describe intent or completion. */
+export function formatGovernanceSummary(summary: GovernanceApprovalSummary, phase: GovernanceApprovalPhase,
+    homeLayoutWidgets?: readonly string[]): string {
     switch (summary.kind) {
-        case 'teamArchive': return t('actionConfirmations.governance.teamArchive');
         case 'homeLayout': {
             const { effect } = summary;
-            if (effect.kind !== 'groupCreate') return t(`actionConfirmations.governance.homeLayout.${effect.kind}`);
+            if (effect.kind !== 'groupCreate') {
+                return formatGovernanceChange(phase, t(`actionConfirmations.governance.homeLayout.${effect.kind}`));
+            }
             const widgets = homeLayoutWidgets ?? effect.widgetIds.map(() => t('common.unavailable'));
             const group = readWidgetGroupTitle(effect) ?? t('common.unavailable');
-            return t('actionConfirmations.governance.homeLayout.groupCreate', { group, widgets: joinList(widgets) });
+            return formatGovernanceChange(phase, t('actionConfirmations.governance.homeLayout.groupCreate', { group, widgets: joinList(widgets) }));
         }
-        case 'nativeCredentialDelivery': return t('actionConfirmations.governance.nativeCredentialDelivery');
-        case 'machinePresetPrepare': return t('actionConfirmations.governance.machinePresetPrepare');
-        case 'teamPolicy': return [
-            summary.signIn === 'inherit' ? t('actionConfirmations.governance.teamPolicyInherit')
-                : summary.signIn === 'inheritMayExpand' ? t('actionConfirmations.governance.teamPolicyInheritMayExpand') : null,
-            summary.clearTeamDefaults ? t('actionConfirmations.governance.teamPolicyClearTeam') : null,
-            summary.clearGroupDefaults ? t('actionConfirmations.governance.teamPolicyClearGroup') : null,
-        ].filter(Boolean).join(' ');
-        case 'teamSetup': return formatSetupSummary(summary.setup);
+        case 'teamArchive':
+        case 'nativeCredentialDelivery':
+        case 'machinePresetPrepare':
+            return phase === 'pending' ? t(`actionConfirmations.governance.${summary.kind}`)
+                : formatGovernanceChange(phase, t(`actionConfirmations.governance.change.${summary.kind}`));
+        case 'teamPolicy': {
+            const changes = [
+                ...(summary.signIn ? [t('actionConfirmations.governance.teamPolicyInherit')] : []),
+                ...(summary.clearTeamDefaults ? [t('actionConfirmations.governance.teamPolicyClearTeam')] : []),
+                ...(summary.clearGroupDefaults ? [t('actionConfirmations.governance.teamPolicyClearGroup')] : []),
+            ];
+            const sentence = formatGovernanceChange(phase, joinList(changes));
+            return phase === 'pending' && summary.signIn === 'inheritMayExpand'
+                ? `${sentence} ${t('actionConfirmations.governance.teamPolicyMayExpand')}` : sentence;
+        }
+        case 'teamSetup': return (phase === 'pending' ? formatSetupSummary(summary.setup) : '')
+            || formatGovernanceChange(phase, t('actionConfirmations.governance.change.teamSetup'));
     }
 }
