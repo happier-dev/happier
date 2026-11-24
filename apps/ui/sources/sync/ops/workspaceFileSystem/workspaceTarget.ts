@@ -3,6 +3,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 
 export type MachineFileSystemTarget = Readonly<{
     kind?: undefined;
+    workspace?: never;
     machineId: string;
     rootPath: string;
     agentRootPath?: string | null;
@@ -14,8 +15,8 @@ export type WorkspaceFileSystemTarget = MachineFileSystemTarget | Readonly<{
     workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>;
 }>;
 
-export function workspaceFileSystemTargetFromScope(scope: WorkspaceScopeBase): WorkspaceFileSystemTarget {
-    return scope.workspace ? { kind: 'managed', workspace: scope.workspace } : scope;
+export function workspaceFileSystemTargetFromScope({ workspace, ...machine }: Omit<MachineFileSystemTarget, 'workspace'> & Pick<WorkspaceScopeBase, 'workspace'>): WorkspaceFileSystemTarget {
+    return workspace ? { kind: 'managed', workspace } : machine;
 }
 
 /** The controller carries a managed request. The address still names the guest filesystem. */

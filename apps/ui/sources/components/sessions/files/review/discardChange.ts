@@ -4,8 +4,7 @@ import { decodeBase64 } from '@/encryption/base64';
 import { machineScmChangeDiscard, type MachineScmCallOptions } from '@/sync/ops/scm/machineScm';
 import { workspaceWriteFile } from '@/sync/ops/workspaceFileSystem/fileReadWrite';
 import { machineWorkspaceFileReplaceApply } from '@/sync/ops/machineWorkspaceFileReplace';
-import type { MachineFileSystemTarget } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
-import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { downloadBulkPayloadViaDirectExportToDestination } from '@/sync/domains/transfers/runtime/transferRuntime';
 import { publishPresentationNotice, readPresentationNotice, retirePresentationNotice, subscribePresentationNotices,
   type PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -19,7 +18,7 @@ export type DiscardChangeResult =
   | Readonly<{ ok: true; entry: ScmChangeDiscardResultEntry; fileReplaced: boolean; undo?: () => Promise<DiscardUndoResult>; undoUnavailable?: true; retire: () => void; refreshFailed: boolean; noteDelivery?: 'queued' | 'failed' }>
   | Readonly<{ ok: false; reason: FailureReason }>;
 export type DiscardChangeParams = Readonly<{
-  target: MachineFileSystemTarget & Pick<WorkspaceScopeBase, 'workspace'>;
+  target: Parameters<typeof workspaceFileSystemTargetFromScope>[0];
   entry: Omit<ScmComparisonDiscardEntry, 'includeUndo'>;
   messages: DiscardChangeMessages;
   refresh: () => Promise<void>;
@@ -123,7 +122,7 @@ export async function discardChange(params: DiscardChangeParams): Promise<Discar
           }
         } else {
           if (!retainedPrevious) { notice(params.messages.undo_unavailable, 'error'); return { success: false }; }
-          const result = await workspaceWriteFile(params.target, params.entry.path, retainedPrevious, entry.hashAfter, {
+          const result = await workspaceWriteFile(workspaceFileSystemTargetFromScope(params.target), params.entry.path, retainedPrevious, entry.hashAfter, {
             onApprovalPending: approval => {
               publishPresentationNotice({ key, message: t('approvals.waitingForYou'), severity: 'info', sticky: true, approval });
             },

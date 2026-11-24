@@ -11,6 +11,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { resolveFilePageMediaFacts } from '@/components/workspaces/files/file/filePageMediaFacts';
 import { workspaceStatFile } from '@/sync/ops/workspaceFileSystem';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -592,14 +593,16 @@ function ReviewBlockMediaLine(props: Readonly<{
     const serverId = scope?.serverId;
     const machineId = scope?.machineId;
     const rootPath = scope?.rootPath;
+    const workspace = scope?.workspace;
     React.useEffect(() => {
         if (!present || !machineId || !rootPath) return;
         const controller = new AbortController();
-        void workspaceStatFile({ serverId, machineId, rootPath }, filePath, { signal: controller.signal }).then((stat) => {
+        const target = workspaceFileSystemTargetFromScope({ serverId, machineId, rootPath, workspace });
+        void workspaceStatFile(target, filePath, { signal: controller.signal }).then((stat) => {
             if (!controller.signal.aborted && stat.success && stat.exists && typeof stat.sizeBytes === 'number') setSizeBytes(stat.sizeBytes);
         }, () => {});
         return () => controller.abort();
-    }, [present, serverId, machineId, rootPath, filePath]);
+    }, [present, serverId, machineId, rootPath, workspace, filePath]);
     const facts = resolveFilePageMediaFacts({ viewer: props.viewer, sizeBytes }).join(' · ');
     const glyph = props.viewer.kind === 'video' ? 'video-camera' : 'waveform';
     const line = (hovered: boolean) => (

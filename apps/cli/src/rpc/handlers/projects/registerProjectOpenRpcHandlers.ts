@@ -19,7 +19,7 @@ export function registerProjectOpenRpcHandlers(registrar: RpcHandlerRegistrar, i
   async function withRequesterContext<T>(context: RpcHandlerContext | undefined,
     run: (context: RpcHandlerContext | undefined, signing?: ProjectOpenRuntime['requesterMachineRpcSigning']) => Promise<T>): Promise<T> {
     const authorization = context?.callerInputAuthorization;
-    if (!authorization) return run(context);
+    if (!authorization || context.sessionProjectOpenRows) return run(context);
     const boundary = input.requesterBootstrapBoundary;
     const owner = input.requesterSessionRuntime;
     const origin = authorization.binding.sessionActionOrigin;
@@ -83,7 +83,7 @@ export function registerProjectOpenRpcHandlers(registrar: RpcHandlerRegistrar, i
       if (acceptance?.actionId === 'projects.open') {
         return openProject(parsed.data, runtime, admitted, acceptance);
       }
-      if (!input.observeExecution || !admitted) {
+      if (!input.observeExecution || !admitted || admitted.sessionProjectOpenRows) {
         return openProject(parsed.data, runtime, admitted);
       }
       const observed = await input.observeExecution({ actionId: 'projects.open', input: parsed.data,

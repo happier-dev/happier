@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { assertProjectAccountSnapshotTransition, parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { ProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
-import type { WorkspaceAddressV1, WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectRepositoryObservationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspaceRefByScope, resolveWorkspaceRefRemoval, upsertWorkspaceRefByScope,
     workspaceRefResolutionContextV1, type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
@@ -417,9 +417,47 @@ export function createProjectAccountRowsSync(options: Readonly<{
             return { ok: true, workspaceRefId: existing.id };
         }
     }
+    async function forgetRefs(select: (snapshot: ProjectAccountRowsSnapshot) =>
+        Readonly<{ ok: true; refs: readonly WorkspaceRefV1[] }> | Extract<WorkspaceRefAccountMutationResult, { ok: false }>,
+    signal?: AbortSignal): Promise<WorkspaceRefAccountMutationResult> {
+        while (true) {
+            const before = await refresh(signal);
+            const selected = select(before);
+            if (!selected.ok) return selected;
+            if (selected.refs.length === 0) return { ok: true };
+            let workspaceRefs = before.workspaceRefs;
+            const mutations = [];
+            for (const ref of selected.refs) {
+                const removed = resolveWorkspaceRefRemoval(workspaceRefs, {
+                    serverId: ref.serverId, workspaceRefId: ref.id, relationships: before.relationships,
+                });
+                if (!removed.ok) return removed;
+                workspaceRefs = removed.workspaceRefs;
+                mutations.push(mutation(null, { kind: 'workspace-ref', serverId: ref.serverId, id: ref.id }));
+            }
+            assertProjectAccountSnapshotTransition(before, { workspaceRefs, relationships: before.relationships });
+            const graph = { kind: 'relationship-graph' as const };
+            mutations.push(mutation({ key: graph, value: { relationships: [...before.relationships] } }, graph));
+            if (await commit({ mutations, expectedRefs: [], topologyChange: true }, signal) !== 'conflict') return { ok: true };
+        }
+    }
+    function forgetManagedAttachment(input: Readonly<{ serverId: string; managedId: string }>, signal?: AbortSignal) {
+        if (!areServerProfileIdentifiersEquivalent(input.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
+        return forgetRefs(snapshot => ({ ok: true, refs: snapshot.workspaceRefs.filter(ref =>
+            isManagedWorkspaceRefV2(ref) && ref.managedId === input.managedId
+            && areServerProfileIdentifiersEquivalent(ref.serverId, input.serverId)) }), signal);
+    }
     async function mutateRef(intent: WorkspaceRefAccountMutation, signal?: AbortSignal): Promise<WorkspaceRefAccountMutationResult> {
         const home = intent.kind === 'upsert' || intent.kind === 'migrate_label' ? intent.scope.serverId : intent.serverId;
         if (!areServerProfileIdentifiersEquivalent(home, options.scope.serverId)) throw failure('project_account_scope_mismatch');
+        if (intent.kind === 'remove') {
+            return await forgetRefs(before => {
+                const result = resolveWorkspaceRefById(before.workspaceRefs, intent.workspaceRefId, intent.serverId);
+                if (result.kind === 'ambiguous') return { ok: false, code: 'workspace_ref_ambiguous' };
+                if (result.kind === 'invalid') return { ok: false, code: 'workspace_ref_invalid' };
+                return { ok: true, refs: result.kind === 'resolved' ? [result.ref] : [] };
+            }, signal);
+        }
         while (true) {
             const before = await refresh(signal);
             const resolution = intent.kind === 'upsert' || intent.kind === 'migrate_label'
@@ -434,46 +472,34 @@ export function createProjectAccountRowsSync(options: Readonly<{
                     ...(intent.kind === 'set_pinned' ? { pinned: intent.pinned } : { label: intent.label }), signal });
                 return { ok: true };
             }
-            let nextRefs: readonly WorkspaceRefV1[];
-            let target: WorkspaceRefV1 | null = existing;
-            let rememberedOpen: number | undefined;
-            if (intent.kind === 'upsert' || intent.kind === 'migrate_label') {
-                if (intent.kind === 'migrate_label' && (options.readLegacyLabel?.(intent.legacyKey) !== intent.label || existing?.label)) return { ok: true, workspaceRefId: existing?.id, migrated: false };
-                const patch = intent.kind === 'migrate_label' ? { label: intent.label } : intent.patch;
-                const { lastOpenedAtMs, ...structuralPatch } = patch;
-                nextRefs = upsertWorkspaceRefByScope(before.workspaceRefs, { scope: intent.scope, nowMs: intent.nowMs, patch: structuralPatch });
-                const resolved = resolveWorkspaceRefByScope(nextRefs, intent.scope);
-                target = resolved.kind === 'resolved' ? resolved.ref : null;
-                if (!target) return { ok: false, code: 'workspace_ref_not_found' };
-                if (lastOpenedAtMs != null) rememberedOpen = lastOpenedAtMs;
-            } else {
-                if (!existing) return { ok: true };
-                const result = resolveWorkspaceRefRemoval(before.workspaceRefs, { serverId: existing.serverId, workspaceRefId: existing.id, relationships: before.relationships });
-                if (!result.ok) return result;
-                nextRefs = result.workspaceRefs; target = null;
-            }
+            if (intent.kind === 'migrate_label' && (options.readLegacyLabel?.(intent.legacyKey) !== intent.label || existing?.label)) return { ok: true, workspaceRefId: existing?.id, migrated: false };
+            const patch = intent.kind === 'migrate_label' ? { label: intent.label } : intent.patch;
+            const { lastOpenedAtMs: rememberedOpen, ...structuralPatch } = patch;
+            const nextRefs = upsertWorkspaceRefByScope(before.workspaceRefs, { scope: intent.scope, nowMs: intent.nowMs, patch: structuralPatch });
+            const resolved = resolveWorkspaceRefByScope(nextRefs, intent.scope);
+            if (resolved.kind !== 'resolved') return { ok: false, code: 'workspace_ref_not_found' };
             assertProjectAccountSnapshotTransition(before, { workspaceRefs: nextRefs, relationships: before.relationships });
-            const ref = target ?? existing!;
+            const ref = resolved.ref;
             const key = { kind: 'workspace-ref' as const, serverId: ref.serverId, id: ref.id };
-            const structural = target ? ProjectAccountWorkspaceRefV1Schema.parse((({ lastOpenedAtMs: _recency, ...value }) => value)(target)) : null;
-            const topologyChange = !existing || target === null;
-            const request: ProjectAccountRowMutationRequestV1 = { mutations: [mutation(structural ? { key, value: structural } : null, key)], expectedRefs: [], topologyChange };
+            const structural = ProjectAccountWorkspaceRefV1Schema.parse((({ lastOpenedAtMs: _recency, ...value }) => value)(ref));
+            const topologyChange = !existing;
+            const request: ProjectAccountRowMutationRequestV1 = { mutations: [mutation({ key, value: structural }, key)], expectedRefs: [], topologyChange };
             if (topologyChange) {
                 const graph = { kind: 'relationship-graph' as const };
                 request.mutations.push(mutation({ key: graph, value: { relationships: [...before.relationships] } }, graph));
                 // The ref mutation already carries its CAS. The unchanged graph CAS
                 // fences concurrent links without contending on unrelated labels.
-            } else if (existing && structural && areAccountSettingsJsonValuesEqual(ProjectAccountWorkspaceRefV1Schema.parse((({ lastOpenedAtMs: _recency, ...value }) => value)(existing)), structural)) {
+            } else if (existing && areAccountSettingsJsonValuesEqual(ProjectAccountWorkspaceRefV1Schema.parse((({ lastOpenedAtMs: _recency, ...value }) => value)(existing)), structural)) {
                 if (rememberedOpen !== undefined) { await options.writeRecency?.(existing, rememberedOpen); disclose(project(opened.values()), 'projection'); }
                 return { ok: true, workspaceRefId: existing.id };
             }
             if (await commit(request, signal) === 'conflict') continue; // Re-read rows and re-admit this intent at the same semantic owner.
             if (rememberedOpen !== undefined) { await options.writeRecency?.(ref, rememberedOpen); disclose(project(opened.values()), 'projection'); }
             if (intent.kind === 'migrate_label') { await options.retireLegacyLabel?.(intent.legacyKey, intent.label); return { ok: true, workspaceRefId: ref.id, migrated: true }; }
-            return intent.kind === 'upsert' ? { ok: true, workspaceRefId: ref.id } : { ok: true };
+            return { ok: true, workspaceRefId: ref.id };
         }
     }
-    return { read, refresh, refreshKeys, readWorkspaceRef, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
+    return { read, refresh, refreshKeys, readWorkspaceRef, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata, forgetManagedAttachment,
         recordWorkspaceSource: (address: WorkspaceAddressV2, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV2, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>

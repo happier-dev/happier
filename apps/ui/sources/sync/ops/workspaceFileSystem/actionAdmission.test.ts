@@ -787,6 +787,30 @@ describe('shared workspace filesystem Action admission', () => {
             payload: expect.objectContaining({ workspace }) }));
         await preview.unmount();
     });
+    it('keeps a managed Review media read from routing to the controller disk', async () => {
+        const { ChangedFilesReviewDiffBlock } = await import('@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock');
+        const { createChangedFilesReviewDiffStateSource } = await import('@/components/workspaces/scm/review/ChangedFilesReviewDiffStore');
+        const { createThemeFixture } = await import('@/dev/testkit/fixtures/themeFixtures');
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'attached-checkout', managedId: 'native-guest',
+            controller: { machineId: target.machineId, installationId: 'installed-controller' }, rootPath: target.rootPath } as const;
+        const filePath = 'recording.mp4';
+        const diffStateSource = createChangedFilesReviewDiffStateSource();
+        diffStateSource.setDiffState(filePath, { status: 'loaded', diff: '', error: null });
+        filesystem.fileBytes = new Uint8Array(2048);
+        const review = await renderScreen(createElement(ChangedFilesReviewDiffBlock, {
+            theme: createThemeFixture(), sessionId: 'review-session', snapshotSignature: 'review-scope',
+            filePath, diffStateSource, reviewCommentsEnabled: false, reviewCommentDrafts: [],
+            workspaceScope: { ...target, serverId, workspace },
+        }));
+        try {
+            await vi.waitFor(() => expect(filesystem.calls).toContainEqual(expect.objectContaining({ method: 'statFile' })));
+            const stats = filesystem.calls.filter(call => (call as FilesystemBoundaryRequest).method === 'statFile');
+            expect(stats).toEqual([expect.objectContaining({ machineId: workspace.controller.machineId,
+                payload: expect.objectContaining({ workspace }) })]);
+        } finally {
+            await review.unmount();
+        }
+    });
     it('keeps a cold viewer loading beyond 15 seconds and publishes the successful inline read', async () => {
         const text = 'riverglassneedle late success';
         filesystem.fileBytes = new TextEncoder().encode(text);

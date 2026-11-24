@@ -1472,7 +1472,7 @@ export class RpcHandlerManager {
         /** Installed host forwards an already-admitted requester; input never supplies authority. */
         rpcContext?: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'callerInputAuthorization'
             | 'callerAuthority' | 'callerInputConstraints' | 'sessionActionOrigin' | 'originalActionEnvelope'
-            | 'requesterSessionBootstrap' | 'localActionContext' | 'workspaceSyncSourceWriterTargetRouting'>;
+            | 'requesterSessionBootstrap' | 'localActionContext' | 'workspaceSyncSourceWriterTargetRouting' | 'sessionProjectOpenRows'>;
     }>): Promise<unknown> {
         return await this.invokeLocalHandler(method, params, this.handlers.get(this.getPrefixedMethod(method)), options);
     }
@@ -1570,6 +1570,8 @@ export class RpcHandlerManager {
                         sessionActionOrigin: options.rpcContext.sessionActionOrigin,
                         originalActionEnvelope: options.rpcContext.originalActionEnvelope,
                         requesterSessionBootstrap: options.rpcContext.requesterSessionBootstrap,
+                        ...(options.rpcContext.sessionProjectOpenRows ? {
+                            sessionProjectOpenRows: options.rpcContext.sessionProjectOpenRows } : {}),
                         ...(options.rpcContext.workspaceSyncSourceWriterTargetRouting ? {
                             workspaceSyncSourceWriterTargetRouting: options.rpcContext.workspaceSyncSourceWriterTargetRouting } : {}),
                     } : {}),

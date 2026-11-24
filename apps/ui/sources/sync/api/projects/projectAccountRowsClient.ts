@@ -114,6 +114,14 @@ export function createUiProjectAccountRowsClient(account: Account) {
       try { return { ok: true as const, ...await (await getOwner()).setEnvironmentPinned(input) }; }
       catch (error) { return mutationFailure(error, input.signal); }
     },
+    forgetManagedAttachment: async (input: Readonly<{ serverId: string; managedId: string; signal?: AbortSignal }>, context: Caller) => {
+      if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
+      try {
+        const result = await (await getOwner()).forgetManagedAttachment(input, input.signal);
+        if (!result.ok) return { ...refused(result.code), ...('relationshipIds' in result ? { details: { relationshipIds: [...result.relationshipIds] } } : {}) };
+        return { ok: true as const };
+      } catch (error) { return mutationFailure(error, input.signal); }
+    },
     forgetWorkspace: async (input: Readonly<{ serverId: string; workspaceId: string; signal?: AbortSignal }>, context?: Caller) => {
       if (!canUsePrivateProjectAccountAction(account, context)) return refused('project_account_access_denied');
       try {

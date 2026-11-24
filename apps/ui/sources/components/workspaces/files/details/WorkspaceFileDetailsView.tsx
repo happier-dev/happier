@@ -144,6 +144,7 @@ import {
     type PluginDetailsViewerChoiceModel,
 } from '@/components/appShell/panes/details/surfaces/pluginDetailsDestination';
 import { createWorkspaceFileOpenableContentBinding, deriveWorkspaceFileOpenableContentKind, type PluginSurfaceOpenableContentBinding } from '@/components/plugins/surfaces/pluginSurfaceOpenableContent';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { resolvePluginSurfaceDestinationLabel } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -414,7 +415,7 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
     const hasViewerDemand = candidates.length > 0 || Object.keys(preferences.selections).length > 0;
     const binding = React.useMemo(() => (
         props.scope && host && hasViewerDemand
-            ? createWorkspaceFileOpenableContentBinding({ target: props.scope, filePath: props.filePath })
+            ? createWorkspaceFileOpenableContentBinding({ target: workspaceFileSystemTargetFromScope(props.scope), filePath: props.filePath })
             : null
     ), [hasViewerDemand, host?.targetKind, props.filePath, props.scope]);
     const [stat, setStat] = React.useState<OpenableContentStatResultV1 | null>(null);

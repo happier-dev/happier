@@ -22,7 +22,7 @@ export function workspaceScopeFromProject(ref: WorkspaceRefV1, activeRootPath: s
 }
 
 export function workspaceScopeFromAddress(address: WorkspaceAddressV2, activeRootPath = address.rootPath): WorkspaceScopeBase {
-    if ('kind' in address) return { serverId: address.serverId, machineId: address.controller.machineId,
+    if (address.kind === 'managed') return { serverId: address.serverId, machineId: address.controller.machineId,
         rootPath: address.rootPath, workspace: address };
     return { serverId: address.serverId, machineId: address.machineId, rootPath: activeRootPath };
 }

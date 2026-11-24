@@ -134,7 +134,11 @@ import { sealRetainedCheckoutTeardownV1 } from '@happier-dev/protocol/sessions/c
 import { randomBytes } from 'node:crypto';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, type UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readHostAdmittedReviewedChildRoleV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { prepareAcquiredFileDownload } from '@/machines/transfer/prepareWorkspaceFileExport';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveSessionRpcContent } from '@/session/transport/rpc/sessionRpc';
@@ -4804,7 +4808,7 @@ export class ApiMachineClient {
         return assertResolvedHomeTargetIdentity(target, observed.serverIdentityId);
     }
 
-    /** This installed target consumes the already Home-admitted root through its registered owner. */
+    /** Consume the admitted Project Open or an exact managed Project-files child of Session creation. */
     async callProjectOpen(input: Readonly<{
         input: OpenProjectInputV1;
         context: RpcActionExecutorContext;
@@ -4823,10 +4827,27 @@ export class ApiMachineClient {
             kind: 'refused', code: 'project_open_unavailable', effectAttempted: false,
             failureCause: { phase, errorClass: 'Error', errorCode: 'project_open_unavailable', httpStatus: null },
         } as const);
+        const managedSource = request.source.kind === 'workspace' && request.source.checkout && isManagedWorkspaceRefV2(request.source.checkout)
+            ? request.source.checkout : null;
+        const sessionChild = authorization?.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            && managedSource?.controller.machineId === this.machine.id
+            && managedSource.controller.installationId === installation?.installationId
+            ? request.materialization.kind === 'attach' && !request.materialization.targetManaged && !request.cloneSource
+                ? SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source
+                : request.materialization.kind === 'sync' && !request.materialization.targetManaged
+                    && request.materialization.workspaceAction.kind === 'copy_once' ? SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target : null
+            : null;
+        const reviewedAuthorization = sessionChild
+            && readHostAdmittedReviewedChildRoleV1(context, sessionChild.action, request) === sessionChild.role
+            ? readHostReviewedChildOriginalAuthorizationV1(context) : undefined;
+        const isSessionOpen = reviewedAuthorization !== undefined && authorization !== undefined
+            && reviewedAuthorization.token === authorization.token
+            && isDeepStrictEqual(reviewedAuthorization.binding, authorization.binding);
+        const rootActionId = isSessionOpen ? SESSION_SPAWN_NEW_ACTION_ID_V1 : 'projects.open';
         if (!socket?.connected || !installation || !authorization || !requesterAuthorization || !admission || !envelope
             || requesterAuthorization.token !== authorization.token || !isDeepStrictEqual(requesterAuthorization.binding, authorization.binding)
             || !requesterAuthorization.requesterAccountProjection || !requesterAuthorization.requesterHttpProjection
-            || request.machineId !== this.machine.id || authorization.binding.actionId !== 'projects.open'
+            || request.machineId !== this.machine.id || authorization.binding.actionId !== rootActionId
             || authorization.binding.machineId !== this.machine.id
             || authorization.binding.installationId !== installation.installationId
             || admission.machineId !== this.machine.id || admission.installationId !== installation.installationId
@@ -4834,8 +4855,10 @@ export class ApiMachineClient {
             || admission.custodianAccountId !== readAccountIdFromToken(this.token)
             || configuration.activeServerId !== this.machineRuntimeServerId
             || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
-                { actionId: 'projects.open', machineId: this.machine.id, envelope })
-            || envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)) return unavailable('projects.open.admission');
+                { actionId: rootActionId, machineId: this.machine.id, envelope })
+            || !isSessionOpen && envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)) return unavailable('projects.open.admission');
+        const sessionAccount = isSessionOpen ? readRequesterAccountActionTransportContext(authorization) : null;
+        if (isSessionOpen && !sessionAccount) return unavailable('projects.open.requester_custody');
         if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
             return unavailable('projects.open.admission_currentness');
         }
@@ -4851,10 +4874,14 @@ export class ApiMachineClient {
         }
         return OpenProjectResultV1Schema.parse(await this.rpcHandlerManager.invokeLocal(RPC_METHODS.PROJECTS_OPEN, request, {
             ...(context.signal ? { signal: context.signal } : {}), localActionContext: context,
-            // This owner validated the exact admitted root above. Preserve that
-            // decision while the native Project owner selects requester custody.
             admissionResult: { ok: true },
-            rpcContext: { ...input.rpcContext, originalActionEnvelope: envelope },
+            rpcContext: { ...input.rpcContext, originalActionEnvelope: envelope,
+                ...(sessionAccount ? { sessionProjectOpenRows: {
+                    credentials: sessionAccount.credentials, serverId: request.serverId,
+                    sessionCustody: { serverId: this.machineRuntimeServerId, accountId: admission.actorAccountId,
+                        serverHttpBaseUrl: sessionAccount.serverHttpBaseUrl, isCurrent: sessionAccount.isCurrent },
+                } } : {}),
+            },
         }));
     }
 

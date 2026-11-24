@@ -759,6 +759,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     refreshProjectSnapshot: async (signal, context, relationshipId) => {
       const retained = relationshipId ? readRequesterPrivateExecution(relationshipId, context) : null;
       if (retained) return await refreshPrivateRows(retained.execution, signal);
+      if (context?.sessionProjectOpenRows) return await readSessionProjectOpenRows(context.sessionProjectOpenRows, signal);
       // A Sync relationship-write root verifies only its own effect; Home's
       // Account row family refuses it. Its requester's rows come through the
       // requester's open Account custody, as at the SOURCE preflight.
@@ -1302,7 +1303,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     }
   };
 
+  function readSessionProjectOpenRows(rows: NonNullable<RpcHandlerContext['sessionProjectOpenRows']>, signal?: AbortSignal) {
+    return factories.refreshProjectRows({ ...rows, signal, selection: { kinds: ['workspace-ref', 'relationship-graph'] } });
+  }
+
   const readHandoffProjectSnapshot = async (signal?: AbortSignal, context?: RpcHandlerContext) => {
+    if (context?.sessionProjectOpenRows) return await readSessionProjectOpenRows(context.sessionProjectOpenRows, signal);
     const authorization = context?.callerInputAuthorization;
     if (authorization && authorization.binding.accountId !== context?.machineAdmission?.actorAccountId) {
       throw compositionError('project_requester_authority_unavailable', 'The admitted requester is no longer current');
@@ -1556,7 +1562,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         }
       }
     }
-    const childMachines = await readHandoffChildMachines([request.sourceMachineId, request.targetMachineId], request.signal, context);
+    // The installed Open receiver admitted both namespaces on this controller.
+    // The managed source is addressed by its exact accepted row, not Machine aliasing.
+    const childMachines = context?.sessionProjectOpenRows ? []
+      : await readHandoffChildMachines([request.sourceMachineId, request.targetMachineId], request.signal, context);
     if (childMachines.length === 0) return { input: request, childMachines, snapshot };
     const childEndpoint = (machineId: string, rootPath: string, workspaceId?: string) => {
       if (!childMachines.some(child => child.machineId === machineId)) return null;

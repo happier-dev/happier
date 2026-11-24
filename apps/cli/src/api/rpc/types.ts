@@ -135,6 +135,8 @@ export type RpcHandlerContext = Readonly<{
     /** Host-bound lifetime of the admitted request; checks local cancellation, never caller input. */
     verifyMachineAdmissionCurrent?: () => Promise<boolean>;
     localActionContext?: RpcLocalActionContext;
+    /** Account rows for an exact managed Session Project-files child admitted by the installed Open receiver. */
+    sessionProjectOpenRows?: Extract<import('@/workspaces/projectAccountRows').ProjectAccountRowsInput, { credentials: import('@/persistence').StoredCredentials }>;
     /** Exact active common-issuer context; host-only and never accepted from RPC DTOs. */
     reviewedChildActionContext?: ActionExecutorContext;
 }>;

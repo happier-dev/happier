@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedMachinePublicFullV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -186,7 +187,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
         }
     });
 
-    it('forgets an attached workspace through retire with manual responsibility, once, carrying the page confirmation', async () => {
+    it.each(['coder', 'ssh'] as const)('forgets every attached Project checkout without deleting the %s resource', async providerId => {
         // Remote workspaces F9: Forget from the Project page never deletes the remote workspace (QA cut 29 step 7).
         const homeId = 'srv_forget_workspace';
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://forget-workspace.test',
@@ -194,7 +195,7 @@ describe('managed configurator uses the exact Home Action front door', () => {
         const controller = { machineId: 'host', installationId: 'installation' };
         const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'project-checkout',
             managedId: 'attached', controller, rootPath: '/home/guest/project' } as const;
-        const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
+        const provider = { pluginId: `happier.machine.${providerId}`, localId: providerId };
         const machine = ManagedMachinePublicFullV1Schema.parse({
             id: workspace.managedId, homeId, custodianAccountId: 'owner', controller, allocation: 'bound',
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 3,
@@ -206,7 +207,29 @@ describe('managed configurator uses the exact Home Action front door', () => {
         });
         harness.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
         const retired: unknown[] = [];
-        // Retire is an Account control the Home admits; the provider is never called.
+        const { workspaceId, ...locator } = workspace;
+        const rows = [workspaceId, 'sibling', 'other-attachment'].map((id, index) => {
+            const key = { kind: 'workspace-ref', serverId: homeId, id };
+            return ProjectAccountRowV1Schema.parse({ key, revision: 0, content: { t: 'plain', v: { key, value: {
+                ...locator, id, rootPath: index === 0 ? workspace.rootPath : `${workspace.rootPath}-${id}`,
+                managedId: index === 2 ? 'different-resource' : workspace.managedId, createdAtMs: 1,
+            } } } });
+        });
+        harness.answer(serverId, 'POST /v1/account/project-rows/list', { select: () =>
+            ({ body: { status: 'listed', coverage: 'complete', rows } }) });
+        harness.answer(serverId, 'POST /v1/account/project-rows/mutate', { select: value => {
+            expect(retired).toHaveLength(1);
+            const mutation = ProjectAccountRowMutationRequestV1Schema.parse(value);
+            const changed = mutation.mutations.map(item => {
+                const row = ProjectAccountRowV1Schema.parse({ key: item.key,
+                    revision: item.expectedRevision === 'absent' ? 0 : item.expectedRevision + 1, content: item.content });
+                const index = rows.findIndex(stored => JSON.stringify(stored.key) === JSON.stringify(row.key));
+                if (index === -1) rows.push(row); else rows[index] = row;
+                return row;
+            });
+            return { body: { status: 'updated', rows: changed, cursor: 1 } };
+        } });
+        // Home archives the attachment independently of the encrypted Project rows.
         harness.answer(serverId, '/v1/machines/managed/controller/admit-control', { select: value => {
             const request = value as { action?: string; input?: unknown };
             expect(request.action).toBe('machines.managed.retire');
@@ -223,9 +246,13 @@ describe('managed configurator uses the exact Home Action front door', () => {
             const current = hook.getCurrent()!;
             let outcomes: unknown[] = [];
             await act(async () => { outcomes = await Promise.all([current.forget(), current.forget()]); });
-            expect(outcomes).toContain('forgotten');
+            expect(outcomes, JSON.stringify(harness.requests.map(request => request.path))).toContain('forgotten');
             expect(retired).toEqual([{ homeId, managedId: machine.id, expectedIntentRevision: 3, manualResponsibility: true }]);
             expect(harness.requestsFor('/v1/actions/machines.managed.delete')).toHaveLength(0);
+            expect(harness.requestsFor('/v1/account/project-rows/mutate'), JSON.stringify(harness.requests.map(request => request.path)))
+                .toHaveLength(1);
+            expect(rows.flatMap(row => row.key.kind === 'workspace-ref' && row.content !== null ? [row.key.id] : []))
+                .toEqual(['other-attachment']);
         } finally {
             await hook.unmount();
         }

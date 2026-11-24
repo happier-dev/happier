@@ -112,12 +112,17 @@ type ProjectRequester = Readonly<{
   rows: ProjectAccountRowsInput;
   credentials: StoredCredentials | null;
   externalAction?: NonNullable<Parameters<typeof callExactMachineRpc>[0]['externalAction']>;
+  sessionProjectFiles?: true;
 }>;
 async function resolveProjectRequester(runtime: ProjectOpenRuntime, context: RpcHandlerContext): Promise<ProjectRequester> {
   const fail = (code: string, reason: string): never => {
     throw Object.assign(new Error(code), { code, details: { reason, phase: 'requester_projection' } });
   };
   const admission = context.machineAdmission!;
+  if (context.sessionProjectOpenRows) {
+    return { rows: { ...context.sessionProjectOpenRows, signal: context.signal },
+      credentials: context.sessionProjectOpenRows.credentials, sessionProjectFiles: true };
+  }
   const authorization = context.callerInputAuthorization;
   if (authorization) {
     const account = authorization.requesterAccountProjection;
@@ -146,7 +151,8 @@ async function resolveProjectRequester(runtime: ProjectOpenRuntime, context: Rpc
 
 async function listOpenedProject(requester: ProjectRequester, ref: WorkspaceRefV1, signal: AbortSignal): Promise<void> {
   // A reviewed child of another Action keeps its parent binding and stays a Session folder.
-  if (requester.rows.authorization && !isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId)) return;
+  if (requester.sessionProjectFiles
+    || requester.rows.authorization && !isProjectWorkspaceSyncOpenActionV1(requester.rows.authorization.binding.actionId)) return;
   await mutateProjectAccountOrganization({ ...requester.rows, serverId: ref.serverId, projectKey: ref.projectKey ?? ref.id,
     mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(error => {
     signal.throwIfAborted();

@@ -8,6 +8,13 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionRequestEnvelopeSchema, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { buildSessionProjectFilesSourceOpenInputV1, SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -49,6 +56,7 @@ it.each([
   { actor: 'member', actionId: 'projects.open' },
   { actor: 'foreign-manager', actionId: 'projects.open' },
   { actor: 'owner', actionId: 'projects.inspect' },
+  { actor: 'owner', actionId: SESSION_SPAWN_NEW_ACTION_ID_V1 },
 ] as const)('dispatches $actionId through the installed Account Agent receiver ($actor)', async ({ actor, actionId: rootActionId }) => {
   expect(getActionSpec('projects.open').surfaces.agent).toBe(true);
   onTestFinished(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); boundary.control = null;
@@ -143,6 +151,10 @@ it.each([
     try { return await homeFetch(...args); }
     catch (error) { transportFailures.push(String(error)); throw error; }
   });
+  if (rootActionId === SESSION_SPAWN_NEW_ACTION_ID_V1) {
+    await assertReviewedManagedOpen(h, homeId, serverId);
+    return;
+  }
   const receiverResults: unknown[] = [];
   const phases: unknown[] = [];
   vi.spyOn(logger, 'warnLocalFile').mockImplementation((...args) => { phases.push(args); });
@@ -322,3 +334,57 @@ it.each([
   expect(rows.filter(row => row.key.kind === 'workspace-ref')).toHaveLength(actor === 'owner' ? 1 : 0);
   expect(h.nativeEffects()).toBe(0);
 });
+
+async function assertReviewedManagedOpen(h: Awaited<ReturnType<typeof createInstalledProjectAgentDaemonFixture>>,
+  homeId: string, serverId: string) {
+  const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'ssh-checkout',
+    managedId: 'ssh-attachment', rootPath: '/home/ssh/project',
+    controller: { machineId: 'machine', installationId: h.f.installation.installationId } } as const;
+  const spawn = SessionSpawnNewInputV2Schema.parse({
+    executionTarget: { serverId: homeId, machineId: 'machine' },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    directory: { kind: 'path', path: workspace.rootPath },
+    sessionPlacement: { kind: 'machine', target: { serverId: homeId, machineId: 'machine' },
+      projectFilesSource: { kind: 'managed', workspace }, projectFiles: { kind: 'copy_once' } },
+  });
+  const envelope = { v: 1 as const, requestId: 'ssh-copy-spawn', target: { kind: 'machine' as const, machineId: 'machine' },
+    input: projectNativeJsonValueForTransport(spawn) };
+  const signed = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'reviewed-session-root',
+    binding: { accountId: 'requester', custodianAccountId: 'requester', serverIdentityId: homeId,
+      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', machineId: 'machine',
+      installationId: h.f.installation.installationId, admittedMachineRole: 'manage',
+      actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, requestId: envelope.requestId, target: envelope.target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+  const projected = await h.f.bootstrap.projectExternalActionAuthorization(signed, homeId, h.signal);
+  if (!projected?.requesterAccountProjection) throw new Error('The fixture lost the requester Account projection');
+  const authorization = Object.defineProperties({ ...projected }, {
+    ...Object.getOwnPropertyDescriptors(projected),
+    requesterHttpProjection: { value: { accountId: 'requester', serverId, serverIdentityId: homeId,
+      serverHttpBaseUrl: 'https://session-home.test', isCurrent: async () => true,
+      createRequestHeaders: async () => { throw new Error('Managed Session Open must use Account custody'); } } },
+  });
+  const machineAdmission = { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
+    installationId: h.f.installation.installationId, role: 'manage', encryptionMode: 'plain' } as const;
+  const context: RpcActionExecutorContext = { signal: h.signal, authority: 'present_user', originalActionEnvelope: envelope,
+    externalActionExecutionAuthorization: authorization, externalActionTarget: signed.binding.target,
+    runtimeAccountId: 'requester', machineAdmission, verifyMachineAdmissionCurrent: async () => true };
+  const source = buildSessionProjectFilesSourceOpenInputV1(spawn.sessionPlacement!)!;
+  const invoke = (input: typeof source, effect: RpcActionExecutorContext) => h.machine.callProjectOpen({ input, context: effect,
+    rpcContext: { signal: h.signal, callerAuthority: 'present_user', callerInputAuthorization: authorization,
+      machineAdmission, verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } });
+  // The installed receiver must require the in-process review for this exact operand.
+  expect(await invoke(source, context)).toMatchObject({ kind: 'refused', code: 'project_open_unavailable' });
+  // The fixture has no provider target. This typed result comes from the real Open owner.
+  const reviewedOpen = await invokeHostReviewedChildV1({
+    parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: envelope.input as Record<string, JsonValue> },
+    context, reviewAdmitted: true,
+    child: { ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source, input: projectNativeJsonValueForTransport(source) },
+    execute: async (_input, child) => {
+      const admittedContext = { ...context, ...child };
+      await expect(invoke({ ...source, subdir: 'another-folder' }, admittedContext))
+        .resolves.toMatchObject({ kind: 'refused', code: 'project_open_unavailable' });
+      return await invoke(source, admittedContext);
+    },
+  });
+  expect(reviewedOpen).toMatchObject({ kind: 'refused', code: 'workspace_target_unavailable' });
+}

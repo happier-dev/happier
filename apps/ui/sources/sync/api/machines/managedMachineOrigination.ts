@@ -26,6 +26,7 @@ import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/na
 import { executeUiManagedAccountAcquire, executeUiManagedAccountRecovery } from './managedMachineAccountAcquire';
 import { executeUiManagedAccountControl } from './managedMachineAccountControl';
 import { createUiManagedAccountHomeRequest } from './managedMachineAccountHome';
+import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import type { UiManagedMachineEnrollmentDependencies } from './managedMachineEnrollment';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1,
     readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -281,6 +282,13 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
         try {
             const output = await createUiManagedAccountHomeRequest(params)('admit-control',
                 { action: actionId, input, requestId }, ManagedMetadataControlAdmissionOutputV1Schema);
+            const { machine } = output;
+            if (machine.archivedAt != null && machine.workspaceAttachment) {
+                const forgotten = await createUiProjectAccountRowsClient(account).forgetManagedAttachment({
+                    serverId: machine.homeId, managedId: machine.id, signal: params.signal,
+                }, context);
+                if (!forgotten.ok) return forgotten;
+            }
             return validateExecution({ ok: true, result: projectManagedMetadataControlResultV1(output) });
         } catch (error) {
             if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
