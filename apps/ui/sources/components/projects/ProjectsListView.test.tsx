@@ -554,6 +554,9 @@ describe('ProjectsListView', () => {
     });
 
     it('opens Save as a source with no repository guess when the exact checkout has no hosting identity', async () => {
+        // bb44bd45886 lists added Projects; a census checkout alone stays in From your sessions.
+        organizationsMock = [{ key: { kind: 'project-organization', serverId, projectKey: 'wr_1' },
+            revision: 1, value: { hidden: false } }];
         workspaceRefsV1Mock = [{ id: 'wr_1', serverId, machineId: 'm1', rootPath: '/repo', label: 'Repo', createdAtMs: 1 }];
         homes.answer(serverId, `/v1/projects/sources?serverId=${encodeURIComponent(serverId)}&query=`, { body: {
             ok: true,
@@ -583,6 +586,9 @@ describe('ProjectsListView', () => {
     });
 
     it('keeps project row menu props stable across unrelated cockpit-state rerenders', async () => {
+        // bb44bd45886 lists added Projects; a census checkout alone stays in From your sessions.
+        organizationsMock = [{ key: { kind: 'project-organization', serverId, projectKey: 'wr_1' },
+            revision: 1, value: { hidden: false } }];
         workspaceRefsV1Mock = [{
             id: 'wr_1',
             serverId,
@@ -682,6 +688,9 @@ describe('ProjectsListView', () => {
     });
 
     it('anchors project row menus below the trigger', async () => {
+        // bb44bd45886 lists added Projects; a census checkout alone stays in From your sessions.
+        organizationsMock = [{ key: { kind: 'project-organization', serverId, projectKey: 'wr_1' },
+            revision: 1, value: { hidden: false } }];
         workspaceRefsV1Mock = [{
             id: 'wr_1',
             serverId,
