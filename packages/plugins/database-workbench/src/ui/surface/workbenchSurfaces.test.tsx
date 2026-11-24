@@ -738,22 +738,32 @@ describe('Database workbench surfaces', () => {
     let run: Control | undefined;
     let explain: Control | undefined;
     const sql = 'SELECT id, customer_id, invoice_key, total FROM invoices';
+    const confirm = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const deviceState = vi.fn<NonNullable<PluginUiTestkitHostHandlers['deviceState']>>(request => ({
+      status: 'ready', value: request.operation === 'read' && request.key?.includes('database-console') ? { sql, history: [] } : null,
+    }));
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'console-run', mountNonce: 'console-run' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
       launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'console',
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
       handlers: {
         ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation: async ({ subPath }) => subPath,
-        deviceState: (request: { operation: string; key?: string }) => ({
-          status: 'ready', value: request.operation === 'read' && request.key?.includes('database-console') ? { sql, history: [] } : null,
-        }),
+        deviceState,
+        confirm,
         actionControl(control) {
           const { request } = control;
           if (request.kind === 'bind' && request.presentation.title === 'Run') run = control;
           if (request.kind === 'bind' && request.presentation.title === 'Explain') explain = control;
-          if (request.kind !== 'prepared' || request.requestId !== 'run-console') return;
+          if (request.kind !== 'prepared') return;
+          if (request.requestId === 'run-invalid-console') {
+            expect(request.preparation?.input).toMatchObject({ statement: { sql } });
+            return { ok: true, result: { ok: false, status: 'failed', code: 'database_engine_error', cause: {
+              source: 'engine', code: '42601', message: 'syntax error at or near "WHERE"', position: 13, statementIndex: 0,
+            } } };
+          }
+          if (request.requestId !== 'run-console') return;
           expect(request.preparation?.input).toMatchObject({ statement: { sql } });
           return { ok: true, result: { ok: true, operation: 'statement.run', results: [{
             columns: ['id', 'customer_id', 'invoice_key', 'total'].map(name => ({ name, nativeType: 'int8', semanticType: 'integer' })),
@@ -774,7 +784,24 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.getByText('1001')).toBeTruthy();
       expect(await fixture.getByText('2002 · 3003 · 4,004')).toBeTruthy();
       await fixture.press(await fixture.getByRole('button', { name: 'History' }));
-      expect(await fixture.getByText(sql)).toBeTruthy();
+      deviceState.mockClear();
+      await fixture.press(await fixture.getByRole('button', { name: 'Clear history' }));
+      await settle();
+      expect(deviceState.mock.calls.map(([request]) => request.operation)).not.toContain('write');
+      expect(await fixture.queryByRole('button', { name: 'History' })).toBeTruthy();
+
+      await fixture.press(await fixture.getByRole('button', { name: 'Clear history' }));
+      await settle();
+      expect(await fixture.queryByRole('button', { name: 'History' })).toBeFalsy();
+      expect(deviceState.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
+        operation: 'write', value: { sql, history: [] },
+      }));
+
+      await act(async () => { run?.publish({ kind: 'prepare', requestId: 'run-invalid-console' }); });
+      await settle();
+      expect(await fixture.queryByText('syntax error at or near "WHERE"')).toBeTruthy();
+      await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+      expect(await fixture.queryByText('42601')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {

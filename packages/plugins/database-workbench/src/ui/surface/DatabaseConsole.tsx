@@ -22,6 +22,7 @@ import {
   useHappierCollection,
   type CodeEditorHandle,
 } from '@happier-dev/plugin-ui/components';
+import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
 import { useDatabaseConsole, useDatabaseTargets, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchLaunchInput } from './mount.js';
 import { projectColumn } from '../projections.js';
@@ -161,10 +162,11 @@ function HistoryMenu(
   props: Readonly<{
     history: readonly Readonly<{ sql: string }>[];
     onPick: (sql: string) => void;
-    onClear: () => void;
+    onClear: () => Promise<void>;
   }>,
 ) {
   const translate = usePluginTranslation();
+  const host = usePluginHostApi();
   const [open, setOpen] = React.useState(false);
   if (props.history.length === 0) return null;
   const label = translate('plugins.database.console.history', 'History');
@@ -200,8 +202,19 @@ function HistoryMenu(
           'plugins.database.console.clearHistory',
           'Clear history',
         )}
-        onPress={() => {
-          props.onClear();
+        onPress={async () => {
+          try {
+            const confirmed = await host.confirm(
+              translate('plugins.database.console.clearHistoryBody', 'Remove past statements from this device? The current draft will stay.'),
+              { title: translate('plugins.database.console.clearHistoryTitle', 'Clear SQL history?') },
+            );
+            if (!confirmed) return;
+          } catch (error) {
+            await host.notify(error instanceof Error ? error.message
+              : translate('plugins.database.console.clearHistoryUnavailable', 'History could not be cleared.'), { severity: 'error' });
+            return;
+          }
+          await props.onClear();
           setOpen(false);
         }}
       />
@@ -221,6 +234,7 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
   const sql = useDatabaseConsole(props.targetKey);
   const [editor, setEditor] = React.useState<CodeEditorHandle | null>(null);
   const positionedError = sql.error?.positionedIn === sql.text ? sql.error : undefined;
+  const nativeErrorCode = sql.result && !sql.result.ok && 'cause' in sql.result ? sql.result.cause?.code : undefined;
   React.useEffect(() => {
     if (!editor) return;
     if (!positionedError?.range || positionedError.positionedIn === undefined) {
@@ -357,6 +371,7 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
             layout="line"
             kind="error"
             title={sql.error.message}
+            details={nativeErrorCode ?? sql.error.code}
             {...(sql.mode === 'write' && engineIsMysql ? {} : {
               description: translate('plugins.database.console.nothingChanged', 'Nothing was changed.'),
             })}
