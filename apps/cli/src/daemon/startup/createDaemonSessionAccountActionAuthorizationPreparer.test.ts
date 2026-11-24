@@ -334,3 +334,73 @@ describe('createDaemonSessionAccountActionAuthorizationPreparer managed acquisit
     }),
   );
 });
+
+// A Session Agent's acquire from a preset resolves its controller from that
+// preset before Home signs; a named controller must be the preset's.
+describe('Session preset acquisition controller', () => {
+  afterEach(() => {
+    resetActiveAccountSettingsSnapshotForTests();
+    vi.restoreAllMocks();
+  });
+  const presetController = { machineId: controllerMachineId, installationId: 'owner-controller-installation' };
+  const agentStart = { directory: { kind: 'managed' }, agentTarget: { kind: 'agent', identity: { pluginId: 'acme.project-launch', localId: 'agent' } } };
+
+  it.each([
+    ['an Agent start naming another controller', { controller: { machineId: sessionMachineId, installationId: 'member-installation' }, agentStart }],
+    ['an ordinary acquire naming no controller', {}],
+  ] as const)('reads the preset once only for an Agent start (%s)', async (named, extra) => {
+    const { prepare, token } = prepareFrom(sessionMachineId, true);
+    const sessionId = 'agent-session';
+    const actionId = 'machines.managed.acquire';
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({}), settingsVersion: 1, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey({ token, encryption: null }) });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      switch (new URL(String(url)).pathname) {
+        case '/v1/account/profile': return { status: 200, data: { id: 'owner' } };
+        case '/v1/account/encryption/currentness':
+          return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+        case `/v2/sessions/${sessionId}`:
+          return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', share: null,
+            metadata: JSON.stringify({ machineId: sessionMachineId, path: '/workspace', permissionMode: 'default' }) }) } };
+        default: throw new Error(`Unexpected Home GET ${url}`);
+      }
+    });
+    const minted: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>[] = [];
+    let presetReads = 0;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (new URL(String(url)).pathname === '/v1/machines/presets/get') {
+        presetReads += 1;
+        return { status: 200, data: { kind: 'found', preset: { id: 'team-preset', homeId: 'srv_home', revision: 1,
+          owner: { kind: 'account', accountId: 'team-owner' }, contentEncryptionMode: 'plain', recipients: [],
+          content: { t: 'plain', v: { v: 1, name: 'Guest', launch: { provider: { pluginId: 'acme.compute', localId: 'vm' },
+            schemaVersion: 1, name: 'guest', choices: {} } } },
+          controller: presetController } } };
+      }
+      expect(new URL(String(url)).pathname).toBe(bindExternalActionExecutionAuthorizationHttpPathV1(actionId));
+      minted.push(ExternalActionExecutionAuthorizationRequestV1Schema.parse(body));
+      // Home refuses the effect after observing the exact signed request.
+      return { status: 403, data: { error: 'credential_scope_denied' } };
+    });
+    const execute = createDaemonSessionAccountActionExecutor({
+      serverId: 'srv_home', serverHttpBaseUrl: 'https://home.invalid', token, machineId: sessionMachineId,
+      credentials: { token, encryption: null }, readAccountEncryptionMode: async () => 'plain',
+      prepareExternalActionAuthorization: prepare,
+      createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()),
+    });
+    const result = await execute({ kind: 'action.execute', actionId, requestId: 'preset-acquire', surface: 'agent',
+      input: { selection: { kind: 'preset', homeId: 'srv_home', id: 'team-preset', revision: 1 }, ...extra },
+      witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
+        agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } },
+    }, { sessionId, isCurrent: async () => true });
+    if (named === 'an Agent start naming another controller') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, details: { requiredFact: 'managed_controller_target' } });
+      expect(minted).toEqual([]);
+      expect(presetReads).toBe(1);
+    } else {
+      // An acquire that starts no Agent keeps its placement and signs its input unchanged.
+      expect(presetReads).toBe(0);
+      expect(minted.map(request => request.envelope.input)).toEqual([
+        { selection: { kind: 'preset', homeId: 'srv_home', id: 'team-preset', revision: 1 } }]);
+    }
+  });
+});

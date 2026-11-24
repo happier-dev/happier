@@ -51,6 +51,10 @@ import { readServerIdentityIdFromFeaturesSnapshot, type CliServerFeaturesSnapsho
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createClientActionReverseDispatcher, type ClientActionMachineRpc } from '@/session/actions/clientActionReverseDispatch';
+import { isManagedPresetAcquireInputV1, ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { readManagedMachinePreset } from '@/machines/managed/readManagedMachine';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
 type SessionActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
@@ -191,8 +195,6 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       return refuse('caller_witness_invalid');
     }
     const actionSpec = getActionSpec(operation.actionId);
-    const requesterAppReview = requiresRequesterAppReview(actionSpec, operation.input, caller.data, operationSurface);
-    let executionPlacement = resolveActionExecutionPlacementForInput(actionSpec, operation.input, caller.data, operationSurface);
     // Process/Session custody does not authorize borrowing the daemon Account.
     // The exact authenticated Home's owner projection proves same-account use
     // once, at this Action's admission; a shared recipient requires its own
@@ -245,6 +247,37 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       const callerInput = await bindCallerInput(getActionSpec(operation.actionId), operation.input, { surface: operationSurface });
       if (!callerInput.ok) return callerInput;
     }
+    // A Session Agent's acquire from a preset is placed on that preset's
+    // controller, read once under the requester's own Account; a named
+    // controller must be the preset's. An acquire starting no Agent keeps its input.
+    if (operation.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 && isAgentStartActionInvocationV1(operation.actionId, readRecord(operation.input))) {
+      const acquire = ManagedAcquireInputV1Schema.parse(operation.input);
+      if (isManagedPresetAcquireInputV1(acquire)) {
+        const credentials = params.credentials;
+        if (!credentials) return refuse('external_authorization_preparation_failed');
+        let preset: Awaited<ReturnType<typeof readManagedMachinePreset>>;
+        try {
+          preset = await readRequesterHomeWithinActionLifetime(() => readManagedMachinePreset({ credentials,
+            serverHttpBaseUrl: params.serverHttpBaseUrl, homeId: acquire.selection.homeId, id: acquire.selection.id,
+            ...(authority.signal ? { signal: authority.signal } : {}) }), authority.signal);
+        } catch (error) {
+          if (authority.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+          if (error instanceof ManagedMachineControllerError) return { ok: false, errorCode: error.code, error: error.code };
+          const homeFailure = readRequesterHomeActionFailure(error);
+          if (homeFailure) return homeFailure;
+          throw error;
+        }
+        if (preset.controller) {
+          if (acquire.controller && !sameStrictJsonValue(acquire.controller, preset.controller)) {
+            return projectSessionActionIssuerRefusal({ ok: false, phase: 'preparation',
+              requiredFact: 'managed_controller_target' }, params.machineId, authority.signal);
+          }
+          operation = { ...operation, input: StrictJsonValueSchema.parse({ ...readRecord(operation.input), controller: preset.controller }) };
+        }
+      }
+    }
+    const requesterAppReview = requiresRequesterAppReview(actionSpec, operation.input, caller.data, operationSurface);
+    let executionPlacement = resolveActionExecutionPlacementForInput(actionSpec, operation.input, caller.data, operationSurface);
     if (operation.actionId.startsWith('scm.')) {
       if (requiresExplicitScmMachineTarget(operation.actionId)) {
         return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };

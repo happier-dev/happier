@@ -60,7 +60,9 @@ vi.mock('@/session/transport/rpc/sessionRpc', async (importOriginal) => {
 const homeId = 'srv_member_acquire_agent_start';
 const homeUrl = 'https://member-home.test';
 
-it("admits a Session agent's managed acquire with agentStart once on the installed daemon and signs the stamp into the root its Ask records", async () => {
+// The producer resolves the controller from the preset, so an acquire that
+// names none is placed on that controller exactly as one that names it.
+it.each(['names the preset controller', 'names no controller'] as const)("admits a Session agent's managed acquire with agentStart once on the installed daemon and signs the stamp into the root its Ask records (%s)", async controllerCase => {
   onTestFinished(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -272,8 +274,9 @@ it("admits a Session agent's managed acquire with agentStart once on the install
     toolCallId: 'tool-acquire',
     input: {
       selection: { kind: 'preset', homeId, id: 'team-preset', revision: 1 },
-      // A named controller places the acquire on a Machine, so it needs a Machine root.
-      controller: { machineId: 'machine', installationId: h.f.installation.installationId },
+      // The preset's controller places the acquire on a Machine, so it needs a Machine root.
+      ...(controllerCase === 'names the preset controller'
+        ? { controller: { machineId: 'machine', installationId: h.f.installation.installationId } } : {}),
       agentStart: {
         directory: { kind: 'managed' },
         agentTarget: {
@@ -306,6 +309,8 @@ it("admits a Session agent's managed acquire with agentStart once on the install
   });
   // One source admission, before Home signs: the origin Home receives carries its stamp.
   expect(mints).toHaveLength(1);
+  expect(mints[0]?.envelope).toMatchObject({ target: { kind: 'machine', machineId: 'machine' },
+    input: { controller: { machineId: 'machine', installationId: h.f.installation.installationId } } });
   const stamp = mints[0]?.sessionActionOrigin?.agentStartAdmission;
   expect(stamp).toMatchObject({ workDepth: 1 });
   // The Ask retains that signed root, so its replay consumes the same admission.
@@ -333,4 +338,6 @@ it("admits a Session agent's managed acquire with agentStart once on the install
       path.startsWith('POST /v1/machines/managed/controller/'),
     ),
   ).toBe(false);
+  // The producer reads the preset once per acquire to resolve its controller.
+  expect(paths.filter(path => path === 'POST /v1/machines/presets/get')).toHaveLength(1);
 }, 120_000);
