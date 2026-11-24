@@ -1,5 +1,5 @@
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
-import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, parseActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import axios from '@/api/client/credentialAxios';
@@ -329,12 +329,21 @@ async function projectAdmittedAccountCustody(
         if (request.authorization.binding.accountId !== stamp.accountId
           || request.authorization.binding.serverIdentityId !== input.serverIdentityId || !await isCurrent()) return null;
         try {
-        const sealed = sealExternalActionRequesterAccountContextV1({ ...request,
-          ...(input.invocation ? { invocation: input.invocation } : {}),
+          const sealed = sealExternalActionRequesterAccountContextV1({ ...request,
+            ...(input.invocation ? { invocation: input.invocation } : {}),
             credentials: encodeRequesterCredentials(bootstrap.credentials),
             randomBytes: length => new Uint8Array(randomBytes(length)) });
           return await isCurrent() ? sealed : null;
-        } catch (error) { refuseExternalActionPhase('requester_custody_seal', stamp.machineId, error); rethrowRequesterHomeReadFailure(error); return null; }
+        } catch (error) {
+          refuseExternalActionPhase('requester_custody_seal', stamp.machineId, error);
+          rethrowRequesterHomeReadFailure(error);
+          if (parseActionExecuteFailure(error)) throw error;
+          const code = 'requester_account_custody_seal_failed';
+          throw createActionExecuteFailureError({
+            ok: false, errorCode: code, error: code, effectAttempted: false,
+            failureCause: { ...projectActionFailureCauseV1(error, 'requester.custody_seal'), errorCode: code },
+          });
+        }
       },
       resolveMachineContentEncryptionContext: row => {
         const context = resolvePublishedMachineEncryptionContext({ credentials: bootstrap.credentials,

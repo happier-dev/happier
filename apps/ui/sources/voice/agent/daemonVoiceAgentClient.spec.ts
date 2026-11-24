@@ -136,6 +136,22 @@ describe('DaemonVoiceAgentClient', () => {
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
     })).rejects.toMatchObject({ rpcErrorCode: uxDiagnostic.code, uxDiagnostic });
   });
+  it('retains the Action refusal phase and code when Voice classifies a pre-effect Start failure', async () => {
+    const failureCause = { phase: 'requester.custody_seal', errorClass: 'Error',
+      errorCode: 'requester_account_custody_seal_failed', httpStatus: null };
+    daemonAction.mockResolvedValueOnce({ ok: false, error: failureCause.errorCode, errorCode: failureCause.errorCode,
+      failureCause, effectAttempted: false,
+      details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') });
+    const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
+    const { classifyVoiceMachineError } = await import('@/voice/runtime/machine/voiceMachineError');
+    const failure = await new DaemonVoiceAgentClient(voiceScope).start({
+      sessionId: 's1', agentId: 'codex', permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
+    }).catch((error: unknown) => error);
+    expect(classifyVoiceMachineError(failure)).toMatchObject({
+      reason: failureCause.errorCode, failureCause, effectAttempted: false,
+    });
+    expect(presentVoiceAgentFailure(failure).failureMessage).toContain(failureCause.errorCode);
+  });
   it('preserves a configured ACP Session target and exact model identity at daemon admission', async () => {
     daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_acp', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
@@ -227,7 +243,10 @@ describe('DaemonVoiceAgentClient', () => {
         failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
           && 'error' in result && typeof result.error === 'string'
           ? { error: result.error, errorCode: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'action_failed',
-              ...('details' in result ? { details: result.details } : {}) } : null,
+              ...('details' in result ? { details: result.details } : {}),
+              ...('failureCause' in result ? { failureCause: result.failureCause } : {}),
+              ...('effectAttempted' in result && typeof result.effectAttempted === 'boolean'
+                ? { effectAttempted: result.effectAttempted } : {}) } : null,
         execute: async (input, context) => {
           if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a Run Action request');
           const result = await daemonAction({ actionId, input: { ...input }, signal: context.signal });

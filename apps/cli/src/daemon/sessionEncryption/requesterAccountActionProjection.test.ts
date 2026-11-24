@@ -25,7 +25,7 @@ import { buildDiscussionModelSessionCreationProofPayloadV1 } from '@happier-dev/
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import * as requesterAccountOwner from './requesterAccountActionProjection';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
@@ -1906,6 +1906,15 @@ describe('admitted requester Action projection', () => {
       serverIdentityId: 'stable-home', installationPrivateKey: installation.secretKey };
     expect(openExternalActionRequesterAccountContextV1(openInput)).toEqual({
       ...encodeStoredCredentials(credentials), token: credentials.token,
+    });
+    const runStartPurpose = { kind: 'machine_rpc' as const, method: SESSION_RPC_METHODS.EXECUTION_RUN_START };
+    await expect(seal({ ...sealInput, purpose: { ...runStartPurpose, params: { approvalProfileId: null } } }))
+      .resolves.toHaveProperty('requesterAccountContext');
+    await expect(seal({ ...sealInput, purpose: {
+      ...runStartPurpose, params: { approvalProfileId: undefined },
+    } })).rejects.toMatchObject({
+      ok: false, errorCode: 'requester_account_custody_seal_failed', effectAttempted: false,
+      failureCause: { phase: 'requester.custody_seal', errorClass: 'Error', errorCode: 'requester_account_custody_seal_failed' },
     });
     expect(openExternalActionRequesterAccountContextV1({ ...openInput, installationId: 'another-installation' })).toBeNull();
     for (const binding of [{ ...root.binding, accountId: 'alice' }, { ...root.binding, serverIdentityId: 'another-home' }]) {

@@ -10,6 +10,7 @@ import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 import { ReviewEngineInventorySchema } from '../reviews/reviewEngines.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   const reviews = createInMemoryReviewRecordPortV1();
@@ -169,7 +170,8 @@ it.each([
 ])('preserves the attached Run profile choice for the Session owner ($inherited, $selection)', async ({ inherited, selection, expected }) => {
   const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
   const executor = createActionExecutor(createDeps({ executionRunStart: async (_sessionId, request) => {
-    requests.push(ExecutionRunStartRequestSchema.parse(request));
+    const signedInput = createCanonicalJsonSigningInput(request);
+    requests.push(ExecutionRunStartRequestSchema.parse(JSON.parse(signedInput)));
     return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
   } }));
   expect(await executor.execute('execution.run.start', {

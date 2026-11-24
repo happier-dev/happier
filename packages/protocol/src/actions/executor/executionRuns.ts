@@ -43,9 +43,9 @@ export async function startExecutionRunWithSelectionV1(
   const leaveProfileToHost = input.approvalProfileId === undefined && (sessionId === null
     ? !input.resumeHandle && context.approvalProfileId == null
     : context.approvalProfileId === undefined);
-  const request = { ...input,
-    approvalProfileId: leaveProfileToHost ? undefined
-      : resolveInheritedApprovalProfileIdV1(input.approvalProfileId, context.approvalProfileId) };
+  const { approvalProfileId, ...startInput } = input;
+  const request = leaveProfileToHost ? startInput : { ...startInput,
+    approvalProfileId: resolveInheritedApprovalProfileIdV1(approvalProfileId, context.approvalProfileId) };
   const admitted = current
     ? stampAgentStartSelectionV1(request, { workDepth: context.agentStartWorkDepth ?? 0 }, 'execution_run', current) : request;
   // The refusal-only baseline cannot admit other selections that previously

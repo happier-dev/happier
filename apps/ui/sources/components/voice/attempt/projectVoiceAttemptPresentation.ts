@@ -77,6 +77,7 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
     const presentationReason = unreachable ? SERVER_UNREACHABLE_ERROR_CODE : input.errorMessage;
     const statusPresentation = resolveVoiceSurfaceStatusPresentation(control.surfaceState, presentationReason);
     const sessionCause = input.errorFailureCause && 'failureReason' in input.errorFailureCause ? input.errorFailureCause : undefined;
+    const actionCause = input.errorFailureCause && 'errorCode' in input.errorFailureCause ? input.errorFailureCause : undefined;
     const startupCode = sessionCause?.code ?? input.errorMessage;
     const startupMessage = startupCode ? presentSessionStartupFailureCause(startupCode, undefined, sessionCause, input.errorProviderMessage) : null;
     const turnMessage = presentExecutionRunTurnFailure(sessionCause);
@@ -96,6 +97,8 @@ export function projectVoiceAttemptPresentation(input: Readonly<{
         : startupMessage ?? (failureKind === null ? null
         : failureKind === 'provider_error' && providerMessage && !unreachable ? providerMessage
         : failureKind === 'provider_error' && input.errorMessage === 'usage_limit' ? presentVoiceUsageLimitMessage(input.errorUsageLimit)
+        : actionCause?.phase === 'requester.custody_seal' && actionCause.errorCode
+            ? t('errors.errorWithCode', { message: t('errors.voiceSessionFailed'), code: actionCause.errorCode })
         : translateVoiceReadiness(resolveVoiceMachineErrorTranslationKey(failureKind, presentationReason ?? undefined), { service: input.serviceTitle }));
     const failureTitle = provider ? t(provider.titleKey)
         : failureKind === 'provider_error' && input.errorMessage?.toLowerCase() === 'usage_limit'
