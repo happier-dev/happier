@@ -67,3 +67,18 @@ it('the page title it draws is the page\'s level-one heading', async () => {
   const headings = screen.root.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header');
   expect(headings.map(node => [node.props.children, node.props['aria-level']])).toEqual([['Appearance', 1]]);
 });
+
+it('a drawn title keeps its "·" separator with the word before it, so a wrapped line never starts with "·"', async () => {
+  const chrome = publisher();
+  screen = await renderScreen(
+    <NavigationTitleChromeProvider showsTitle publisher={chrome}>
+      <NavigationLargeTitleProvider largeTitle>
+        <PageHeader testID="header" title="Set session title · Review the storefront guide" />
+      </NavigationLargeTitleProvider>
+    </NavigationTitleChromeProvider>,
+  );
+
+  expect(screen.getTextContent()).toContain('Set session title · Review the storefront guide');
+  // The page's name for tabs and assistive technology stays the plain title.
+  expect(chrome.setPageTitle).toHaveBeenCalledWith('Set session title · Review the storefront guide');
+});

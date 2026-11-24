@@ -11,7 +11,7 @@ function Button(props: HappierDecisionButtonProps) {
 }
 
 describe('HappierDecisionBar', () => {
-  it('offers one primary approval, secondary rejection and neutral optional dismissal in reading order', () => {
+  it('reads the answers first (primary approval, secondary rejection) and the optional non-answer last and quiet', () => {
     const approve = vi.fn(); const reject = vi.fn(); const dismiss = vi.fn();
     const mounted = mountThroughReactNativeWeb(<HappierDecisionBar Button={Button}
       approve={{ label: 'Approve', testID: 'approve', onPress: approve }}
@@ -19,8 +19,8 @@ describe('HappierDecisionBar', () => {
       dismiss={{ label: 'Dismiss', testID: 'dismiss', onPress: dismiss }} />);
     try {
       const buttons = Array.from(mounted.container.querySelectorAll('button'));
-      expect(buttons.map(button => button.dataset.testid)).toEqual(['approve', 'dismiss', 'reject']);
-      expect(buttons.map(button => button.dataset.emphasis)).toEqual(['primary', 'plain', 'secondary']);
+      expect(buttons.map(button => button.dataset.testid)).toEqual(['approve', 'reject', 'dismiss']);
+      expect(buttons.map(button => button.dataset.emphasis)).toEqual(['primary', 'secondary', 'plain']);
       act(() => { buttons.forEach(button => button.click()); });
       expect(approve).toHaveBeenCalledOnce(); expect(reject).toHaveBeenCalledOnce(); expect(dismiss).toHaveBeenCalledOnce();
     } finally { mounted.unmount(); }

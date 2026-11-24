@@ -282,16 +282,61 @@ function ResolvedText<TSource>(
   );
 }
 
-/** A structured value as one labelled line per leaf, groups indented beneath their key. */
+type HappierApprovalFieldEntryLine<TSource> =
+  | Readonly<{ kind: 'entry'; entry: HappierApprovalFieldEntry<TSource> }>
+  | Readonly<{ kind: 'list'; label: string; depth: number; items: readonly HappierApprovalFieldEntry<TSource>[] }>;
+
+/** A key whose children are only numbered leaves is a list: it reads as one line of those values, not numbered rows. */
+function readApprovalFieldEntryLines<TSource>(
+  entries: readonly HappierApprovalFieldEntry<TSource>[],
+): readonly HappierApprovalFieldEntryLine<TSource>[] {
+  const lines: HappierApprovalFieldEntryLine<TSource>[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    let end = index + 1;
+    while (end < entries.length && entries[end]!.depth > entry.depth) end += 1;
+    const children = entries.slice(index + 1, end);
+    if (entry.value === null && children.length > 0 && children.every(child =>
+      child.depth === entry.depth + 1 && child.value !== null && /^\d+$/u.test(child.label))) {
+      lines.push({ kind: 'list', label: entry.label, depth: entry.depth, items: children });
+      index = end - 1;
+    } else lines.push({ kind: 'entry', entry });
+  }
+  return lines;
+}
+
+/** A structured value as one labelled line per leaf, groups indented beneath their key, a list as one line. */
 export function HappierApprovalFieldEntries<TSource = never>(
   props: HappierApprovalFieldEntriesProps<TSource>,
 ) {
   const { styles, space, text } = useApprovalFieldsLook(props);
   const page = props.density === 'page';
   if (props.entries.length === 0) return null;
+  const lines = readApprovalFieldEntryLines(props.entries);
   return (
     <View style={{ gap: space.s4 }}>
-      {props.entries.map((entry, index) => (
+      {lines.map((line, index) => line.kind === 'list' ? (
+        <View
+          key={`${index}:${line.label}`}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'baseline',
+            gap: space.s8,
+            paddingLeft: line.depth * HAPPIER_APPROVAL_FIELDS_METRICS.entryIndentPx,
+          }}
+        >
+          {text('entryLabel', line.label, page ? styles.pageEntryLabel : styles.entryLabel)}
+          <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap' }}>
+            {line.items.map((item, itemIndex) => (
+              <ResolvedText key={`${itemIndex}:${item.label}`} Resolve={props.Resolve} source={item.source}
+                label={item.label} value={item.value ?? ''}>
+                {(resolved) => text('entryValue', itemIndex < line.items.length - 1 ? `${resolved.value}, ` : resolved.value,
+                  page ? styles.pageEntryValue : styles.entryValue)}
+              </ResolvedText>
+            ))}
+          </View>
+        </View>
+      ) : (() => { const entry = line.entry; return (
         <View
           key={`${index}:${entry.label}`}
           style={{
@@ -334,7 +379,7 @@ export function HappierApprovalFieldEntries<TSource = never>(
             </ResolvedText>
           )}
         </View>
-      ))}
+      ); })())}
     </View>
   );
 }

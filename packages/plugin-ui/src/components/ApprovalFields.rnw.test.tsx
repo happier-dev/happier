@@ -246,3 +246,39 @@ describe('HappierApprovalFields code literals', () => {
     },
   );
 });
+
+describe('HappierApprovalFields lists', () => {
+  it('reads a list of items as one line of their names under the list key, never as numbered rows', () => {
+    const Resolve: HappierApprovalFieldResolve<string> = (props) => (
+      <>{props.children({ label: props.label, value: `named:${props.source}` })}</>
+    );
+    const mounted = mount(
+      <HappierApprovalFields<string>
+        testID="host"
+        Resolve={Resolve}
+        rows={[
+          {
+            kind: 'entries',
+            key: 'intent',
+            label: 'Customization intent',
+            entries: [
+              { label: 'Kind', value: 'Group create', depth: 0 },
+              { label: 'Items', value: null, depth: 0 },
+              { label: '1', value: 'machines', depth: 1, source: 'Machines' },
+              { label: '2', value: 'services', depth: 1, source: 'Local services' },
+              { label: 'Title', value: 'Release checks', depth: 0 },
+            ],
+          },
+        ]}
+      />,
+    );
+    try {
+      expect(
+        mounted.container.querySelector('[data-testid="host.row:intent"]')
+          ?.textContent,
+      ).toBe('Customization intentKindGroup createItemsnamed:Machines, named:Local servicesTitleRelease checks');
+    } finally {
+      mounted.unmount();
+    }
+  });
+});

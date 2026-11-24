@@ -302,7 +302,8 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
         // The editable title stops where the read-only one does, until the person edits it.
         ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
             restingLines={props.titleLines ?? titleMaxLines} />
-        : props.title;
+        // A drawn title keeps each " · " separator with the word before it: a wrapped line never starts with "·".
+        : props.title.replaceAll(' · ', '\u00A0· ');
     const titleNode = props.titleLeading != null
         ? <View style={stylesheet.titleLeadingLine}>{props.titleLeading}<View style={stylesheet.titleLeadingTitle}>{ownTitleNode}</View></View>
         : ownTitleNode;

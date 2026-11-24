@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
     HappierApprovalFieldEntries,
     HappierApprovalFields,
-    HappierPressable,
+    HappierDisclosureToggle,
     type HappierApprovalFieldEntry,
     type HappierApprovalFieldResolve,
     type HappierApprovalFieldRow,
@@ -14,7 +14,7 @@ import {
 import { resolvePartialMachineReferenceReviewReaderV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
-import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
 import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -24,7 +24,6 @@ import { readPluginUiHostTypography } from '@/components/plugins/surfaces/plugin
 import { Text } from '@/components/ui/text/Text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
-import { Typography } from '@/constants/Typography';
 import { getTranslationValue, t, tLoose } from '@/text';
 import type { ApprovalActionFieldsPresentation } from './approvalFieldValues';
 import { presentPluginInstallApprovalRows } from './pluginInstallApprovalFacts';
@@ -187,6 +186,7 @@ function HomeSettingsApprovalFields(props: ApprovalFieldsReadingProps) {
 const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: ApprovalFieldsReadingProps) {
     const { detailsOpen, setDetailsOpen } = props;
     const look = useApprovalFieldsLook();
+    const disclosure = useCoreDisclosureToggleBinding();
     // A kind with its own human presentation reads through it; its raw structure stays in Technical details.
     const allRows = React.useMemo((): readonly ApprovalFieldRow[] => presentPluginInstallApprovalRows(props.presentation.rows), [props.presentation.rows]);
     // People read names, choices and values; opaque ids stay present, one disclosure away.
@@ -257,15 +257,15 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
                     onExpandedChange={setDetailsOpen}
                     showDivider={false}
                     header={({ headerProps, expanded }) => (
-                        <HappierPressable
-                            accessibilityRole="button"
-                            expanded={expanded}
+                        // The card's one toggle look: the shared in-place disclosure, labelled "Details" (these are facts).
+                        <HappierDisclosureToggle
+                            label={t('approvals.details')}
+                            open={expanded}
                             onPress={headerProps.onPress}
-                            style={styles.disclosureHeader}
-                        >
-                            <Text style={styles.disclosureTitle}>{t('approvals.details')}</Text>
-                            <DisclosureCaret expanded={expanded} />
-                        </HappierPressable>
+                            caret={disclosure.renderCaret(expanded)}
+                            renderLabel={disclosure.renderLabel}
+                            focusColor={disclosure.focusColor}
+                        />
                     )}
                 >
                     <View style={styles.disclosureBody}>
@@ -575,16 +575,6 @@ export function ApprovalTechnicalDetails(props: Readonly<{ lines: readonly Appro
 }
 
 const styles = StyleSheet.create((theme) => ({
-    disclosureHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        alignSelf: 'flex-start',
-        gap: theme.space.s4,
-    },
-    disclosureTitle: {
-        ...Typography.variant('meta', 'semiBold'),
-        color: theme.colors.text.secondary,
-    },
     disclosureBody: {
         paddingTop: theme.space.s8,
     },

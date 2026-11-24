@@ -35,11 +35,12 @@ export type HappierDecisionBarProps = Readonly<{
 
 export function HappierDecisionBar(props: HappierDecisionBarProps) {
   const { Button, size = 'normal', layout = 'inline' } = props;
+  // The answers come first; the non-answer (cancel or dismiss) follows them, last and quiet, for every consumer.
   const actions = [
     { kind: 'approve', action: props.approve, emphasis: 'primary' },
     { kind: 'alternative', action: props.alternative, emphasis: 'secondary' },
-    { kind: 'dismiss', action: props.dismiss, emphasis: 'plain' },
     { kind: 'reject', action: props.reject, emphasis: 'secondary' },
+    { kind: 'dismiss', action: props.dismiss, emphasis: 'plain' },
   ] as const;
   const busy = props.busy === true || actions.some(({ action }) => action?.busy === true);
   if (!actions.some(({ action }) => action !== undefined)) return null;
