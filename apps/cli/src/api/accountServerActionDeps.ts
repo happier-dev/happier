@@ -880,7 +880,14 @@ export function createAccountServerActionDeps(input: Readonly<{
         serverId: actionInput && typeof actionInput === 'object' ? Reflect.get(actionInput, 'serverId') : undefined,
         machineId: actionInput && typeof actionInput === 'object' ? Reflect.get(actionInput, 'machineId') : undefined,
       });
-      if (!await isServerProfileHomeIdentity(serverId, target.serverId) || await accountServerTargetMismatch(actionContext)) {
+      const preparesKeys = actionId === 'machines.access.prepareKeys';
+      // The approved origin already passed replay currentness. Use its portable
+      // Home with this adapter's bound Home for the reviewed key census.
+      const usesApprovedHome = preparesKeys && actionContext.approvedActionReplay?.artifactId
+        && serverIdentityId !== undefined && actionContext.serverIdentityId === serverIdentityId
+        && target.serverId === serverIdentityId;
+      if (!usesApprovedHome && (!await isServerProfileHomeIdentity(serverId, target.serverId)
+        || await accountServerTargetMismatch(actionContext))) {
         return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
       }
       if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
@@ -900,7 +907,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           },
         });
       };
-      if (actionId === 'machines.access.prepareKeys') return await prepareKeys();
+      if (preparesKeys) return await prepareKeys();
       const spec = getActionSpec(actionId);
       const request = bindMachineAccessActionHttpRequestV1(actionId, actionInput);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId,

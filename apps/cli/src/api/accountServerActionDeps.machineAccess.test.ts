@@ -27,12 +27,71 @@ import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/mach
 import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 
 let app: FastifyInstance | undefined;
 let restore: (() => void) | undefined;
 afterEach(async () => { restore?.(); restore = undefined; await app?.close(); app = undefined; });
 
 describe('Machine access headless Action transport', () => {
+  it.each([
+    { originProfileId: 'receiver-profile', savedDescriptor: true, targetHome: 'srv_machine_access', expected: 'unsupported_operation' },
+    { originProfileId: 'creator-profile', savedDescriptor: true, targetHome: 'srv_machine_access', expected: 'unsupported_operation' },
+    { originProfileId: 'receiver-profile', savedDescriptor: false, targetHome: 'srv_machine_access', expected: 'unsupported_operation' },
+    { originProfileId: 'receiver-profile', savedDescriptor: true, targetHome: 'srv_other_home', expected: 'server_target_mismatch' },
+  ])('replays approved key preparation for $originProfileId, descriptor=$savedDescriptor, target=$targetHome',
+    async ({ originProfileId, savedDescriptor, targetHome, expected }) => {
+      await withTempDir('machine-access-approval-home-', async home => {
+        const scope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+        try {
+          scope.patch({ HAPPIER_HOME_DIR: home });
+          reloadConfiguration();
+          const serverId = 'receiver-profile';
+          const serverIdentityId = 'srv_machine_access';
+          const serverHttpBaseUrl = 'https://machine-access.test';
+          if (savedDescriptor) await seedTestServerProfile({ id: serverId, homeId: serverIdentityId, serverUrl: serverHttpBaseUrl });
+          const machineId = 'owner-machine';
+          const actionId = 'machines.access.prepareKeys';
+          const token = 'fixture-token';
+          const credentials = { token, encryption: null };
+          let request = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
+            createdBy: { surface: 'system' }, requestedSurface: 'cli', actionId,
+            actionArgs: { serverId: targetHome, machineId: 'shared-machine' }, summary: 'Prepare secure machine access',
+            decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 2 },
+            executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+              serverId: originProfileId, serverIdentityId, accountId: 'owner', machineId, actionId, requestId: 'key-ask' } });
+          app = fastify();
+          let censusReads = 0;
+          app.get('/v1/machines/shared-machine/data-key-envelopes', async (_, reply) => {
+            censusReads++;
+            return reply.code(501).send();
+          });
+          await app.ready();
+          restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+          const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            ...createAccountServerActionDeps({ token, credentials, serverId, serverIdentityId, serverHttpBaseUrl }),
+            approvalsGet: async () => structuredClone(request),
+            approvalsUpdate: async ({ request: next, expectedStatus }) => {
+              const transition = decideApprovalRequestTransition(request, next, { expectedStatus });
+              if (transition.ok) request = ApprovalRequestV2Schema.parse(next);
+              return transition;
+            },
+            isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentness({ accountId: 'owner', machineId, serverId,
+              resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId }),
+              resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+              isAccountCurrent: async () => true, listAccountApiTokens: async () => ({ tokens: [] }),
+            }),
+          });
+          const replay = await executor.replayApprovedApprovalRequest({ artifactId: 'approval', callerAuthority: 'present_user' });
+          expect(request, JSON.stringify(replay)).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: expected } });
+          expect(censusReads).toBe(expected === 'unsupported_operation' ? 1 : 0);
+        } finally { scope.restore(); reloadConfiguration(); }
+      });
+    });
+
   it('dispatches CLI machines.list for the owner beside key-pending Machines with withheld metadata', async () => {
     await withTempDir('machine-inventory-dispatch-', async home => {
       const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
