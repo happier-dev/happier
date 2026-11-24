@@ -79,6 +79,7 @@ import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/
 import { DeploymentDomainContentV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
+import { DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionBodyV1Schema, EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretClientBindingsInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, type MachineConnectorSecretGrantBodyV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { API_TOKEN_FULL_GRANT_V1, ARTIFACT_PLAIN_DATA_KEY_MARKER, MACHINE_PLAIN_DATA_KEY_MARKER, sealSavedSecretResourceStoredContentV1,
@@ -7060,6 +7061,102 @@ describe('deployment children retain their controller Action authority', () => {
             expect(await verify('POST', path, changed, changed)).toBeNull();
         }
     });
+
+    it.each(['plain', 'e2ee'] as const)(
+        'keeps the serving own-server bearer after Rotate until redeploy in a %s Account', async contentMode => {
+            const f = await fixture('account', 'account', { contentMode, readableEnvironment: true });
+            const ownerToken = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const actionId = DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
+            const effectActionId = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+            const target = { kind: 'machine' as const, machineId: f.controller.id };
+            const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+            const environmentId = f.environment.id;
+            const bindingsPath = `/v1/deployments/environments/${environmentId}/bindings`;
+            const ownerHeaders = { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${ownerToken}` };
+            const oldBearer = 'synthetic-native-serving-bearer';
+            const newBearer = 'synthetic-native-rotated-bearer';
+            const collector = createTelemetryAssignments();
+
+            async function verifyBearer(machineId: string, bearer: string, accepted: boolean) {
+                const rows = await db.deploymentEnvironment.findMany({ where: { id: environmentId, telemetryMachineId: machineId },
+                    select: { id: true, telemetryTokenHash: true } });
+                collector.replace(rows.map(({ id, telemetryTokenHash }) => ({ environmentId: id, tokenHash: telemetryTokenHash })));
+                const request = new IncomingMessage(new Socket());
+                request.headers.authorization = `Bearer ${bearer}`;
+                expect(collector.admit(request)).toMatchObject(accepted
+                    ? { accepted: true, context: { environmentId } } : { accepted: false, status: 401 });
+            }
+
+            await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+                async function changeBinding(expectedRevision: number,
+                    change: { rotate: true } | { collector: { machineId: string }; confirmDelete: true }, telemetryMachineId: string) {
+                    const input = { serverId, environmentId, expectedRevision, ...change };
+                    const requestId = crypto.randomUUID();
+                    const binding = { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target };
+                    const envelope = contentMode === 'e2ee'
+                        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                            binding, input, material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes })
+                        : { v: 1 as const, requestId, target, input };
+                    const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+                    const authorization = await auth.mintExternalActionExecutionAuthorization({ ...binding, machineId: f.controller.id,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                        { input: contentMode === 'e2ee' ? native : input, deploymentNativeAdmission: native });
+                    const reference = await f.content('deployment-environment.v1', createDeploymentEnvironmentDetailV1().content,
+                        createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, actionId: effectActionId, environmentId }));
+                    const reviewedChild = { actionId: effectActionId, role: 'telemetry.bindings',
+                        inputDigest: computeActionInputApprovalDigestV1(effectActionId,
+                            { serverId, environmentId, expectedRevision, set: [], remove: [], telemetryMachineId }) };
+                    const body = { serverId, environmentId, expectedRevision, ...reference,
+                        referencedSavedSecretRevisions: [], grants: [], telemetryMachineId };
+                    const response = await app.inject({ method: 'POST', url: bindingsPath, payload: body, headers: {
+                        ...currentAccountStoredContentCompatibilityHeaders,
+                        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                        [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: encodeReviewedActionChildHttpProofV1(reviewedChild),
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                            authorizationToken: authorization.token, effectActionId, target, method: 'POST', path: bindingsPath, body,
+                            installationId: f.controller.installationId, requestId, reviewedChild, privateKey: f.controller.keys.secretKey }),
+                    } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.json()).toMatchObject({ ok: true, revision: expectedRevision + 1 });
+                }
+
+                async function settle(receipt: typeof f.receipt, expectedTargetLinkRevision: number, bearer: string) {
+                    const body = { kind: 'settle' as const, serverId, environmentId, deploymentId: receipt.id,
+                        actionOperationId: receipt.actionOperationId, expectedRevision: receipt.revision,
+                        machineId: f.controller.id, installationId: f.controller.installationId, state: 'succeeded' as const,
+                        expectedTargetLinkRevision, telemetryMachineId: f.member.id,
+                        telemetryTokenHash: createHash('sha256').update(bearer).digest('hex') };
+                    const proof = signMachineInstallationProof({ payload: { version: 1, machineId: f.controller.id,
+                        installationId: f.controller.installationId, accountId: f.account.id, deploymentTransition: {
+                            serverId, environmentId, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
+                            expectedRevision: receipt.revision, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body),
+                        } }, privateKey: f.controller.keys.secretKey });
+                    const response = await app.inject({ method: 'POST', url: `/v1/deployments/environments/${environmentId}/deployments/${receipt.id}/transitions`,
+                        headers: ownerHeaders, payload: { ...body, proof } });
+                    expect(response.statusCode, response.body).toBe(200);
+                }
+
+                const ownServer = await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'running' } });
+                await changeBinding(f.environmentRevision, { collector: { machineId: f.member.id }, confirmDelete: true }, f.member.id);
+                await settle(ownServer, f.link.revision, oldBearer);
+                await verifyBearer(f.member.id, oldBearer, true);
+                await changeBinding(f.environmentRevision + 1, { rotate: true }, f.member.id);
+                await verifyBearer(f.member.id, oldBearer, true);
+                await verifyBearer(f.member.id, newBearer, false);
+
+                const redeploy = await db.deployment.create({ data: { ...ownServer, id: crypto.randomUUID(), requestKey: crypto.randomUUID(),
+                    actionOperationId: crypto.randomUUID(), ...await f.content('deployment-receipt.v1') } });
+                await settle(redeploy, f.link.revision + 1, newBearer);
+                await verifyBearer(f.member.id, newBearer, true);
+                await verifyBearer(f.member.id, oldBearer, false);
+
+                await changeBinding(f.environmentRevision + 2, { collector: { machineId: f.builder.id }, confirmDelete: true }, f.builder.id);
+                await verifyBearer(f.member.id, newBearer, false);
+                await verifyBearer(f.builder.id, newBearer, false);
+            }, { authentication: 'real' });
+        });
 
     it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'cloudflare-workers'], ['e2ee', 'cloudflare-pages']] as const)(
         'admits a hosted collector bearer only after acknowledged sync in a %s Account on %s', async (contentMode, targetKind) => {

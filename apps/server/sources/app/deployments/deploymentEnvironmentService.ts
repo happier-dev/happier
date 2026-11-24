@@ -1003,7 +1003,7 @@ async function setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx: Tx
         if (updated.count !== 1) throw new Error('Locked deployment TargetLink changed during binding CAS');
     }
     const data = { ...deploymentContentReference(input), ...(telemetryChanged ? { telemetryMachineId } : {}),
-        ...(telemetryChanged || telemetryRotated ? { telemetryTokenHash: null } : {}),
+        ...(telemetryChanged || (telemetryRotated && platformRuntime) ? { telemetryTokenHash: null } : {}),
         ...(telemetryCapabilitiesChanged ? { telemetryMetricsEnabled: telemetryCapabilities.metrics,
             telemetryAppLlmCostEnabled: telemetryCapabilities.appLlmCost, telemetryExceptionsEnabled: telemetryCapabilities.exceptions } : {}), ...(placement ? { buildMachineId,
             ...(placement.edgeMachineId !== undefined ? { edgeMachineId: placement.edgeMachineId } : {}),
