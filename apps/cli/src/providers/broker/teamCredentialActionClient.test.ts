@@ -15,6 +15,7 @@ import {
 } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeExternalActionHttpBodyV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ApiClient } from '@/api/api';
+import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { executeTeamCredentialBrokerAction } from './teamCredentialActionClient';
 
@@ -85,6 +86,27 @@ describe('finite Team broker Action client', () => {
         method: 'POST', url: PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
         bearer: undefined, signed: { headers: proof, body: request },
       }]);
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
+  it('surfaces the Home HTTP authentication refusal for an unsigned v3 open', async () => {
+    const { resourceId, initiator, consumer, inputDigest } = opened().authority.payload;
+    const request: ProviderBrokerActionOpenRequestV3 = {
+      v: 3, resourceId, initiatorMachineId: initiator.machineId, consumer, inputDigest,
+    };
+    const server = createServer((incoming, response) => {
+      incoming.resume();
+      response.writeHead(incoming.headers.authorization ? 500 : 401);
+      response.end();
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing Home listener');
+      await expect(openTeamCredentialProviderBroker({
+        token: 'daemon-token', request, serverBaseUrl: `http://127.0.0.1:${address.port}`,
+      })).rejects.toMatchObject({ response: { status: 401 } });
     } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 

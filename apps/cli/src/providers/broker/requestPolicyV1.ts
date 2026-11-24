@@ -186,13 +186,6 @@ export function classifyTeamCredentialRequestRouteV1(pathAndQuery: string): Read
     return route ? { kind: route.kind, generation: route.generation } : null;
 }
 
-export function isTeamCredentialRequestModelAllowed(
-    policy: TeamCredentialRequestPolicyV1 | null,
-    modelId: string,
-): boolean {
-    return policy?.allowedModelIds?.includes(modelId) ?? true;
-}
-
 function configuredEffort(
     policy: TeamCredentialRequestPolicyV1,
     value: unknown,
@@ -242,7 +235,7 @@ export function evaluateTeamCredentialRequestPolicyV1(input: Readonly<{
         ? input.resolveCanonicalModelId(requestedModelId)
         : requestedModelId;
     if (!canonicalModelId) return { ok: false, reasonCode: 'model_not_allowed' };
-    if (!isTeamCredentialRequestModelAllowed(parsedPolicy.data, canonicalModelId)) {
+    if (parsedPolicy.data.allowedModelIds && !parsedPolicy.data.allowedModelIds.includes(canonicalModelId)) {
         return { ok: false, reasonCode: 'model_not_allowed' };
     }
     if (!route.generation) {

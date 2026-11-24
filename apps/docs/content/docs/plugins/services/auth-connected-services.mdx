@@ -100,9 +100,9 @@ const oauthMode = {
 ```
 
 An authentication mode can declare the kind its successful results produce.
-If you set `credentialKind` to `'oauth'` or `'token'`, return the same
-`credentialKind` on each connected result. The host refuses to save a connected
-result that omits the declared kind or returns a different one.
+Return the observed `credentialKind` on each connected result so it can be saved
+with the account. When the result omits the kind, consumers that require a known
+kind can ask the user to refresh or reconnect.
 
 The initiating daemon's existing authentication attempt supplies state and the
 S256 challenge to the runtime's `begin` method. Its `complete` method receives

@@ -35,7 +35,6 @@ export async function openTeamCredentialProviderBroker(input: Readonly<{
   const watcherRefresh = watcher && 'refreshAuthority' in input.request;
   const publisherProof = watcher ? input.requestHeaders?.[PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1] : undefined;
   if (watcher && !publisherProof) throw new Error('Signed Event watcher authority is required');
-  if (action && !input.requestHeaders) throw new Error('Signed Action broker authority is required');
   const serverBaseUrl = (input.serverBaseUrl ?? resolveServerHttpBaseUrl()).replace(/\/+$/, '');
   const body = watcherRefresh ? ProviderBrokerWatcherRefreshRequestV1Schema.parse(input.request)
     : watcher ? ProviderBrokerWatcherOpenRequestV1Schema.parse(input.request)

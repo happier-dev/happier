@@ -2406,11 +2406,11 @@ that requires a kind refuses an unknown profile and returns the same typed
 recovery through the model catalog, launch and Credits. Refresh an OAuth
 sign-in or reconnect a personal token to publish its kind.
 
-Plugin authentication mode descriptors may declare the kind a successful
-callback must report. The shared host dispatcher refuses a connected result
-with a missing or mismatched kind before settlement. Vercel declares its OAuth
-and personal-token modes. The strict 0.3 mode descriptor and Provider error
-envelopes gain optional fields under the existing development-source cut.
+Plugin authentication mode descriptors may declare the expected kind. The
+connected result reports the observed kind used for settlement. Vercel declares
+its OAuth and personal-token modes and reports their kinds in connected
+results. The strict 0.3 mode descriptor and Provider error envelopes gain
+optional fields under the existing development-source cut.
 There is no persisted schema change or wire epoch change.
 
 This is a coordinated direct cut in unpublished 0.3: reload the matching

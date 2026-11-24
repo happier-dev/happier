@@ -217,8 +217,9 @@ describe('createProviderBrokerRequestHandler', () => {
         { allowed: 'minimal', authorized: true, modelAllowed: true, expected: 'reasoning_effort_not_allowed' },
         { allowed: 'low', authorized: true, modelAllowed: true, expected: 'opened' },
         { allowed: 'minimal', authorized: false, modelAllowed: true, expected: 'session_not_active' },
-        { allowed: 'minimal', authorized: true, modelAllowed: false, expected: 'model_not_allowed' },
-    ])('returns $expected on a private Session endpoint request', async ({ allowed, authorized, modelAllowed, expected }) => {
+        { allowed: 'low', authorized: true, modelAllowed: false, expected: 'opened', requestRefusal: 'model_not_allowed' },
+        { allowed: 'low', authorized: true, modelAllowed: true, expected: 'opened', requestRefusal: 'route_not_allowed' },
+    ])('returns $expected on a private Session endpoint request', async ({ allowed, authorized, modelAllowed, expected, requestRefusal }) => {
         const acquireSource = vi.fn(async () => ({ access: access(), sourceMemberKey: 'member' }));
         const handle = createProviderBrokerRequestHandler({
             ...handlerSecurity,
@@ -227,7 +228,7 @@ describe('createProviderBrokerRequestHandler', () => {
             resolveRequestPolicy: async () => ({
                 ...await handlerSecurity.resolveRequestPolicy(),
                 policy: {
-                    allowedProtocolKinds: ['openai_chat_completions'],
+                    allowedProtocolKinds: [requestRefusal === 'route_not_allowed' ? 'openai_responses' : 'openai_chat_completions'],
                     allowedModelIds: [modelAllowed ? 'gpt-5' : 'another-model'],
                     reasoningEffort: { allowedValues: [allowed], defaultValue: allowed },
                 },
@@ -243,6 +244,9 @@ describe('createProviderBrokerRequestHandler', () => {
         if (expected === 'opened') {
             expect(result).toMatchObject({ ok: true, response: { status: 204 } });
             expect(acquireSource).toHaveBeenCalledOnce();
+            if (requestRefusal) {
+                await expect(handle({ context, request })).resolves.toEqual({ ok: false, reasonCode: requestRefusal });
+            }
         } else {
             expect(acquireSource).not.toHaveBeenCalled();
             expect(result).toMatchObject({ ok: false, reasonCode: expected });

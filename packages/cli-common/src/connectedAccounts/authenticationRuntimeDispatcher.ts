@@ -63,11 +63,5 @@ export async function invokeConnectedAccountAuthenticationRuntime<Context>(input
         }
         return unavailable('connected_account_authentication_operation_unavailable');
     })();
-    const snapshot = snapshotConnectedAccountAuthenticationResult(result, input.redactDiagnosticText);
-    if (descriptor.credentialKind !== undefined && snapshot && typeof snapshot === 'object'
-        && 'status' in snapshot && snapshot.status === 'connected'
-        && (!('credentialKind' in snapshot) || snapshot.credentialKind !== descriptor.credentialKind)) {
-        return unavailable('connected_account_authentication_credential_kind_invalid');
-    }
-    return snapshot;
+    return snapshotConnectedAccountAuthenticationResult(result, input.redactDiagnosticText);
 }
