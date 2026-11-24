@@ -4835,7 +4835,31 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             ok: false,
             error: "Forbidden",
             errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            effectAttempted: false,
+            failureCause: {
+                phase: "rpc.admission.session_access", errorClass: "Error",
+                errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403,
+            },
         });
+    });
+
+    it("diagnoses a creator's Stop with no Session selector before checking access", async () => {
+        sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
+        const socket = createFakeSocket({ id: "creator", data: { clientType: "user-scoped" } });
+        registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io: {} as Server });
+        const callback = vi.fn();
+
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
+            method: `machine-1:${RPC_METHODS.STOP_SESSION}`,
+            params: "opaque-stop-request",
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith(expect.objectContaining({
+            ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+            failureCause: expect.objectContaining({
+                phase: "rpc.admission.session_authorization", errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            }),
+        }));
     });
 
     it("keeps requester Session ownership distinct from the shared Machine's Stop destination", async () => {

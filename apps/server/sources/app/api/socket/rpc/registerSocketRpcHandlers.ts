@@ -758,7 +758,8 @@ function buildForbiddenRpcResponse(reason?: MachineAccessRefusalCode, phase?: st
  */
 function buildSessionAccessRpcRefusal(
     status: Exclude<SessionAccessOperationDecision["status"], "allowed">,
-): Readonly<{ ok: false; error: string; errorCode: string }> {
+    forbiddenPhase?: string,
+): Readonly<{ ok: false; error: string; errorCode: string; failureCause?: ActionFailureCauseV1; effectAttempted?: false }> {
     if (status === "authentication_required") {
         return {
             ok: false,
@@ -773,7 +774,7 @@ function buildSessionAccessRpcRefusal(
             errorCode: RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE,
         };
     }
-    return buildForbiddenRpcResponse();
+    return buildForbiddenRpcResponse(undefined, forbiddenPhase);
 }
 
 async function isMachineScopedRpcMethodAvailable(params: Readonly<{
@@ -1833,7 +1834,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         durationMs: Date.now() - startedAt,
                         result: "error",
                     });
-                    callback?.(buildForbiddenRpcResponse());
+                    callback?.(buildForbiddenRpcResponse(undefined, sessionAuthorization.method === RPC_METHODS.STOP_SESSION
+                        ? "rpc.admission.session_authorization" : undefined));
                     return;
                 }
                 const decision = await admitSessionRpc({
@@ -1849,7 +1851,8 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         durationMs: Date.now() - startedAt,
                         result: "error",
                     });
-                    callback?.(buildSessionAccessRpcRefusal(decision.status));
+                    callback?.(buildSessionAccessRpcRefusal(decision.status, sessionAuthorization.method === RPC_METHODS.STOP_SESSION
+                        ? "rpc.admission.session_access" : undefined));
                     return;
                 }
                 if (sessionAuthorization.routeToSessionOwnerDaemon) {

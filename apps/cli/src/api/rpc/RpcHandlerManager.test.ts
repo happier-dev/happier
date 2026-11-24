@@ -2287,6 +2287,33 @@ describe('RpcHandlerManager.handleRequest (encrypted)', () => {
     ).toEqual({ status: 'stopped' });
   });
 
+  it.each([
+    [undefined, 'session_authorization'],
+    [{ kind: 'session.write', sessionId: 'other-session' } as const, 'session_target'],
+  ])('returns the daemon admission cause for rejected Stop with proof %j', async (authorization, predicate) => {
+    const encryptionKey = new Uint8Array(32).fill(11);
+    const method = `machine_1:${RPC_METHODS.STOP_SESSION}`;
+    const rpc = new RpcHandlerManager({
+      scopePrefix: 'machine_1', encryptionKey, encryptionVariant: 'dataKey',
+      authorizeRequest: (request) => authorizeMachineRpcRequest(request), logger: () => {},
+    });
+    rpc.registerHandler(RPC_METHODS.STOP_SESSION, async () => ({ status: 'stopped' }));
+
+    const response = await rpc.handleRequest({
+      method,
+      params: await sealRpcRequest(encryptionKey, method, { sessionId: 'sess_1' }),
+      authorization,
+      transportResponseEnvelopeVersion: 1,
+    });
+
+    expect(response).toMatchObject({ v: 1 });
+    expect(await openRpcResponse(encryptionKey, (response as { result: string }).result)).toMatchObject({
+      errorCode: RPC_ERROR_CODES.FORBIDDEN,
+      effectAttempted: false,
+      failureCause: { phase: `rpc.admission.${predicate}`, errorCode: RPC_ERROR_CODES.FORBIDDEN },
+    });
+  });
+
   it('rejects encrypted requests when the authorization hook rejects', async () => {
     const encryptionKey = new Uint8Array(32).fill(11);
     const rpc = new RpcHandlerManager({

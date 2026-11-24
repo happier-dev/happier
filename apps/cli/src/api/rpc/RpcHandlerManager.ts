@@ -1076,12 +1076,17 @@ export class RpcHandlerManager {
                     if (authorization.admissionPredicate) this.reportAdmissionDenial(diagnostic, authorization.admissionPredicate);
                     // Admission failed before the domain handler. Use the
                     // manager's error envelope, not a domain result flag.
-                    return await respond(request, {
+                    const refusal = {
                         error: confidential ? 'confidential_continuation_failed' : authorization.error,
                         ...(confidential ? { errorCode: 'confidential_continuation_failed' } : authorization.errorCode ? { errorCode: authorization.errorCode } : {}),
                         ...(!confidential && authorization.failureCause ? { failureCause: authorization.failureCause } : {}),
                         effectAttempted: false,
-                    });
+                    };
+                    if (privateMethod === RPC_METHODS.STOP_SESSION && authorization.admissionPredicate
+                        && refusal.errorCode === RPC_ERROR_CODES.FORBIDDEN && !authorization.failureCause) {
+                        return await deny(authorization.admissionPredicate, refusal);
+                    }
+                    return await respond(request, refusal);
                 }
                 workspaceSyncPrivateExecution = authorization.workspaceSyncPrivateExecution;
                 directScmWorkspaceRequester = authorization.directScmWorkspaceRequester;
