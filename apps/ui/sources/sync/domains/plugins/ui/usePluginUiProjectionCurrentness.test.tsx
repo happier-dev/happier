@@ -2285,6 +2285,34 @@ describe('usePluginUiProjectionCurrentness', () => {
         }
     });
 
+    it.each(['ready', 'invalid'] as const)('settles a remounted exact family read when the Home binding was initially resolving (%s)', async (outcome) => {
+        const sections = ['familiesById.backupDestinations'];
+        const validReply = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1,
+            projection: { v: 2, generation: 41, familiesById: {
+                backupDestinations: { family: 'backupDestinations', entriesById: {} },
+            } },
+        });
+        projectionRuntime.describe.mockResolvedValueOnce(validReply);
+        const read = () => usePluginUiProjectionCurrentness({ machineId: 'machine-1', serverId: serverIdentityId, sections });
+        const firstEnvironment = await renderHook(read);
+        await waitForHomeGovernance(() => expect(firstEnvironment.getCurrent().phase).toBe('current'));
+        await firstEnvironment.unmount();
+        clearDaemonMergedProjectionCacheForTests();
+
+        const answer = createDeferred<unknown>();
+        projectionRuntime.describe.mockImplementationOnce(() => answer.promise);
+        const secondEnvironment = await renderHook(read);
+        await waitForHomeGovernance(() => expect(projectionRuntime.describe).toHaveBeenCalledTimes(2));
+        expect(secondEnvironment.getCurrent().phase).toBe('establishing');
+        await act(async () => { answer.resolve(outcome === 'ready' ? validReply : { supported: true, projection: { invalid: true } }); });
+        await waitForHomeGovernance(() => expect(secondEnvironment.getCurrent()).toMatchObject(outcome === 'ready'
+            ? { phase: 'current', interactionEnabled: true, pluginUiProjection: { backupDestinationsById: {} } }
+            : { phase: 'unavailable', interactionEnabled: false, unavailableReasonCode: 'plugin_daemon_invalid_response' }));
+        expect(projectionRuntime.describe).toHaveBeenCalledTimes(2);
+        await secondEnvironment.unmount();
+    });
+
     it('reports an answered unsupported projection as unavailable', async () => {
         projectionRuntime.describe.mockResolvedValueOnce({ error: 'Method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
 

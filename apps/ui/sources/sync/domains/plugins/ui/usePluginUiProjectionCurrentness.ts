@@ -453,13 +453,21 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             && isAccountLifetimeCurrent(accountLifetime)
         );
 
+        const publishForCurrentRequest = (update: (previous: LoadedProjectionState) => LoadedProjectionState): void => {
+            setLoadedProjection((previous) => {
+                if (!isRequestCurrent()) return previous;
+                // A queued update can rebase on state from before the Home binding settled.
+                // Keep facts only from the admitted request's exact scope.
+                return update(previous.targetKey === targetKey && previous.accountLifetime === accountLifetime
+                    ? previous : restoreRetained());
+            });
+        };
+
         const scheduleRetry = (failureReason: MachineContributionRegistryProjectionFailureReason = 'error'): void => {
             if (!isRequestCurrent() || retryTimer !== null) return;
-            setLoadedProjection((previous) => {
-                if (previous.targetKey !== targetKey
-                    || previous.accountLifetime !== accountLifetime
-                    || (previous.connectedAccountProjection === CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR
-                        && previous.failureReason === failureReason)) return previous;
+            publishForCurrentRequest((previous) => {
+                if (previous.connectedAccountProjection === CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR
+                    && previous.failureReason === failureReason) return previous;
                 if (previous.phase === 'current' && previous.authorityKey !== null
                     && previous.authorityRevision === projectionAuthorityRevision) {
                     return previous.failedRefreshAuthorityKey === authorityKey
@@ -490,9 +498,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
                 return;
             }
             if (entry.kind === 'unsupported') {
-                setLoadedProjection((previous) => previous.targetKey !== targetKey
-                    || previous.accountLifetime !== accountLifetime || !isRequestCurrent()
-                    ? previous : createUnavailableLoadedProjectionState(targetKey, accountLifetime));
+                publishForCurrentRequest(() => createUnavailableLoadedProjectionState(targetKey, accountLifetime));
                 return;
             }
             const projection = entry.inputs.pluginProjectionV2;
@@ -505,10 +511,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
             const registrySourcesRead = daemonProjectionHasSections(entry, REGISTRY_SOURCE_PROJECTION_SECTIONS);
             const skillsRead = daemonProjectionHasSections(entry, SKILL_PROJECTION_SECTIONS);
             const themesRead = daemonProjectionHasSections(entry, THEME_PROJECTION_SECTIONS);
-            setLoadedProjection((previous) => {
-                if (previous.targetKey !== targetKey || previous.accountLifetime !== accountLifetime || !isRequestCurrent()) {
-                    return previous;
-                }
+            publishForCurrentRequest((previous) => {
                 const connectedAccountProjection = connectedAccountsReady
                     ? entry.inputs.connectedAccountProjection : previous.connectedAccountProjection;
                 // A catalog's answered descriptor family settles independently
