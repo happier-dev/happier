@@ -3,10 +3,10 @@ import { afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
-import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
+import { installTokenStorageTestIsolation, installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
-import { adoptHomeProfile, getActiveServerId, resetServerProfilesRuntimeForTests, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile, getActiveServerId, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider, getCurrentAuth } from '@/auth/context/AuthContext';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
@@ -21,6 +21,7 @@ import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 
 installTokenStorageWebPlatformMocks();
+installTokenStorageTestIsolation('auth-home-return', { preserveGenerations: true });
 const boundary = vi.hoisted(() => ({ request: vi.fn(), params: {
     provider: 'github', flow: 'auth', pending: 'provider-handle', purpose: '', admissionReference: '', accountMode: 'plain', code: 'mtls-code', error: '', error_description: '',
     teamId: '', target: '', mode: '', credentialTarget: '', endpointUrl: '', endpointServerIdentityId: '', canonicalServerUrl: '',
@@ -42,7 +43,6 @@ const { default: TeamSignInRoute } = await import('../teams/[teamId]/sign-in');
 
 beforeEach(() => {
     restore = installLocalStorageMock().restore;
-    resetServerProfilesRuntimeForTests();
     // Observe the physical HTTP destination below the real scoped client and carrier policy.
     setRuntimeFetch(async (input, init) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
@@ -373,6 +373,39 @@ it('starts a fresh OAuth request on the same Home only after Start again', async
         if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
         else delete (globalThis as { window?: unknown }).window;
     }
+});
+
+it('opens the proven Home after a Home-owned certificate return while another Home is focused', async () => {
+    const fixture = createDirectoryHttpFixture();
+    const homeA = await adoptHomeProfile({ descriptor: { ...fixture.home.connectionDescriptor,
+        homeServerIdentityId: 'srv_home_a', canonicalServerUrl: 'https://home-a.test',
+        endpoints: [{ kind: 'https', url: 'https://home-a.test' }] }, source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
+    const homeB = await adoptHomeProfile({ descriptor: fixture.home.connectionDescriptor,
+        source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
+    await setActiveServerId(homeA.id, { scope: 'device' });
+    expect(getActiveServerId()).toBe(homeA.serverIdentityId);
+    const target = { serverId: fixture.home.homeServerIdentityId, serverUrl: homeB.serverUrl };
+    createdCredentialTarget = target;
+    await TokenStorage.setPendingExternalAuth({ provider: 'mtls', ...target, returnTo: '/' }, target);
+    boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
+        if (path === '/v1/auth/mtls/claim' && endpoint === homeB.serverUrl) return Response.json({ token: fixture.token });
+        return fixture.request(endpoint, path, init);
+    });
+
+    screen = await renderScreen(<AuthProvider initialCredentials={null}><MtlsCallbackScreen /></AuthProvider>);
+
+    await vi.waitFor(async () => expect(await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, target))
+        .toEqual({ token: fixture.token }));
+    // A cold Home's real Sync bootstrap can spend 2.5 seconds waiting for its initial queues.
+    await vi.waitFor(() => {
+        expect(getActiveServerId()).toBe(target.serverId);
+        expect(getCurrentAuth()?.credentials).toEqual({ token: fixture.token });
+        expect(router.replace).toHaveBeenCalledWith('/');
+    }, { timeout: 5_000 });
+    expect(boundary.request.mock.calls.filter(([, path]) => path === '/v1/auth/mtls/claim')).toHaveLength(1);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    expect(Modal.alert).not.toHaveBeenCalled();
+    expect(await TokenStorage.getCredentialsForServerUrl(homeA.serverUrl, { serverId: homeA.id })).toBeNull();
 });
 
 it.each(['oauth', 'mtls-claim', 'mtls-redirect', 'mtls-web'] as const)('presents a disabled Account on its captured Home after %s proof without committing credentials', async (flow) => {

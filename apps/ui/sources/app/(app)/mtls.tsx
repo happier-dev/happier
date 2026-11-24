@@ -15,6 +15,8 @@ import { formatOperationFailedDebugMessage } from '@/utils/errors/formatOperatio
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountServiceReturn } from '@/auth/accountDirectory/accountDirectoryNavigation';
 import { acquireAccountServiceAuthTransport } from '@/auth/accountDirectory/accountDirectoryAuthClient';
+import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeDestinationNotice';
+import { useExactHomeDestination } from '@/components/account/auth/useExactHomeDestination';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
@@ -26,11 +28,12 @@ import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePos
 import { admitInternalRouteHref, tryAdmitInternalRouteHref } from '@/utils/path/routeUtils';
 
 export default function MtlsCallbackScreen() {
-    const auth = useAuth();
+    const { loginWithCredentials, refreshFromActiveServer } = useAuth();
     const params = useLocalSearchParams();
     const [failure, setFailure] = React.useState<Readonly<{ message: string; returnTo: string }> | null>(null);
     const destinationRouter = useRouter();
     const replaceAdmitted = useEventCallback((href: Href) => destinationRouter.replaceAdmitted(href));
+    const { continueToHome, state: homeDestination } = useExactHomeDestination({ refreshAuth: refreshFromActiveServer });
 
     React.useEffect(() => {
         let mounted = true;
@@ -214,20 +217,28 @@ export default function MtlsCallbackScreen() {
                             resolvePostAuthLanding({ replace: replaceAdmitted, continuation: admitInternalRouteHref(destination) });
                             return;
                         }
-                        resolvePostAuthLanding({
-                            replace: replaceAdmitted,
-                            revealHome: router.replace,
-                            teamContinuation: pending.teamContinuation ? teamSignInReturnPath({
-                                teamId: pending.teamContinuation.destination.teamId,
-                                carrier: pending.teamContinuation.homeServerIdentityId,
-                                postAuthInvitation: retainPostAuthInvitation,
-                            }) : undefined,
-                            returnTo: pending.returnTo,
-                        });
+                        const arrive = () => {
+                            if (!mounted) return;
+                            resolvePostAuthLanding({
+                                replace: replaceAdmitted,
+                                revealHome: router.replace,
+                                teamContinuation: pending.teamContinuation ? teamSignInReturnPath({
+                                    teamId: pending.teamContinuation.destination.teamId,
+                                    carrier: pending.teamContinuation.homeServerIdentityId,
+                                    postAuthInvitation: retainPostAuthInvitation,
+                                }) : undefined,
+                                returnTo: pending.returnTo,
+                            });
+                        };
+                        if (pending.teamContinuation) {
+                            arrive();
+                            return;
+                        }
+                        await continueToHome(serverId, arrive);
                     };
                     await presentFirstKeyCredentialLifecycle({
                         run: async () =>
-                            await auth.loginWithCredentials({ token }, { target, signInMethodId: 'mtls' }),
+                            await loginWithCredentials({ token }, { target, signInMethodId: 'mtls' }),
                         onCompleted: finishCredentialCustody,
                         onFinishCompleted: finishCredentialCustody,
                     });
@@ -249,7 +260,7 @@ export default function MtlsCallbackScreen() {
             mounted = false;
             controller.abort();
         };
-    }, [auth, params.admissionReference, params.code, replaceAdmitted]);
+    }, [continueToHome, loginWithCredentials, params.admissionReference, params.code, params.error, replaceAdmitted]);
 
     if (failure) return <AuthRouteStepFrame
         testID="mtls-callback-outcome"
@@ -259,6 +270,16 @@ export default function MtlsCallbackScreen() {
         mark={<StepMark iconName="shield-check" />}
         status
     />;
+
+    if (homeDestination.kind === 'blocked') return (
+        <AuthRouteStepFrame
+            testID="mtls-callback-home"
+            title={t('welcome.signInWithCertificate')}
+            mark={<StepMark iconName="shield-check" />}
+        >
+            <ExactHomeDestinationNotice state={homeDestination} testID="mtls-callback-destination" />
+        </AuthRouteStepFrame>
+    );
 
     return (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
