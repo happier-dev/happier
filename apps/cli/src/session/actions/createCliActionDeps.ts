@@ -209,6 +209,7 @@ import type { createSessionFollowSourceKeyPreparationAfterSet } from '@/agent/ru
 import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { createSessionListActionDeps } from './sessionListActionDependency';
+import { requiresManagedSessionWorkspace } from '@/session/machineControlLocality';
 import { createCliBoundSessionMetadataReader, readCliActionBoundSessionId, resolveCliActionCallerSession } from './resolveCliActionCallerSession';
 import { dispatchOriginalAccountAction, readAdmittedBotTemplateParentActionIdV1,
   resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
@@ -817,6 +818,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     const caller = await resolveActionCallerSession(context);
     if (!caller?.directory || !caller.machineId || !(await requireLocalPromptActionMachine(caller.machineId)).ok) return null;
     return { sessionId: caller.sessionId, machineId: caller.machineId, directory: caller.directory,
+      requiresManagedTarget: requiresManagedSessionWorkspace(caller.metadata),
       ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}) };
   };
   const sessionContentCredentials = params.credentials ?? params.sessionContentCredentials;

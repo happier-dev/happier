@@ -1,6 +1,6 @@
 import { isSameMachineLocality } from '@happier-dev/protocol/machines/identity/machineLocality';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
-import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { readSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 
 import { fetchAccountMachineReplacements } from '@/api/machine/fetchAccountMachineReplacements';
@@ -113,6 +113,14 @@ export function resolveSessionMachineWorkspacePath(params: Readonly<{
   }).machinePath || null;
 }
 
+/** A placed Session can outlive the workspace holder that serves it. */
+export function requiresManagedSessionWorkspace(metadata: unknown): boolean {
+  const recipe = readSessionCreationCorrespondence(metadata)?.recipe;
+  return recipe !== undefined && (recipe.inPlaceWorkspace !== undefined
+    || recipe.projectFilesOrigin?.targetWorkspace.kind === 'managed'
+    || recipe.managedCreationOrigin !== undefined && recipe.managedCreation !== undefined);
+}
+
 /** Exact owner metadata and locality read shared by installed and admitted Account custody. */
 export async function readOwnSessionMachineWorkspace(input: Readonly<{
   credentials: StoredCredentials; serverHttpBaseUrl: string; sessionId: string; machineId: string;
@@ -143,10 +151,6 @@ export async function readOwnSessionMachineWorkspace(input: Readonly<{
   const requestedPath = input.candidatePath === undefined ? undefined
     : resolveSessionMachineWorkspacePath({ metadata, currentMachineId: input.machineId, candidatePath: input.candidatePath });
   if (input.candidatePath !== undefined && !requestedPath) return null;
-  const creation = SessionCreationCorrespondenceV1ReadSchema.safeParse(metadata.sessionCreationCorrespondenceV1);
-  // A policy-selected target can outlive the holder registration that serves this Session.
-  const requiresManagedTarget = creation.success && (creation.data.recipe.inPlaceWorkspace !== undefined
-    || creation.data.recipe.projectFilesOrigin?.targetWorkspace.kind === 'managed'
-    || creation.data.recipe.managedCreationOrigin !== undefined && creation.data.recipe.managedCreation !== undefined);
-  return { rootPath, ...(requestedPath ? { requestedPath } : {}), ...(requiresManagedTarget ? { requiresManagedTarget: true as const } : {}) };
+  return { rootPath, ...(requestedPath ? { requestedPath } : {}),
+    ...(requiresManagedSessionWorkspace(metadata) ? { requiresManagedTarget: true as const } : {}) };
 }

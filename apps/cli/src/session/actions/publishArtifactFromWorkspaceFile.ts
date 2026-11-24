@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { lstat, readdir } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { assembleArtifactHtmlBundleV1, isArtifactHtmlBundleEntrypointV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
 import type { ArtifactSavedByV1 } from '@happier-dev/protocol';
@@ -11,8 +10,15 @@ import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
 import { resolveWorkspaceFileUploadTarget } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { runWithWorkspaceSourceDemand, selectWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 
-export type ArtifactSessionWorkspaceCaller = Readonly<{ sessionId: string; machineId: string; directory: string; runId?: string; rootPath?: never }>;
+export type ArtifactSessionWorkspaceCaller = Readonly<{
+  sessionId: string; machineId: string; directory: string; runId?: string; rootPath?: never;
+  requiresManagedTarget?: boolean;
+}>;
 export type ArtifactWorkspaceCaller = ArtifactSessionWorkspaceCaller
   | Readonly<{ rootPath: string; machineId: string; directory: string; sessionId?: never; runId?: never }>;
 
@@ -53,8 +59,7 @@ export async function writeArtifactWorkspaceFile(params: Readonly<{
   } finally { await transfers.dispose(); }
 }
 
-/** Every Artifact file input uses the same confined workspace transfer owner and its byte budget. */
-export async function readArtifactWorkspaceFile(params: Readonly<{
+type ReadArtifactWorkspaceFileInput = Readonly<{
   caller: ArtifactWorkspaceCaller;
   path: string;
   entrypoint?: string;
@@ -63,11 +68,25 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
   title?: string;
   requestedCapabilities?: UiSurfaceCapabilityRequestV1;
   signal?: AbortSignal;
-}>) {
+}>;
+
+/** Every Artifact file input uses the same confined workspace transfer owner and its byte budget. */
+export async function readArtifactWorkspaceFile(params: ReadArtifactWorkspaceFileInput) {
   params.signal?.throwIfAborted();
   if ((!params.caller.sessionId && !params.caller.rootPath) || !params.caller.machineId || !isAbsolute(params.caller.directory)) {
     throw Object.assign(new Error('artifact_source_unavailable'), { code: 'artifact_source_unavailable' });
   }
+  const { caller } = params;
+  const hosted = readHostedSessionScope();
+  const workspace = caller.sessionId !== undefined
+    ? await selectWorkspaceSource({ sessionId: caller.sessionId }, placement =>
+      (hosted?.sessionId === caller.sessionId ? hosted.workspaceSource : undefined) ?? resolveSessionTargetWorkspace(placement),
+      caller.requiresManagedTarget ? async () => ({ requiresManagedTarget: true }) : undefined)
+    : localWorkspaceSource;
+  return await runWithWorkspaceSourceDemand(workspace, () => readArtifactFromSource(params, workspace));
+}
+
+async function readArtifactFromSource(params: ReadArtifactWorkspaceFileInput, workspace: WorkspaceSource) {
   const forbidden = () => Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
   if (params.path.split(/[\\/]/u).includes('..')) throw forbidden();
   const authorized = validatePath(params.path, params.caller.directory, [],
@@ -78,18 +97,18 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
   // Realpath containment alone allows in-root symlinks. Publication refuses every link
   // component within the proven root rather than copying a link's mutable destination.
   let componentPath = params.caller.directory;
-  if ((await lstat(componentPath)).isSymbolicLink()) throw forbidden();
+  if ((await workspace.lstat(componentPath)).isSymbolicLink()) throw forbidden();
   for (const component of sourceRelativePath.split(sep).filter(Boolean)) {
     componentPath = join(componentPath, component);
     params.signal?.throwIfAborted();
-    if ((await lstat(componentPath)).isSymbolicLink()) throw forbidden();
+    if ((await workspace.lstat(componentPath)).isSymbolicLink()) throw forbidden();
   }
-  const sourceStats = await lstat(sourcePath);
+  const sourceStats = await workspace.lstat(sourcePath);
   if (sourceStats.isSymbolicLink() || (!sourceStats.isFile() && !sourceStats.isDirectory())) throw forbidden();
   if (sourceStats.isDirectory()) {
     if (params.entrypoint === undefined || !isArtifactHtmlBundleEntrypointV1(params.entrypoint)) throw forbidden();
     try {
-      if (!(await lstat(join(sourcePath, ...params.entrypoint.split('/')))).isFile()) throw forbidden();
+      if (!(await workspace.lstat(join(sourcePath, ...params.entrypoint.split('/')))).isFile()) throw forbidden();
     } catch {
       params.signal?.throwIfAborted();
       throw forbidden();
@@ -104,7 +123,6 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
       const resolved = await resolveWorkspaceFileDownloadSource({ workingDirectory: params.caller.directory,
         path, asZip: false, confinedToWorkingDirectory: true });
       if (!resolved.success) throw forbidden();
-      params.signal?.throwIfAborted();
       const session = await lifecycle.openDownloadTransferSession({ source: resolved.source });
       const chunks: Buffer[] = [];
       let index = 0;
@@ -133,11 +151,11 @@ export async function readArtifactWorkspaceFile(params: Readonly<{
     const files: Array<Readonly<{ key: string; bytes: Uint8Array }>> = [];
     const visit = async (directory: string): Promise<void> => {
       params.signal?.throwIfAborted();
-      const entries = (await readdir(directory)).sort();
+      const entries = (await workspace.readdir(directory)).map(entry => entry.name).sort();
       for (const entry of entries) {
         params.signal?.throwIfAborted();
         const path = join(directory, entry);
-        const stats = await lstat(path);
+        const stats = await workspace.lstat(path);
         if (stats.isSymbolicLink()) throw forbidden();
         if (stats.isDirectory()) { await visit(path); continue; }
         if (!stats.isFile()) throw forbidden();

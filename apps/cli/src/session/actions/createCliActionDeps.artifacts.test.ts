@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
+import { bindHostedSessionId, bindHostedSessionWorkspaceSource, runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCreationCorrespondence';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { createActionExecutor, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactBlobWriteV1Schema, ApprovalRequestSchema, ApprovalRequestV2Schema, FeaturesResponseSchema, readLegacyRolesV1, type ApprovalRequest, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HomeHubLayoutV1Schema } from '@happier-dev/protocol/home';
 import { BUILTIN_WIDGET_DESCRIPTORS_V1, buildWidgetDefinitionArtifactHeaderV1, WidgetInstanceActionOutputSchemasV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
@@ -1350,6 +1353,55 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     await expect(foreign.artifactAction?.({ actionId: 'artifact.publish_from_file', input: { path: 'result.txt' }, context }))
       .resolves.toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
     expect(http.post.mock.calls.filter(([url]) => !String(url).endsWith('/v2/sessions/lookup-by-tags'))).toEqual([]);
+  });
+
+  it('publishes a hosted Session file when the same controller path is a directory', async () => {
+    const directory = join(root, 'workspace');
+    const guestDirectory = join(root, 'guest');
+    await mkdir(guestDirectory);
+    await mkdir(join(directory, 'result.txt'));
+    await writeFile(join(guestDirectory, 'result.txt'), 'Guest bytes');
+    http.get.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+    http.post.mockImplementation(async (_url: string, wire: unknown) => ({ status: 200,
+      data: { ...readCarrierMutation(wire), headerVersion: 1, bodyVersion: 1 } }));
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const correspondence = buildSessionCreationCorrespondence({
+      identity: { callerCreationNamespace: 'artifact-test', creationKey: 'in-place' },
+      recipe: {
+        execution: { machineId: 'local-machine', directory: { kind: 'managed' } },
+        organization: { folderId: null, tagIds: [] },
+        inPlaceWorkspace: { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'checkout',
+          managedId: 'guest', rootPath: guestDirectory,
+          controller: { machineId: 'local-machine', installationId: 'installation' } },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      },
+    });
+    const host = createCliActionDeps({ token, credentials: { token, encryption: null },
+      sessionId: 'session', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'local-machine', path: directory,
+        metadata: JSON.stringify({ machineId: 'local-machine', path: directory, sessionCreationCorrespondenceV1: correspondence }) } });
+    const executor = workspaceArtifactExecutor(host);
+    const context = { surface: 'agent' as const,
+      actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 },
+      defaultSessionId: 'session', presentUserConfirmation: { actionId: 'artifact.publish_from_file' as const } };
+    // Stand in for the provider filesystem while preserving real file and transfer operations.
+    const guestPath = (path: string) => join(guestDirectory, relative(directory, path));
+    await runInHostedSessionScope({}, async () => {
+      bindHostedSessionId('session');
+      bindHostedSessionWorkspaceSource({ ...localWorkspaceSource, kind: 'target', id: 'managed-test',
+        lstat: path => localWorkspaceSource.lstat(guestPath(path)),
+        stat: path => localWorkspaceSource.stat(guestPath(path)),
+        open: (path, options) => localWorkspaceSource.open(guestPath(path), options),
+      });
+      await expect(executor.execute('artifact.publish_from_file', { path: 'result.txt' }, context))
+        .resolves.toMatchObject({ ok: true });
+    });
+    const written = readCarrierMutation(http.post.mock.calls[0]?.[1]);
+    expect(decodePlainArtifactStoredContent(String(written.body))).toEqual({ body: 'Guest bytes' });
+    http.post.mockClear();
+    await expect(executor.execute('artifact.publish_from_file', { path: 'result.txt' }, context))
+      .resolves.toMatchObject({ ok: false, errorCode: 'workspace_target_unavailable' });
+    expect(http.post).not.toHaveBeenCalled();
   });
 
   it('never falls back to the ambient Session for an explicit workspace publication source', async () => {

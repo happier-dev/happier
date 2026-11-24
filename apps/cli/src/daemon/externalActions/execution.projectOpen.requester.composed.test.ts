@@ -388,7 +388,7 @@ async function assertReviewedManagedOpen(h: Awaited<ReturnType<typeof createInst
   });
   expect(reviewedOpen).toMatchObject({ kind: 'refused', code: 'workspace_target_unavailable' });
 
-  // A managed source on this controller can request Git defaults through the same reviewed source role.
+  // The issuer can request Git defaults for this managed source. Project Open owns the provider result.
   const clonePlacement = SessionSpawnNewInputV2Schema.parse({
     ...spawn, sessionPlacement: { ...spawn.sessionPlacement, projectFiles: { kind: 'git_clone' } },
   });
@@ -408,6 +408,5 @@ async function assertReviewedManagedOpen(h: Awaited<ReturnType<typeof createInst
       rpcContext: { signal: h.signal, callerAuthority: 'present_user', callerInputAuthorization: cloneAuthorization,
         machineAdmission, verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent } }),
   });
-  expect(reviewedClone).toMatchObject({ kind: 'refused', code: 'project_open_unavailable', effectAttempted: false,
-    failureCause: { phase: 'projects.open.session_source_clone' } });
+  expect(reviewedClone).toMatchObject({ kind: 'refused', code: 'workspace_target_unavailable' });
 }

@@ -34,6 +34,7 @@ import type { createCliConnectedAccountCatalogStore } from '@/settings/connected
 import type { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import type { CliMachineActionCall } from './machineTransport';
 import type { CliProjectAdmission, CliAdmittedProjectRowsReader } from './projectAdmission';
+import { requiresManagedSessionWorkspace } from '@/session/machineControlLocality';
 import type { ArtifactWorkspaceCaller } from '../publishArtifactFromWorkspaceFile';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 type ResolvedSessionTransport = Extract<Awaited<ReturnType<typeof resolveSessionTransportContext>>, Readonly<{ ok: true }>>;
@@ -229,7 +230,7 @@ export function createCliWidgetActionDeps(
       const candidatePath = normalizeStringValue(metadata.path) ?? normalizeStringValue(transport.rawSession.path) ?? '';
       const directory = machineId ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : null;
       if (!machineId || !directory || !(await requireLocalPromptActionMachine(machineId)).ok) return null;
-      return { sessionId, machineId, directory };
+      return { sessionId, machineId, directory, requiresManagedTarget: requiresManagedSessionWorkspace(metadata) };
     },
     ...(params.resolveExactSessionEncryptionMaterial ? { resolveExactSessionEncryptionMaterial: params.resolveExactSessionEncryptionMaterial } : {}),
     ...(params.resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
