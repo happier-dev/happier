@@ -563,7 +563,7 @@ describe('local voice engine stop', () => {
     }
   });
 
-  it.each(['recorded', 'device', 'device-committed', 'recorded-starting', 'recorded-starting-replace', 'recorded-stop-failed', 'recorded-starting-stop-failed', 'recorded-muted'] as const)('discards %s conversation input before Say and keeps the conversation idle', async capture => {
+  it.each(['recorded', 'device', 'device-committed', 'recorded-starting', 'recorded-starting-finite', 'recorded-starting-replace', 'recorded-stop-failed', 'recorded-starting-stop-failed', 'recorded-muted'] as const)('discards %s conversation input before Say and keeps the conversation idle', async capture => {
     const storage = await getStorage();
     const local = readLocalConversationVoiceSettings(storage.getState().settings.voice);
     storage.__setState({ settings: { ...storage.getState().settings, voice: {
@@ -595,7 +595,7 @@ describe('local voice engine stop', () => {
     const target = { serverId: localVoiceHomeId, sessionId: 's1' };
     const recorderStarting = createDeferred<void>();
     const admitRecorder = createDeferred<{ recordingId: string }>();
-    if (capture === 'recorded-starting' || capture === 'recorded-starting-replace' || capture === 'recorded-starting-stop-failed') {
+    if (capture === 'recorded-starting' || capture === 'recorded-starting-finite' || capture === 'recorded-starting-replace' || capture === 'recorded-starting-stop-failed') {
       localVoiceSpeechOutputBoundary.fileRecording.start.mockImplementationOnce(async () => {
         recorderStarting.resolve(); return await admitRecorder.promise;
       });
@@ -640,6 +640,21 @@ describe('local voice engine stop', () => {
         expect(await replacement).toEqual({ status: 'completed' });
         expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Current answer.']);
         expect(localVoiceSpeechOutputBoundary.fileRecording.stop).toHaveBeenCalled();
+        return;
+      }
+      if (capture === 'recorded-starting-finite') {
+        await recorderStarting.promise;
+        const saying = executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'Finish the admitted answer.' }, storage.getState().settings);
+        expect(localVoiceTtsController.readSay()).toBe('preparing');
+        storage.__setState({ settings: { ...storage.getState().settings, voice: {
+          ...storage.getState().settings.voice, providerId: null,
+        } } });
+        admitRecorder.resolve({ recordingId: 'local-engine-recording' });
+        await starting;
+        expect(await saying).toEqual({ status: 'completed' });
+        expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Finish the admitted answer.']);
+        expect(await executeVoiceSpeechAction('ui.voice_global.say.start', { text: 'The next readout needs Voice.' },
+          storage.getState().settings)).toMatchObject({ status: 'unavailable', code: 'provider_unselected' });
         return;
       }
       if (capture === 'recorded-starting') {
