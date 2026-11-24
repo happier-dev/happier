@@ -1077,6 +1077,17 @@ function readAccountLinks(setup: Awaited<ReturnType<typeof createRequesterWorksp
   return ProjectAccountRelationshipGraphV1Schema.parse(graph.content.v.value).relationships;
 }
 
+/** A Project rows write that enables any link but the given one: the write that commits a Replace. */
+function enablesLinkOtherThan(body: unknown, relationshipId: string): boolean {
+  const enabled: string[] = [];
+  JSON.stringify(body, (_key, value: unknown) => {
+    if (value && typeof value === 'object' && 'relationshipId' in value && 'enabled' in value && value.enabled === true
+      && typeof value.relationshipId === 'string') enabled.push(value.relationshipId);
+    return value;
+  });
+  return enabled.some(id => id !== relationshipId);
+}
+
 async function listSourceLinks(setup: Awaited<ReturnType<typeof createRequesterWorkspaceSyncFixture>>) {
   const controller = setup.fixture.parentManagedWorkspaceSync;
   if (!(controller instanceof WorkspaceSyncController)) throw new Error('SOURCE controller is unavailable');
@@ -1127,6 +1138,63 @@ it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)
   expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
 });
 
+// W28-E-SYNC row 2 (build #152): a Manage holder replaced their own link whose
+// TARGET is another person's Machine and was refused
+// project_requester_authority_unavailable. The requester's Account custody is
+// not open there; the link's TARGET loan carries the signed admission that made it.
+// TS-QA-SWEEP-1122 (cut 40, request 924ae8c9) hit the same lookup between one
+// person's own two Machines (TARGET custodian member-a).
+it.skipIf(process.platform !== 'linux').each(['target-owner', 'member-a'] as const)(
+  'replaces a person\'s own link on another Machine under the link\'s signed admission (TARGET custodian %s)', async targetCustodianAccountId => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId: 'member-a',
+    remoteTarget: true, targetCustodianAccountId, socketIo, allowRelationshipAction: true });
+  const created = await setup.executeRelationshipAction();
+  if (!created.ok) throw new Error(`Original link refused: ${JSON.stringify(created)}`);
+  const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const replace = async (operationId: string, input: Partial<typeof setup.request.actionInput> & { replaceRelationshipId: string }) =>
+    setup.executeRelationshipAction(await setup.prepareInvocation({ ...setup.request, operationId,
+      actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing', ...input } }));
+  // A link the person does not own lends nothing: its root stays held.
+  const foreign = await replace('cross-sync-replace-foreign', { replaceRelationshipId: 'another-link' });
+  expect(foreign, JSON.stringify(foreign)).toMatchObject({ ok: false, failureCause: { errorCode: 'workspace_root_in_use' } });
+  expect(await listSourceLinks(setup)).toEqual([[original.relationshipId, 'watching']]);
+  const replaced = await replace('cross-sync-replace', { replaceRelationshipId: original.relationshipId });
+  expect(replaced, JSON.stringify(replaced)).toMatchObject({ ok: true, result: { created: true } });
+  const successor = WorkspaceSyncRelationshipCreateResultV1Schema.parse(replaced.ok ? replaced.result : null).relationshipId;
+  expect(successor).not.toBe(original.relationshipId);
+  expect(readAccountLinks(setup)).toEqual([expect.objectContaining({ relationshipId: successor, enabled: true })]);
+  expect(await listSourceLinks(setup)).toEqual([[successor, 'watching']]);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
+it.skipIf(process.platform !== 'linux')(
+  'keeps a person\'s original link on another person\'s Machine exactly as it was when its Replace fails', async () => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', sourceCustodianAccountId: 'member-a',
+    remoteTarget: true, targetCustodianAccountId: 'target-owner', socketIo, allowRelationshipAction: true });
+  const created = await setup.executeRelationshipAction();
+  if (!created.ok) throw new Error(`Original link refused: ${JSON.stringify(created)}`);
+  const original = WorkspaceSyncRelationshipCreateResultV1Schema.parse(created.result);
+  const before = readAccountLinks(setup);
+  const targetBefore = [...setup.targetAccountRows];
+  // Home refuses the write that would commit the replacement, after the handover.
+  const post = vi.mocked(axios.post).getMockImplementation();
+  if (!post) throw new Error('HTTP boundary is unavailable');
+  vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => String(url).includes('/v1/account/project-rows/')
+    && !/\/(list|read)$/u.test(String(url)) && enablesLinkOtherThan(body, original.relationshipId)
+    ? { status: 200, data: { status: 'invalid-request' } } : await post(url, body, config));
+  const replaced = await setup.executeRelationshipAction(await setup.prepareInvocation({ ...setup.request,
+    operationId: 'cross-sync-replace-fails', actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing',
+      replaceRelationshipId: original.relationshipId } }));
+  expect(replaced, JSON.stringify(replaced)).toMatchObject({ ok: false, errorCode: 'workspace_sync_unavailable',
+    error: expect.stringContaining('project_account_rows_invalid-request') });
+  expect(readAccountLinks(setup), JSON.stringify(replaced)).toEqual(before);
+  expect(await listSourceLinks(setup)).toEqual([[original.relationshipId, 'watching']]);
+  expect(setup.targetAccountRows).toEqual(targetBefore);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
 // A failed Replace must never cost the person the link it was replacing: the
 // graph row, its TARGET custody and its running state stay exactly as they were.
 it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)(
@@ -1144,17 +1212,8 @@ it.skipIf(process.platform !== 'linux').each(['member-a', 'requester'] as const)
   // after the original's runtime and TARGET custody were handed over.
   const post = vi.mocked(axios.post).getMockImplementation();
   if (!post) throw new Error('HTTP boundary is unavailable');
-  const enablesAnotherLink = (body: unknown) => {
-    const enabled: string[] = [];
-    JSON.stringify(body, (_key, value: unknown) => {
-      if (value && typeof value === 'object' && 'relationshipId' in value && 'enabled' in value && value.enabled === true
-        && typeof value.relationshipId === 'string') enabled.push(value.relationshipId);
-      return value;
-    });
-    return enabled.some(id => id !== original.relationshipId);
-  };
   vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => String(url).includes('/v1/account/project-rows/')
-    && !/\/(list|read)$/u.test(String(url)) && enablesAnotherLink(body)
+    && !/\/(list|read)$/u.test(String(url)) && enablesLinkOtherThan(body, original.relationshipId)
     ? { status: 200, data: { status: 'invalid-request' } } : await post(url, body, config));
   const replaced = await setup.executeRelationshipAction(await setup.prepareInvocation({ ...setup.request,
     operationId: 'member-sync-replace-fails', actionInput: { ...setup.request.actionInput, destinationIntent: 'use_existing',

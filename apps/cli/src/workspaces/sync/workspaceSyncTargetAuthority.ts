@@ -15,6 +15,7 @@ import { resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/ac
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { realpathWithAbsentSuffix } from '@/utils/path/physicalAncestorPath';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { openManagedMachineRead, readManagedMachineFull, readManagedMachineReads } from '@/machines/managed/readManagedMachine';
 import { unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -2445,6 +2446,33 @@ export function createWorkspaceSyncTargetAuthority(
     });
   };
 
+  // A retained TARGET loan is this admitted work only for the same SOURCE writer,
+  // requester Account and placement its stored signed admission names.
+  const isAdmittedBySourceWriter = (entry: RetainedBootstrap, routing: Pick<RetainedSourceWriterTargetRouting, 'sourceWriter' | 'source'>
+    & Readonly<{ target: Pick<RetainedSourceWriterTargetRouting['target'], 'targetMachineId' | 'targetRootPath'> }>) => {
+    const admitted = entry.sourceWriterTargetRouting;
+    return admitted !== undefined && isDeepStrictEqual(routing.sourceWriter, admitted.sourceWriter)
+      && routing.source.sourceContext.machineAdmission.actorAccountId === admitted.source.sourceContext.machineAdmission.actorAccountId
+      && routing.source.sourceMachineId === entry.sourceMachineId && routing.source.sourceRootPath === entry.sourceRootPath
+      && routing.target.targetMachineId === entry.targetMachineId && routing.target.targetRootPath === entry.targetRootPath;
+  };
+
+  // Another person's Machine holds no requester Account custody. A signed writer's
+  // Replace then finds the person's own link through the loan its signed admission made.
+  const resolveAdmittedReplacementLoan = (rawRouting: unknown, request: HandoffTargetReplacementPreflightV1) => {
+    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(rawRouting);
+    for (const relationshipId of [deriveWorkspaceSyncRelationshipId(request.operationId), request.replaceRelationshipId]) {
+      const matches = [...physicalRetained.values()].filter(entry => entry.relationshipId === relationshipId
+        && entry.endpointRole === 'beta' && entry.relationshipDefinition && isAdmittedBySourceWriter(entry, routing));
+      const relationship = matches.length === 1 ? matches[0]!.relationshipDefinition : null;
+      if (!relationship) continue;
+      const entry = matches[0]!;
+      return { relationship, target: { id: entry.targetWorkspaceRefId, serverId: localServerId,
+        machineId: entry.targetMachineId, rootPath: entry.targetRootPath, createdAtMs: relationship.createdAtMs } satisfies WorkspaceRefV1 };
+    }
+    return null;
+  };
+
   // One retained native loan owns preview, dependency observation and reviewed removal.
   // Home authenticates the installed SOURCE transport; this owner binds its original requester and exact physical copy.
   const resolveRetainedCopyCustody = async (request: Readonly<{
@@ -2508,10 +2536,7 @@ export function createWorkspaceSyncTargetAuthority(
     if (!match || !entry || !entry.relationshipDefinition || !entry.sourceRootPath
       || (entry.requesterCopyCustody
         ? !restoredBindingMatched && !matchesBinding(entry.requesterCopyCustody, entry.targetWorkspaceRefId, entry.targetRootPath, entry.endpointRole)
-        : !admitted || !isDeepStrictEqual(routing.sourceWriter, admitted.sourceWriter)
-          || routing.source.sourceContext.machineAdmission.actorAccountId !== admitted.source.sourceContext.machineAdmission.actorAccountId
-          || routing.source.sourceMachineId !== entry.sourceMachineId || routing.source.sourceRootPath !== entry.sourceRootPath
-          || routing.target.targetMachineId !== entry.targetMachineId || routing.target.targetRootPath !== entry.targetRootPath
+        : !admitted || !isAdmittedBySourceWriter(entry, routing)
           || request.sourceMachineId !== undefined && request.sourceMachineId !== entry.sourceMachineId
           || request.sourceWorkspace !== undefined && (request.sourceWorkspace.refId !== entry.sourceWorkspaceRefId
             || request.sourceWorkspace.serverId !== localServerId)
@@ -2851,11 +2876,14 @@ export function createWorkspaceSyncTargetAuthority(
         throw authorityError('workspace_root_unsafe', 'Handoff target parent is unavailable');
       }
       if (!bootstrap) throw authorityError('workspace_sync_unavailable', 'Workspace sync bootstrap authority is unavailable');
-      // A signed writer's Replace looks up the requester's own admitted rows,
-      // never this custodian's catalog, so it can lend only that person's link.
+      // A signed writer's Replace lends only the requester's own link, never from
+      // this custodian's catalog: through the requester's rows when their Account
+      // custody is open here, else through the link's own signed admission.
+      const admittedLoan = normalWriter && request.replaceRelationshipId
+        && !readRequesterAccountActionContext(context?.callerInputAuthorization);
       const snapshot = !normalWriter ? getSnapshot(request.operationId)
-        : request.replaceRelationshipId ? await readInvocationSnapshot(signal, context, request.operationId) : null;
-      const preflightTarget = await resolveEnabledRelationshipPreflightTarget({
+        : request.replaceRelationshipId && !admittedLoan ? await readInvocationSnapshot(signal, context, request.operationId) : null;
+      const preflightTarget = admittedLoan ? resolveAdmittedReplacementLoan(writer, request) : await resolveEnabledRelationshipPreflightTarget({
         snapshot,
         operationId: request.operationId,
         replaceRelationshipId: request.replaceRelationshipId,

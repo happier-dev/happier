@@ -87,7 +87,12 @@ export type RequesterAccountAuthorizationHeaders = Readonly<Record<string, strin
   [requesterAccountEncryptionMode]?: 'plain' | 'e2ee';
 }>;
 
-/** Host-local custody facet; strict parsing/JSON forwarding cannot carry credentials or settings. */
+/**
+ * Host-local custody facet; strict parsing/JSON forwarding cannot carry credentials or settings.
+ * The one requester-read chooser (Coordination ruling 2026-11-23 20:15Z): present, a row is read
+ * with the requester's own open Account custody; absent, through the admitted work's signed
+ * admission. Never with the root of the Action being executed.
+ */
 export function readRequesterAccountActionContext(authorization?: ExternalActionExecutionAuthorizationV1): RequesterAccountActionContext | null {
   const context = readRequesterAccountCarrierContext(authorization);
   return context && 'savedSecretOperationContext' in context ? context : null;

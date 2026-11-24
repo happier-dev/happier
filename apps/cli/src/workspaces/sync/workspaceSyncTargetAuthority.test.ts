@@ -100,6 +100,7 @@ import {
   inspectCommittedWorkspaceTargetMaterialization,
   rehydrateWorkspaceTargetMaterializationFromReceiptPath,
 } from '@/scm/workspace/workspaceExportMaterialization';
+import { requesterActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 // Prepare the real lazy transport during collection, before the held-response
 // overlap assertion starts. Source-module linking is not endpoint HTTP work.
@@ -3978,13 +3979,17 @@ describe('workspace sync target bootstrap authority', () => {
       actionId: 'workspace.sync.relationship.replace', requestId: replacementOperationId, requestEnvelopeDigest: 'A'.repeat(43),
       target: { kind: 'machine', machineId: 'machine-a' }, accountEncryptionMode: 'plain',
     } });
-    const writerContext: RpcHandlerContext = { callerAuthority: 'present_user', callerInputAuthorization: authorization,
+    // The requester's own Account custody is open on this daemon: the host-local
+    // carrier the installed ingress attaches (the rows it reads are refreshProjectSnapshot's).
+    const openCustody = { savedSecretOperationContext: {} } as unknown as RequesterAccountActionContext;
+    const withRequesterCustody = { ...authorization, requesterAccountProjection: { [requesterActionContext]: openCustody } } as unknown as typeof authorization;
+    const writerContext: RpcHandlerContext = { callerAuthority: 'present_user', callerInputAuthorization: withRequesterCustody,
       machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true,
       workspaceSyncSourceWriterTargetRouting: writerRouting };
-    const replace = (replaceRelationshipId: string) => harness.authority.preflightHandoffTargetReplacementHere({
+    const replace = (replaceRelationshipId: string, context = writerContext) => harness.authority.preflightHandoffTargetReplacementHere({
       v: 1, serverId: 'server-1', machineId: 'machine-b', operationId: replacementOperationId, targetPath: betaRoot,
       replaceRelationshipId, destinationIntent: 'use_existing',
-    }, undefined, writerContext);
+    }, undefined, context);
     try {
       // The live link holds its target root under the receiving daemon's retained custody.
       await expect(harness.authority.prepareBootstrapHere(prepareRequest())).resolves.toMatchObject({ state: 'ready' });
@@ -3996,6 +4001,11 @@ describe('workspace sync target bootstrap authority', () => {
       // A requester whose own rows do not hold the live link cannot borrow it from this daemon's catalog.
       requesterRows = snapshot(alphaRoot, betaRoot, { includeRelationship: false });
       await expect(replace(relationshipId)).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+      // Without that custody here (another person's Machine) only a loan made under this
+      // writer's own signed admission is lent; this daemon's installed link is not one.
+      requesterRows = daemonRows;
+      await expect(replace(relationshipId, { ...writerContext, callerInputAuthorization: authorization }))
+        .rejects.toMatchObject({ code: 'workspace_root_in_use' });
       // The selected link keeps its root: no refusal released or stole the retained claim.
       expect(await harness.rootOwnershipManager.tryAcquire({
         ownerId: 'probe', canonicalRoot: await realpath(betaRoot), operation: 'handoff', deferRootIdentityBinding: true,
