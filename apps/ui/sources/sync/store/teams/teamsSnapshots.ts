@@ -8,6 +8,7 @@ import {
     type TeamCredentialSourceCandidateListOutputV1,
     type TeamCredentialResourceActivityEventV1,
     type TeamCredentialUsageQueryResultV1,
+    type TeamCredentialUsageLimitV1,
     type TeamCredentialResourceSummaryV1,
     type TeamCredentialViewerCapabilitiesV1,
     type TeamGroupV1,
@@ -39,12 +40,14 @@ import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, retainKey
 import {
     readServerAccountScopeOwnerLifetime,
     serverAccountScopeKeySuffix,
+    serverAccountScopedResourceKey,
     type ServerAccountScope,
     type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import {
     serverAccountScopedTeamKey,
     serverAccountScopedTeamResourceKey,
+    teamSetupStepId,
     type TeamAddress,
 } from '@/sync/domains/teams/teamAddress';
 import {
@@ -242,6 +245,16 @@ function createTeamObservations<Data>() {
             const observation = observations.get(key);
             return observation?.lifetime.isCurrent() ? observation.data : undefined;
         },
+        findForTeam<T>(scope: ServerAccountScope, address: TeamAddress, find: (data: Data) => T | undefined): T | undefined {
+            const prefix = serverAccountScopedTeamKey(scope, address);
+            for (const [key, { data, lifetime }] of observations) {
+                if (key.startsWith(prefix) && lifetime.scope.serverId === scope.serverId
+                    && lifetime.scope.accountId === scope.accountId && lifetime.isCurrent()) {
+                    const match = find(data);
+                    if (match !== undefined) return match;
+                }
+            }
+        },
         apply(key: string, lifetime: ServerAccountScopeLifetime, data: Data | null) {
             if (!lifetime.isCurrent()) return;
             if (data === null) observations.delete(key);
@@ -287,6 +300,21 @@ export function readObservedTeamCredentialExternalKey(
 }
 
 export const teamCredentialUsageObservations = createTeamObservations<TeamCredentialUsageQueryResultV1>();
+export const teamCredentialLimitObservations = createTeamObservations<Readonly<{
+    resourceRevision: number;
+    limits: readonly TeamCredentialUsageLimitV1[];
+}>>();
+
+export function teamCredentialLimitsObservationKey(scope: ServerAccountScope, resourceId: string): string {
+    return serverAccountScopedResourceKey(scope, 'team-credential-limits', resourceId);
+}
+
+export function readObservedTeamCredentialLimit(
+    scope: ServerAccountScope, resourceId: string, resourceRevision: number, limitId: string,
+): TeamCredentialUsageLimitV1 | undefined {
+    const observation = teamCredentialLimitObservations.get(teamCredentialLimitsObservationKey(scope, resourceId));
+    return observation?.resourceRevision === resourceRevision ? observation.limits.find(row => row.id === limitId) : undefined;
+}
 export const teamGroupMemberPages = createTeamObservations<TeamPage<TeamGroupMemberV1>>();
 export const teamMemberGroupPages = createTeamObservations<TeamPage<TeamGroupV1>>();
 export const teamCredentialActivityPages = createTeamObservations<TeamPage<TeamCredentialResourceActivityEventV1>>();
@@ -295,6 +323,26 @@ export const teamCredentialSourceCandidateObservations = createTeamObservations<
 export const teamDirectoryPeoplePages = createTeamObservations<TeamPage<TeamDirectoryPeoplePageV1['items'][number]>>();
 export const teamDirectoryGroupPages = createTeamObservations<TeamPage<TeamDirectoryGroupPageV1['items'][number]>>();
 export const teamExternalGroupBindingPages = createTeamObservations<TeamPage<TeamExternalGroupBindingV1>>();
+
+export function teamDirectoryGroupObservationKey(scope: ServerAccountScope, address: TeamAddress, sourceId: string, filter: string): string {
+    return serverAccountScopedTeamResourceKey(scope, address, 'directory-groups', sourceId, filter);
+}
+
+export function readTeamDirectoryGroupName(scope: ServerAccountScope, teamId: string, sourceId: string, externalGroupId: string): string | null {
+    const key = teamDirectoryGroupObservationKey(scope, { serverId: scope.serverId, teamId }, sourceId, '');
+    return teamDirectoryGroupPages.get(key)?.items
+        .find(group => group.sourceId === sourceId && group.externalGroupId === externalGroupId)?.displayName ?? null;
+}
+
+export function readObservedTeamExternalGroupBinding(scope: ServerAccountScope, teamId: string, bindingId: string) {
+    const address = { serverId: scope.serverId, teamId };
+    const directoryGroup = teamDirectoryGroupPages.findForTeam(scope, address, page =>
+        page.items.find(group => group.mapping.state === 'bound' && group.mapping.bindingId === bindingId));
+    if (directoryGroup) return { kind: 'directoryGroup' as const, displayName: directoryGroup.displayName };
+    const binding = teamExternalGroupBindingPages.findForTeam(scope, address, page =>
+        page.items.find(row => row.teamId === teamId && row.id === bindingId));
+    return binding ? { kind: 'teamGroup' as const, target: binding.target } : null;
+}
 const retainedTeamObservations = [
     teamSharedMachineObservations,
     teamSharedMachinePoolObservations,
@@ -306,6 +354,7 @@ const retainedTeamObservations = [
     teamInvitationPages,
     teamCredentialExternalApiKeyObservations,
     teamCredentialUsageObservations,
+    teamCredentialLimitObservations,
     teamGroupMemberPages,
     teamMemberGroupPages,
     teamCredentialActivityPages,
@@ -390,6 +439,19 @@ export function getTeamsDirectorySnapshot(
 ): TeamsDirectorySnapshot | null {
     if (!scope) return null;
     return directories.get(directoryKey(scope, queryKey)) ?? null;
+}
+
+/** Read a retained setup offer's Team even after the step has been dismissed. */
+export function readTeamSetupStepName(scope: ServerAccountScope, stepId: string): string | null {
+    if (!stepId.startsWith('team:')) return null;
+    for (const snapshot of directories.values()) {
+        if (snapshot.scope.serverId !== scope.serverId || snapshot.scope.accountId !== scope.accountId) continue;
+        if (isAuthoritativeScopedSnapshotRefusal(snapshot.error)) continue;
+        const team = snapshot.data?.find(team => team.hasSetup === true && team.viewerJoinedAt != null
+            && teamSetupStepId(scope, { serverId: scope.serverId, teamId: team.id }) === stepId);
+        if (team) return team.name;
+    }
+    return null;
 }
 
 /** Directory presentation facts, including cursor/currentness changes, independent of observation time. */

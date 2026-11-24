@@ -1,3 +1,4 @@
+import { HOME_SETUP_STEP_TITLES } from '@/components/hub/setup/homeSetupStepTitles';
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -43,7 +44,7 @@ export function usePersonalizeSetupItem(input: Readonly<{
     if (input.hidden.has(PERSONALIZE_SETUP_ENTRY_ID)) return null;
     const card = resolvePersonalizeCardProgress(progress);
     const total = PERSONALIZE_STEPS.length;
-    const title = t('personalize.cardTitle');
+    const title = t(HOME_SETUP_STEP_TITLES[PERSONALIZE_SETUP_ENTRY_ID]);
     const subtitle = !card.started ? t('personalize.cardSubtitle')
         : card.nextStep ? t('personalize.cardProgress', { saved: card.savedCount, total, step: personalizeStepName(card.nextStep) })
             : t('personalize.cardProgressReview', { saved: card.savedCount, total });

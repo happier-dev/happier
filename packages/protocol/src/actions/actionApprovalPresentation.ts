@@ -214,14 +214,18 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'discussion'; id: string }>
   /** A saved Home layout item, read through the presenting Account's existing layout projection. */
   | Readonly<{ kind: 'homeLayoutItem'; id: string }>
+  | Readonly<{ kind: 'homeSetupStep'; id: string }>
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
   | Readonly<{ kind: 'signInConnection' | 'signInProvider'; id: string; teamId: string | null }>
   | Readonly<{ kind: 'teamDirectorySource'; id: string; teamId: string }>
+  | Readonly<{ kind: 'teamDirectoryGroup'; id: string; teamId: string; sourceId?: string }>
+  | Readonly<{ kind: 'teamExternalGroupBinding'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamInvitation'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamCredentialResource'; id: string; unavailableWithoutName: true }>
   | Readonly<{ kind: 'teamCredentialExternalKey'; id: string; resourceId: string }>
+  | Readonly<{ kind: 'teamCredentialLimit'; id: string; resourceId: string; resourceRevision: number }>
   | Readonly<{ kind: 'teamCredentialAudience'; id: string; resourceId: string; audience: 'group' | 'teamMembership' }>
   /** An explicit null is the default picker’s None choice. An omitted field has no reference. */
   | Readonly<{ kind: 'approvalProfile'; id: string | null }>

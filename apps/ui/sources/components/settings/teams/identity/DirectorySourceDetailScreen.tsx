@@ -27,8 +27,8 @@ import { getPreferredLanguage, t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
-import { serverAccountScopedTeamResourceKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
-import { teamDirectoryGroupPages } from '@/sync/store/teams/teamsSnapshots';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { teamDirectoryGroupObservationKey, teamDirectoryGroupPages } from '@/sync/store/teams/teamsSnapshots';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 
 import { TeamSection } from '../TeamSection';
@@ -128,7 +128,7 @@ const DirectoryGroupMappings = React.memo(function DirectoryGroupMappings(props:
     const directoryGroups = useTeamObservedPagedList({
         scope: props.scope,
         observations: filter ? null : teamDirectoryGroupPages,
-        key: serverAccountScopedTeamResourceKey(props.scope, props.address, 'directory-groups', props.sourceId, filter),
+        key: teamDirectoryGroupObservationKey(props.scope, props.address, props.sourceId, filter),
         enabled: props.groupMappingsAvailable,
         loadPage,
         // Directory projection changes are published as the Team change.

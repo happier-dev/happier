@@ -51,6 +51,8 @@ import {
     readTeamCredentialResource,
     subscribeTeamsSnapshots,
     teamCredentialActivityPages,
+    teamCredentialLimitObservations,
+    teamCredentialLimitsObservationKey,
     teamCredentialSourceCandidateObservations,
     teamCredentialUsageObservations,
 } from '@/sync/store/teams/teamsSnapshots';
@@ -450,7 +452,7 @@ export function useTeamCredentialRequestPolicySupport(params: Readonly<{
     return React.useMemo(() => ({ ...state, reload: load }), [load, state]);
 }
 
-/** Limits are an on-demand resource read; they are not part of the list cache. */
+/** Limits are an on-demand read. Pending reviews can name a limit from the same observed revision. */
 export function useTeamCredentialUsageLimits(params: Readonly<{
     scope: ServerAccountScope | null;
     resourceId: string;
@@ -466,8 +468,11 @@ export function useTeamCredentialUsageLimits(params: Readonly<{
     }>>({ rows: Object.freeze([]), status: 'loading', error: null });
     const scope = params.scope;
     const active = params.enabled && scope !== null && params.resourceId !== '';
+    const { binding } = useServerCredentialAccountScopeBinding(active ? scope.serverId : null);
+    const currentBinding = binding?.isCurrent() && areServerAccountScopesEqual(binding.scope, scope) ? binding : null;
     const load = React.useCallback(async () => {
-        if (!active || !scope) return;
+        if (!currentBinding) return;
+        const scope = currentBinding.scope;
         const epoch = ++requestEpoch.current;
         request.current?.abort();
         const controller = new AbortController();
@@ -477,13 +482,18 @@ export function useTeamCredentialUsageLimits(params: Readonly<{
             if (controller.signal.aborted) return null;
             throw error;
         });
-        if (!outcome || epoch !== requestEpoch.current) return;
+        if (!outcome || epoch !== requestEpoch.current || !currentBinding.isCurrent()) return;
+        const key = teamCredentialLimitsObservationKey(scope, params.resourceId);
         if (outcome.kind === 'succeeded') {
+            if (params.resourceRevision !== null) {
+                teamCredentialLimitObservations.apply(key, currentBinding, { resourceRevision: params.resourceRevision, limits: outcome.value.limits });
+            }
             setState({ rows: outcome.value.limits, status: 'ready', error: null });
         } else {
+            if (isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind)) teamCredentialLimitObservations.apply(key, currentBinding, null);
             setState((previous) => ({ ...previous, status: 'error', error: outcome.failure }));
         }
-    }, [active, params.resourceId, params.resourceRevision, scope]);
+    }, [currentBinding, params.resourceId, params.resourceRevision]);
     React.useEffect(() => {
         void load();
         return () => { requestEpoch.current += 1; request.current?.abort(); };

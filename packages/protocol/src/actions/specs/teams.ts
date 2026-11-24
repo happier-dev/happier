@@ -188,6 +188,7 @@ type TeamProvisioningActionRowInput = Readonly<{
   projectObservationInput?: PreNormalizedActionSpec['projectObservationInput'];
   projectObservationOutput?: PreNormalizedActionSpec['projectObservationOutput'];
   approvalResultCustody?: PreNormalizedActionSpec['approvalResultCustody'];
+  approvalPresentation?: PreNormalizedActionSpec['approvalPresentation'];
 }>;
 
 const identityApprovalPresentation: NonNullable<PreNormalizedActionSpec['approvalPresentation']> = {
@@ -236,8 +237,10 @@ function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRo
 function teamProvisioningActionRow<const TInput extends TeamProvisioningActionRowInput>(
   input: TInput,
 ): HomeDomainActionRow<TInput['id'], TInput['inputSchema'], TInput['outputSchema'], 'account_automation' | 'present_user'> {
-  const approvalPresentation = TEAM_IDENTITY_ACTION_IDS_V1.some(id => id === input.id) ? identityApprovalPresentation
-    : TEAM_DIRECTORY_ACTION_IDS_V1.some(id => id === input.id) ? directoryApprovalPresentation : undefined;
+  const approvalPresentation = input.approvalPresentation ?? (
+    TEAM_IDENTITY_ACTION_IDS_V1.some(id => id === input.id) ? identityApprovalPresentation
+      : TEAM_DIRECTORY_ACTION_IDS_V1.some(id => id === input.id) ? directoryApprovalPresentation : undefined
+  );
   const row = homeDomainActionRow({ ...input, agent: true, mcp: true, approvalPresentation });
   const presentUser = input.presentUser ?? input.sideEffectClass !== 'read';
   if (!presentUser) return row;
@@ -292,6 +295,12 @@ function teamCredentialApprovalReferences(actionId: TeamCredentialHomeActionIdV1
       if (path === 'keyId' && actionId !== TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1) {
         const { resourceId } = readRecord(input);
         if (typeof resourceId === 'string') return { kind: 'teamCredentialExternalKey', id: value, resourceId };
+      }
+      if (path === 'limitId') {
+        const { resourceId, expectedRevision } = readRecord(input);
+        if (typeof resourceId === 'string' && typeof expectedRevision === 'number') {
+          return { kind: 'teamCredentialLimit', id: value, resourceId, resourceRevision: expectedRevision };
+        }
       }
       if (path === 'source.connectionId' || path === 'replacement.custodian.source.connectionId') {
         return { kind: 'providerConnection', id: value };
@@ -1552,6 +1561,35 @@ function createTeamActionSpecs(): TeamActionSpecs {
     safety: 'danger',
     sideEffectClass: 'danger',
     cliPath: ['teams', 'external-group-bindings', 'set'],
+    approvalPresentation: {
+      inputHints: { fields: [
+        TEAM_ID_FIELD,
+        approvalChoiceField('owner.kind', 'Source', [
+          { value: 'directory_source', label: 'Directory', labelKey: 'teams.authentication.directory.section' },
+          { value: 'identity_connection', label: 'Sign-in connections', labelKey: 'teams.authentication.connectionsSection' },
+        ]),
+        approvalField('owner.directorySourceId', 'Directory'),
+        approvalField('owner.teamIdentityConnectionId', 'Sign-in connection'),
+        approvalField('externalGroupId', 'External Group'),
+        approvalChoiceField('target.kind', 'Mapping', [
+          { value: 'directory_created', label: 'Create and manage a Team Group', labelKey: 'identityAdministration.mapCreate' },
+          { value: 'native_target', label: 'Map to an existing Team Group', labelKey: 'identityAdministration.mapExisting' },
+        ]),
+        approvalField('target.teamGroupId', 'Team Group'),
+      ] },
+      referenceForField: (path, value, input) => {
+        const { teamId, owner } = readRecord(input);
+        if (typeof value !== 'string' || typeof teamId !== 'string') return;
+        if (path === 'owner.directorySourceId') return { kind: 'teamDirectorySource', id: value, teamId };
+        if (path === 'owner.teamIdentityConnectionId') return { kind: 'signInConnection', id: value, teamId };
+        if (path === 'target.teamGroupId') return { kind: 'group', id: value, teamId };
+        if (path === 'externalGroupId') {
+          const { kind, directorySourceId } = readRecord(owner);
+          return { kind: 'teamDirectoryGroup', id: value, teamId,
+            ...(kind === 'directory_source' && typeof directorySourceId === 'string' ? { sourceId: directorySourceId } : {}) };
+        }
+      },
+    },
   }),
   teamExternalGroupBindingActionRow({
     id: 'teams.externalGroupBindings.remove', approval: {result: 'required',flow: 'deferred'},
@@ -1565,6 +1603,15 @@ function createTeamActionSpecs(): TeamActionSpecs {
     safety: 'danger',
     sideEffectClass: 'danger',
     cliPath: ['teams', 'external-group-bindings', 'remove'],
+    approvalPresentation: {
+      inputHints: { fields: [TEAM_ID_FIELD, approvalField('bindingId', 'Group mapping')] },
+      referenceForField: (path, value, input) => {
+        const { teamId } = readRecord(input);
+        if (path === 'bindingId' && typeof value === 'string' && typeof teamId === 'string') {
+          return { kind: 'teamExternalGroupBinding', id: value, teamId };
+        }
+      },
+    },
   }),
   teamProvisioningActionRow({
     id: 'teams.directory.sourceSetup.list', approval: {result: 'required'},
@@ -1638,6 +1685,21 @@ function createTeamActionSpecs(): TeamActionSpecs {
     safety: 'danger',
     sideEffectClass: 'danger',
     cliPath: ['teams', 'directory', 'sources', 'create'],
+    approvalPresentation: {
+      ...directoryApprovalPresentation,
+      inputHints: { fields: [
+        TEAM_ID_FIELD,
+        approvalChoiceField('kind', 'Source', [
+          { value: 'workos_directory', label: 'WorkOS', labelKey: 'teams.authentication.directory.kind.workos' },
+          { value: 'github_organization', label: 'GitHub', labelKey: 'teams.authentication.directory.kind.github' },
+        ]),
+        approvalField('displayName', 'Name'),
+        approvalField('teamIdentityConnectionId', 'Sign-in connection'),
+        approvalField('githubAppInstallationId', 'GitHub installation ID'),
+        approvalField('workosDirectoryId', 'WorkOS directory ID'),
+      ] },
+      technicalInputPaths: ['githubAppInstallationId', 'workosDirectoryId'],
+    },
   }),
   teamProvisioningActionRow({
     id: 'teams.directory.sources.sync', approval: {result: 'required',flow: 'deferred'},

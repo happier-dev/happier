@@ -86,6 +86,7 @@ function createHomeHubLayoutActionSpecs() {
       clearInputPaths: ['intent.displayName', 'intent.frameStyle', 'intent.groupId'],
       referenceForField: (path, value, input) => {
         if (typeof value !== 'string') return undefined;
+        if (path === 'intent.stepId') return { kind: 'homeSetupStep', id: value };
         if (path === 'intent.sectionId' || path === 'intent.instanceId' || path === 'intent.position.anchorId'
           || path === 'intent.sectionIds.[]' || path === 'intent.instanceIds.[]') return { kind: 'homeLayoutItem', id: value };
         if (path === 'intent.instance.definition.artifactId' || path === 'intent.group.children.[].instance.definition.artifactId') {

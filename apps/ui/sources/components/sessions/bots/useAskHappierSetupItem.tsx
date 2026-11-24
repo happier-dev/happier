@@ -1,3 +1,4 @@
+import { HOME_SETUP_STEP_TITLES } from '@/components/hub/setup/homeSetupStepTitles';
 import * as React from 'react';
 
 import type { SetupBlockItem } from '@/components/ui/setupBlocks/SetupBlockGrid';
@@ -32,7 +33,7 @@ export function useAskHappierSetupItem(
                 testID="hub-setup.askHappier"
                 layout={layout}
                 glyph={<AskHappierMark size={22} />}
-                title={t('bots.guide.offer')}
+                title={t(HOME_SETUP_STEP_TITLES[ASK_HAPPIER_SETUP_STEP_ID])}
                 subtitle={t('bots.guide.line')}
                 action={{
                   label: t('bots.guide.start'),

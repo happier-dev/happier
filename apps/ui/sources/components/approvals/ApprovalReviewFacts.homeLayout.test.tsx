@@ -30,6 +30,24 @@ afterEach(async () => {
 });
 
 it.each([
+    ['addPhone', 'settings.addYourPhone'],
+    ['67cffe92-bd4e-4b28-8512-706b1cc4ab77', 'common.unavailable'],
+] as const)('reviews setup visibility by the setup step title (%s)', async (stepId, titleKey) => {
+    const serverId = await harness.addHome({ name: 'Layout Home', serverUrl: 'https://layout-review.test',
+        accountId: 'layout-reviewer' });
+    const actionId = 'home.hub.layout.update';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ intent: { kind: 'setup_visibility', stepId, hidden: true } });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={serverId} testID="setup-visibility-review" />);
+    try {
+        expect(screen.getTextContent()).toContain(t(titleKey));
+        expect(screen.getTextContent()).not.toContain(stepId);
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(stepId);
+    } finally { await screen.unmount(); }
+});
+
+it.each([
     ['widget_rename', 'readable'], ['widget_rename', 'unreadable'], ['widget_rename', 'other Home'],
     ['visibility', 'readable'], ['visibility', 'unreadable'], ['visibility', 'other Home'],
 ] as const)('names a %s target in a Home layout review (%s)', async (kind, visibility) => {

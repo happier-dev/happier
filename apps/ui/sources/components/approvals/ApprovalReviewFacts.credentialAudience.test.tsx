@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { TeamCredentialExternalApiKeySummaryV1Schema } from '@happier-dev/protocol/teams';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { teamCredentialResourceFixture, teamMembershipFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { t } from '@/text';
@@ -15,6 +15,7 @@ installHomeGovernanceBoundaries(harness);
 const { ApprovalReviewFacts } = await import('./ApprovalReviewFacts');
 const { applyTeamCredentialResource, resetTeamsSnapshotsForTests, teamCredentialExternalApiKeyObservations, teamCredentialExternalKeyObservationKey } = await import('@/sync/store/teams/teamsSnapshots');
 const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+const { useTeamCredentialUsageLimits } = await import('@/hooks/teams/useTeamCredentialResources');
 
 const resourceId = '67cffe92-bd4e-4b28-8512-706b1cc4ab77';
 const teamId = '299c21a2-4015-40ad-8940-38867c442c2c';
@@ -25,6 +26,49 @@ const resourceName = 'Studio credential';
 
 beforeEach(async () => { standardCleanup(); resetTeamsSnapshotsForTests(); await harness.reset(); });
 afterEach(async () => { standardCleanup(); resetTeamsSnapshotsForTests(); await harness.reset(); });
+
+it.each(['readable', 'denied', 'different revision'] as const)('identifies a readable limit being deleted (%s)', async visibility => {
+    const accountId = 'reviewer';
+    const serverId = await harness.addHome({ name: 'Review Home', serverUrl: 'https://limit-review.test', accountId,
+        teamsEnabled: true, credentialResourcesEnabled: true });
+    await harness.selectHomes([serverId]);
+    const limitId = '876c1059-e438-4752-bafd-d08dd94c6de4';
+    const limitsRoute = '/v1/teams/credential-resources/limits/list';
+    harness.answer(serverId, `POST ${limitsRoute}`, visibility !== 'denied' ? {
+        body: { limits: [{ id: limitId, subjectKind: 'each_member', subjectId: '', period: 'week', metric: 'inference_requests',
+            maximum: '500', enabled: true, currentWindow: { recorded: '0', resetsAtUtc: '2026-11-24T10:00:00Z' } }], nextCursor: null },
+    } : { status: 403, body: { error: 'forbidden' } });
+    const scope = { serverId, accountId };
+    const limits = await renderHook(() => useTeamCredentialUsageLimits({
+        scope, resourceId, resourceRevision: visibility === 'different revision' ? 2 : 1, enabled: true,
+    }));
+    try {
+        await waitForHomeGovernance(() => expect(limits.getCurrent().status).toBe(visibility === 'denied' ? 'error' : 'ready'));
+    } finally { await limits.unmount(); }
+    const reads = harness.requestsFor(limitsRoute).length;
+    const actionId = 'teams.credentials.limits.delete';
+    const actionArgs = getActionSpec(actionId).inputSchema.parse({ resourceId, expectedRevision: 1, limitId });
+    const screen = await renderScreen(<ApprovalReviewFacts actionId={actionId} actionArgs={actionArgs}
+        preview={null} status="open" serverId={serverId} testID="credential-limit-delete" />);
+    try {
+        await waitForHomeGovernance(() => {
+            const content = screen.getTextContent();
+            expect(content).not.toContain(limitId);
+            if (visibility === 'readable') {
+                expect(content).toContain(t('teams.credentials.limits.subject.eachMember'));
+                expect(content).toContain(t('teams.credentials.limits.period.week'));
+                expect(content).toContain(t('teams.credentials.limits.metric.requests'));
+                expect(content).toContain('500');
+            } else {
+                expect(content).toContain(t('common.unavailable'));
+                expect(content).not.toContain('500');
+            }
+        });
+        await screen.pressByTestIdAsync('approvals.technical-details.header');
+        expect(screen.getTextContent()).toContain(limitId);
+        expect(harness.requestsFor(limitsRoute)).toHaveLength(reads);
+    } finally { await screen.unmount(); }
+});
 
 it.each([
     ['teams.credentials.list', { teamId, filter: 'needs_attention' }, 'teams.credentials.state.needsAttention', 'needs_attention'],

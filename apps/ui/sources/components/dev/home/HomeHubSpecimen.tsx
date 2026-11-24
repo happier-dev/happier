@@ -1,3 +1,4 @@
+import { HOME_SETUP_STEP_TITLES } from '@/components/hub/setup/homeSetupStepTitles';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { WIDGET_SIZE_POLICY_V1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
@@ -151,7 +152,7 @@ function labSetup(phone: boolean): SetupBlockItem[] {
             ? tile('connectComputer', 'laptop', t('homeSetup.connectComputerTitle'), t('homeSetup.connectComputerSubtitle'), t('settingsOverview.setupActionScan'))
             : tile('addPhone', 'device-mobile', t('settings.addYourPhone'), t('homeSetup.addPhoneSubtitle'), t('homeSetup.addPhoneAction')),
         tile('addMachine', 'desktop', t('settingsOverview.addMachineTitle'), t(phone ? 'homeSetup.phoneAddMachineSubtitle' : 'homeSetup.addMachineSubtitle'), t(phone ? 'homeSetup.phoneAddMachineAction' : 'settingsOverview.setupActionAddMachine')),
-        tile('installComputer', 'laptop', t('homeSetup.installComputerTitle'), t('homeSetup.installComputerSubtitle'), t('homeSetup.installComputerAction')),
+        tile('installComputer', 'laptop', t(HOME_SETUP_STEP_TITLES.installComputer), t('homeSetup.installComputerSubtitle'), t('homeSetup.installComputerAction')),
     ];
 }
 

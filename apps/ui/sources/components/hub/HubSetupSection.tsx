@@ -1,3 +1,4 @@
+import { HOME_SETUP_STEP_TITLES } from '@/components/hub/setup/homeSetupStepTitles';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -137,7 +138,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
         id: 'addMachine',
         testID: 'hub-setup.addMachine',
         icon: 'hard-drives',
-        title: t('settingsOverview.addMachineTitle'),
+        title: t(HOME_SETUP_STEP_TITLES.addMachine),
         subtitle: !tiles
             ? t('settingsOverview.addMachineSubtitle')
             : isPhone ? t('homeSetup.phoneAddMachineSubtitle') : t('homeSetup.addMachineSubtitle'),
@@ -156,7 +157,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
             id: 'recoveryKey' as const,
             testID: 'hub-setup.recoveryKey',
             icon: 'key' as const,
-            title: t('settingsOverview.saveRecoveryKeyTitle'),
+            title: t(HOME_SETUP_STEP_TITLES.recoveryKey),
             subtitle: t('settingsOverview.saveRecoveryKeySubtitle'),
             action: { id: 'recoveryKey' as const, label: t('settingsOverview.setupActionSaveKey'), testID: 'hub-setup.recoveryKey.action' },
             kind: 'step' as const,
@@ -165,7 +166,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
             id: 'addPhone' as const,
             testID: 'settings-add-your-phone-shortcut',
             icon: 'device-mobile' as const,
-            title: t('settings.addYourPhone'),
+            title: t(HOME_SETUP_STEP_TITLES.addPhone),
             subtitle: tiles ? t('homeSetup.addPhoneSubtitle') : t('settings.addYourPhoneSubtitle'),
             action: {
                 id: 'showAddPhonePage' as const,
@@ -181,7 +182,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
             id: 'connectComputer' as const,
             testID: 'hub-setup.connectComputer',
             icon: 'laptop' as const,
-            title: t('homeSetup.connectComputerTitle'),
+            title: t(HOME_SETUP_STEP_TITLES.connectComputer),
             subtitle: isConnectingTerminal ? t('common.scanning') : t('homeSetup.connectComputerSubtitle'),
             action: {
                 id: 'scanTerminal' as const,
@@ -199,7 +200,7 @@ function useSetupEntries(presentation: SetupPresentation, openPanelId: string | 
             id: 'browsePlugins' as const,
             testID: 'settings-overview-browse-plugins',
             icon: 'squares-four' as const,
-            title: t('settingsOverview.browsePluginsTitle'),
+            title: t(HOME_SETUP_STEP_TITLES.browsePlugins),
             subtitle: t('settingsOverview.browsePluginsSubtitle'),
             action: { id: 'browsePlugins' as const, label: t('settingsOverview.setupActionBrowse'), testID: 'settings-overview-browse-plugins.action' },
             kind: 'action' as const,

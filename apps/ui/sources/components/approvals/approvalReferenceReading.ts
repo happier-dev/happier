@@ -32,7 +32,11 @@ import { readSignInIdentityName } from '@/sync/store/home/governance/homeGoverna
 import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
 import { useOpenedPrivateLabels } from '@/sync/ops/privateLabels/useOpenedPrivateLabels';
 import { teamCredentialDisplayNameBinding, teamCredentialExternalApiKeyLabelBinding } from '@/sync/ops/teams/teamCredentialLabels';
-import { readObservedTeamCredentialExternalKey, readTeamCredentialResourceApprovalProjection, readTeamDirectorySourceName, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { readObservedTeamCredentialExternalKey, readObservedTeamCredentialLimit, readObservedTeamExternalGroupBinding, readTeamCredentialResourceApprovalProjection,
+    readTeamDirectoryGroupName, readTeamDirectorySourceName, readTeamSetupStepName, subscribeTeamsSnapshots } from '@/sync/store/teams/teamsSnapshots';
+import { limitMetricLabel, limitPeriodLabel, limitSubjectLine } from '@/components/settings/teams/credentials/teamCredentialPresentation';
+import { openTeamGroupNameProjection } from '@/sync/ops/teams/teamGroupLabels';
+import { readHomeSetupStepTitle } from '@/components/hub/setup/homeSetupStepTitles';
 import { approvalProfileDefaultNoneTitle } from './approvalProfileDefaultChoiceCopy';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { readMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
@@ -172,6 +176,11 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         account.assertCurrent();
         sources.teamDirectorySourceName = readTeamDirectorySourceName(scope, reference.teamId, reference.id);
     }
+    if (isTeamDomainReference(reference)) {
+        sources.teamDomainName = await readTeamDomainReference(reference, account, signal);
+        account.assertCurrent();
+    }
+    if (reference.kind === 'homeSetupStep') sources.homeSetupStepName = readSetupStepName(reference.id, scope);
     if (reference.kind === 'teamInvitation') {
         account.assertCurrent();
         sources.teamInvitationName = readTeamInvitationName(scope, reference);
@@ -212,6 +221,50 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
 }
 
 type MachineCatalogReference = Extract<ApprovalReference, { kind: 'machinePreset' | 'machinePool' }>;
+
+type TeamDomainReference = Extract<ApprovalReference, {
+    kind: 'teamDirectoryGroup' | 'teamExternalGroupBinding' | 'teamCredentialLimit';
+}>;
+
+function isTeamDomainReference(reference: ApprovalReference | undefined): reference is TeamDomainReference {
+    return reference?.kind === 'teamDirectoryGroup' || reference?.kind === 'teamExternalGroupBinding'
+        || reference?.kind === 'teamCredentialLimit';
+}
+
+function readSetupStepName(id: string, scope: ApprovalReferenceSources['viewer']): string | null {
+    const builtIn = readHomeSetupStepTitle(id);
+    if (builtIn || !scope) return builtIn;
+    const team = readTeamSetupStepName(scope, id);
+    return team ? t('homeSetup.teamSetupTitle', { team }) : null;
+}
+
+async function readTeamDomainReference(reference: TeamDomainReference, account: LazyActionAccountContext,
+    signal?: AbortSignal): Promise<string | null> {
+    account.assertCurrent();
+    const scope = { serverId: account.serverId, accountId: account.accountId };
+    if (reference.kind === 'teamDirectoryGroup') {
+        return reference.sourceId ? readTeamDirectoryGroupName(scope, reference.teamId, reference.sourceId, reference.id) : null;
+    }
+    if (reference.kind === 'teamExternalGroupBinding') {
+        const row = readObservedTeamExternalGroupBinding(scope, reference.teamId, reference.id);
+        if (!row) return null;
+        if (row.kind === 'directoryGroup') return row.displayName;
+        const targetName = await openTeamGroupNameProjection({
+            client: createPrivateLabelClientForActionAccountContext(account),
+            groupId: row.target.teamGroupId, name: row.target.name, signal,
+        });
+        return targetName ? `${t('identityAdministration.mappedTo')} · ${targetName}` : null;
+    }
+    const { resourceId, resourceRevision, id } = reference;
+    const limit = readObservedTeamCredentialLimit(scope, resourceId, resourceRevision, id);
+    if (!limit) return null;
+    const teamId = limit.subjectKind === 'team_group' ? readTeamCredentialResourceApprovalProjection(scope, resourceId)?.teamId : null;
+    const principal = limit.subjectKind === 'team_member' ? { kind: 'account' as const, id: limit.subjectId }
+        : teamId ? { kind: 'group' as const, id: limit.subjectId, teamId } : undefined;
+    const subjectName = await readApprovalPrincipalName(principal, scope, signal, () => { account.assertCurrent(); return true; });
+    account.assertCurrent();
+    return [limitSubjectLine(limit, () => subjectName), limitMetricLabel(limit.metric), limitPeriodLabel(limit.period), limit.maximum].join(' · ');
+}
 
 async function readMachineCatalogReferenceName(reference: MachineCatalogReference, account: LazyActionAccountContext,
     signal?: AbortSignal): Promise<string | null> {
@@ -313,13 +366,15 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         ? credentialAudiencePrincipal(credentialAudience, credentialProjection.resource?.teamId) : reference, approvalServerId);
     const profileId = reference?.kind === 'approvalProfile' ? reference.id : null;
     const machineCatalogReference = reference?.kind === 'machinePreset' || reference?.kind === 'machinePool' ? reference : null;
+    const teamReference = isTeamDomainReference(reference) ? reference : null;
     const lookupKey = machineCatalogReference ? JSON.stringify([machineCatalogReference.kind,
         machineCatalogReference.id, machineCatalogReference.kind === 'machinePreset' && machineCatalogReference.homeId])
-        : profileId === null ? null : JSON.stringify(['approvalProfile', profileId]);
+        : teamReference ? JSON.stringify(teamReference) : profileId === null ? null : JSON.stringify(['approvalProfile', profileId]);
     const lookup = useScopedSharingRead(lookupKey, approvalServerId, async (scope, signal) => {
         const account = await captureLazyActionAccountContext(scope.serverId, signal);
         try {
             if (account.accountId !== scope.accountId) return null;
+            if (teamReference) return await readTeamDomainReference(teamReference, account, signal);
             return machineCatalogReference ? await readMachineCatalogReferenceName(machineCatalogReference, account, signal)
                 : profileId === null ? null : (await readApprovalProfileDescriptor(account, profileId, signal))?.name ?? null;
         } finally {
@@ -361,6 +416,9 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
         approvalProfileName: profileId === null ? undefined : lookup.value ?? undefined,
         approvalProfileResolving: profileId !== null && lookup.resolving,
         teamCredentialResourceName, teamCredentialExternalKeyName, signInIdentityName, teamDirectorySourceName, teamInvitationName, homeLayoutItemName,
+        teamDomainName: teamReference ? lookup.value : null,
+        teamDomainResolving: teamReference !== null && lookup.resolving,
+        homeSetupStepName: reference?.kind === 'homeSetupStep' ? readSetupStepName(reference.id, ownHome ? viewer : null) : null,
         homeLayoutItemResolving: reference?.kind === 'homeLayoutItem' && ownHome && homeLayout.status === 'loading',
         machineCatalogName: machineCatalogReference ? lookup.value : null,
         machineCatalogResolving: machineCatalogReference !== null && lookup.resolving });
@@ -465,6 +523,9 @@ type ApprovalReferenceSources = {
     teamCredentialExternalKeyName?: string | null;
     signInIdentityName?: string | null;
     teamDirectorySourceName?: string | null;
+    teamDomainName?: string | null;
+    teamDomainResolving?: boolean;
+    homeSetupStepName?: string | null;
     teamInvitationName?: string | null;
     homeLayoutItemName?: string | null;
     homeLayoutItemResolving?: boolean;
@@ -524,6 +585,13 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     if (reference?.kind === 'teamDirectorySource') {
         const name = sources.teamDirectorySourceName;
         return { text: name ?? t('common.unavailable'), named: Boolean(name) };
+    }
+    if (isTeamDomainReference(reference)) {
+        return { text: sources.teamDomainName ?? t(sources.teamDomainResolving ? 'common.loading' : 'common.unavailable'),
+            named: sources.teamDomainName != null, ...(sources.teamDomainResolving ? { resolving: true } : {}) };
+    }
+    if (reference?.kind === 'homeSetupStep') {
+        return { text: sources.homeSetupStepName ?? t('common.unavailable'), named: sources.homeSetupStepName != null };
     }
     if (reference?.kind === 'signInConnection' || reference?.kind === 'signInProvider') {
         const name = sources.signInIdentityName;
