@@ -63,7 +63,6 @@ import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessio
 import { createConnectedPurposeCatalogHttpBoundary } from '@/dev/testkit/harness/connectedAccountCatalogBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createRecipientContractDigestV1 } from '@happier-dev/protocol/plugins/recipientContractV1';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { applyAccountVoiceCredentialSourceSelection, saveAndUseAccountVoiceCredential } from '@/voice/credentials/accountVoiceCredential';
 import { createAccountVoiceOperationService } from '@/voice/credentials/accountVoiceOperationService';
@@ -136,7 +135,7 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
         voiceSettingsV1: { ...voice, providerId: entry.providerId }, voice: { ...voice, providerId: entry.providerId } },
         contribution, credentialSlotId: recipientContract.credentialSlot.id, expectedSettingsVersion: 1,
         currentDeclaration: entry.declaration, value: 'sk_action_boundary', generateId: () => 'voice-action-secret', now: 1,
-        expectedSecretId: null, expectedSecretUpdatedAt: null, approvedRecipientContractDigest: createRecipientContractDigestV1(recipientContract) });
+        expectedSecretId: null, expectedSecretUpdatedAt: null });
     const selected = applyAccountVoiceCredentialSourceSelection({ settings: saved.settings, connectedPurposes: purposes.value,
         currentDeclaration: entry.declaration, mutation: { contribution, credentialSlotId: recipientContract.credentialSlot.id,
             expectedSettingsVersion: 1, selection: { kind: 'savedSecret' } } });
@@ -805,8 +804,10 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
         const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         const machineId = 'voice-unmute-requester-machine';
         const sourceSession = storage.getState().sessions['session-original']!;
+        const sourceMetadata = sourceSession.metadata;
+        if (!sourceMetadata) throw new Error('Expected source Session owner metadata');
         storage.setState(state => ({ sessions: { ...state.sessions, 'session-original': { ...sourceSession,
-            metadata: { ...sourceSession.metadata, machineId } } } }));
+            metadata: { ...sourceMetadata, machineId } } } }));
         sessionsByHome.get('voice')!.replaceSession('session-original');
         const publications: unknown[] = [];
         setRuntimeFetch(async (url, init) => {

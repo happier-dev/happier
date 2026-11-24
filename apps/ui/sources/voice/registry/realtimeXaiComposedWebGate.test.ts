@@ -351,8 +351,8 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
         providerId: 'happier.voice.xai/realtime-grok',
         requestedTargetSessionId: null,
       })).resolves.toEqual({
-        conversationSessionId: null,
-        conversationServerId: null,
+        conversationSessionId: XAI_HISTORY_SESSION_ID,
+        conversationServerId: binding!.conversationSessionAddress.serverId,
       });
 
       FakeWebSocket.instances[0]!.emitConversationId('conv-runtime-only');
@@ -701,7 +701,8 @@ describe('realtime_grok source-composed direct-media persistence gate', () => {
     await environment.installSettings(true);
     environment.installProviderConversationMetadata(XAI_HISTORY_SESSION_ID, 'conv-mutation-fails');
     environment.mockHistoryCarrierDiscovery();
-    environment.sessionHttp.rejectNextPatch(XAI_HISTORY_SESSION_ID);
+    environment.sessionHttp.rejectNextPatch(XAI_HISTORY_SESSION_ID, patch => patch.mode === 'owner'
+      && patch.ownerMetadata.t === 'plain' && !patch.ownerMetadata.v.system?.voiceProviderConversationsV1);
     const composed = await environment.createRuntime();
     voiceSessionBindingStore.getState().unbind(XAI_HISTORY_SESSION_ID);
 

@@ -1687,7 +1687,7 @@ describe('voice tool handlers', () => {
 
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
-    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(!configuredDefault && !rememberedDefault && !signedOutDefault && !r135Default);
+    expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(true);
     if (configuredDefault) {
       // RUN100: the catalog supplied the right default; the model nested its
       // definition inside identity. Never silently repair an explicit operand.
