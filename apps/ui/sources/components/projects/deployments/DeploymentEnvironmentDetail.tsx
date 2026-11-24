@@ -700,9 +700,10 @@ export const DeploymentEnvironmentDetail = React.memo(
         provider,
         running,
         services: services.map((service) => service.name),
-        // An Environment never deployed left nothing on a Machine to detach (R14-D9); a linked target keeps its Detach.
-        hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0 && !neverDeployed,
-        neverDeployed: !targetLinkId && neverDeployed,
+        // An Environment never deployed left nothing on a Machine to detach (R14-D9); a linked target and a provider
+        // resource (which exists whether or not anything deployed) keep their choice.
+        hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0 && (provider !== null || !neverDeployed),
+        neverDeployed: !targetLinkId && provider === null && neverDeployed,
         canRemove: removal.choices.includes('delete'),
         ...(dispositionPlatformRef && provider ? { providerResource: {
           name: readPlatformResourceName(dispositionRow?.content, provider) ?? detail.content.name,
