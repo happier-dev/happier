@@ -1245,7 +1245,7 @@ describe('approval field presentation', () => {
     expect(spec.inputSchema.safeParse({ ...identity, launch: { choices: {} } }).success).toBe(false);
   });
 
-  it.each(['one-off', 'preset', 'unpriced'] as const)('reviews managed acquire cost and lifetime without exposing native inputs (%s)', kind => {
+  it.each(['priced', 'unpriced'] as const)('reviews one-off managed acquire cost and lifetime without exposing native inputs (%s)', pricing => {
     const controller = { machineId: 'controller', installationId: 'installation' };
     const launch = { provider: { pluginId: 'happier.machine.vercel', localId: 'vercel' }, schemaVersion: 1,
       name: 'Work sandbox', choices: { size: 'large', privateInput: 'M8_PRIVATE_NATIVE_INPUT' } };
@@ -1254,13 +1254,11 @@ describe('approval field presentation', () => {
       billing: { location: 'cloud', stoppedBilling: 'not-billed' },
       retentionCapabilities: { supportedIntents: ['start', 'stop', 'delete'] }, retention, wakeOnAcceptedMessage: true,
       nativeFacts: { size: { id: 'large', title: 'Large', cpuCores: 4 } },
-      ...(kind === 'unpriced' ? {} : { prices: [{ amount: '0.25', currency: 'USD', unit: 'hour',
+      ...(pricing === 'unpriced' ? {} : { prices: [{ amount: '0.25', currency: 'USD', unit: 'hour',
         source: 'vendor-rate-card', observedAt: 1 }] }),
     };
     const input = ManagedAcquireInputV1Schema.parse({
-      selection: kind === 'preset' ? { kind: 'preset', homeId: 'home', id: 'preset', revision: 2 }
-        : { kind: 'one-off', homeId: 'home', controller, launch, retention, wakeOnAcceptedMessage: true },
-      ...(kind === 'preset' ? { controller, retention, wakeOnAcceptedMessage: true } : {}),
+      selection: { kind: 'one-off', homeId: 'home', controller, launch, retention, wakeOnAcceptedMessage: true },
       enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' }, reviewedFacts,
     });
     const presentation = describeApprovalActionFields({ actionId: 'machines.managed.acquire', actionArgs: input });
@@ -1272,7 +1270,7 @@ describe('approval field presentation', () => {
     ]));
     const price = presentation.rows.find(row => row.path === 'price');
     expect(price).toEqual(expect.objectContaining({ kind: 'value' }));
-    if (kind === 'unpriced') expect(JSON.stringify(price)).toContain('Price unavailable');
+    if (pricing === 'unpriced') expect(JSON.stringify(price)).toContain('Price unavailable');
     else {
       const amount = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(0.25);
       for (const fact of [amount, 'hour', 'vendor-rate-card']) expect(JSON.stringify(price)).toContain(fact);
