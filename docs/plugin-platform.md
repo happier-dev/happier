@@ -2908,11 +2908,14 @@ an Account storage rebind withdraws it, the host uses the existing
 `expired_resource` event with the `plugin_read_authority_retired` diagnostic.
 The shared client clears raw content and typed reconciliation baselines before
 readmitting the still-demanded read and watch, even if the event arrives before
-watch acknowledgement. Other expiry events replace established watches and end
-unacknowledged openings. A late handle is released, and a refused replacement
-stays unavailable. Ordinary dependency invalidation retains the admitted value
-while refreshing. For revisioned selected credentials, metadata-only Connected
-Account updates preserve credential authority.
+watch acknowledgement. During readmission, the Resource projection is pending
+and carries the prior withdrawal so consumers can discard related data. The
+fresh read supplies the content or its typed refusal. Other expiry events
+replace established watches and end unacknowledged openings. A late handle is
+released, and a refused replacement stays unavailable. Ordinary dependency
+invalidation retains the admitted value while refreshing. For revisioned
+selected credentials, metadata-only Connected Account updates preserve
+credential authority.
 
 Natural reads of a retained, settled `expired_resource` acquire again through the
 existing Resource entry loader. Concurrent reads join a pending replacement.

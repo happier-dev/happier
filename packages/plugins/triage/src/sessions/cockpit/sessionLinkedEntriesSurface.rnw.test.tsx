@@ -18,7 +18,7 @@ import type {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createUnavailablePluginUiAccountKv } from '../../../../../plugin-ui/src/data/accountKv.js';
-import { createPluginUiHostApiResourceClient, createPluginUiResourceStore, type PluginUiResourceStore } from '../../../../../plugin-ui/src/hostApi/resourceStore.js';
+import { createPluginUiHostApiResourceClient, createPluginUiResourceStore, type PluginUiResourceClient, type PluginUiResourceStore } from '../../../../../plugin-ui/src/hostApi/resourceStore.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SESSION_LINKS_FIELD, CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../../corpus/collections/ids.js';
 import { toCorpusStoredValue } from '../../corpus/collections/rowCodec.js';
@@ -224,6 +224,7 @@ function createDataHarness(input: Readonly<{
 function createCockpitAdapter(
     dataClient: PluginUiDataClient | null,
     sharedScope?: PluginUiEphemeralSharedScope | (() => PluginUiEphemeralSharedScope),
+    watchResource?: PluginUiResourceClient['watchResource'],
 ): PluginUiSemanticSurfaceAdapter<typeof renderSessionLinkedEntriesSurface> {
     // Overlays mounted, so the link picker a press opens is observable like the host's.
     const rnwAdapter = createPluginUiRnwSemanticSurfaceAdapter({ overlays: true });
@@ -234,7 +235,8 @@ function createCockpitAdapter(
                     // Model the host's admitted declaration placement while
                     // keeping the real Resource store and transport path.
                     const resourceStore = React.useMemo<PluginUiResourceStore>(() => {
-                        const store = createPluginUiResourceStore({ client: createPluginUiHostApiResourceClient(context.hostApi), pluginId: PLUGIN_ID });
+                        const client = createPluginUiHostApiResourceClient(context.hostApi);
+                        const store = createPluginUiResourceStore({ client: watchResource ? { ...client, watchResource } : client, pluginId: PLUGIN_ID });
                         return { ...store, requiresMachine(resource) {
                             if (typeof resource !== 'string' && 'hostRead' in resource) return false;
                             if (typeof resource !== 'string' && resource.pluginId !== PLUGIN_ID) return true;
@@ -929,6 +931,65 @@ describe('the Session tab, round 2', () => {
 });
 
 describe('the mounted Session cockpit', () => {
+    it('shows pending readmission after the watch retires and presents the fresh refusal if access is removed', async () => {
+        const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
+        function content(repository: string, number: number) {
+            const bytes = new TextEncoder().encode(JSON.stringify({ kind: 'complete', links: [], channels: {
+                kind: 'relations', links: [{ sessionId: SESSION_ID, bindingId: `pr-${number}`, revision: 2,
+                    repositoryId: '123', pullRequest: { repository, number }, linkedAtMs: 10 }],
+            } }));
+            return { contentType: 'application/json', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes };
+        }
+        const initial = content('example/initial', 1);
+        const fresh = content('example/fresh', 2);
+        let resolveFresh!: (value: typeof fresh) => void;
+        const freshAdmission = new Promise<typeof fresh>(resolve => { resolveFresh = resolve; });
+        const readResource = vi.fn<PluginUiResourceClient['readResource']>()
+            .mockResolvedValueOnce(initial)
+            .mockReturnValueOnce(freshAdmission)
+            .mockRejectedValue(new PluginError({ code: 'permission_denied', retryable: false, details: { requestId: 'denied-fresh-read' } }));
+        let retireWatch: (() => void) | undefined;
+        const watchResource: NonNullable<PluginUiResourceClient['watchResource']> = async (_resource, listener) => {
+            const opening = retireWatch === undefined;
+            const admittedDigest = opening ? initial.digest : fresh.digest;
+            retireWatch = () => listener({ version: 1, subscriptionId: opening ? 'initial' : 'replacement',
+                kind: 'error', code: 'expired_resource', diagnostics: ['plugin_read_authority_retired'] });
+            return { admittedDigest, dispose() {} };
+        };
+        let fixture!: PluginUiTestkit;
+        await act(async () => {
+            fixture = await createPluginUiTestkit({
+                identity: { instanceId: 'readmission-fixture', mountNonce: 'readmission-mount' },
+                authorPlugin: { id: PLUGIN_ID, version: '0.0.0' },
+                surface: renderSessionLinkedEntriesSurface,
+                surfaceContext: createSurfaceContextFixture({
+                    target: { kind: 'session', sessionId: SESSION_ID },
+                    mount: { kind: 'destination', destination: { pluginId: PLUGIN_ID, localId: 'session-linked-entries' }, container: 'rightSidebarTab' },
+                }),
+                adapter: createCockpitAdapter(harness.client, undefined, watchResource),
+                handlers: { readResource: async ({ resource }) => await readResource(resource) },
+            });
+        });
+        mounted.push(fixture);
+        await expect(fixture.getByText('example/initial#1')).resolves.toBeDefined();
+        const firstRetirement = retireWatch;
+        expect(firstRetirement).toBeDefined();
+        await act(async () => { firstRetirement?.(); });
+        expect(await fixture.queryByText('example/initial#1')).toBeUndefined();
+        expect(readResource).toHaveBeenCalledTimes(2);
+        await expect(fixture.getByRole('progressbar', { name: 'Reading linked PRs & Issues' })).resolves.toBeDefined();
+
+        await act(async () => { resolveFresh(fresh); });
+        await expect(fixture.getByText('example/fresh#2')).resolves.toBeDefined();
+        expect(retireWatch).not.toBe(firstRetirement);
+        await act(async () => { retireWatch?.(); });
+        expect(await fixture.queryByText('example/fresh#2')).toBeUndefined();
+        await openRow(fixture, 'Details');
+        expect(document.body.textContent).toContain('permission_denied');
+        expect(document.body.textContent).toContain('denied-fresh-read');
+        expect(readResource).toHaveBeenCalledTimes(3);
+    });
+
     it.each([false, true])('shows a revision-two Channels PR outside the configured sources when the source read fails: %s', async sourceReadFails => {
         const harness = createDataHarness({ snapshot: { status: 'ready', rows: [], hasMore: false } });
         const readNativeRelations = vi.fn(async (input: unknown): Promise<SessionPullRequestBindingResultV1> => {

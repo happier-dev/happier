@@ -14,6 +14,7 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
+import { installNativeRuntimeFetchBoundaryForTest } from '@/dev/testkit/harness/nativeRuntimeFetch';
 import { createPluginSurfaceActionHostApi } from './pluginSurfaceActionDispatch';
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
@@ -1109,108 +1110,111 @@ it('shares one portable Account Resource read for the exact Session and withdraw
     }
 });
 
-it('retires nested Account Action read authority immediately while ordinary invalidation retains Resource bytes', async () => {
+it('readmits a retired Account Resource projection and settles a permanent refusal', async () => {
+    installNativeRuntimeFetchBoundaryForTest();
     const account = await createAccountLifetime({ accountId: 'nested-read-retirement' });
-    const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
     const pluginId = 'example.retiring-account-source';
     const execution = { target: 'account', account: { artifactId: 'read-retirement', exportName: 'activate' } };
     const parsed = parsePluginManifest({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Read retirement source',
         engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 }, contributes: {
-            actions: ['source', 'relay'].map(id => ({ id, title: id, scopes: ['global'], surfaces: ['plugin'],
-                execution, dangerLevel: 'safe', readOnly: true })),
+            actions: [{ id: 'source', title: 'Source', scopes: ['global'], surfaces: ['plugin'],
+                execution, dangerLevel: 'safe', readOnly: true }],
             resources: [{ id: 'status', source: 'dynamic', scope: 'session', kind: 'config',
                 contentType: 'application/json', execution }],
         } });
     if (!parsed.ok) throw new Error(`Invalid authored read fixture: ${JSON.stringify(parsed.diagnostics)}`);
     let nativeReads = 0;
     let holdNative = false;
-    let sourceDisposals = 0;
+    let projectionRevision = 'initial-private-value';
+    let accessRemoved = false;
+    const replacementObservation = createDeferred<void>();
     const invalidations: PluginActionReadInvalidation[] = [];
-    const observerSignals: AbortSignal[] = [];
-    const nativePending: Array<Readonly<{ gate: ReturnType<typeof createDeferred<{ value: string }>>; signal: AbortSignal }>> = [];
+    const nativePending: ReturnType<typeof createDeferred<{ value: string }>>[] = [];
     const source = { pluginId, localId: 'source' };
-    const relay = { pluginId, localId: 'relay' };
-    const fixture = await installPortableAccountPluginForTest({ manifest: parsed.manifest, accountLifetime: account.lifetime,
+    const fixture = await installPortableAccountPluginReleaseForTest({ manifest: parsed.manifest, accountLifetime: account.lifetime, publishProjection: true,
         activate(api) {
-            api.actions.register('source', async (_input, context) => {
+            api.actions.register('source', async () => {
                 nativeReads++;
-                if (!holdNative) return { value: 'initial-private-value' };
+                if (accessRemoved) throw new PluginError({ code: 'permission_denied' });
+                if (!holdNative) return { value: projectionRevision };
                 const gate = createDeferred<{ value: string }>();
-                nativePending.push({ gate, signal: context.signal });
+                nativePending.push(gate);
                 return await gate.promise;
-            }, { observeRead(_input, invalidate, context) {
-                invalidations.push(invalidate); observerSignals.push(context.signal);
-                return { dispose() { sourceDisposals++; } };
+            }, { async observeRead(_input, invalidate) {
+                invalidations.push(invalidate);
+                if (invalidations.length === 2) await replacementObservation.promise;
+                return { dispose() {} };
             } });
-            api.actions.register('relay', async (_input, context) => context.services.actions.execute(source, {}),
-                { observeRead: (_input, invalidate, context) => context.services.actions.observe(source, {}, invalidate) });
             api.resources.registerDynamicResource('status', {
                 async read(options) {
-                    const result = await options.readAction(relay, {}, { signal: options.signal });
+                    const result = await options.readAction(source, {}, { signal: options.signal });
                     if (!result.ok) throw new PluginError({ code: result.errorCode });
                     return JSON.stringify(result.result);
                 },
-                observe: (invalidate, options) => options.observeAction(relay, {}, invalidate, { signal: options.signal }),
+                observe: (invalidate, options) => options.observeAction(source, {}, invalidate, { signal: options.signal }),
             });
         } });
-    const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
     const declaration = fixture.projection.resourcesById[`${pluginId}/status`];
     if (!declaration) throw new Error('Expected admitted Account Resource declaration');
-    const lease = acquirePluginContextualResourceStore({ accountLifetime: account.lifetime, pluginId, machineId: null,
+    const store = createPluginDeclaredResourceStore({ accountLifetime: account.lifetime, pluginId, machineId: null,
         serverId: account.lifetime.scope.serverId, expectedCallerOccurrenceId: declaration.occurrenceId!,
-        accountResource: declaration, context: { kind: 'session', sessionId: 'read-retirement-session' } });
-    if (!lease) throw new Error('Expected current Account Resource lease');
-    const entry = lease.store.getEntry('status');
+        resourcesById: fixture.projection.resourcesById, resourceDeclarationsComplete: true, sessionId: 'read-retirement-session' });
+    if (!store) throw new Error('Expected current Account Resource store');
+    const entry = store.getEntry('status');
     const decode = vi.fn((content: NonNullable<PluginUiResourceSnapshot['value']>, _previous: { text: string } | undefined) => ({
         text: new TextDecoder().decode(content.bytes),
     }));
     const projection: PluginUiResourceValueProjection<{ text: string }> = { decode };
-    const selected = entry.select(projection, snapshot => snapshot.value);
-    const release = selected.subscribe(() => {}, true);
+    const selected = entry.select(projection, snapshot => snapshot);
+    const presented: ReturnType<typeof selected.getSnapshot>[] = [];
+    const release = selected.subscribe(() => { presented.push(selected.getSnapshot()); }, true);
     try {
-        await vi.waitFor(() => expect(selected.getSnapshot()?.text).toContain('initial-private-value'));
-        await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+        await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({ subscription: 'live', value: expect.anything() }));
+        expect(entry.getSnapshot().error).toBeUndefined();
         expect(nativeReads).toBe(1);
         expect(invalidations).toHaveLength(1);
         const oldBytes = entry.getSnapshot().value;
-        const oldTypedValue = selected.getSnapshot();
+        const oldTypedValue = selected.getSnapshot().value;
         holdNative = true;
         invalidations[0]!();
         await vi.waitFor(() => expect(nativePending).toHaveLength(1));
         expect(entry.getSnapshot().value).toBe(oldBytes);
-        expect(selected.getSnapshot()).toBe(oldTypedValue);
+        expect(selected.getSnapshot().value).toBe(oldTypedValue);
 
         invalidations[0]!.retire();
         expect(entry.getSnapshot().value).toBeUndefined();
         expect(entry.getSnapshot().digest).toBeUndefined();
-        expect(selected.getSnapshot()).toBeUndefined();
-        expect(nativePending[0]!.signal.aborted).toBe(true);
-        expect(observerSignals[0]!.aborted).toBe(true);
-        expect(sourceDisposals).toBe(1);
-        expect(account.lifetime.isCurrent()).toBe(true);
-        invalidations[0]!.retire(); invalidations[0]!();
-        await vi.waitFor(() => expect(nativePending).toHaveLength(2));
+        expect(selected.getSnapshot().value).toBeUndefined();
         await vi.waitFor(() => expect(invalidations).toHaveLength(2));
-        nativePending[0]!.gate.resolve({ value: 'late-old-private-value' });
-        await new Promise<void>(resolve => setTimeout(resolve, 0));
-        expect(entry.getSnapshot().value).toBeUndefined();
-        expect(selected.getSnapshot()).toBeUndefined();
-        nativePending[1]!.gate.resolve({ value: 'replacement-private-value' });
-        await vi.waitFor(() => expect(selected.getSnapshot()?.text).toContain('replacement-private-value'));
-        expect(decode).toHaveBeenLastCalledWith(expect.anything(), undefined);
-        expect(entry.getSnapshot().subscription).toBe('live');
-        expect(invalidations).toHaveLength(2);
-        expect(nativeReads).toBe(3);
-        release();
-        await vi.waitFor(() => expect(sourceDisposals).toBe(2));
-        invalidations[1]!.retire(); invalidations[1]!();
-        await new Promise<void>(resolve => setTimeout(resolve, 0));
-        expect(nativeReads).toBe(3);
-        expect(invalidations).toHaveLength(2);
+        holdNative = false;
+        projectionRevision = 'replacement-private-value';
+        // Refresh joins fresh admission even if the replacement observer itself retires.
+        const refreshed = selected.refresh({ supersede: true });
+        invalidations[1]!.retire();
+        nativePending[0]!.resolve({ value: 'late-old-private-value' });
+        await refreshed;
+        await vi.waitFor(() => expect(selected.getSnapshot().value?.text).toBe('{"value":"replacement-private-value"}'));
+        replacementObservation.resolve();
+        expect(decode).toHaveBeenLastCalledWith(expect.anything(), undefined, 'read');
+        expect(entry.getSnapshot().subscription).toBe('reconnecting');
+        await selected.refresh({ supersede: true });
+        await vi.waitFor(() => expect(entry.getSnapshot().subscription).toBe('live'));
+        expect(invalidations).toHaveLength(3);
+        accessRemoved = true;
+        invalidations[2]!.retire();
+        await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+            pending: 'idle', subscription: 'ended', error: { code: 'permission_denied' },
+        }));
+        expect(selected.getSnapshot().value).toBeUndefined();
+        expect(presented.some(snapshot => snapshot.value?.text.includes('late-old-private-value'))).toBe(false);
+        expect(new Set(presented.flatMap(snapshot => snapshot.pending === 'idle' && snapshot.error ? [snapshot.error.code] : [])))
+            .toEqual(new Set(['permission_denied']));
     } finally {
-        release(); lease.dispose();
-        for (const pending of nativePending) pending.gate.resolve({ value: 'disposed' });
-        unpublish(); await fixture.dispose();
+        release(); store.dispose();
+        replacementObservation.resolve();
+        for (const pending of nativePending) pending.resolve({ value: 'disposed' });
+        await fixture.dispose();
     }
 });
 

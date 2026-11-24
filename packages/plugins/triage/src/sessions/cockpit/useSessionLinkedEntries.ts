@@ -118,16 +118,19 @@ export function useTriageSessionLinkedEntries(sessionId: string, resolveEntries 
             return row == null ? [] : [row];
         });
         const sourceError = admitted?.sourceReadError;
+        const pending = resource.pending !== 'idle';
+        // The store retains the withdrawal while fresh admission is pending.
+        const readError = pending ? undefined : resource.error;
         const projected = projectTriageSessionLinkedEntries({
             links: admitted?.links ?? [],
             nativePullRequests: admitted?.channels?.links,
             readFailureCodes: admitted?.channels?.failures?.map(failure => failure.code),
-            status: resource.error !== undefined || (resource.value !== undefined && admitted === null) ? 'failed'
-                : admitted === null ? 'loading'
-                    : resource.pending !== 'idle' ? 'loading'
+            status: pending ? 'loading'
+                : readError !== undefined || (resource.value !== undefined && admitted === null) ? 'failed'
+                    : admitted === null ? 'loading'
                         : admitted.kind === 'complete' ? (admitted.channels?.failures?.length ? 'partial' : 'ready') : admitted.kind,
             lanes: admitted?.lanes,
-            error: resource.error ?? (sourceError === undefined ? undefined : {
+            error: readError ?? (sourceError === undefined ? undefined : {
                 code: sourceError.code, message: sourceError.code, retryable: sourceError.retryable,
                 ...(sourceError.requestId === undefined ? {} : { details: { requestId: sourceError.requestId } }),
             }),
