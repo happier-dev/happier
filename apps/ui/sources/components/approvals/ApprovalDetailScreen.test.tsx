@@ -291,6 +291,15 @@ function approvedFixtureLifecycle(body: string, decidedAtMs: number) {
   } } : {}) };
 }
 
+function settleApprovalAtDaemon(artifact: Readonly<{ id: string; body: string }>) {
+  const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+  const settledAtMs = request.updatedAtMs + 1;
+  const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs: settledAtMs,
+    ...approvedFixtureLifecycle(artifact.body, settledAtMs) });
+  remoteArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+  daemonReply = { ok: true, result: { status: 'approved' } };
+}
+
 async function createBuiltInApprovalArtifact(
   input: Readonly<{
     actionId: ApprovalRequestV2['actionId'];
@@ -2676,6 +2685,7 @@ describe('ApprovalDetailScreen', () => {
   it('routes a signed Session stop approval through this device profile to its exact daemon', async () => {
     currentArtifact = await createDaemonRoutedApprovalArtifact('session.stop');
     const origin = ApprovalRequestV2Schema.parse(JSON.parse(currentArtifact.body)).executionOriginV1;
+    settleApprovalAtDaemon(currentArtifact);
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId="daemon-approval-1" />);
 
@@ -2691,7 +2701,7 @@ describe('ApprovalDetailScreen', () => {
     expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody('daemon-approval-1')!)).toMatchObject({
       status: 'approved', executionOriginV1: origin,
     });
-    expect(artifactWrites()).toHaveLength(1);
+    expect(artifactWrites()).toEqual([]);
     expect(rpcRequests).toEqual([]);
   });
 
@@ -2885,12 +2895,10 @@ describe('ApprovalDetailScreen', () => {
     await screen.pressByTestIdAsync('approvals.approve');
 
     expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
-    expect(artifactWrites()).toHaveLength(1);
-    expect(decodedArtifactWrite().body).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
-    expect(decodedArtifactWrite().body.execution).toBeUndefined();
+    expect(artifactWrites()).toEqual([]);
     expect(rpcRequests).toEqual([]);
     expect(artifactReads('daemon-approval-1').length).toBeGreaterThan(1);
-    expect(readRenderedText(screen)).toContain('approvals.status.failed');
+    expect(approvalStatus(screen)).toBe('approvals.status.failed');
     expect(screen.findByTestId('approvals.approve')).toBeNull();
   });
 
@@ -2907,12 +2915,11 @@ describe('ApprovalDetailScreen', () => {
     await screen.pressByTestIdAsync('approvals.approve');
 
     expect(homes.requestsFor('/v1/actions/approval.request.decide')).toHaveLength(1);
-    expect(artifactWrites()).toHaveLength(1);
-    expect(decodedArtifactWrite().body).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
-    expect(decodedArtifactWrite().body.execution).toBeUndefined();
-    // Home refused dispatch before an effect began; it cannot invent an execution receipt.
-    expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody('daemon-approval-1')!))
-      .toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+    expect(artifactWrites()).toEqual([]);
+    const request = ApprovalRequestV2Schema.parse(JSON.parse(homes.artifacts(account.serverId).readPlainBody('daemon-approval-1')!));
+    expect(request.status).toBe('open');
+    expect(request.decision).toBeUndefined();
+    expect(request.execution).toBeUndefined();
     expect(rpcRequests).toEqual([]);
   });
 
@@ -4344,6 +4351,7 @@ describe('ApprovalDetailScreen', () => {
 
   it('routes approval decisions to the approval Home without mutating another Home’s duplicate Session', async () => {
     currentArtifact = await createCurrentApprovalArtifact('server-approval', { placedOnMachine: true });
+    settleApprovalAtDaemon(currentArtifact);
     approvalHomeFixture = {
       kind: 'resolved',
       serverIdentityId: 'srv_approval_home_a',
@@ -4366,7 +4374,12 @@ describe('ApprovalDetailScreen', () => {
     expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody('artifact-1')!)).toMatchObject({
       decision: { kind: 'approve' }, executionOriginV1: JSON.parse(currentArtifact.body).executionOriginV1,
     });
-    expect(artifactWrites().every(request => request.serverUrl === 'https://provider-settings-account.test')).toBe(true);
+    expect(homes.requestsFor('/v1/actions/approval.request.decide')).toEqual([
+      expect.objectContaining({ serverId: account.serverId, input: expect.objectContaining({
+        input: expect.objectContaining({ artifactId: 'artifact-1', decision: 'approve' }),
+      }) }),
+    ]);
+    expect(artifactWrites()).toEqual([]);
     for (const homeId of Object.values(homeIds).filter(id => id !== account.serverId)) {
       expect(homes.artifacts(homeId).list()).toEqual([]);
     }
@@ -4522,6 +4535,7 @@ describe('ApprovalDetailScreen', () => {
   it('executes an approval decision without requiring a second web confirmation', async () => {
     modalConfirmResult = false;
     currentArtifact = await createCurrentApprovalArtifact('server-approval', { placedOnMachine: true });
+    settleApprovalAtDaemon(currentArtifact);
     approvalHomeFixture = {
       kind: 'resolved',
       serverIdentityId: 'srv_approval_home_a',
