@@ -7,8 +7,8 @@ import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from 
 import { WorkflowFinalResultV1Schema, projectWorkflowFinalResultDeliverableTextV1 } from '../../workflows/workflowProgressV1.js';
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecutorDeps } from './types.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
-import type { ActionAutomationPortV1, ActionAutomationSelectionV1, ActionAutomationTriggerReferenceV1,
-  ActionAutomationPrivateMatchingV1 } from './actionAutomationAdmission.js';
+import { actionAutomationAdmissionUnavailableV1, type ActionAutomationPortV1, type ActionAutomationSelectionV1,
+  type ActionAutomationTriggerReferenceV1, type ActionAutomationPrivateMatchingV1 } from './actionAutomationAdmission.js';
 import { createActionAutomationInvocationV1 } from './actionSettlement.js';
 import { deriveActionActorV1 } from '../actionRequestAttributionV1.js';
 import { resolveHostStampedAuthority } from '../invocationAuthority.js';
@@ -180,12 +180,15 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
     if ('ok' in admitted) return admitted;
     const started = await owner.actionAutomations.start({ selected, ...admitted, context, approvalArtifactId: artifactId });
     const waiting = selected.filter(row => row.phase === 'before' && row.mode !== 'notify');
-    const settled = waiting.filter(row => started.runs.some(run => actionAutomationTriggerKeyV1(run) === actionAutomationTriggerKeyV1(row))
+    const allWaitingChecksAdmitted = waiting.every(row => started.runs.some(run => actionAutomationTriggerKeyV1(run) === actionAutomationTriggerKeyV1(row))
       || started.notices.some(notice => notice.code === 'action_automation_skipped'
+        && (notice.reason === 'conditionNotMatched' || notice.reason === 'causeSuppressed')
         && notice.automationId === row.automationId && notice.triggerId === row.triggerId));
-    // A selected wait check must settle at admission. An empty start result is
-    // not an automatic skip: only an explicit notice can explain no Run.
-    if (settled.length !== waiting.length) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    if (!allWaitingChecksAdmitted) {
+      // A selected wait can be absent only when its condition or the occurrence owner excluded it.
+      await cancel({ ...request, automaticChecks: { ...checks, runs: started.runs } }, context);
+      return { ...actionAutomationAdmissionUnavailableV1('selection_unavailable'), automationNotices: started.notices };
+    }
     return owner.parse({ ...request, updatedAtMs: Math.max(Date.now(), request.updatedAtMs),
       automaticChecks: { ...checks, phase: 'checking', runs: [...checks.runs, ...started.runs],
         notices: [...checks.notices, ...started.notices] } });

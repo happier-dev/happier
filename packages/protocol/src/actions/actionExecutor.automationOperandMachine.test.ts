@@ -7,7 +7,7 @@ import {
   type ActionExecutorContext,
 } from './actionExecutor.js';
 import { listActionSpecs } from './actionSpecs.js';
-import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import { createActionAutomationHttpPortV1, createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
 import { readActionAutomationExecutionMachineV1 } from './executor/actionSettlement.js';
 import { readActionOperandExecutionMachineV1 } from './executor/actionOperandExecutionMachine.js';
 
@@ -122,6 +122,52 @@ function context(
 }
 
 describe('Before checks on the Action operand Machine', () => {
+  it('keeps a deferred terminal approval from executing when the selected wait check cannot be opened', async () => {
+    const port = createActionAutomationHttpPortV1({
+      accountId: 'actor',
+      request: async (_path, request) => {
+        if (request.method !== 'GET') throw new Error('An unreadable check cannot be admitted');
+        return { v: 1, rows: [{ automationId: 'guard', triggerId: 'before',
+          triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+          ownerAccountId: 'actor', actionIds: [TERMINAL_OPEN], phase: 'before',
+          mode: 'wait', onFailure: 'refuse' }] };
+      },
+    });
+    let stored: Request | null = null;
+    const effect = vi.fn(async () => ({ ok: true }));
+    const executor = createActionExecutor({
+      actionAutomations: port,
+      approvalsCreate: async ({ request }) => {
+        stored = request;
+        return { artifactId: 'approval' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        stored = request;
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+      machineTerminalAction: effect,
+    });
+    const caller = context(TERMINAL_OPEN, 'ui', { surface: 'cli', actionsSettings: ActionsSettingsV1Schema.parse({
+      v: 1, actions: { [TERMINAL_OPEN]: { approvalRequiredSurfaces: ['cli'] } },
+    }) });
+    try {
+      const requested = await executor.execute(TERMINAL_OPEN, operands[TERMINAL_OPEN], caller);
+      expect(requested).toMatchObject({
+        ok: true, result: { kind: 'approval_request_created', artifactId: 'approval' },
+      });
+      expect(stored).toMatchObject({ automaticChecks: { selected: [{ triggerId: 'before' }], consents: [] } });
+      const result = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, caller);
+      expect(effect).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', effectAttempted: false,
+        automationNotices: [{ code: 'action_automation_skipped', reason: 'content_unavailable', triggerId: 'before' }],
+      });
+    } finally {
+      port.dispose();
+    }
+  });
+
   it('runs the Before check from a usable index when Home features are unknown and retains the index', async () => {
     const { port, executor, effect, runMachines, seeds } = setup(TERMINAL_OPEN, 'refuse', async () => null);
     try {
