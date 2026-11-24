@@ -3,10 +3,12 @@
  * the exception detail's request): one component set over the `capture/*` read answers.
  */
 export {
+  CaptureAppLlmCalls,
   CaptureEndpoints,
   CaptureLogs,
   CaptureQueries,
   CaptureTraces,
+  type CaptureAppLlmCallV1,
   type CaptureEndpointAction,
   type CapturePageMore,
 } from './CaptureViews.js';
@@ -25,3 +27,14 @@ export {
   type CaptureEndpointView,
 } from './model.js';
 export { projectWaterfall, requestLabelOf, slowestSteps } from '../traceWaterfall.js';
+/** The metric vocabulary the Telemetry widgets read, shared with the Environment's Metrics view. */
+export {
+  formatTelemetryMetric,
+  intervalErrorRate,
+  intervalMetricValue,
+  readMetricValue,
+  telemetryWidgetMeasure,
+  type TelemetryWidgetMetricV1,
+} from '../widgets/telemetryWidgetModel.js';
+/** The regression check Workflow an Environment's Telemetry setup opens prefilled (P7 J3). */
+export { TELEMETRY_REGRESSION_WORKFLOW_ID_V1 } from '../../regressionWorkflowId.js';

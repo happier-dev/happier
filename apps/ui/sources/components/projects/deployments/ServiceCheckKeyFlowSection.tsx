@@ -21,38 +21,16 @@ import {
   type ServiceCheckCollectorTrend,
 } from './serviceCheckPresentation';
 import { serviceCheckCollectorLatency, useServiceCheckCollectorTrend } from './useServiceCheckCollectorTrend';
+import { TELEMETRY_CHART_MIN_WIDTH_PX as CHART_MIN_WIDTH_PX, TelemetryChartHead as ChartHead,
+  latestTelemetryPoint as latestOf } from './TelemetryChartHead';
 
 const m = 'projects.deployments.monitoring' as const;
-/** The narrowest a trend reads beside its sibling; below it the two stack (a details pane, a phone). */
-const CHART_MIN_WIDTH_PX = 280;
 
 const formatClock = (ms: number) =>
   formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), { hour: 'numeric', minute: '2-digit' });
 const formatCount = (count: number) => new Intl.NumberFormat(getPreferredLanguage()).format(count);
 
 type Interval = TelemetryMetricsReadResultV1['trend'][number];
-
-/** The newest measured point of a series, in its own units; null while the window has none. */
-function latestOf(series: HappierSeries, format: (value: number) => string): string | null {
-  for (let index = series.points.length - 1; index >= 0; index -= 1) {
-    const y = series.points[index]!.y;
-    if (typeof y === 'number') return format(y);
-  }
-  return null;
-}
-
-/** A trend's name and newest value on one line, its limit under it (lab p7Flows detail). */
-function ChartHead(props: Readonly<{ title: string; latest: string | null; detail: string | null }>) {
-  return (
-    <View style={styles.head}>
-      <View style={styles.headLine}>
-        <Text variant="label" numberOfLines={1} style={styles.headTitle}>{props.title}</Text>
-        <Text variant="label" emphasis="semiBold" style={styles.headValue}>{props.latest ?? '—'}</Text>
-      </View>
-      {props.detail ? <Text variant="meta" style={styles.caption}>{props.detail}</Text> : null}
-    </View>
-  );
-}
 
 /** The latency statistic a chart names ("p95"), from the saved flow. */
 function latencyWord(config: TelemetryKeyFlowConfigV1): string {
@@ -163,9 +141,5 @@ const styles = StyleSheet.create((theme) => ({
   charts: { gap: theme.space.s16 },
   chartsRow: { flexDirection: 'row' },
   chart: { flex: 1, minWidth: 0, gap: theme.space.s8 },
-  head: { gap: theme.space.s2 },
-  headLine: { flexDirection: 'row', justifyContent: 'space-between', gap: theme.space.s12 },
-  headTitle: { flexShrink: 1, color: theme.colors.text.secondary },
-  headValue: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'] },
   route: { ...Typography.mono(), color: theme.colors.text.primary },
 }));

@@ -479,7 +479,9 @@ function transportFor(
   // `?state=reader`: a reader sees everything but Deploy; `?state=plugin`: a target with no Deploy producer.
   const staging = createDeploymentEnvironmentDetailV1({
     content: { ...base.content, name: 'Staging', bindings: SPECIMEN_BINDINGS,
-      ...(fixtures.backup ? { backup: fixtures.backup } : {}) },
+      ...(fixtures.backup ? { backup: fixtures.backup } : {}),
+      // A collector Environment records every capability (lab p7Setup-waiting): Exceptions, App LLM calls and Metrics.
+      ...(telemetry ? { telemetry: { metrics: true, appLlmCost: true, exceptions: true } } : {}) },
     // The one supplied availability fact (P40): one server, passing (down while a failed deploy left it so).
     healthAggregate: { v: 1, environmentId: stagingHeader.id, targetLinkId: stagingHeader.runtimeTargetLinkId!,
       protection: stagingHeader.protection, status: receiptState === 'failed' ? 'down' : 'up', n: 1,
@@ -539,7 +541,11 @@ function transportFor(
     receiptFor('deployment-c', 'failed', 30, 'deploy', 'deployment-d', RECEIPT_TITLES[2]),
     receiptFor('deployment-d', 'succeeded', 52, 'rollback', null, undefined),
   ];
-  const receipts = onMachine(railway ? receiptFixtures.map(railwayReceipt) : receiptFixtures, machineId);
+  const delivered = (receipt: (typeof receiptFixtures)[number]) => telemetry ? { ...receipt, content: { ...receipt.content,
+    // The serving deploy delivered the collector's credential, so the tab reads the collector's status.
+    machineResults: receipt.content.machineResults.map(result => ({ ...result,
+      telemetryMachineId: stagingHeader.telemetryMachineId, telemetryTokenHash: '7'.repeat(64) })) } } : receipt;
+  const receipts = onMachine(railway ? receiptFixtures.map(railwayReceipt) : receiptFixtures.map(delivered), machineId);
   const never = new Promise<never>(() => {});
   return {
     listDomains: fixtures.listDomains,
@@ -836,7 +842,8 @@ export function DeploymentsSpecimen(
     })]);
   }, [props.telemetry, machineId]);
   const telemetryInvoke = React.useMemo(() => props.telemetry
-    ? createTelemetryCaptureFixtureInvoke(props.telemetry === 'offline' ? 'offline' : 'populated') : null, [props.telemetry]);
+    ? createTelemetryCaptureFixtureInvoke(props.telemetry === 'offline' || props.telemetry === 'waiting' ? props.telemetry : 'populated')
+    : null, [props.telemetry]);
   const view = (
     <ProjectDeploymentsView
       controller={controller}

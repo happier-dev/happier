@@ -318,6 +318,27 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
+  it('shows collector storage is full while keeping previously captured data readable', async () => {
+    const { invoke, calls } = collector(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1
+      ? {
+          ok: true,
+          source,
+          coverage: { lostObservations: 1, reason: 'daemon_database_quota_exceeded' },
+          lastReceivedAt: request.at,
+        }
+      : answers(call));
+    const screen = await renderScreen(panel(invoke, setUpDetail(), { telemetryApplied: true }));
+    try {
+      await settle();
+      expect(screen.findByTestId('project-deployments.telemetry.collector')?.props.children).toBe('Collector storage full');
+      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
+      expect(calls.filter(call => call.actionId === DATABASE_CAPTURE_STATUS_ACTION_ID_V1)).toHaveLength(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('reads the open list once on the collector with the Environment as its source, and each tab reads its own list', async () => {
     const { invoke, calls } = collector(answers);
     const screen = await mount(invoke);
@@ -820,6 +841,107 @@ describe('Environment Telemetry tabs', () => {
       ).toHaveLength(0);
     } finally {
       await viewer.unmount();
+    }
+  });
+});
+
+describe('Environment Telemetry capability views', () => {
+  const now = Date.now();
+  const evidence = { v: 1, items: [{ source: { kind: 'alert', label: 'Collector' }, author: { kind: 'process' }, text: 'Retained metrics' }] };
+  const httpRead = (p95: number) => ({ result: { status: 'up', observedAt: now, evidence,
+    measurements: { measure: 'p95', value: p95, unit: 'ms', basis: 'metric_points', p95Ms: p95, p50Ms: 88, requestCount: 3600,
+      errorRate: 0.024, producers: [{ serviceName: 'billing-api' }], window: { since: now - 3_600_000, until: now },
+      completeness: 'complete', reasons: [] } },
+    routes: [], trend: [
+      { since: now - 7_200_000, until: now - 3_600_000, value: 380, p95: 380, count: 3600, errorRate: 0.01, unit: 'ms' },
+      { since: now - 3_600_000, until: now, value: p95, p95, count: 3600, errorRate: 0.024, unit: 'ms' },
+    ] });
+  const call = { ...request, id: 'call-1', traceId: 'trace-1', endpointMethod: null, endpointRoute: null, httpStatusCode: null,
+    serviceVersion: 'v1.43', genAi: { provider: 'openai', modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat',
+      tokens: { input: 900, output: 340, total: 1240, reasoning: null, cacheRead: null, cacheWrite: null },
+      tokenCategories: null, reportedCost: { amount: 0.0021, currency: 'USD' } } };
+  const capabilityAnswers = (sampled: Readonly<{ metrics: number | null; appLlmCost: number | null; exceptions: number | null }>) =>
+    (call_: Call) => {
+      if (call_.actionId.endsWith('/capture/status'))
+        return { ok: true, source, coverage: { lostObservations: 0, reason: null }, lastReceivedAt: now, capabilityLastSampleAt: sampled };
+      if (call_.actionId.endsWith('/capture/costs/read'))
+        return { ok: true, source, since: now - 86_400_000, until: now, items: [{ bucketStartMs: now - 3_600_000, provider: 'openai',
+          modelId: 'gpt-5-mini', requestedModel: 'gpt-5-mini', operation: 'chat', callCount: 2,
+          tokens: { input: 1800, output: 680, total: 2480, reasoning: null, cacheRead: null, cacheWrite: null }, tokenCategories: null,
+          reportedCost: { amount: 0.0042, currency: 'USD' }, firstSeenMs: now - 3_000_000, lastSeenMs: now - 180_000 }],
+          coverage: { lostObservations: 0, reason: null, callCount: 2, tokenCategoryCallCount: 0, reportedCostCallCount: 2 } };
+      if (call_.actionId.endsWith('/capture/traces/list') && (call_.input as { appLlmCalls?: unknown }).appLlmCalls)
+        return { ok: true, source, items: [call] };
+      if (call_.actionId.endsWith('/capture/metrics/read')) {
+        const measure = (call_.input as { measure: { kind: string } }).measure;
+        return measure.kind === 'runtime'
+          ? { result: { status: 'unknown', observedAt: now, evidence }, routes: [], trend: [] }
+          : httpRead(412);
+      }
+      return answers(call_);
+    };
+  const detailWith = (telemetry: Readonly<{ metrics: boolean; appLlmCost: boolean; exceptions: boolean }>) => {
+    const detail = setUpDetail();
+    return { ...detail, content: { ...detail.content, telemetry } };
+  };
+
+  it('says each enabled capability’s delivery, and opens a selected LLM call in the existing trace detail', async () => {
+    const { invoke, calls } = collector(capabilityAnswers({ metrics: null, appLlmCost: now - 180_000, exceptions: null }));
+    const screen = await renderScreen(panel(invoke, detailWith({ metrics: true, appLlmCost: true, exceptions: true }),
+      { active: true, telemetryApplied: true }));
+    const barStatus = () => String(screen.findByTestId('project-deployments.telemetry.collector')?.props.children);
+    // The rendered words under one node, as a reader meets them.
+    const textIn = (testID: string) => (screen.findByTestId(testID)?.findAll(node => typeof node.type === 'string') ?? [])
+      .flatMap(node => [node.props.children].flat().filter((child): child is string => typeof child === 'string')).join(' ');
+    try {
+      await settle();
+      // Getting ready: each recorded choice says its own delivery; Exceptions offers the browser addition.
+      expect(textIn('project-deployments.telemetry.readiness.exceptions')).toContain('Not receiving yet');
+      expect(screen.findByTestId('project-deployments.telemetry.readiness.llm')).toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.exceptions.add-telemetry')).not.toBeNull();
+
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:llmCalls');
+      await settle();
+      expect(barStatus()).toContain('Receiving · last sample');
+      const llmReads = calls.filter(read => read.actionId.endsWith('/capture/costs/read') || read.actionId.endsWith('/capture/traces/list'));
+      expect(llmReads).toEqual([
+        expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source, since: expect.any(Number), until: expect.any(Number) }) }),
+        expect.objectContaining({ collectorMachineId: 'collector', input: expect.objectContaining({ source, appLlmCalls: {} }) }),
+      ]);
+      expect(textIn('project-deployments.telemetry.llm.reported')).toContain('$0.0042');
+      await reportCollectionLayout(screen, 'telemetry.capture.llmCalls');
+      await screen.pressByTestIdAsync('telemetry.capture.llmCall.call-1');
+      await settle();
+      expect(calls.at(-1)).toEqual(expect.objectContaining({ input: expect.objectContaining({ source, traceId: 'trace-1' }) }));
+      expect(screen.findByTestId('project-deployments.telemetry.request')).not.toBeNull();
+
+      await screen.pressByTestIdAsync('project-deployments.telemetry.tab:metrics');
+      await settle();
+      expect(barStatus()).toContain('Not receiving yet');
+      const metricReads = calls.filter(read => read.actionId.endsWith('/capture/metrics/read')).map(read => read.input);
+      expect(metricReads).toEqual([
+        expect.objectContaining({ serverId: 'home', environmentId: 'production', serviceName: 'billing-api', measure: { kind: 'http', statistic: 'p95' } }),
+        expect.objectContaining({ serviceName: 'billing-api', measure: expect.objectContaining({ kind: 'runtime' }) }),
+      ]);
+      expect(textIn('project-deployments.telemetry.metrics.p95')).toContain('412');
+      expect(textIn('project-deployments.telemetry.metrics.heap')).toContain('doesn’t report heap use');
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('offers only the capability views the Environment records', async () => {
+    const { invoke, calls } = collector(capabilityAnswers({ metrics: null, appLlmCost: null, exceptions: null }));
+    const screen = await renderScreen(panel(invoke, detailWith({ metrics: false, appLlmCost: false, exceptions: false }),
+      { active: true, telemetryApplied: true }));
+    try {
+      await settle();
+      expect(screen.findByTestId('project-deployments.telemetry.tab:llmCalls')).toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.tab:metrics')).toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.readiness.exceptions')).toBeNull();
+      expect(calls.some(read => read.actionId.endsWith('/capture/costs/read') || read.actionId.endsWith('/capture/metrics/read'))).toBe(false);
+    } finally {
+      await screen.unmount();
     }
   });
 });

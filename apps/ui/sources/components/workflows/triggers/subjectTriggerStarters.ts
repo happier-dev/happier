@@ -11,15 +11,20 @@ import { buildSimpleScheduleCron } from './triggerSchedule';
 
 export type SubjectSentenceStarter = 'healthFailed' | 'deploymentFailed' | 'nightly';
 
-const STARTER_EVENT: Readonly<Partial<Record<SubjectSentenceStarter | 'addCheck', PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
+/** An Environment's successful deploy: the regression check Workflow's trigger (P7 J3), opened from its Telemetry setup. */
+type EnvironmentDeployStarter = 'deploymentFailed' | 'deploymentSucceeded';
+const STARTER_EVENT: Readonly<Partial<Record<SubjectSentenceStarter | 'addCheck' | 'deploymentSucceeded', PluginUiOpenAutomationEventRequestV1['eventRef']>>> = {
   addCheck: HEALTH_CHECK_EVENT_REFS_V1.status,
   healthFailed: HEALTH_CHECK_EVENT_REFS_V1.failed,
   deploymentFailed: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
+  deploymentSucceeded: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded,
 };
+const isEnvironmentDeployStarter = (starter: string): starter is EnvironmentDeployStarter =>
+  starter === 'deploymentFailed' || starter === 'deploymentSucceeded';
 
 /** The page supplies its subject; the existing contributed setup owns configuring the source. */
 export function subjectStarterEventSeed(
-  starter: SubjectSentenceStarter | 'addCheck' | null,
+  starter: SubjectSentenceStarter | 'addCheck' | 'deploymentSucceeded' | null,
   params: Readonly<{
     subject?: TriggerSubject;
     serverId?: string;
@@ -32,7 +37,7 @@ export function subjectStarterEventSeed(
   const eventRef = starter ? STARTER_EVENT[starter] : undefined;
   if (!eventRef) return undefined;
   const observer = params.controllerMachineId ? { monitoringMachineId: params.controllerMachineId } : {};
-  if (starter === 'deploymentFailed') {
+  if (starter && isEnvironmentDeployStarter(starter)) {
     if (!params.deploymentEnvironment) return undefined;
     const { serverId, environmentId } = params.deploymentEnvironment;
     return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };

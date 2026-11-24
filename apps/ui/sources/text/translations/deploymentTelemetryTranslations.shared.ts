@@ -28,6 +28,36 @@ export type Copy = Readonly<{
     traces: string;
     logs: string;
     queries: string;
+    llmCalls: string;
+    metrics: string;
+  }>;
+  /** While a recorded choice has kept nothing yet (lab p7Setup-waiting): each choice's own delivery. */
+  readiness: Readonly<{ title: string; description: string }>;
+  /** Telemetry → LLM calls (J4): typed totals and coverage, then each retained call. */
+  llm: Readonly<{
+    calls: string;
+    tokens: (p: Readonly<{ count: string }>) => string;
+    reported: string;
+    reportedFor: (p: Readonly<{ reported: string; calls: string }>) => string;
+    reportedNone: string;
+    note: string;
+    openUsage: string;
+    reading: string;
+    unavailable: string;
+  }>;
+  /** Telemetry → Metrics (J5): one service's request time, traffic, errors and heap over the window. */
+  metrics: Readonly<{
+    service: string;
+    duration: string;
+    durationDetail: (p: Readonly<{ p50: string }>) => string;
+    requests: string;
+    requestsDetail: string;
+    errorRate: string;
+    heap: string;
+    heapNotReported: string;
+    noService: string;
+    reading: string;
+    unavailable: string;
   }>;
   window: Readonly<{ label: string; hour: string; day: string; week: string }>;
   menu: Readonly<{ settings: string; addTelemetry: string; clear: string; clearFailed: string }>;
@@ -39,6 +69,7 @@ export type Copy = Readonly<{
   unavailable: Readonly<{ title: string; reason: string }>;
   request: Readonly<{
     back: string;
+    backToCalls: string;
     waterfall: string;
     reading: string;
     unavailable: string;
@@ -92,6 +123,11 @@ export type Copy = Readonly<{
     requestsDescription: string;
     notReceiving: string;
     lastSample: (p: Readonly<{ time: string }>) => string;
+    afterDeploy: string;
+    regression: string;
+    regressionDescription: string;
+    regressionAction: string;
+    regressionFailed: string;
     exceptions: string;
     exceptionsDescription: string;
     llm: string;
@@ -144,6 +180,36 @@ const en: Copy = {
     traces: 'Traces',
     logs: 'Logs',
     queries: 'Queries',
+    llmCalls: 'LLM calls',
+    metrics: 'Metrics',
+  },
+  readiness: {
+    title: 'Getting ready',
+    description: 'Each choice starts as soon as its data arrives.',
+  },
+  llm: {
+    calls: 'Model calls',
+    tokens: ({ count }) => `${count} tokens`,
+    reported: 'Reported by the provider',
+    reportedFor: ({ reported, calls }) => `for ${reported} of ${calls} calls`,
+    reportedNone: 'Your SDK doesn’t report cost',
+    note: 'Your app’s own model calls. Usage prices them with your prices; what your agents use is never added to them.',
+    openUsage: 'Open Usage',
+    reading: 'Reading model calls',
+    unavailable: 'Model calls aren’t available right now',
+  },
+  metrics: {
+    service: 'Service',
+    duration: 'Request duration',
+    durationDetail: ({ p50 }) => `p95 · p50 ${p50}`,
+    requests: 'Requests',
+    requestsDetail: 'per second',
+    errorRate: 'Error rate',
+    heap: 'Heap used',
+    heapNotReported: 'This runtime doesn’t report heap use.',
+    noService: 'No requests in this window yet',
+    reading: 'Reading metrics',
+    unavailable: 'Metrics aren’t available right now',
   },
   window: { label: 'Time window', hour: '1 h', day: '24 h', week: '7 d' },
   menu: { settings: 'Telemetry settings…', addTelemetry: 'Add telemetry to this app', clear: 'Clear capture…', clearFailed: 'Capture could not be cleared.' },
@@ -160,6 +226,7 @@ const en: Copy = {
     investigate: 'Send to agent',
     investigateFailed: 'Could not open the finding brief',
     back: 'All traces',
+    backToCalls: 'All LLM calls',
     waterfall: 'Waterfall',
     reading: 'Reading the request',
     unavailable: 'This request isn’t available',
@@ -216,7 +283,13 @@ const en: Copy = {
     requestsDescription:
       'Endpoints, traces, logs and the queries each request runs.',
     notReceiving: 'Not receiving yet',
-    lastSample: ({ time }) => `Receiving · Last sample ${time}`,
+    lastSample: ({ time }) => `Receiving · last sample ${time}`,
+    afterDeploy: 'After each deploy',
+    regression: 'Compare each deploy with the one before',
+    regressionDescription:
+      'Sets up a workflow you can read and change: what to compare, for how long, and what counts as slower.',
+    regressionAction: 'Set up…',
+    regressionFailed: 'The workflow couldn’t be opened.',
     exceptions: 'Exceptions',
     exceptionsDescription:
       'Server errors become issues in PRs & Issues. Browser errors need a small addition to your app.',

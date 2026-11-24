@@ -7,6 +7,7 @@ import type {
   DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
 import { TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import {
   CaptureEndpoints,
@@ -38,6 +39,10 @@ import { Text } from '@/components/ui/text/Text';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { AddCheckSetup } from './AddCheckSetup';
 import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
+import { TelemetryAppLlmCalls } from './TelemetryAppLlmCalls';
+import { TelemetryMetrics } from './TelemetryMetrics';
+import { formatTelemetryCapabilityStatus } from './telemetryCapabilityStatus';
+import { TelemetryCapabilityReadiness } from './TelemetryCapabilityReadiness';
 import { Typography } from '@/constants/Typography';
 import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -136,12 +141,17 @@ export function DeploymentTelemetryPanel(
 
 type WindowId = 'hour' | 'day' | 'week';
 const WINDOW_MS: Readonly<Record<WindowId, number>> = { hour: 3_600_000, day: 86_400_000, week: 604_800_000 };
-const TAB_IDS: readonly TelemetryCaptureList[] = ['endpoints', 'traces', 'logs', 'queries'];
-const TAB_LABELS: Readonly<Record<TelemetryCaptureList, () => string>> = {
+/** The capture lists, then a view per enabled capability (P7 J4 LLM calls, J5 Metrics; lab p7Cost-env, p7Flows-metrics). */
+type TelemetryTab = TelemetryCaptureList | 'llmCalls' | 'metrics';
+const CAPTURE_TAB_IDS: readonly TelemetryCaptureList[] = ['endpoints', 'traces', 'logs', 'queries'];
+const isCaptureTab = (tab: TelemetryTab): tab is TelemetryCaptureList => (CAPTURE_TAB_IDS as readonly string[]).includes(tab);
+const TAB_LABELS: Readonly<Record<TelemetryTab, () => string>> = {
   endpoints: () => t('deploymentTelemetry.tabs.endpoints'),
   traces: () => t('deploymentTelemetry.tabs.traces'),
   logs: () => t('deploymentTelemetry.tabs.logs'),
   queries: () => t('deploymentTelemetry.tabs.queries'),
+  llmCalls: () => t('deploymentTelemetry.tabs.llmCalls'),
+  metrics: () => t('deploymentTelemetry.tabs.metrics'),
 };
 
 /** Only presence decides the offline words; an unanswered presence (null) is never offline. */
@@ -263,12 +273,18 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const reads = React.useMemo(() => lifetime
     ? createTelemetryCaptureReads(invoke, { scope: lifetime.scope, environmentId: environment.id, collectorMachineId: collectorId })
     : null, [invoke, lifetime, environment.id, collectorId]);
-  const [tab, setTab] = React.useState<TelemetryCaptureList>('endpoints');
+  const capabilities = resolveDeploymentTelemetryCapabilitiesV1(detail.content.telemetry);
+  const tabIds: readonly TelemetryTab[] = [...CAPTURE_TAB_IDS, ...(capabilities.appLlmCost ? ['llmCalls' as const] : []),
+    ...(capabilities.metrics ? ['metrics' as const] : [])];
+  const [chosenTab, setTab] = React.useState<TelemetryTab>('endpoints');
+  // A capability turned off in settings takes its view with it; the tab falls back to Endpoints.
+  const tab = tabIds.includes(chosenTab) ? chosenTab : 'endpoints';
   const [windowId, setWindowId] = React.useState<WindowId>('day');
   const [attempt, setAttempt] = React.useState(0);
   const [collectorStatus, setCollectorStatus] = React.useState<Readonly<{
     reads: TelemetryCaptureReads;
     lastReceivedAt?: number | null;
+    capabilityLastSampleAt?: Awaited<ReturnType<TelemetryCaptureReads['status']>>['capabilityLastSampleAt'];
     failure?: string;
   }> | null>(null);
   React.useEffect(() => {
@@ -276,7 +292,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
     const controller = new AbortController();
     reads.status(controller.signal).then(
       status => {
-        if (!controller.signal.aborted) setCollectorStatus({ reads, lastReceivedAt: status.lastReceivedAt });
+        if (!controller.signal.aborted) {
+          setCollectorStatus({ reads, lastReceivedAt: status.lastReceivedAt, capabilityLastSampleAt: status.capabilityLastSampleAt });
+        }
       },
       (error: unknown) => {
         if (!controller.signal.aborted) setCollectorStatus({ reads, failure: telemetryCaptureFailureCode(error) });
@@ -292,8 +310,10 @@ function DeploymentTelemetryTabs(props: Readonly<{
     if (reads) setOpenTrace({ reads, request });
   }, [reads]);
   const [addingCheck, setAddingCheck] = React.useState<KeyFlowRoute | null>(null);
-  const trace = tab === 'traces' && openTrace?.reads === reads ? openTrace : null;
-  const { state, more, discardOlder, refresh } = useTelemetryCaptureList(lifetime, reads, active && !trace, tab, WINDOW_MS[windowId]);
+  const trace = (tab === 'traces' || tab === 'llmCalls') && openTrace?.reads === reads ? openTrace : null;
+  const captureTab = isCaptureTab(tab) ? tab : null;
+  const { state, more, discardOlder, refresh } = useTelemetryCaptureList(lifetime, reads, active && !trace && captureTab !== null,
+    captureTab ?? 'endpoints', WINDOW_MS[windowId]);
   const retry = React.useCallback(() => {
     setAttempt(value => value + 1);
     void refresh?.();
@@ -340,11 +360,15 @@ function DeploymentTelemetryTabs(props: Readonly<{
     }] : []),
   ], [canAddCheck, endpointDemand, openBrief, captureWindow]);
 
-  const data = state.data;
-  const failed = state.failure !== null && !state.reading;
+  const data = captureTab ? state.data : null;
+  const failed = captureTab !== null && state.failure !== null && !state.reading;
   const status = telemetryApplied && collectorStatus?.reads === reads ? collectorStatus : null;
   const keptOn = t('deploymentTelemetry.recording.keptOn', { machine });
+  // On a capability's own view the bar says that capability's delivery; the capture lists say the collector's.
+  const capabilitySample = tab === 'llmCalls' ? status?.capabilityLastSampleAt?.appLlmCost
+    : tab === 'metrics' ? status?.capabilityLastSampleAt?.metrics : undefined;
   const collectorLabelText = telemetryApplied === false ? `${keptOn} ${t('deploymentTelemetry.recording.nextDeploy')}`
+    : capabilitySample !== undefined ? formatTelemetryCapabilityStatus(capabilitySample)
     : status?.lastReceivedAt === null ? t('deploymentTelemetry.recording.waiting')
     : typeof status?.lastReceivedAt === 'number' ? t('deploymentTelemetry.recording.receiving', {
       time: new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(status.lastReceivedAt),
@@ -366,8 +390,13 @@ function DeploymentTelemetryTabs(props: Readonly<{
       request={trace.request}
       locale={locale}
       onBack={() => setOpenTrace(null)}
+      backLabel={tab === 'llmCalls' ? t('deploymentTelemetry.request.backToCalls') : undefined}
       onAddCheck={canAddCheck ? setAddingCheck : undefined}
     />
+  ) : tab === 'llmCalls' && reads ? (
+    <TelemetryAppLlmCalls reads={reads} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} onOpenCall={openRequest} />
+  ) : tab === 'metrics' && reads ? (
+    <TelemetryMetrics reads={reads} active={active} windowMs={WINDOW_MS[windowId]} locale={locale} />
   ) : data?.list === 'endpoints' ? (
     <CaptureEndpoints items={data.items} loading={state.reading} locale={locale}
       actions={endpointActions}
@@ -388,6 +417,10 @@ function DeploymentTelemetryTabs(props: Readonly<{
   return (
     <PageContentColumn testID="project-deployments.telemetry.recording">
     <View style={styles.panel}>
+      {status?.capabilityLastSampleAt && status.lastReceivedAt !== undefined ? (
+        <TelemetryCapabilityReadiness lastReceivedAt={status.lastReceivedAt} samples={status.capabilityLastSampleAt}
+          recorded={capabilities} onAddTelemetry={addTelemetry} addingTelemetry={openingSetup} />
+      ) : null}
       <View style={styles.lines}>
       {!failed && status?.failure ? (
         <SurfaceStateCard kind="unavailable" size="line" title={t('deploymentTelemetry.unavailable.title')}
@@ -412,12 +445,14 @@ function DeploymentTelemetryTabs(props: Readonly<{
       ) : null}
       <View style={styles.bar}>
         <View style={styles.tabs}>
-          <SegmentedTabBar<TelemetryCaptureList>
+          <SegmentedTabBar<TelemetryTab>
             accessibilityLabel={t('deploymentTelemetry.tabs.label')}
             testIDPrefix="project-deployments.telemetry.tab"
             segmentSizing="content"
             activeTabId={tab}
-            tabs={TAB_IDS.map(id => ({ id, label: TAB_LABELS[id]() }))}
+            tabs={tabIds.map(id => ({ id, label: TAB_LABELS[id]() }))}
+            // Six views outgrow a phone: the trailing ones move behind More, the selected one stays (D44).
+            overflow={{ label: t('common.more'), testID: 'project-deployments.telemetry.tab.more' }}
             onSelectTab={(id) => { setTab(id); setOpenTrace(null); }}
           />
         </View>
@@ -552,6 +587,8 @@ export function TelemetryRequestDetail(props: Readonly<{
   request: DatabaseCaptureSummaryV1;
   locale: string;
   onBack: () => void;
+  /** The list the detail returns to, when it is not Traces (an LLM call opens its trace here too). */
+  backLabel?: string;
   onAddCheck?: (route: KeyFlowRoute) => void;
 }>) {
   const { reads, lifetime, active, request, locale, onAddCheck } = props;
@@ -593,7 +630,7 @@ export function TelemetryRequestDetail(props: Readonly<{
   return (
     <View style={styles.detail} testID="project-deployments.telemetry.request">
       <View style={[styles.detailHeader, { paddingHorizontal: headerInsetPx }]}>
-        <TextLinkButton testID="project-deployments.telemetry.request.back" label={t('deploymentTelemetry.request.back')}
+        <TextLinkButton testID="project-deployments.telemetry.request.back" label={props.backLabel ?? t('deploymentTelemetry.request.back')}
           onPress={props.onBack} tone="quiet" size="meta" />
         <Text variant="heading" style={styles.requestTitle} numberOfLines={2}>{requestLabelOf(request)}</Text>
         {onAddCheck && serviceName && endpointMethod && endpointRoute ? (
@@ -646,7 +683,8 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s8,
   },
   tabs: { flexShrink: 1, minWidth: 0 },
-  barEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  // The bar's end wraps on a phone, so a long delivery line never pushes the window or "…" off the page.
+  barEnd: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8, flexShrink: 1, minWidth: 0 },
   detail: { gap: theme.space.s16 },
   // The detail's header stands on the same edge as the tab bar and its sections.
   detailHeader: { gap: theme.space.s4 },

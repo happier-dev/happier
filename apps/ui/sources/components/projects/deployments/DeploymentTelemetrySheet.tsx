@@ -38,6 +38,8 @@ import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentTelemetryBrief } from './useDeploymentTelemetryBrief';
 import { createDeploymentReadTransport, type PublicCollectorDomainPage } from './deploymentReadTransport';
 import type { TelemetryCaptureReads } from './telemetryCaptureReads';
+import { formatTelemetryCapabilityStatus } from './telemetryCapabilityStatus';
+import { useOpenTelemetryRegressionWorkflow } from './useOpenTelemetryRegressionWorkflow';
 
 export type DeploymentTelemetrySheetInput = Readonly<{
   detail: DeploymentEnvironmentDetailV1;
@@ -77,6 +79,10 @@ export function DeploymentTelemetrySheet(
   props: DeploymentTelemetrySheetInput & CustomModalInjectedProps,
 ) {
   const { detail, lifetime } = props;
+  const { opening: openingRegression, open: openRegressionWorkflow } = useOpenTelemetryRegressionWorkflow(lifetime, detail.environment);
+  const openRegression = async () => {
+    if (await openRegressionWorkflow()) props.onClose();
+  };
   const environment = detail.environment;
   const allMachines =
     useMachineListForServer(lifetime.scope.serverId) ?? NO_MACHINES;
@@ -142,10 +148,7 @@ export function DeploymentTelemetrySheet(
       ? capabilityLastSampleAt?.[capability]
       : undefined;
     if (at === undefined) return description;
-    const status = at === null ? t('deploymentTelemetry.sheet.notReceiving') : t('deploymentTelemetry.sheet.lastSample', {
-      time: new Intl.DateTimeFormat(getPreferredLanguage(), { dateStyle: 'short', timeStyle: 'short' }).format(at),
-    });
-    return [description, status].join('\n');
+    return [description, formatTelemetryCapabilityStatus(at)].join('\n');
   };
   const [saving, setSaving] = React.useState(false);
   const [refusal, setRefusal] = React.useState<Refusal | null>(null);
@@ -424,6 +427,19 @@ export function DeploymentTelemetrySheet(
             />
           ) : null}
         </ItemGroup>
+        {/* Regression is not a stored choice (P7 J3): it opens the prefilled Workflow, whose Save and arm are its opt-in. */}
+        {setUp ? (
+          <ItemGroup title={t('deploymentTelemetry.sheet.afterDeploy')}>
+            <Item
+              testID="project-deployments.telemetry.regression"
+              title={t('deploymentTelemetry.sheet.regression')}
+              subtitle={t('deploymentTelemetry.sheet.regressionDescription')}
+              detail={t('deploymentTelemetry.sheet.regressionAction')}
+              disabled={saving || openingRegression}
+              onPress={() => { void openRegression(); }}
+            />
+          </ItemGroup>
+        ) : null}
         {confirmingDelete ? (
           <SurfaceStateCard
             testID="project-deployments.telemetry.confirm-delete"

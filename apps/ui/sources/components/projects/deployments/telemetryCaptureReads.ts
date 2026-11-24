@@ -26,6 +26,11 @@ import {
   type DatabaseCaptureSummaryV1,
   type DatabaseCaptureSourceV1,
   type DatabaseCaptureTracesListInputV1,
+  DatabaseCaptureCostsReadResultV1Schema,
+  TELEMETRY_COSTS_READ_ACTION_ID_V1,
+  TELEMETRY_METRICS_READ_ACTION_ID_V1,
+  TelemetryMetricsReadResultV1Schema,
+  type TelemetryMetricsReadInputV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -50,7 +55,9 @@ export type TelemetryCaptureActionId =
   | typeof DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1
-  | typeof DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1;
+  | typeof DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1
+  | typeof TELEMETRY_METRICS_READ_ACTION_ID_V1
+  | typeof TELEMETRY_COSTS_READ_ACTION_ID_V1;
 
 export type TelemetryCaptureInvoke = (
   request: Readonly<{
@@ -310,6 +317,26 @@ export function createTelemetryCaptureReads(
         await call(DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, input, signal),
       ));
       return { items: result.items, nextCursor: result.nextCursor ?? null };
+    },
+    /** The window's App LLM call totals and coverage (J4); pricing stays with Usage's catalog and the viewer's prices. */
+    async costs(since: number, until: number, signal?: AbortSignal) {
+      return settle(DatabaseCaptureCostsReadResultV1Schema.safeParse(
+        await call(TELEMETRY_COSTS_READ_ACTION_ID_V1, { source: source(environment), since, until }, signal),
+      ));
+    },
+    /** One service's selected measure over the window (J5), as the check pages and widgets read it. */
+    async metrics(
+      selection: Readonly<{ serviceName: string; measure: TelemetryMetricsReadInputV1['measure'] }>,
+      since: number,
+      until: number,
+      signal?: AbortSignal,
+    ) {
+      if (!environment.environmentId) throw new HappyError('telemetry_unavailable', false, { code: 'telemetry_unavailable' });
+      const read = await call(TELEMETRY_METRICS_READ_ACTION_ID_V1, { serverId: environment.scope.serverId,
+        environmentId: environment.environmentId, serviceName: selection.serviceName, measure: selection.measure, since, until }, signal);
+      const parsed = TelemetryMetricsReadResultV1Schema.safeParse(read);
+      if (!parsed.success) throw unreadableCapture();
+      return parsed.data;
     },
     async trace(
       traceId: string,

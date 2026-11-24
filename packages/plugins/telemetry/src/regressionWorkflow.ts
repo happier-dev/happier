@@ -3,7 +3,9 @@ import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events
 import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { regressionCompareInputSchema, regressionScheduleInputSchema } from './regressionSchemas.js';
 
-export const TELEMETRY_REGRESSION_WORKFLOW_ID_V1 = 'regression-check';
+import { TELEMETRY_REGRESSION_WORKFLOW_ID_V1 } from './regressionWorkflowId.js';
+
+export { TELEMETRY_REGRESSION_WORKFLOW_ID_V1 };
 const configured = (field: string) => ({ kind: 'input' as const, name: 'configuration', path: [field] });
 const result = (field: string) => ({ kind: 'result' as const,
     producer: { blockId: 'compare', scope: { kind: 'current' as const } }, path: [field] });

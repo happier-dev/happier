@@ -225,7 +225,66 @@ const QUERIES = [
   ),
 ];
 
-export type TelemetryCaptureFixtureState = 'populated' | 'offline';
+const MINUTE = 60 * SECOND;
+const HOUR = 60 * MINUTE;
+
+/** The app's own model calls (lab p7Cost-env): each a retained span with the model and token fields the collector kept. */
+const llmCall = (id: string, at: number, durationMs: number, modelId: string, provider: string, input: number, output: number,
+  reported: number | null) => span(id, at, durationMs, {
+  traceId: 'trace-checkout', spanKind: 3, shape: `chat ${modelId}`, serviceVersion: 'v1.43',
+  genAi: { provider, modelId, requestedModel: modelId, operation: 'chat',
+    tokens: { input, output, total: input + output, reasoning: null, cacheRead: null, cacheWrite: null }, tokenCategories: null,
+    reportedCost: reported === null ? null : { amount: reported, currency: 'USD' } },
+});
+const LLM_CALLS = [
+  llmCall('m-1', NOW - 40 * SECOND, 2840, 'gpt-5-mini', 'openai', 9800, 1300, null),
+  llmCall('m-2', NOW - 3 * MINUTE, 1920, 'claude-haiku-4.5', 'anthropic', 12400, 2100, 0.0229),
+  llmCall('m-3', NOW - 7 * MINUTE, 120, 'text-embedding-3-small', 'openai', 820, 0, null),
+  llmCall('m-4', NOW - 12 * MINUTE, 3400, 'gpt-5-mini', 'openai', 14200, 2600, null),
+  llmCall('m-5', NOW - 26 * MINUTE, 4100, 'llama-3.3-70b', 'groq', 6100, 1900, null),
+];
+const costOperand = (modelId: string, provider: string, callCount: number, input: number, output: number, reported: number | null) => ({
+  bucketStartMs: NOW - 24 * HOUR, provider, modelId, requestedModel: modelId, operation: 'chat', callCount,
+  tokens: { input, output, total: input + output, reasoning: null, cacheRead: null, cacheWrite: null }, tokenCategories: null,
+  reportedCost: reported === null ? null : { amount: reported, currency: 'USD' }, firstSeenMs: NOW - 23 * HOUR, lastSeenMs: NOW - 40 * SECOND,
+});
+const COSTS = [
+  costOperand('gpt-5-mini', 'openai', 1852, 16_400_000, 3_700_000, null),
+  costOperand('claude-haiku-4.5', 'anthropic', 410, 5_200_000, 900_000, 61.2),
+  costOperand('text-embedding-3-small', 'openai', 45_900, 9_600_000, 0, null),
+  costOperand('llama-3.3-70b', 'groq', 48, 900_000, 300_000, null),
+];
+
+/** A day of the service's hourly intervals (lab p7Flows-metrics): request time stepping up after the 18:40 deploy. */
+function metricTrend(pick: (hour: number) => Readonly<Record<string, number>>) {
+  return Array.from({ length: 24 }, (_, index) => {
+    const until = NOW - (23 - index) * HOUR;
+    return { since: until - HOUR, until, unit: 'ms', ...pick(index) };
+  });
+}
+const metricsEvidence = { v: 1, items: [{ source: { kind: 'alert', label: 'Collector' }, author: { kind: 'process' }, text: 'Retained metrics' }] };
+function metricsRead(measure: Readonly<{ kind: string }>) {
+  if (measure.kind === 'runtime') {
+    const trend = metricTrend(hour => ({ value: 380_000_000 + ((hour * 7919) % 11) * 6_000_000 }));
+    return { result: { status: 'up', observedAt: NOW, evidence: metricsEvidence, measurements: { measure: 'v8js.memory.heap.used',
+      value: 412_000_000, unit: 'By', basis: 'metric_points', producers: [{ serviceName: 'billing-api', serviceVersion: 'v1.43' }],
+      window: { since: NOW - 24 * HOUR, until: NOW }, completeness: 'complete', reasons: [] } }, routes: [], trend };
+  }
+  const trend = metricTrend(hour => {
+    const p95 = hour >= 18 ? 400 + (hour % 3) * 9 : 190 + ((hour * 31) % 5) * 8;
+    return { value: p95, p95, p50: Math.round(p95 / 4.6), count: 9000 + ((hour * 977) % 7) * 900, errorRate: hour >= 18 ? 0.024 : 0.004 };
+  });
+  return { result: { status: 'up', observedAt: NOW, evidence: metricsEvidence, measurements: { measure: 'p95', value: 412, unit: 'ms',
+    basis: 'metric_points', p95Ms: 412, p50Ms: 88, requestCount: 236_400, errorRate: 0.011,
+    producers: [{ serviceName: 'billing-api', serviceVersion: 'v1.43' }], window: { since: NOW - 24 * HOUR, until: NOW },
+    completeness: 'complete', reasons: [] } }, routes: [], trend };
+}
+
+/**
+ * `populated`: every capability receiving, with a day of data. `waiting`: the collector is set up and answering but
+ * nothing has arrived yet, so each capability says Not receiving yet and each view is empty. `offline`: see below.
+ */
+export type TelemetryCaptureFixtureState = 'populated' | 'waiting' | 'offline';
 
 export function createTelemetryCaptureFixtureInvoke(
   state: TelemetryCaptureFixtureState,
@@ -240,6 +299,25 @@ export function createTelemetryCaptureFixtureInvoke(
       answered = true;
     }
     const source = (input as { source?: unknown }).source;
+    const waiting = state === 'waiting';
+    if (actionId.endsWith('/capture/status'))
+      // Delivery is read against the viewer's clock ("last sample 3 minutes ago"), unlike the fixed capture window.
+      return { ok: true, source, enabled: true, coverage: { lostObservations: 0, reason: null },
+        lastReceivedAt: waiting ? null : Date.now() - 40 * SECOND,
+        capabilityLastSampleAt: waiting ? { metrics: null, appLlmCost: null, exceptions: null }
+          : { metrics: Date.now() - MINUTE, appLlmCost: Date.now() - 3 * MINUTE, exceptions: null } };
+    if (actionId.endsWith('/capture/costs/read'))
+      return { ok: true, source, since: NOW - 24 * HOUR, until: NOW, items: waiting ? [] : COSTS,
+        coverage: { lostObservations: 0, reason: null, callCount: waiting ? 0 : 48_210, tokenCategoryCallCount: 0,
+          reportedCostCallCount: waiting ? 0 : 410 } };
+    if (actionId.endsWith('/capture/metrics/read')) {
+      if (waiting) throw Object.assign(new Error('unexpected'), { code: 'unexpected' });
+      return metricsRead((input as { measure: { kind: string } }).measure);
+    }
+    if (actionId.endsWith('/capture/traces/list') && (input as { appLlmCalls?: unknown }).appLlmCalls)
+      return { ok: true, source, items: waiting ? [] : LLM_CALLS };
+    if (waiting && actionId.endsWith('/list'))
+      return { ok: true, source, items: [] };
     if (actionId.endsWith('/capture/endpoints/list'))
       return { ok: true, source, items: ENDPOINTS };
     if (actionId.endsWith('/capture/traces/list'))

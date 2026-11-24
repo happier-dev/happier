@@ -57,10 +57,15 @@ export function readWorkflowDefinitionDraftSeed(id: string, scope?: ServerAccoun
     return readWorkflowEditorDraftSeed(WORKFLOW_DEFINITION_DRAFT_SEED_KIND, id, scope);
 }
 
-/** Open a private authoring copy. The regular editor owns saving it. */
+/**
+ * Open a private authoring copy. The regular editor owns saving it. A page that opens the template for one subject
+ * (an Environment's regression check) passes its known Run values and its trigger intent; saving and arming stay with
+ * the editor and its native trigger owner.
+ */
 export async function preparePluginWorkflowTemplateDraft(input: Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     signal?: AbortSignal;
+    seed?: Pick<WorkflowDefinitionDraftSeed, 'inputValues' | 'eventSeed'>;
 }> & (Readonly<{ workflow: string }> | Readonly<{ source: WorkflowPluginSourceV1; name?: string }>)) {
     const { accountLifetime, signal } = input;
     if (!accountLifetime.isCurrent()) return null;
@@ -77,6 +82,7 @@ export async function preparePluginWorkflowTemplateDraft(input: Readonly<{
         ...(source.description === undefined ? {} : { description: source.description }),
         definition: source.definition,
         initialView: 'sentence',
+        ...input.seed,
     }, accountLifetime);
     return { pathname: '/workflows/new' as const, params: { definitionDraftSeedId, serverId: accountLifetime.scope.serverId } };
 }
