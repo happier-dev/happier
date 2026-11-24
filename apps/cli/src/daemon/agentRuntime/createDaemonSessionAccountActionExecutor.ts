@@ -6,6 +6,7 @@ import { AgentStartSessionCallerV1Schema, readAgentStartCallerWorkDepthV1 } from
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import type { createActionExecutor, ActionExecuteResult, ActionExecutorContext, ExternalActionExecutionAuthorizationV1, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { readProjectExecutionOutputMachineAdmissionMethodV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -318,12 +319,19 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     // exact operation lookup and terminal read it delegates to.
     const requesterOutputRead = params.credentials !== undefined && params.machineId !== undefined
       && typeof outputMachineId === 'string' && outputMachineId !== params.machineId;
+    // Entry history already has an exact Machine read under the requester's
+    // Account. Retain the Session host's workspace without minting an Action root.
+    const requesterHistoryWorkspace = params.credentials && actionSpec.bindings?.rpcMethod === RPC_METHODS.SCM_HISTORY_ENTRIES
+      ? operation.scmWorkspace : undefined;
+    // The one selection point for reads served by the requester Account's
+    // authenticated exact-Machine route instead of an Action root.
+    const requesterAccountRead = requesterOutputRead || requesterHistoryWorkspace !== undefined;
     const requiresMachineAuthorization = executionPlacement !== 'account'
       && executionPlacement !== 'client'
       && !requesterAppReview
       && !proposesPluginInstallApproval
       && !sessionOriginRpc
-      && !requesterOutputRead;
+      && !requesterAccountRead;
     if (params.credentials && (operation.actionId === 'discussion.post' || operation.actionId === 'discussion.reply')) {
       context = { ...context, serverIdentityId: readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.()) ?? undefined };
       const bound = await bindDiscussionDraftReply({ actionId: operation.actionId, input: operation.input, context,
@@ -397,7 +405,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         })), authority.signal) : undefined;
       if (needsCallerWorkspace && !workflowTarget) return refuse('external_authorization_preparation_failed');
       const prepare = params.prepareExternalActionAuthorization;
-      external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc && !requesterOutputRead
+      external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc && !requesterAccountRead
         // The admitted owner uses the CLI's captured Account data provider.
         // Machine-purpose proofs are not credentials for private Task KV/resources.
         && !(executionPlacement === 'account' && (
@@ -509,6 +517,9 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...context,
       ...(source ? { defaultSessionMachineId: source.machineId } : {}),
       ...(external ? { externalActionExecutionAuthorization: external.authorization, externalActionTarget: external.target } : {}),
+      ...(requesterHistoryWorkspace ? { externalActionTarget: {
+        kind: 'machine' as const, machineId: requesterHistoryWorkspace.machineId, project: requesterHistoryWorkspace,
+      } } : {}),
       ...(observationSetup ? { requiredContributedActionDangerLevel: 'safe' } : {}),
       ...(operation.actionId === WORKFLOW_AUTHORING_ACTION_ID.draftSave ? {
         executeOrdinaryChildAction: (actionId, input, options) => {

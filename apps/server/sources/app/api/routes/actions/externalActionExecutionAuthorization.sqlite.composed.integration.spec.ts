@@ -13909,6 +13909,124 @@ describe("external Action execution authorization", () => {
         } finally { await currentnessChannel.close(); get.mockRestore(); post.mockRestore(); await app.close(); }
     });
 
+    it('relays Session entry history using the owner Account on the enrolled Machine', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { id: accountId, tokenEpoch } = fixture.account;
+        const { id: machineId, installationId } = fixture.machine;
+        const homeId = await getOrCreateServerIdentityId();
+        const actionId = 'scm.history.entries';
+        const serverId = 'owner-scm-history';
+        const directory = '/tmp/owner-session-worktree';
+        const input = { cwd: directory, folder: '', paths: ['conflict.txt'] };
+        const history = getActionSpec(actionId).outputSchema.parse({
+            success: true, headOid: null, entries: [{ path: 'conflict.txt', kind: 'none' }],
+        });
+        const method = `${machineId}:${RPC_METHODS.SCM_HISTORY_ENTRIES}`;
+        const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        await db.machine.update({ where: { id: machineId }, data: {
+            active: true, lastActiveAt: new Date(), ...machineOperationSupportForTest(),
+        } });
+        const controllerKeys = tweetnacl.sign.keyPair();
+        const controllerMachine = await db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId, metadata: fixture.machine.metadata,
+            installationId: crypto.randomUUID(),
+            installationPublicKey: new Uint8Array(controllerKeys.publicKey),
+        } });
+        await db.managedMachine.create({ data: {
+            homeId, custodianAccountId: accountId, controllerMachineId: controllerMachine.id,
+            controllerInstallationId: controllerMachine.installationId!, enrolledMachineId: machineId,
+            admittedActionRequestId: crypto.randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
+            launch: { provider: { pluginId: 'happier.lima', localId: 'lima' }, schemaVersion: 1, name: 'History guest', choices: {} },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        } });
+        const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
+            storedContentMode: 'plain', metadata: createTestMetadata({ machineId, path: directory }), agentState: null });
+        const session = await db.session.create({ data: { accountId, tag: crypto.randomUUID(), encryptionMode: 'plain',
+            metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext,
+            ownerMetadata: JSON.stringify(fields.ownerMetadata), agentState: fields.agentState, active: true } });
+        await db.accessKey.create({ data: { accountId, machineId, sessionId: session.id, data: 'scm-history-publisher-key' } });
+        const presence = createSessionPublisherPresence();
+        const delivered = vi.fn(async (_event: string, _packet: SocketRpcRequestPayload) => history);
+        const receiver = { id: 'owner-history-receiver', data: { clientType: 'machine-scoped', machineId,
+            verifiedMachineInstallationId: installationId }, timeout: () => ({ emitWithAck: delivered }) };
+        qualifyCurrentAccountStoredContentSocket(receiver);
+        expect(await presence.registerPublisher({ socket: receiver, binding: { accountId, machineId, sessionId: session.id },
+            completeActivitySnapshot: { state: 'active', activeCount: 1 } })).toMatchObject({ status: 'registered' });
+        // The installed Machine transport is the boundary. Home's Account/Session checks,
+        // real client RPC, socket admission, and installed target selection all remain active.
+        const io = createSocketRoomDiscoveryHarness(async room => room === receiver.id
+            || room === getAccountSessionSocketRoom(accountId, session.id)
+            || room === `rpc:${accountId}:${method}` ? [receiver] : []);
+        const { app } = await createApp(fixture.team.id, false,
+            request => resolveCurrentSessionMachineFromServer({ io, presence, ...request }),
+            undefined, false, undefined, true);
+        const network = await createRequesterCurrentnessSocketHarness();
+        network.server.use((socket, next) => {
+            void auth.verifyTokenForRoute(socket.handshake.auth.token).then(verified => {
+                if (!verified || verified.userId !== accountId) return next(new Error('Unauthorized'));
+                socket.data = { clientType: 'user-scoped', userId: verified.userId,
+                    authTokenKind: verified.authTokenKind, authAuthority: verified.authority,
+                    authTokenAuthenticationEvidence: verified.authenticationEvidence };
+                qualifyCurrentAccountStoredContentSocket(socket);
+                next();
+            }).catch(next);
+        });
+        network.server.on('connection', socket =>
+            registerSocketRpcHandlers({ userId: accountId, socket, io, sessionPublisherPresence: presence }));
+        try {
+            const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+            await runWithServerHttpBaseUrl(origin, async () => {
+                await bootstrapAccountSettingsContext({ credentials, mode: 'blocking' });
+                const sender = createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped', userId: accountId,
+                    authTokenKind: 'account', authAuthority: 'present_user' } });
+                qualifyCurrentAccountStoredContentSocket(sender);
+                registerSocketRpcHandlers({ userId: accountId, socket: sender as unknown as Socket, io, sessionPublisherPresence: presence });
+                const callback = vi.fn();
+                await getSocketHandler(sender, SOCKET_RPC_EVENTS.CALL)({ method, requestId: crypto.randomUUID(), params: input }, callback);
+                expect(callback).toHaveBeenCalledWith({ ok: true, result: history });
+                delivered.mockClear();
+
+                const prepare = async ({ operation, workflowTarget, sessionActionOrigin, isCallerCurrent }:
+                    Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) => {
+                    if (!workflowTarget) throw new Error('The Session SCM workspace was not bound');
+                    const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId: operation.actionId,
+                        input: operation.input, requestId: operation.requestId, target: workflowTarget, machineId, sourceMachineId: machineId,
+                        accountId, accountEncryptionMode: 'plain', tokenEpochHint: tokenEpoch, token, serverId, serverIdentityId: homeId,
+                        serverHttpBaseUrl: origin, installationId: installationId!, privateKey: fixture.keyPair.secretKey,
+                        sessionActionOrigin, isCurrent: isCallerCurrent });
+                    return authorization ? { authorization, target: workflowTarget } : null;
+                };
+                const prepareExternalActionAuthorization = vi.fn(prepare);
+                const invokeDirect = vi.fn(async () => { throw new Error('History must use Home Machine admission'); });
+                const execute = createDaemonSessionAccountActionExecutor({ credentials, token, serverId, serverHttpBaseUrl: origin, machineId,
+                    prepareExternalActionAuthorization,
+                    createExecutor: () => createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: origin,
+                        serverIdentityId: homeId, machineId, externalActionMachineRequestPrivateKey: fixture.keyPair.secretKey,
+                        externalActionMachineInstallationId: installationId!, pluginActionExecutionOwner: 'current_process',
+                        machineActionDirectTargetTransport: { machineId, invoke: invokeDirect } }),
+                });
+                const result = await execute({ kind: 'action.execute', actionId, input, requestId: crypto.randomUUID(),
+                    scmWorkspace: { machineId, directory },
+                    witness: { turnId: 'history-turn', inputId: crypto.randomUUID(), userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
+                        agentStartCaller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 } },
+                }, { sessionId: session.id, isCurrent: async () => true });
+                expect(result, !result.ok ? JSON.stringify({
+                    errorCode: result.errorCode, failureCause: result.failureCause, effectAttempted: result.effectAttempted,
+                }) : undefined).toMatchObject({ ok: true, result: history });
+                expect(prepareExternalActionAuthorization).not.toHaveBeenCalled();
+                expect(invokeDirect).not.toHaveBeenCalled();
+                expect(delivered).toHaveBeenCalledOnce();
+                expect(delivered).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                    machineAdmission: expect.objectContaining({ actorAccountId: accountId, custodianAccountId: accountId, machineId, installationId }),
+                    params: expect.objectContaining({ kind: 'targeted_action_rpc',
+                        target: { kind: 'machine', machineId, project: { machineId, directory } }, input: expect.objectContaining(input) }),
+                }));
+                expect(delivered.mock.calls[0]![1].callerInputAuthorization).toBeUndefined();
+            });
+        } finally { await network.close(); await app.close(); }
+    });
+
     it('relays signed turn cancellation only within the installed Session caller’s owned led subtree', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const accountId = fixture.account.id;

@@ -194,6 +194,9 @@ export function createCliMachineActionTransport(
     // approval replay does not carry. Direct-only hosts can still install
     // bundled tools; configured definitions remain refused without admission.
     ...(params.credentials ? [
+      // Entry history spends Home's installed Machine admission, including on
+      // the caller's own daemon where a direct Action otherwise lacks that stamp.
+      RPC_METHODS.SCM_HISTORY_ENTRIES,
       // Workflow materialization also observes the same Machine after durable
       // approval replay. Native detection needs fresh Home admission, not the
       // unadmitted direct hop available to this host-local executor.
