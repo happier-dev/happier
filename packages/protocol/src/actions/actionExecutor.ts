@@ -752,6 +752,15 @@ function readNativeServiceStartApproval(actionId: string, actionArgs: unknown, p
   return { ok: true as const, review: review.data };
 }
 
+function projectPresentUserApprovalDecision(context: ActionExecutorContext, decidingAccountId?: string) {
+  if (resolveHostStampedAuthority(context) !== 'present_user') return undefined;
+  return {
+    authority: 'present_user' as const,
+    ...(context.surface === 'voice' && isPresentUserHostInvocation(context) ? { decidedVia: 'voice' as const } : {}),
+    ...(decidingAccountId ? { decidingAccountId } : {}),
+  };
+}
+
 function projectRequesterApprovalDecision(request: Pick<StoredApprovalRequestV2, 'requesterConfirmation'>, context: ActionExecutorContext) {
   const requester = request.requesterConfirmation && context.requesterApprovalDecision;
   return requester ? { authority: 'present_user' as const, decidingAccountId: requester.actor.accountId,
@@ -892,9 +901,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const checks = existing.automaticChecks;
     if (!checks) return { request: existing };
     const decidingActor = deriveActionActorV1(ctx, 'approval.request.decide');
-    const personDecision = projectRequesterApprovalDecision(existing, ctx) ?? (resolveHostStampedAuthority(ctx) === 'present_user'
-      ? { authority: 'present_user' as const,
-        ...(decidingActor?.actorKind === 'person' ? { decidingAccountId: decidingActor.accountId } : {}) } : undefined);
+    const personDecision = projectRequesterApprovalDecision(existing, ctx)
+      ?? projectPresentUserApprovalDecision(ctx, decidingActor?.actorKind === 'person' ? decidingActor.accountId : undefined);
     let pending = existing;
     const now = Math.max(Date.now(), existing.updatedAtMs);
     if (checks.phase === 'consent') {
@@ -8153,12 +8161,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             status: 'rejected',
             updatedAtMs: Math.max(now, existing.updatedAtMs),
             decision: { kind: 'reject', decidedAtMs: now,
-              ...(existing.v === 2 && resolveHostStampedAuthority(ctx) === 'present_user' ? {
-                authority: 'present_user' as const,
-                ...(ctx.surface === 'voice' && isPresentUserHostInvocation(ctx) ? { decidedVia: 'voice' as const } : {}),
-                ...(ctx.expectedAccountId ?? ctx.runtimeAccountId
-                  ? { decidingAccountId: ctx.expectedAccountId ?? ctx.runtimeAccountId } : {}),
-              } : {}),
+              ...(existing.v === 2 ? projectPresentUserApprovalDecision(ctx, ctx.expectedAccountId ?? ctx.runtimeAccountId) : undefined),
               ...(existing.v === 2 ? projectRequesterApprovalDecision(existing, ctx) : undefined) },
           };
           const updated = await deps.approvalsUpdate({ artifactId, request: nextRejected, serverId: effectiveServerId, context: ctx });
@@ -8215,13 +8218,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             status: 'approved',
             updatedAtMs: Math.max(now, existing.updatedAtMs),
             decision: { kind: 'approve', decidedAtMs: now,
-              ...(existing.v === 2 && resolveHostStampedAuthority(ctx) === 'present_user' ? {
-                authority: 'present_user' as const,
-                ...(ctx.surface === 'voice' && isPresentUserHostInvocation(ctx) ? { decidedVia: 'voice' as const } : {}),
-                ...(existing.v === 2 && !existing.requesterConfirmation
-                  && (ctx.expectedAccountId ?? ctx.runtimeAccountId ?? existing.executionOriginV1.accountId)
-                  ? { decidingAccountId: ctx.expectedAccountId ?? ctx.runtimeAccountId ?? existing.executionOriginV1.accountId } : {}),
-              } : {}),
+              ...(existing.v === 2 ? projectPresentUserApprovalDecision(ctx, existing.requesterConfirmation
+                ? undefined : ctx.expectedAccountId ?? ctx.runtimeAccountId ?? existing.executionOriginV1.accountId) : undefined),
               ...(existing.v === 2 ? projectRequesterApprovalDecision(existing, ctx) : undefined),
               ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(approvedActionArgs) } : {}) },
           };

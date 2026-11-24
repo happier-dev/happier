@@ -186,6 +186,30 @@ it('lets a person-selected Approval Profile delegate shared-check Skip without d
     notices: [{ code: 'action_automation_skipped', reason: 'consentSkipped' }] });
 });
 
+it('retains Voice attribution when a human approves a request with automatic checks', async () => {
+  let stored = ApprovalRequestV2Schema.parse({
+    ...createApprovalRequest(),
+    automaticChecks: { phase: 'consent', humanApprovalRequired: true, selectionStatus: 'ready',
+      subjects: [], selected: [], consents: [], runs: [], results: [], notices: [] },
+  });
+  const executor = createExecutor({
+    approvalsGet: async () => stored,
+    approvalsUpdate: async ({ request }) => {
+      const transition = decideApprovalRequestTransition(stored, request);
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { ok: true };
+    },
+    sessionSendMessage: async () => ({ status: 'accepted', localId: 'voice-message' }),
+  });
+
+  const result = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' },
+    { surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'reviewer', serverId: 'server-1' });
+  expect(result).toMatchObject({ ok: true });
+  expect(stored.decision).toMatchObject({ kind: 'approve', authority: 'present_user', decidedVia: 'voice' });
+});
+
 it('retains qualified contributed identity when an approved automatic check settles', async () => {
   const qualifiedId = 'example.fixture/actions/write';
   const input = { action: { pluginId: 'example.fixture', localId: 'write' }, input: { value: 'accepted' } };
