@@ -11,6 +11,12 @@ import {
   type WorkspaceSyncRelationshipV1,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
@@ -18,6 +24,7 @@ import { createHydratedPlainMachineFixture, createMachineFixture, createMachineR
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { Modal } from '@/modal';
 import { buildMachineActivityPlaceholder } from '@/sync/domains/machines/machineActivity';
 
 vi.mock('react-native', async () => {
@@ -112,6 +119,32 @@ async function setup(
       releasePolicyRead = resolve;
     });
   const accountId = 'artifact-account';
+  const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+  // This fixture is already bootstrapped: its local Home id and portable identity agree.
+  await upsertServerProfileOnly({ serverUrl: 'https://srv_machine_work' });
+  await setServerProfileIdentityForUrl('https://srv_machine_work', 'srv_machine_work');
+  // Retirement (b64689faec4) and inspection (4ed0b0c6a2c) use the signed HTTP
+  // Account Action boundary. Keep policy, Account capture and output codecs real.
+  // The receiving daemon owns native Ask since b64689faec4. Its Protocol
+  // executor builds the carried review; only its final network port is replaced.
+  const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+    readActionsSettings: () => storage.getState().settings.actionsSettingsV1,
+    projectWorkerAction: ({ actionId, input }) => rpc.machine({ method: getActionSpec(actionId).bindings!.rpcMethod!, payload: input }),
+  }));
+  const copyActions = await Promise.all((['projects.worker.copy.inspect', 'projects.worker.copy.retire'] as const).map(actionId =>
+    createExternalActionAccountHttpBoundary({ serverUrl: 'https://srv_machine_work',
+      serverIdentityId: 'srv_machine_work', accountId, machineId: 'source-machine', actionId, tokenEpoch: 0, requesterInvocation: 'optional',
+      execute: async (input, context) => {
+        const outcome = await receiver.execute(actionId, input, { surface: 'ui', authority: 'present_user',
+          actionCaller: { kind: 'host' }, serverId: 'srv_machine_work', serverIdentityId: 'srv_machine_work',
+          runtimeAccountId: 'artifact-account', actionRequestId: context.requestId, externalActionTarget: context.target,
+          ...(context.invocation?.presentUserConfirmation ? { presentUserConfirmation: context.invocation.presentUserConfirmation } : {}),
+        });
+        return outcome.ok ? outcome.result : outcome;
+      },
+      failure: result => actionId === 'projects.worker.copy.retire' ? readActionFailureEnvelope(result) : null,
+    })));
+
   const ownerMachine = createHydratedPlainMachineFixture({
     id: 'm1',
     accountId,
@@ -136,9 +169,15 @@ async function setup(
   const { loadSyncSingletonForTests } =
     await import('@/dev/testkit/harness/syncSingletonLoader');
   await loadSyncSingletonForTests();
-  fixture = await createPlainArtifactHomeFixture('https://machine-work.test', { accountId, currentAccount: true,
+  fixture = await createPlainArtifactHomeFixture('https://srv_machine_work', { accountId, currentAccount: true,
     handleRequest: async (path, init) => {
       if (path === '/v1/account/project-rows/list' && projectRowsRead) return projectRowsRead();
+      if (path.startsWith('/v1/actions/') || path === '/v1/machines/source-machine') {
+        for (const boundary of copyActions) {
+          const response = await boundary.handle(new URL(path, 'https://srv_machine_work'), init);
+          if (response) return response;
+        }
+      }
       const batch = path === '/v1/machines/read-batch' && init?.method === 'POST';
       if (!machineHttp.read || (path !== '/v1/machines/m1' && !batch)) return null;
       policyReads += 1;
@@ -147,7 +186,7 @@ async function setup(
       if (!batch || !response.ok) return response;
       const body: unknown = await response.json();
       const row = body && typeof body === 'object' && 'machine' in body ? body.machine : null;
-      return createMachineReadBatchResponseFixture(init?.body, id => id === 'm1' ? row : null);
+      return createMachineReadBatchResponseFixture(init?.body, id => id === 'm1' ? row : id === 'source-machine' ? copyActions[0]!.machine : null);
     },
   });
   machineHttp.read = () =>
@@ -626,7 +665,9 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const subtitle = String(row()?.props.subtitle);
     expect(subtitle).not.toContain('projectWorkers.copyLastSynced');
     expect(subtitle).not.toMatch(/\d/);
-    // Remove… offers the explicit choices; Ask first is rendered as a pending approval, never a local confirm.
+    // a4a360ea3cc routes explicit UI Ask through native confirmation; no Inbox replay is needed.
+    let answer: ((confirmed: boolean) => void) | undefined;
+    const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(() => new Promise(resolve => { answer = resolve; }));
     const menu = () =>
       screen.findAll(
         (node) =>
@@ -638,26 +679,19 @@ describe('Machine › Work from your projects through the Machine policy Actions
       'keep',
       'files',
     ]);
-    await act(async () => {
-      menu().props.onSelect('keep');
-    });
-    await vi.waitFor(() =>
-      expect(
-        screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]
-          ?.props,
-      ).toMatchObject({
-        title: 'projectWorkers.approvalPending',
-        action: { testID: 'work.copy:proven-worker-target.approval' },
-      }),
-    );
-    // No duplicate Remove while the first one is pending.
-    expect(
-      screen.findAllByTestId('work.copy:proven-worker-target.remove')[0]?.props
-        .disabled,
-    ).toBe(true);
-    expect(
-      screen.findAllByTestId('work.copy:proven-worker-target').length,
-    ).toBeGreaterThan(0);
+    try {
+      await act(async () => { menu().props.onSelect('keep'); });
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props)
+        .toMatchObject({ title: 'projectWorkers.saving' });
+      expect(screen.findAllByTestId('work.copy:proven-worker-target.approval')).toHaveLength(0);
+      // No duplicate Remove or retirement before the person answers the review.
+      expect(screen.findAllByTestId('work.copy:proven-worker-target.remove')[0]?.props.disabled).toBe(true);
+      expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(0);
+      expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+    } finally {
+      await act(async () => { answer?.(false); });
+    }
   });
 
   it('keeps the files-unknown warning at section level after the retired copy disappears, until dismissed', async () => {
