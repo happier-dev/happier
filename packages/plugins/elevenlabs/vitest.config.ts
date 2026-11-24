@@ -24,7 +24,9 @@ export default defineConfig({
     include: ['src/**/*.{spec,test}.{ts,tsx}'],
     env: { HAPPIER_FEATURE_POLICY_ENV: '' },
     server: {
-      deps: { inline: [/^@happier-dev\/(?:plugin-sdk|protocol)(?:\/|$)/] },
+      // Keep the installed SDK real while allowing its external LiveKit room
+      // transport to be replaced by the composed connection keeper.
+      deps: { inline: [/^@happier-dev\/(?:plugin-sdk|protocol)(?:\/|$)/, /@elevenlabs\/client(?:\/|$)/] },
     },
   },
 });
