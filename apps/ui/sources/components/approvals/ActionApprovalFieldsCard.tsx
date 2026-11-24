@@ -295,7 +295,7 @@ const ApprovalReferenceResolve: HappierApprovalFieldResolve<ApprovalValueSource>
 /** The existing reader owns naming; an unresolved identity stays in Technical details. */
 export function readableApprovalReferenceText(reference: ApprovalReference | undefined, reading: ApprovalReferenceReading,
     format?: (name: string) => string): string {
-    const name = reference && !reading.named
+    const name = reference && reference.kind !== 'setting' && !reading.named
         ? t(reading.resolving ? 'common.loading' : 'common.unavailable') : reading.text;
     return format ? format(name) : name;
 }
@@ -328,7 +328,8 @@ function toSharedFieldRow(row: ApprovalFieldRow, serverId: string | null, exactR
             };
         }) };
     }
-    const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? row.title;
+    const title = typeof getTranslationValue(row.title) === 'string' ? tLoose(row.title) : row.title;
+    const label = row.path === 'primaryTeamId' ? t('session.access.context') : readHomePolicyLabel(row, actionId) ?? title;
     const value = row.valueFormat === 'clear' ? literalApprovalValue(row, label)
         : governance && isGovernancePrincipal(row.reference)
         ? t('common.unavailable') : readGovernanceChoice(row, actionId) ?? literalApprovalValue(row);
@@ -445,7 +446,7 @@ function ApprovalValueItem(props: Readonly<{
     const title = (
         <FieldLayout label={label} columns={columns}>
             <FieldValue value={readableApprovalReferenceText(source?.reference, reading, source?.referenceText)} names={extras.names} note={extras.note}
-                code={extras.kind === 'value' && extras.valueFormat === 'code'} />
+                code={!reading.named && extras.kind === 'value' && extras.valueFormat === 'code'} />
         </FieldLayout>
     );
     if (reading.session) return <ApprovalSessionLinkItem title={title} session={reading.session} />;

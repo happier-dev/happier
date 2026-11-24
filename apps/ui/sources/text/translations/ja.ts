@@ -2281,6 +2281,7 @@ export const ja: TranslationStructure = {
   },
 
   approvals: {
+    publicLinkFields: { audience: "公開対象", anonymous: "リンクを知っている全員", signedIn: "ログイン済みの閲覧者", consent: "同意を求める", networkOff: "ネットワークアクセスを無効にする", preserveExisting: "既存の公開を維持する" },
     requesterRunsAs: "実行アカウント",
     requesterWritesWith: "書き込みに使用",
     requesterAction: "アクション",

@@ -342,14 +342,23 @@ function combineHostPredicates(
 
 // The app validates shared translation keys while the portable owner stays independent of UI.
 const portableUiLabels: readonly Readonly<{
-    anchor: string; titleKey: TranslationKeyNoParams; descriptionKey?: TranslationKeyNoParams;
+    anchor: string; sectionId: string; titleKey: TranslationKeyNoParams; descriptionKey?: TranslationKeyNoParams;
     keywordKeys?: readonly TranslationKeyNoParams[]; sectionTitleKey?: TranslationKeyNoParams;
     featureId?: FeatureId;
     labelVariants?: Readonly<Record<string, Readonly<{
         titleKey: TranslationKeyNoParams; descriptionKey?: TranslationKeyNoParams; keywordKeys?: readonly TranslationKeyNoParams[];
     }>>>;
 }>[] = BUILT_IN_SETTINGS_METADATA_V1;
-const portableLabelsByAnchor = new Map(portableUiLabels.map(declaration => [declaration.anchor, declaration]));
+const portableLabelsByAnchor = new Map([
+    ...portableUiLabels.flatMap(declaration => declaration.sectionTitleKey
+        ? [[declaration.sectionId, { ...declaration, titleKey: declaration.sectionTitleKey }] as const] : []),
+    ...portableUiLabels.map(declaration => [declaration.anchor, declaration] as const),
+]);
+
+/** Settings and their sections share the authored labels used by pages and search. */
+export function readBuiltInSettingUiIdentifierTitleKey(identifier: string): TranslationKeyNoParams | undefined {
+    return portableLabelsByAnchor.get(identifier)?.titleKey;
+}
 
 /** Pages whose rows have no host callbacks take their structure directly from the shared owner. */
 export function builtInSettingsPageSections(anchorPrefix: string): Record<string, SettingsSectionDeclaration> {

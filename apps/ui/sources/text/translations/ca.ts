@@ -2134,6 +2134,7 @@ export const ca: TranslationStructure = {
     },
 
   approvals: {
+    publicLinkFields: { audience: "Públic", anonymous: "Qualsevol persona amb l’enllaç", signedIn: "Persones amb sessió iniciada", consent: "Demana consentiment", networkOff: "Desactiva l’accés a la xarxa", preserveExisting: "Conserva la publicació existent" },
     requesterRunsAs: "S’executa com",
     requesterWritesWith: "Escriu amb",
     requesterAction: "Acció",

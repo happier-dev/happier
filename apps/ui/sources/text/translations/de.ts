@@ -1908,6 +1908,7 @@ export const de: TranslationStructure = {
     },
 
   approvals: {
+    publicLinkFields: { audience: "Zielgruppe", anonymous: "Alle mit dem Link", signedIn: "Angemeldete Personen", consent: "Einwilligung verlangen", networkOff: "Netzwerkzugriff deaktivieren", preserveExisting: "Bestehende Veröffentlichung behalten" },
     requesterRunsAs: "Ausführung als",
     requesterWritesWith: "Schreibzugriff über",
     requesterAction: "Aktion",

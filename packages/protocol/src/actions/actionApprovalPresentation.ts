@@ -27,7 +27,6 @@ import { z } from '../zodRuntimePolicy.js';
 import { readWidgetActionSurfaceV1 } from '../widgets/actionsV1.js';
 import { unwrapActionInputSchema } from './actionInputSchemaPath.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
-import { readBuiltInSettingDeclarationV1 } from './settings/settingsDeclarations.js';
 import {
   readApprovalAgentReference, readApprovalConnectedAccountTarget, readApprovalDeclaredModelSelection, readApprovalModelReference, readApprovalPurposeBindings, readApprovalSavedSecretReference,
 } from './actionApprovalValueReferences.js';
@@ -364,7 +363,7 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   if (leaf === 'machineId') return { kind: 'machine', id: value };
   if ((actionId === 'skills.rules.set' || actionId === 'mcp.rules.set') && field.path === 'change.write.agentId') return { kind: 'agent', id: value };
   if (actionId.startsWith('registries.sources.') && field.path === 'sourceId') return { kind: 'registrySource', id: value };
-  if (field.path === 'anchor' && isSettingsDeclarationActionIdV1(actionId) && readBuiltInSettingDeclarationV1(value)) {
+  if (field.path === 'anchor' && isSettingsDeclarationActionIdV1(actionId)) {
     return { kind: 'setting', id: value };
   }
   const key = field.path.split('.').at(-1);
@@ -1352,7 +1351,7 @@ export function describeApprovalActionFields(input: Readonly<{
       ...(reference ? { reference } : {}),
       ...(values.length === 1 && typeof values[0] === 'boolean' ? { valueFormat: 'boolean' as const }
         : reference && PRINCIPAL_OPERAND_REFERENCES.has(field.path) ? { valueFormat: 'unavailable' as const }
-        : codePaths.includes(field.path) ? { valueFormat: 'code' as const }
+        : codePaths.includes(field.path) || reference?.kind === 'setting' ? { valueFormat: 'code' as const }
         // An epoch moment (`expiresAt`) reads as a date and time; the exact literal stays in `value`.
         : values.length === 1 && isApprovalTimestamp(field.path.split('.').at(-1), values[0]) ? { valueFormat: 'timestamp' as const } : {}),
       ...(entries ? { entries } : {}),

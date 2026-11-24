@@ -2112,6 +2112,7 @@ export const zhHans: TranslationStructure = {
   },
 
   approvals: {
+    publicLinkFields: { audience: "访问对象", anonymous: "拥有链接的任何人", signedIn: "已登录的访问者", consent: "要求同意", networkOff: "禁用网络访问", preserveExisting: "保留现有发布" },
     requesterRunsAs: "运行身份",
     requesterWritesWith: "写入凭据",
     requesterAction: "操作",

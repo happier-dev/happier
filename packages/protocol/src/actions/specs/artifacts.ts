@@ -139,7 +139,16 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
       ? { projectObservationOutput: projectPublicLinkCreationObservation } : {}),
     approvalPresentation: { summary: () => ARTIFACT_ACTION_COPY[id][1],
       // The confirm already names the document; the link's raw share id stays exact under Technical details.
-      ...(id === 'artifact.public_link.revoke' ? { technicalInputPaths: ['shareId'] } : {}) },
+      ...(id === 'artifact.public_link.revoke' ? { technicalInputPaths: ['shareId'] } : {}),
+      ...(id === 'artifact.public_link.create' ? { inputHints: { fields: [
+      { path: 'audience', title: 'approvals.publicLinkFields.audience', widget: 'select', options: [
+        { value: 'anonymous', label: 'Anyone with the link', labelKey: 'approvals.publicLinkFields.anonymous' },
+        { value: 'signed_in', label: 'Signed-in viewers', labelKey: 'approvals.publicLinkFields.signedIn' },
+      ] },
+      { path: 'isConsentRequired', title: 'approvals.publicLinkFields.consent', widget: 'boolean' },
+      { path: 'networkOff', title: 'approvals.publicLinkFields.networkOff', widget: 'boolean' },
+      { path: 'preserveExisting', title: 'approvals.publicLinkFields.preserveExisting', widget: 'boolean' },
+      ] } } : {}) },
     inputHints: { title: ARTIFACT_ACTION_COPY[id][0], description: ARTIFACT_ACTION_COPY[id][1], fields: id === 'artifact.publish_from_file' ? [
       { path: 'path', title: 'File path', widget: 'text', required: true,
         description: 'File within the source workspace. Without workspace, the admitted caller Session supplies the source.' },
