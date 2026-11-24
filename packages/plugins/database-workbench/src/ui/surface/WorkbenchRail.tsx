@@ -1,7 +1,12 @@
 import * as React from 'react';
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { DATABASE_ACCESS_SET_ACTION_ID_V1, DatabaseAccessSetResultV1Schema, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import type { DatabaseAgentAccessV1, DatabaseDescriptorV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import {
+  Action,
   ErrorState,
   Icon,
   LoadingState,
@@ -12,6 +17,7 @@ import {
   usePluginTranslation,
   type PluginTranslate,
 } from '@happier-dev/plugin-ui';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import {
   useDatabaseAccess,
   useDatabaseRelations,
@@ -90,9 +96,56 @@ function AgentAccess({ targetKey }: Readonly<{ targetKey: string }>) {
       title={t('plugins.database.access.readUnavailable', 'Database access could not be read')}
       details={isPluginError(error) ? error.code : error instanceof Error ? error.message : undefined} />;
   }
-  const text = value.setBy === 'machine' ? agentAccessLabel(t, value.agentAccess)
-    : t('plugins.database.access.setByEnvironment', 'Agent access is managed by the Environment.');
-  return <Text tone="secondary" variant="meta" value={text} />;
+  return value.setBy === 'machine'
+    ? <MachineAgentAccess key={targetKey} targetKey={targetKey} level={value.agentAccess} />
+    : <Text tone="secondary" variant="meta" value={t('plugins.database.access.setByEnvironment', 'Agent access is managed by the Environment.')} />;
+}
+
+const setAgentAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1);
+
+function MachineAgentAccess({ targetKey, level }: Readonly<{ targetKey: string; level: DatabaseAgentAccessV1 }>) {
+  const t = usePluginTranslation();
+  const instance = useWorkbenchInstance();
+  const [accepted, setAccepted] = React.useState<DatabaseAgentAccessV1 | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ text: string; error?: true; code?: string }> | null>(null);
+  const current = accepted ?? level;
+  const choices = {
+    none: t('plugins.database.access.level.none', 'None'),
+    read: t('plugins.database.access.level.read', 'Read'),
+    readWriteAsk: t('plugins.database.access.level.ask', 'Read and write (asks first)'),
+    readWriteNoApproval: t('plugins.database.access.level.write', 'Read and write (no approval)'),
+  } satisfies Record<DatabaseAgentAccessV1, string>;
+  function settle(execution: PluginUiActionControlExecution) {
+    const result = projectPluginActionControlExecutionV1(execution, t);
+    if (isPluginActionConfirmationDeclined(result)) return;
+    if (result.status === 'success') {
+      if (isPluginActionApprovalRequestCreated(result.result)) {
+        setNotice({ text: t('plugins.database.access.pending', 'Waiting for approval.') });
+        return;
+      }
+      const reply = DatabaseAccessSetResultV1Schema.safeParse(result.result);
+      if (reply.success) {
+        setAccepted(reply.data.agentAccess);
+        setNotice(null);
+        return;
+      }
+    }
+    setNotice('code' in result ? { text: result.message, error: true, code: result.code }
+      : { text: t('plugins.database.access.changeFailed', 'The access change could not be confirmed.'), error: true });
+  }
+  return <Stack gap="small">
+    <Text tone="secondary" variant="meta" value={agentAccessLabel(t, current)} />
+    <Row gap="small" wrap>
+      {(Object.keys(choices) as DatabaseAgentAccessV1[]).map(agentAccess => agentAccess === current ? null : (
+        <Action.Control key={agentAccess} action={setAgentAccess} title={choices[agentAccess]} variant="secondary"
+          controller={{ prepare: () => ({ input: projectNativeJsonValueForTransport({
+            target: instance.target(targetKey).target, agentAccess,
+          }) }), onSettled: settle }} />
+      ))}
+    </Row>
+    {notice?.error ? <ErrorState layout="line" title={notice.text} details={notice.code} />
+      : notice ? <Text tone="secondary" variant="meta" value={notice.text} /> : null}
+  </Stack>;
 }
 
 function agentAccessLabel(t: PluginTranslate, access: DatabaseAgentAccessV1): string {

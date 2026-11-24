@@ -4,6 +4,7 @@ import { act } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
     DATABASE_ACCESS_READ_ACTION_ID_V1,
+    DATABASE_ACCESS_SET_ACTION_ID_V1,
     DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
     DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
     DATABASE_CAPTURE_STATUS_ACTION_ID_V1,
@@ -273,13 +274,21 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('loads the selected database agent access only when the access popover opens', async () => {
+  it('loads the selected database agent access on demand and edits it through its owner', async () => {
     const readAccess = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
+    const setAccess = databaseActionLocalIdV1(DATABASE_ACCESS_SET_ACTION_ID_V1);
     const daemon = daemonAnswers([descriptor]);
+    let agentAccess = 'readWriteAsk';
+    const write = vi.fn(async (request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => {
+      expect(request).toMatchObject({ action: setAccess, input: { target: descriptor.target, agentAccess: 'none' } });
+      agentAccess = 'none';
+      return { ok: true as const, result: { ok: true, agentAccess } };
+    });
+    const control = createPluginUiActionControlTestHost(write);
     const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
       if (request.action !== readAccess) return daemon(request);
       return projectNativeJsonValueForTransport({
-        setBy: 'machine', agentAccess: 'readWriteAsk', access: descriptor.access,
+        setBy: 'machine', agentAccess, access: descriptor.access,
       });
     });
     const fixture = await createPluginUiTestkit({
@@ -304,7 +313,7 @@ describe('Database workbench surfaces', () => {
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { ...connectionResourceHandlers(), executeAction },
+      handlers: { ...connectionResourceHandlers(), executeAction, actionControl: control.handler },
     });
     const reads = () => executeAction.mock.calls.map(([call]) => call).filter(call => call.action === readAccess);
     try {
@@ -314,6 +323,9 @@ describe('Database workbench surfaces', () => {
       await settle(20);
       expect(reads()).toMatchObject([{ input: { target: descriptor.target } }]);
       expect(await fixture.getByText('Agents can read and ask before writing.')).toBeTruthy();
+      await act(async () => control.press('None'));
+      expect(await fixture.getByText('Agents can’t use this database.')).toBeTruthy();
+      expect(write).toHaveBeenCalledTimes(1);
     } finally {
       await fixture.dispose();
     }
