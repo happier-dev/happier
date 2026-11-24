@@ -704,6 +704,30 @@ test('captured source workspaces run pnpm tasks with private real task state', a
     'installed dependency payloads remain linked rather than copied');
 });
 
+test('server capture includes the daemon workspace when a guest payload is requested', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-source-guest-inputs-' });
+  const daemonEntry = 'export const ready = true;\n';
+  const repoDir = await createReloadDaemonRepo(fixture, daemonEntry);
+  const serverDir = join(repoDir, 'apps/server');
+  const serverEntry = 'export const serverReady = true;\n';
+  await mkdir(join(serverDir, 'sources'), { recursive: true });
+  await writeFile(join(serverDir, 'package.json'), JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await writeFile(join(serverDir, 'sources/main.light.ts'), serverEntry);
+  const guestConfig = '{"extends":"./tsconfig.json"}\n';
+  await writeFile(join(repoDir, 'apps/cli/tsconfig.runtime.json'), guestConfig);
+
+  const ordinaryCapture = fixture.path('server');
+  await captureSourceWebBuildInputs({ repoDir, outputDir: ordinaryCapture, component: 'server' });
+  assert.equal(await readFile(join(ordinaryCapture, 'apps/server/sources/main.light.ts'), 'utf8'), serverEntry);
+  await assert.rejects(access(join(ordinaryCapture, 'apps/cli/tsconfig.runtime.json')), { code: 'ENOENT' });
+
+  const guestCapture = fixture.path('server-with-guest');
+  await captureSourceWebBuildInputs({ repoDir, outputDir: guestCapture, component: 'server', includeGuestPayload: true });
+  assert.equal(await readFile(join(guestCapture, 'apps/server/sources/main.light.ts'), 'utf8'), serverEntry);
+  assert.equal(await readFile(join(guestCapture, 'apps/cli/tsconfig.runtime.json'), 'utf8'), guestConfig);
+  assert.equal(await readFile(join(guestCapture, 'apps/cli/src/index.ts'), 'utf8'), daemonEntry);
+});
+
 test('every component captures the projection path owner imported by source tooling', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-projection-owner-' });
   const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');

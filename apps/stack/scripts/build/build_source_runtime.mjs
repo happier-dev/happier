@@ -132,8 +132,9 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   const capture = await captureBuildInputFiles({ sourceDir, captureDir: outputDir,
     readPaths: async () => {
       signal?.throwIfAborted();
-      return sharedManifest ? sharedManifest.filesByComponent[component]
+      const files = sharedManifest ? sharedManifest.filesByComponent[component]
         : (await readSourceCaptureBuildInputs({ repoDir, component, descriptor })).files;
+      return [...new Set([...files, ...(guestInputs ? sharedManifest?.filesByComponent.daemon ?? guestInputs.files : [])])];
     } });
   // A shared capture already holds the revision's bytes; a direct capture applies it here.
   if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir,
