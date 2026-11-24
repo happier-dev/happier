@@ -1,4 +1,5 @@
 import { getTransactionContext, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { formatPostgresTransactionApplicationName } from "@/storage/postgresApplicationName";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import type { DbProvider } from "@/storage/db";
@@ -164,15 +165,10 @@ export async function acquireAccountSessionOwnerMetadataFencesInTx(
         const context = getTransactionContext(tx, { optional: true });
         const owner = context as (typeof context & AdmissionContext);
         if (owner && !owner.readOnly && !owner[attributionSymbol]) {
-            const requestId = owner.requestId ?? "unattributed";
-            const transactionClass = /^[a-zA-Z0-9._-]+$/.test(owner.transactionClass)
-                ? owner.transactionClass : "unspecified";
-            // PostgreSQL application_name has 63 usable bytes. Keep the full
-            // validated request identity and as much of the existing class as fits.
-            const applicationName = `${transactionClass.slice(0, 63 - requestId.length - 1)}:${requestId}`;
+            const applicationName = formatPostgresTransactionApplicationName(owner.transactionClass, owner.requestId);
             // A utility SET leaves the first Serializable snapshot to the
             // Account lock. SELECT set_config (including inside DO) does not.
-            // Both components are restricted ASCII, never SQL/input content.
+            // The formatter restricts every component to ASCII identity characters.
             await tx.$executeRawUnsafe(`SET LOCAL application_name = '${applicationName}'`);
             owner[attributionSymbol] = true;
         }

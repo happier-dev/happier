@@ -138,7 +138,7 @@ export const inTxPostgresControlStatementMock = {
     },
     async $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number> {
         if (/^SET LOCAL statement_timeout = [1-9]\d*$/.test(query) && values.length === 0) return 0;
-        if (/^SET LOCAL application_name = '[a-zA-Z0-9._-]+:[a-zA-Z0-9-]+'$/.test(query) && values.length === 0) return 0;
+        if (/^SET LOCAL application_name = '[a-z0-9-]+:[1-9]\d*(?::(?:[a-zA-Z0-9._-]*:)?[a-zA-Z0-9-]+)?'$/.test(query) && values.length === 0) return 0;
         throw new Error('Unexpected fixture SQL');
     },
 };

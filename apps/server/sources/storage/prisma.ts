@@ -21,6 +21,7 @@ import {
 import { isPrismaErrorCode, readPrismaDriverErrorCause, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
 import { annotateWebLatencyQuery, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 import { notifySqliteCommittedWrite } from './sqliteCommittedWrites';
+import { resolvePostgresServerApplicationName } from "./postgresApplicationName";
 import { createPrismaDriverAdapter } from "./prismaDriverAdapters";
 export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
@@ -194,7 +195,10 @@ export function initDbPostgres(): void {
         throw new Error("Database client is already initialized.");
     }
     _provider = "postgres";
-    const { client, poolStats } = createDefaultPrismaClient(undefined, "postgres", runtimeClientOptions());
+    const { client, poolStats } = createDefaultPrismaClient(undefined, "postgres", {
+        ...runtimeClientOptions(),
+        postgresApplicationName: resolvePostgresServerApplicationName(),
+    });
     _db = withSharedQaSchemaDiagnostics(client);
     registerDatabasePoolStatsReader(poolStats);
     activePrismaRuntime = defaultPrismaRuntime;

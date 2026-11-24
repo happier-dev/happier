@@ -90,6 +90,16 @@ Startup sequence:
 
 Shutdown hooks are registered for DB disconnect and activity-cache flush.
 
+In 0.3 development source, serving PostgreSQL connections send a default
+`application_name` of `<stack>:<server-pid>` at startup. Outside a managed stack
+the tag is `happier-server:<server-pid>`. The PostgreSQL URL and `PGAPPNAME` overrides take
+precedence for the startup value. Managed Account write transactions retain the
+stack and PID prefix in their transaction-local tag and use the remaining
+PostgreSQL name space for the class and validated request identity. Use the
+prefix to group open transactions in `pg_stat_activity`, and correlate the
+request with server warnings when it fits. The tag is sent by new connections
+and requires no database setting.
+
 In 0.3 development source, ordinary PostgreSQL Usage batches capture coherent
 `UsageEvent` and retained `UsageReport` facts in one statement without an
 interactive transaction. Bounded reads capture historical identity and coverage

@@ -66,6 +66,7 @@ export function loadDefaultPrismaClientModule(): typeof import("@prisma/client")
 export type PrismaClientConstructionOptions = Readonly<{
     log?: DbClientLog;
     onDriverStatement?: DriverStatementObserver;
+    postgresApplicationName?: string;
     observeStatementDurationMs?: (durationMs: number) => void;
 }>;
 
@@ -78,13 +79,14 @@ export type PrismaClientConstructionOptions = Readonly<{
  * count approaches 1000.
  */
 function createPrismaClientOptions(provider: DbProvider, databaseUrl: string,
-    { onDriverStatement, observeStatementDurationMs }: PrismaClientConstructionOptions): Readonly<{
+    { onDriverStatement, observeStatementDurationMs, postgresApplicationName }: PrismaClientConstructionOptions): Readonly<{
     errorFormat: "minimal";
     adapter: ReturnType<typeof createPrismaDriverAdapter>["factory"];
     poolStats: ReturnType<typeof createPrismaDriverAdapter>["poolStats"];
 }> {
     const driver = createPrismaDriverAdapter(provider, databaseUrl, {
         sqliteBusyTimeoutMs: resolveLightSqliteBusyTimeoutMsFromEnv(process.env),
+        postgresApplicationName,
         ...(onDriverStatement ? { onDriverStatement } : {}),
     });
     const timed = observeStatementDurationMs ? withStatementTiming(driver.factory, observeStatementDurationMs) : driver.factory;

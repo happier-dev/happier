@@ -143,7 +143,10 @@ function createObservedPostgresClient(onDriverStatement: DriverStatementObserver
     };
 }
 
-function createPostgresAdapter(databaseUrl: string, onDriverStatement?: DriverStatementObserver): PrismaDriverAdapter {
+function createPostgresAdapter(
+    databaseUrl: string,
+    { onDriverStatement, postgresApplicationName }: Pick<PrismaDriverAdapterOptions, "onDriverStatement" | "postgresApplicationName">,
+): PrismaDriverAdapter {
     const url = new URL(databaseUrl);
     const schema = url.searchParams.get("schema") ?? undefined;
     const connectionLimit = readPositiveNumber(url, "connection_limit") ?? resolveDefaultConnectionLimit();
@@ -153,6 +156,7 @@ function createPostgresAdapter(databaseUrl: string, onDriverStatement?: DriverSt
     for (const name of ["sslmode", "sslcert"]) driverUrl.searchParams.delete(name);
     const pool = new pg.Pool({
         connectionString: driverUrl.toString(),
+        fallback_application_name: postgresApplicationName,
         max: connectionLimit,
         connectionTimeoutMillis: Math.round(poolTimeoutSeconds * 1000),
         ...(ssl !== undefined ? { ssl } : {}),
@@ -188,12 +192,18 @@ function createMysqlAdapter(databaseUrl: string): PrismaDriverAdapter {
     };
 }
 
+type PrismaDriverAdapterOptions = Readonly<{
+    sqliteBusyTimeoutMs: number;
+    onDriverStatement?: DriverStatementObserver;
+    postgresApplicationName?: string;
+}>;
+
 export function createPrismaDriverAdapter(
     provider: DbProvider,
     databaseUrl: string,
-    options: Readonly<{ sqliteBusyTimeoutMs: number; onDriverStatement?: DriverStatementObserver }>,
+    options: PrismaDriverAdapterOptions,
 ): PrismaDriverAdapter {
-    if (provider === "postgres" || provider === "pglite") return createPostgresAdapter(databaseUrl, options.onDriverStatement);
+    if (provider === "postgres" || provider === "pglite") return createPostgresAdapter(databaseUrl, options);
     if (options.onDriverStatement) throw new Error(`Driver statement observation is not implemented for ${provider}`);
     if (provider === "mysql") return createMysqlAdapter(databaseUrl);
     const factory = new SqliteDriverAdapterFactory({

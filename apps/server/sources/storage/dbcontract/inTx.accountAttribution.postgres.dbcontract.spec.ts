@@ -10,6 +10,7 @@ import { withWebLatencyTrace } from "@/utils/webLatencyTrace";
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("PostgreSQL Account admission attribution", () => {
     let observer: PrismaClientType;
     let connected = false;
+    const serverIdentity = `qa-tx:${process.pid}`;
 
     beforeAll(async () => {
         const supplied = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
@@ -19,6 +20,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         // caused merely by selecting another pooled connection.
         url.searchParams.set("connection_limit", "1");
         vi.stubEnv("DATABASE_URL", url.toString());
+        vi.stubEnv("HAPPIER_STACK_STACK", "qa-tx");
         vi.stubEnv("HAPPIER_DB_CONNECTION_LIMIT", "1");
         vi.stubEnv("HAPPIER_DB_TX_MAX_RETRIES", "0");
         vi.stubEnv("HAPPIER_WEB_LATENCY_TRACE", "1");
@@ -73,7 +75,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             `;
             // Observe the backend from another session while the real managed
             // transaction holds its Account lock and awaits the observer.
-            expect(holder).toEqual({ application_name: `${transactionClass}:${requestId}`, state: "idle in transaction" });
+            expect(holder).toEqual({ application_name: `${serverIdentity}:${transactionClass.slice(0, 63 - serverIdentity.length - requestId.length - 2)}:${requestId}`, state: "idle in transaction" });
             await acquireAccountSessionOwnerMetadataFenceInTx(observed, account.id, "content");
             return pid;
         }, { isolationLevel: "Serializable", transactionClass }));
@@ -82,7 +84,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         const [after] = await db.$queryRaw<Array<{ pid: number; application_name: string }>>`
             SELECT pg_backend_pid() AS pid, current_setting('application_name') AS application_name
         `;
-        expect(after).toEqual({ pid: outcome, application_name: "" });
+        expect(after).toEqual({ pid: outcome, application_name: serverIdentity });
     });
 
     it("reattributes each retry after rollback and preserves full request identities within PostgreSQL's name limit", async () => {
@@ -94,7 +96,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         try {
             const pid = await withWebLatencyTrace(requestId, () => inTx(async tx => {
                 // The first attempt's LOCAL value must not survive rollback.
-                expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`).toEqual([{ name: "" }]);
+                expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`).toEqual([{ name: serverIdentity }]);
                 await acquireAccountSessionOwnerMetadataFenceInTx(tx, account.id, "content");
                 const [current] = await tx.$queryRaw<Array<{ name: string; pid: number }>>`
                     SELECT current_setting('application_name') AS name, pg_backend_pid() AS pid
@@ -103,22 +105,22 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 if (names.length === 1) await tx.$executeRaw`DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '40001'; END $$`;
                 return current.pid;
             }, { transactionClass }));
-            expect(names).toEqual(Array(2).fill(`${transactionClass.slice(0, 26)}:${requestId}`));
+            expect(names).toEqual(Array(2).fill(`${serverIdentity}:${transactionClass.slice(0, 63 - serverIdentity.length - requestId.length - 2)}:${requestId}`));
             expect(await db.$queryRaw`SELECT pg_backend_pid() AS pid, current_setting('application_name') AS name`)
-                .toEqual([{ pid, name: "" }]);
+                .toEqual([{ pid, name: serverIdentity }]);
         } finally {
             vi.stubEnv("HAPPIER_DB_TX_MAX_RETRIES", "0");
         }
     });
 
-    it("omits attribution outside managed Account admission", async () => {
+    it("keeps the startup identity outside managed Account admission", async () => {
         await inTx(async tx => {
-            expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`).toEqual([{ name: "" }]);
+            expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`).toEqual([{ name: serverIdentity }]);
         }, { transactionClass: "no-account-admission" });
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.$transaction(async tx => {
             await acquireAccountSessionOwnerMetadataFenceInTx(tx, account.id, "content");
-            expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`).toEqual([{ name: "" }]);
+            expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`).toEqual([{ name: serverIdentity }]);
         });
     });
 
@@ -127,7 +129,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         await withWebLatencyTrace("private ' input", () => inTx(async tx => {
             await acquireAccountSessionOwnerMetadataFenceInTx(tx, account.id, "content");
             expect(await tx.$queryRaw`SELECT current_setting('application_name') AS name`)
-                .toEqual([{ name: "unspecified:unattributed" }]);
+                .toEqual([{ name: `${serverIdentity}:unspecified:unattributed` }]);
         }, { transactionClass: "private ' input" }));
     });
 });
