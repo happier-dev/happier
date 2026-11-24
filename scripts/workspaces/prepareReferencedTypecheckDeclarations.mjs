@@ -9,9 +9,10 @@ import { runCommand, exitWithCommandResult } from '../../apps/stack/scripts/util
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
 import { resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
 
-function workspaceDeclarationPackageNames(repoDir, graph) {
+function workspaceDeclarationPackageNames(repoDir, graph, workspaceImports) {
   const names = [];
   for (const name of graph.closure) {
+    if (workspaceImports && !workspaceImports.has(name)) continue;
     const dir = graph.packageDirsByName.get(name);
     if (!relative(repoDir, dir).replaceAll('\\', '/').startsWith('packages/')) continue;
     const configPath = resolve(dir, 'tsconfig.json');
@@ -34,15 +35,17 @@ function workspaceDeclarationPackageNames(repoDir, graph) {
  * receipts, emission and staging. The compiler's own project declarations
  * retain their private output paths. */
 export async function prepareWorkspaceTypecheckDeclarations(componentDir, {
-  env = process.env, withinTypecheckAdmission = false, signal,
+  env = process.env, withinTypecheckAdmission = false, signal, workspaceImports,
 } = {}) {
   const started = performance.now();
   const repoDir = coerceHappyMonorepoRootFromPath(componentDir);
   const graph = await readWorkspaceComponentDependencyGraph(componentDir, { monorepoRoot: repoDir });
-  const names = graph ? workspaceDeclarationPackageNames(repoDir, graph) : [];
+  const names = graph ? workspaceDeclarationPackageNames(repoDir, graph, workspaceImports) : [];
   const failed = [];
   const failure = (status, projects) => ({ ok: false, failure: { step: 'declaration-emission', status, projects } });
   let built = [];
+  // Finite projects already observed their workspace imports during derivation.
+  // The publisher still prepares every dependency required by those packages.
   if (names.length) {
     try {
       const result = await ensureWorkspacePackagesBuiltByName(repoDir, names, {

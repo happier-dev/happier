@@ -131,7 +131,9 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
         // Declaration consumers share publication/currentness rather than
         // silently accepting an earlier producer's output.
         const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
-        const result = await prepareWorkspaceTypecheckDeclarations(componentDir);
+        const result = await prepareWorkspaceTypecheckDeclarations(componentDir, {
+          workspaceImports: project.workspaceImports,
+        });
         if (!result.ok) failures.push({ component: componentDir, ...result.failure });
         preparedDeclarations.add(componentDir);
       }

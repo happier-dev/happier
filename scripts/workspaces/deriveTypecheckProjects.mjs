@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, relative, resolve } from 'node:path';
 import ts from 'typescript';
+import { packageNameOfSpecifier } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { readWorkspaceTypecheckSources, resolveTypecheckCacheDirectory, sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
@@ -106,6 +107,15 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     Object.assign(project.parsed.options, sourceTypecheckCompilerOptions(project.parsed.options, path, workspaceSources));
     return project;
   };
+  const workspaceImports = new Set();
+  const declarationOwners = new Map(Object.entries(workspaceSources.declarationPaths)
+    .flatMap(([specifier, targets]) => targets.map(target => [target, packageNameOfSpecifier(specifier)])));
+  const recordWorkspaceImport = (specifier, resolvedFile) => {
+    const name = packageNameOfSpecifier(specifier);
+    if (workspaceSources.packageNames.has(name)) workspaceImports.add(name);
+    const owner = declarationOwners.get(resolvedFile);
+    if (owner) workspaceImports.add(owner);
+  };
   const original = readProject(resolve(packageDir, 'tsconfig.json'));
   const projects = names.map(name => readProject(resolve(packageDir, `tsconfig.${name}.json`)));
   const declarationRoot = file => resolve(declarationOverrides.get(resolve(file)) ?? file);
@@ -187,7 +197,9 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   const primaryTypeReferences = new Map();
   const primaryTypes = context => {
     if (!primaryTypeReferences.has(context.configPath)) {
-      primaryTypeReferences.set(context.configPath, resolveTypecheckPrimaryTypeReferences(context));
+      const references = resolveTypecheckPrimaryTypeReferences(context);
+      for (const [name, reference] of references) recordWorkspaceImport(name, reference?.resolvedFileName);
+      primaryTypeReferences.set(context.configPath, references);
     }
     return primaryTypeReferences.get(context.configPath);
   };
@@ -218,15 +230,21 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
       }
       const dependencies = [...specifiers].flatMap(fileName => {
         const resolved = ts.resolveModuleName(fileName, file, context.parsed.options, ts.sys, moduleCache(context)).resolvedModule;
+        recordWorkspaceImport(fileName, resolved?.resolvedFileName);
         return resolved && authored(resolved) ? [resolve(resolved.resolvedFileName)] : [];
       });
-      for (const { fileName } of info.referencedFiles) dependencies.push(resolve(dirname(file), fileName));
+      for (const { fileName } of info.referencedFiles) {
+        const path = resolve(dirname(file), fileName);
+        recordWorkspaceImport(fileName, path);
+        dependencies.push(path);
+      }
       for (const { fileName } of info.typeReferenceDirectives) {
         // A program's primary type directive wins over a dependency's secondary
         // reference, just as in the canonical producer compiler environment.
         const primary = primaryTypes(context);
         const resolved = primary.has(fileName) ? primary.get(fileName)
           : ts.resolveTypeReferenceDirective(fileName, file, context.parsed.options, ts.sys).resolvedTypeReferenceDirective;
+        recordWorkspaceImport(fileName, resolved?.resolvedFileName);
         if (resolved) dependencies.push(resolve(resolved.resolvedFileName));
       }
       cache.set(file, dependencies);
@@ -440,6 +458,7 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
     ambientInputs: project.ambientInputs.filter(file => !missingFiles.has(file)),
     files: [...project.files].filter(file => !missingFiles.has(file)
       && (!/[\\/]node_modules[\\/]/.test(file) || contributesAmbientTypes(file, readSource))).sort() }));
+  inventory.workspaceImports = workspaceImports;
   inventory.testContexts = testContexts;
   inventory.consumerPrimaryAmbientInputs = consumerPrimaryAmbientInputs;
   return inventory;
@@ -458,6 +477,7 @@ export async function prepareDerivedTypecheckProjects(projects, cwd, { names, de
     if (project.args) project.args = project.args.map((arg, argIndex) => ['--project', '-p'].includes(project.args[argIndex - 1])
       ? target : arg.startsWith('--project=') ? `--project=${target}` : arg);
     project.project = target;
+    project.workspaceImports = inventory.workspaceImports;
   }
   process.stderr.write(`[typescript] derived ${basename(packageDir)} partitions: ${inventory.map(({ project, files }) => `${project}=${files}`).join(', ')}\n`);
   return inventory;

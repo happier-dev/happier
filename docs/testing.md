@@ -1914,8 +1914,9 @@ an already selected program by changing the later coverage scan.
 
 Bootstrap admits source tools and UI postinstall outputs without compiling Stack's
 unrelated workspace closure. Ordinary source typechecks consume other workspace
-packages through their declared type exports. The existing declaration-preparation
-owner refreshes those outputs under publication custody without rebuilding dependency
+packages through their declared type exports. Finite checks request declarations
+from their selected import graph. The existing declaration-preparation owner
+refreshes those outputs and the required dependencies under publication custody without rebuilding dependency
 JavaScript; consumers release that custody before checking. Producer self imports
 still resolve to source. Finite checks retain their internal declaration partitions
 and cross-app private-alias project references, which check producers under their own
