@@ -39,8 +39,8 @@ export function resolveResumeFailurePresentation(result: Readonly<{
         return { kind: 'plugin_disabled', errorCode, pluginId: target?.kind === 'agent' ? target.identity.pluginId : null,
             message: presentSessionStartupFailureCause(errorCode) ?? fallbackMessage };
     }
-    if (errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
-        return { kind: 'directory_missing', errorCode };
+    if (cause === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING || errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING) {
+        return { kind: 'directory_missing', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING };
     }
     if (detail?.kind === 'provider_error') {
         return { kind: 'alert', errorCode: detail.providerError.code,
@@ -50,8 +50,9 @@ export function resolveResumeFailurePresentation(result: Readonly<{
     if (detail?.kind === 'launch_error') {
         const pool = resolveSessionSpawnNewConnectedAccountFailure({ type: 'error', code: 'spawn_failed',
             retryable: false, launchError: detail });
-        if (pool) return { kind: 'alert', errorCode: errorCode || detail.code, reasonCode: detail.code,
-            recovery: 'connected_accounts', message: pool.message };
+        if (pool) return { kind: 'alert',
+            errorCode: errorCode === 'resume_failed' ? SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED : errorCode || detail.code,
+            reasonCode: detail.code, recovery: 'connected_accounts', message: pool.message };
     }
     const diagnostic = readConnectedServiceUxDiagnosticFromError({ errorDetail: detail });
     if (diagnostic?.retryable && diagnostic.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume) {

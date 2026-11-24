@@ -7225,9 +7225,9 @@ export function useSessionComposerController({
                                 return { status: 'rejected' };
                             }
                             const cancellation = new AbortController();
-                            const retirement = outboundAccountLifetime.onRetire(() => cancellation.abort());
-                            const abort = () => cancellation.abort();
-                            composerPluginActionScopeSignal.addEventListener('abort', abort, { once: true });
+                            // An issued reset-start can settle after this view closes. The
+                            // Account owns the receipt and the captured draft it may clear.
+                            const retirement = acceptedOutboundAccountLifetime.onRetire(() => cancellation.abort());
                             try {
                                 const prepared = await sync.preparePendingResetStartInput(sessionId, outbound.text,
                                     outbound.displayText, outbound.metaOverrides, {
@@ -7235,7 +7235,8 @@ export function useSessionComposerController({
                                         allowedModels: embedded?.allowedModels ?? null,
                                         allowedPermissionModes: embedded?.permissionModePicker ?? null,
                                     });
-                                if (!outboundAccountLifetime.isCurrent() || cancellation.signal.aborted) return { status: 'rejected' };
+                                if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted
+                                    || cancellation.signal.aborted) return { status: 'rejected' };
                                 const result = await createFrontDoorActionExecute(actionExecutor)('session.pending.resetStart.set', {
                                     sessionId, localId: prepared.localId, reset: resetStart,
                                     initialInput: prepared.initialInput, serverId: sessionRouteServerId,
@@ -7252,7 +7253,8 @@ export function useSessionComposerController({
                                     recordOutboundAccepted();
                                     return { status: 'accepted' };
                                 }
-                                if (!outboundAccountLifetime.isCurrent() || cancellation.signal.aborted) return { status: 'rejected' };
+                                if (!outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted
+                                    || cancellation.signal.aborted) return { status: 'rejected' };
                                 if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) {
                                     Modal.alert(t('usage.board.plans.resetStartTitle'), t('usage.board.plans.waitingApproval'));
                                     return { status: 'rejected' };
@@ -7260,13 +7262,13 @@ export function useSessionComposerController({
                                 Modal.alert(t('common.error'), result.ok ? t('usage.board.plans.resetStartFailed') : usageResetStartFailureMessage(result));
                                 return { status: 'rejected' };
                             } catch (error) {
-                                if (outboundAccountLifetime.isCurrent() && !cancellation.signal.aborted) {
+                                if (outboundAccountLifetime.isCurrent() && !composerPluginActionScopeSignal.aborted
+                                    && !cancellation.signal.aborted) {
                                     Modal.alert(t('common.error'), error instanceof Error ? error.message : t('usage.board.plans.resetStartFailed'));
                                 }
                                 return { status: 'rejected' };
                             } finally {
                                 retirement.dispose();
-                                composerPluginActionScopeSignal.removeEventListener('abort', abort);
                             }
                         };
                         const startSessionComposerAdmission = (

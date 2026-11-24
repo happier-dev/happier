@@ -459,6 +459,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
 });
 const { SessionView } = await import('./SessionView');
+const { SessionChatFooter } = await import('@/components/sessions/transcript/ChatFooter');
 const { useSessionDestinationAccountBinding } = await import('@/components/sessions/viewer/SessionViewerDestinationScope');
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { emitSessionResumeRequest } = await import('@/components/sessions/model/sessionResumeRequests');
@@ -734,15 +735,19 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         try {
             expect(readSessionOwnerMetadataView(currentSession())).not.toBeNull();
             expect(screen.tree.findAllByType('AgentInput' as never)).toHaveLength(0);
-            // The presentation boundary receives the existing unsupported-context notice,
-            // not merely an input hidden for some unrelated reason.
-            const content = screen.tree.findByType('AgentContentView' as never).props.content;
-            expect(React.Children.toArray(content.props.children)).toEqual(expect.arrayContaining([
-                expect.objectContaining({ props: expect.objectContaining({ bottomNotice: {
-                    title: 'session.inactiveNotResumableNoticeTitle', body: expect.stringContaining('session.inactiveNotResumableNoticeBody'),
-                } }) }),
-            ]));
+            const noticeSeat = screen.findByTestId('session-notice-seat');
+            const [notices] = React.Children.toArray(noticeSeat?.props.children);
+            const noticeChildren = React.isValidElement<{ children: React.ReactNode }>(notices)
+                ? notices.props.children : null;
+            expect(React.Children.toArray(noticeChildren)).toContainEqual(expect.objectContaining({
+                type: SessionChatFooter,
+                props: expect.objectContaining({ bottomNotice: {
+                    title: 'session.inactiveNotResumableNoticeTitle',
+                    body: expect.stringContaining('session.inactiveNotResumableNoticeBody'),
+                } }),
+            }));
             expect(resumeCalls()).toHaveLength(0);
+            expect(screen.findByTestId('session-start-failure-retry')).toBeNull();
         } finally { await screen.unmount(); }
     });
 

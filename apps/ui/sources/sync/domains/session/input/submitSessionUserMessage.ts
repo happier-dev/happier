@@ -451,11 +451,22 @@ async function shouldWakePendingInputFromUi(
     return !delegated;
 }
 
-/** A held Home receipt retains Pending custody without claiming provider acceptance or waking again. */
-export function projectHeldSessionInputReceipt(
+/** Home owns custody and wake for these receipts. The submit owner consumes both without another wake. */
+export function projectHomeSessionInputReceipt(
     receipt: PendingMessageSubmitResult | DirectMessageSubmitResult,
     localId?: string,
 ): SubmitSessionUserMessageResult | null {
+    if (receipt?.status === 'failed') {
+        return {
+            type: 'wake_failed',
+            persistence: 'pending',
+            localId: receipt.admissionResult.localId,
+            wake: { attempted: true, state: 'failed' },
+            errorCode: receipt.code,
+            ...(receipt.errorDetail ? { errorDetail: receipt.errorDetail } : {}),
+            wakeFailureReceipt: receipt,
+        };
+    }
     return receipt?.status === 'held' ? {
         type: 'wake_pending',
         persistence: 'pending',
@@ -508,12 +519,12 @@ async function directSend(
         );
         const localId = readLocalId(sendResult) ?? handoffLocalId ?? opts.localId ?? undefined;
         const persistence = resolveDirectSubmitPersistence(sendResult, sawLocalPendingProjection);
-        const held = projectHeldSessionInputReceipt(sendResult, localId);
+        const projectedReceipt = projectHomeSessionInputReceipt(sendResult, localId);
         if (!isSubmitAccountLifetimeCurrent(opts)) {
             // The transport result is the custody fact. Retirement after an ACK
             // must not reinterpret an accepted prompt as a failed send, while
             // the retired Composer owner remains fenced from clearing its draft.
-            return held ?? {
+            return projectedReceipt ?? {
                 type: 'success',
                 persistence,
                 ...(sendResult?.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
@@ -527,7 +538,7 @@ async function directSend(
                 ...(localId ? { localId } : {}),
             });
         }
-        return held ?? {
+        return projectedReceipt ?? {
             type: 'success',
             persistence,
             ...(sendResult?.providerAcceptancePending === true ? { providerAcceptancePending: true } : {}),
@@ -633,8 +644,8 @@ async function enqueuePending(
     // Pending already owns this input. Runtime wake is a later lifecycle phase,
     // not a prerequisite for handing off the still-current Composer snapshot.
     if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
-    const held = projectHeldSessionInputReceipt(enqueueResult, localId);
-    if (held) return held;
+    const projectedReceipt = projectHomeSessionInputReceipt(enqueueResult, localId);
+    if (projectedReceipt) return projectedReceipt;
     if (enqueueResult && typeof enqueueResult === 'object' && enqueueResult.accepted === false) {
         if (!reportHandoffIfCurrent()) return accountScopeRetiredResult('send_failed', 'pending', localId);
         return {

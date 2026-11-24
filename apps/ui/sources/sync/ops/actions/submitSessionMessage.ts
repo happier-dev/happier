@@ -8,7 +8,7 @@ import { buildOutgoingUserTextRecord } from '@/sync/domains/messages/outgoingUse
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { HappyError } from '@/utils/errors/errors';
 import { projectServerScopedSessionSendMessageResult } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
-import { projectHeldSessionInputReceipt, submitSessionUserMessage } from '@/sync/domains/session/input/submitSessionUserMessage';
+import { projectHomeSessionInputReceipt, submitSessionUserMessage } from '@/sync/domains/session/input/submitSessionUserMessage';
 import type { SessionSubmitPort, SubmitSessionUserMessageOptions, SubmitSessionUserMessageResult } from '@/sync/domains/session/input/types';
 import type { SessionMessageDelivery } from './sessionMessageDelivery';
 
@@ -19,7 +19,7 @@ function createHomeDeliverySubmitPort(port: SessionSubmitPort, args: Parameters<
         messageMeta: Record<string, unknown> | undefined,
         requestedAction: Parameters<SessionMessageDelivery>[0]['requestedAction'], localId?: string | null) => {
         if (!args.authoredInput || !('message' in args.authoredInput)) throw new HappyError('Invalid message input', false, { code: 'invalid_parameters' });
-        const sent = requireSendSuccess(completeActionResult(await delivery({ ...args, sessionId, message: text,
+        const sent = readSendReceipt(completeActionResult(await delivery({ ...args, sessionId, message: text,
             displayText, messageMeta: { ...args.messageMeta, ...messageMeta }, requestedAction, localId: localId ?? args.localId,
             authoredInput: { ...args.authoredInput, sessionId, message: text,
                 messageMeta: { ...args.authoredInput.messageMeta, ...messageMeta }, requestedAction,
@@ -44,11 +44,12 @@ function createHomeDeliverySubmitPort(port: SessionSubmitPort, args: Parameters<
     };
 }
 
-function requireSendSuccess(result: ActionExecuteResult) {
+function readSendReceipt(result: ActionExecuteResult) {
     requireActionSuccess(result);
     if (!result.ok) throw new Error('Unreachable Action refusal');
     const sent = SessionMessageSendResultV1Schema.parse(result.result);
-    if (sent.status === 'rejected' || sent.status === 'failed' || sent.status === 'cancelled') {
+    if (sent.status === 'rejected' || sent.status === 'cancelled'
+        || (sent.status === 'failed' && sent.code !== 'resume_failed')) {
         throw new HappyError(sent.code, false, { code: sent.code, details: sent });
     }
     return sent;
@@ -88,6 +89,7 @@ export async function submitUiSessionMessage(port: SessionSubmitPort, options: S
                     ? { ...options.metaOverrides, permissionMode: permissionModeOverride }
                     : options.metaOverrides,
             });
+            if (submitted.wakeFailureReceipt) return submitted.wakeFailureReceipt;
             if (submitted.type === 'send_failed' || submitted.type === 'wake_failed' || submitted.type === 'rejected') {
                 throw new HappyError(submitted.errorMessage ?? submitted.type, false, { code: submitted.errorCode ?? submitted.type });
             }
@@ -103,15 +105,15 @@ export async function submitUiSessionMessage(port: SessionSubmitPort, options: S
     // An admitted local effect retains the submit owner's failure/custody result.
     // Admission refusals still throw below because no local effect ran.
     if (submitted && (submitted.type === 'send_failed' || submitted.type === 'wake_failed' || submitted.type === 'rejected')) return submitted;
-    const sent = requireSendSuccess(execution);
+    const sent = readSendReceipt(execution);
     if (submitted) return submitted;
     // API-token clients receive the canonical remote receipt; their callback
     // clears the exact captured draft just as the local submit owner does.
     if (sent.status === 'outcomeUnknown') return { type: 'rejected', persistence: 'none', errorCode: sent.code,
         errorMessage: sent.code, wake: { attempted: false, state: 'not_needed' } };
     options.onOutboundHandoff?.({ persistence: 'pending', localId: sent.localId });
-    const held = projectHeldSessionInputReceipt(sent, sent.localId);
-    if (held) return held;
+    const projectedReceipt = projectHomeSessionInputReceipt(sent, sent.localId);
+    if (projectedReceipt) return projectedReceipt;
     return { type: 'success', persistence: 'pending', localId: sent.localId,
         wake: { attempted: false, state: 'not_needed' } };
 }

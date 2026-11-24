@@ -10,6 +10,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import type { ResumeSessionOptions, PendingInputRuntimeEnsureResult } from '@/sync/ops/sessions';
+import type { SessionMessageSendResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { PendingDeliveryBlockedReason } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
 import type {
     PendingRequestedActionV1} from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -51,10 +52,14 @@ export type SubmitWakeState =
     | 'already_active'
     | 'failed';
 
+type SessionMessageWakeFailureReceipt = Extract<SessionMessageSendResultV1, { code: 'resume_failed' }>;
+
 export type SubmitSessionUserMessageResult = Readonly<{
     type: SubmitResultType;
     persistence: SubmitPersistence;
     providerAcceptancePending?: boolean;
+    /** Home accepted the exact input and separately reported a wake refusal. */
+    wakeFailureReceipt?: SessionMessageWakeFailureReceipt;
     wake: Readonly<{
         attempted: boolean;
         state: SubmitWakeState;
@@ -159,8 +164,8 @@ export type SubmitSessionUserMessageOptions = Readonly<{
     steerWithoutConfig?: boolean;
 }>;
 
-type SessionMessageSubmitReceipt = Extract<import('@happier-dev/protocol/sessions/messages/sessionInputAdmission').SessionMessageSendResultV1,
-    { status: 'accepted' | 'alreadyAccepted' | 'replied' | 'held' }>;
+type SessionMessageSubmitReceipt = Extract<SessionMessageSendResultV1, { status: 'accepted' | 'alreadyAccepted' | 'replied' | 'held' }>
+    | SessionMessageWakeFailureReceipt;
 
 export type PendingMessageSubmitResult = Readonly<{
     localId?: string;
