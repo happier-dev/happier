@@ -32,6 +32,7 @@ import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machi
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui';
 import { preparePluginContributionPointDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
 import { samePluginUiMaterializationFacts, normalizePluginInstalledUiDeclarations, type PluginUiActionProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { readPluginMachineMaterializations } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { preparePluginUiProjectionOrigins } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { projectPluginRegistrySourceDeclarationV1 } from '@happier-dev/protocol/registries';
 import { projectPluginSkillDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/skills';
@@ -436,6 +437,11 @@ export type PluginAccountAvailabilityReader = Readonly<{
     readCurrentAccountIntent: (pluginId: string) => PluginAccountPluginIntentV1 | null | undefined;
     /** Desired Account enablement. Null is not loaded or incomplete. */
     readCurrentAccountEnablement: (pluginId: string) => boolean | null;
+    /** Installation enablement for an addressed Machine, or the complete census for automatic selection. */
+    readCurrentMachineEnablement: (
+        pluginId: string,
+        target: Pick<PluginMachineMaterializationV1, 'serverIdentityId' | 'machineId'> | null,
+    ) => boolean | null;
     readCurrentAccountExecution: (pluginId: string) => PluginAccountExecutionAdmission;
     /** The same Account-selected Event declaration consumed by trigger admission. */
     readCurrentAutomationEventContribution: (input: Readonly<{
@@ -2334,6 +2340,14 @@ function createBoundReader(input: Readonly<{
         readCurrentAccountEnablement: (pluginId: string) => {
             const intent = readCurrentAccountIntent(pluginId);
             return intent === undefined ? null : intent?.enabled ?? true;
+        },
+        readCurrentMachineEnablement: (pluginId, target) => {
+            const snapshot = readProjectionForScope(input.readState(), input.scope);
+            if (!snapshot || (target === null && snapshot.inventoryComplete === false)) return null;
+            const rows = readPluginMachineMaterializations(snapshot.materializations, pluginId);
+            const installations = target === null ? rows : rows.filter(row =>
+                row.serverIdentityId === target.serverIdentityId && row.machineId === target.machineId);
+            return installations.length === 0 ? null : installations.some(row => row.enabled);
         },
         readCurrentAccountExecution: (pluginId: string) => input.readInitialFailure(pluginId)
             ?? readAccountExecutionSelection(input.readState(), input.scope, pluginId),

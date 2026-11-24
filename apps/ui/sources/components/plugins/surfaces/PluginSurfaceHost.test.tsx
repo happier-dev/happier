@@ -14007,6 +14007,70 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             .rejects.toMatchObject({ code: 'stale_surface' });
     });
 
+    it('stops a mounted renderer’s callbacks when its Machine installation is disabled and resumes on re-enable', async () => {
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const serverIdentityId = 'srv_server_1';
+        const machineId = 'machine_1';
+        const pluginId = 'acme.browser';
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId });
+        const scope = pluginSurfaceAccountLifetime.value!.scope;
+        await primeGeneratedArtifact();
+        const fixture = primeExactTargetedContributions({ pluginId, occurrenceId: 'surface-disable' });
+        const projection = withMountedTargetPackage(createGeneratedProjection(), fixture, {
+            displayName: 'Browser Inspector', version: '3.2.1',
+        });
+        const placement = {
+            ...generatedReactNativePlacement({ occurrenceId: fixture.mountedTarget.occurrenceId }),
+            executionOrigin: { serverIdentityId, sourceRef: { pluginId, machineId, sourceCustody: fixture.mountedTarget.sourceCustody } },
+        };
+        const publish = (availabilityCursor: number, enabled: boolean) => {
+            const materialization = {
+                serverIdentityId, machineId, pluginId, materializationId: 'browser-inspector', version: '3.2.1',
+                sourceClass: 'bundledFirstParty', portableRelease: false, uiArtifacts: [], enabled, trustState: 'trusted',
+                observedAt: availabilityCursor,
+            } as const;
+            replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+                availabilityCursor, intentReads: [], materializations: [materialization],
+                snapshots: [{ serverIdentityId, machineId, materializations: [materialization] }],
+            } });
+        };
+        publish(1, true);
+
+        const activity = new EventTarget();
+        const onActivity = vi.fn();
+        function ActivityPanel() {
+            React.useEffect(() => {
+                activity.addEventListener('activity', onActivity);
+                return () => activity.removeEventListener('activity', onActivity);
+            }, []);
+            return React.createElement('Text', null, 'Plugin Activity');
+        }
+        reactNativeSurfaceRuntime.enabled = true;
+        reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(ActivityPanel) };
+        const screen = await renderScreen(<PluginSurfacePlacementHost placement={placement}
+            resourceBrowserTarget={target} machineId={machineId} serverId="server_1"
+            pluginUiProjection={projection} platform="web" />);
+        try {
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('Plugin Activity'));
+            activity.dispatchEvent(new Event('activity'));
+            expect(onActivity).toHaveBeenCalledTimes(1);
+
+            await act(async () => { publish(2, false); });
+            await vi.waitFor(() => expect(
+                screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_disabled'),
+            ).toBeTruthy());
+            activity.dispatchEvent(new Event('activity'));
+            activity.dispatchEvent(new Event('activity'));
+            expect(onActivity).toHaveBeenCalledTimes(1);
+            expect(screen.getTextContent()).not.toContain('Plugin Activity');
+
+            await act(async () => { publish(3, true); });
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain('Plugin Activity'));
+            activity.dispatchEvent(new Event('activity'));
+            expect(onActivity).toHaveBeenCalledTimes(2);
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps a React Native signal through an equivalent target refresh and replaces it only when the mounted target generation changes', async () => {
         reactNativeSurfaceProps.length = 0;
         const { publishMachineContributionRegistryProjectionInvalidation } = await import(

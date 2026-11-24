@@ -43,7 +43,8 @@ import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtim
 import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import type { PluginUiTargetedSurfaceMountCoreV1, DaemonContributionRegistryProjectionMountedTargetV1, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginDeclarativePreparedTargetedSurfaceInventoryEntryV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocument';
-import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, getPluginMachineExecutionRouting, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { PluginMachineExecutionOriginSelectorView, usePluginMachineExecutionOriginPickerOpener } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { readPluginSurfaceMachineDemand, usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
 import { useWidgetFrameHeaderBinding } from '@/components/widgets/frame/widgetFrameHeaderBinding';
@@ -1641,6 +1642,8 @@ function resolveHostedWebProjectionMount(params: Readonly<{
     });
 }
 
+const isDisabledPluginSurfaceCurrent = () => false;
+
 const INLINE_LOADING_MARKER_STYLE = { width: 0, height: 0 } as const;
 
 /** A loading state that reserves nothing: only the hidden marker QA and tests key on. */
@@ -2148,6 +2151,14 @@ function PluginSurfaceHostMount(props: Readonly<(
         : null;
     const serverId = hasEmbeddedRendererMount ? props.serverId : origin ? origin.serverId
         : accountUnionMount ? accountExecutionOrigin?.serverId ?? pluginExecution.selection.storedTarget?.serverIdentityId ?? null : props.serverId;
+    const serverIdentityId = origin?.serverIdentityId ?? (serverId ? resolvePortableServerIdentityForRoutingId(serverId) : null);
+    const installationTarget = executionOrigin ? getPluginMachineExecutionRouting(executionOrigin)
+        : (needsMachineExecution ? pluginExecution.selection.storedTarget ?? pluginExecution.selection.projectionTarget : null)
+            ?? (machineId && serverIdentityId ? { machineId, serverIdentityId } : null);
+    // Account-hosted bytes can present a surface whose work is bound to a Machine.
+    const pluginDisabled = availabilityReader?.readCurrentAccountEnablement(mountedPluginId) === false
+        || ((needsMachineExecution || (accountExecutionOrigin === null && installationTarget !== null))
+            && availabilityReader?.readCurrentMachineEnablement(mountedPluginId, installationTarget) === false);
     // The daemon byte route: the machine this mount reads from. It is
     // transport only; the lease verifies whatever bytes it returns.
     const exactArtifactSource = typeof machineId === 'string' && typeof serverId === 'string'
@@ -2257,7 +2268,7 @@ function PluginSurfaceHostMount(props: Readonly<(
         serverId,
         pluginId: mountedTarget?.pluginId,
         mountedOccurrenceId: mountedTarget?.occurrenceId,
-        enabled: mountedTargetSnapshotRequired,
+        enabled: !pluginDisabled && mountedTargetSnapshotRequired,
         emptyTargetedContributions: pointlessTargetedContributions,
         pluginUiProjection: mountedPluginUiProjection,
         refreshKey: mountedTargetRefreshKey,
@@ -2538,7 +2549,7 @@ function PluginSurfaceHostMount(props: Readonly<(
             ? pluginExecution.selectedSupply?.resourceCapability
             : readSelectedPluginUiResourceCapability(descriptor)
         : undefined;
-    const accountLocalInteractionEnabled = accountLifetime?.isCurrent() === true;
+    const accountLocalInteractionEnabled = !pluginDisabled && accountLifetime?.isCurrent() === true;
     // The Availability projection rematerializes an equivalent bound reader on
     // every AccountChange. A reader remains live for its bound Account scope,
     // so that update must not replace this mount's client (and reset its
@@ -2776,6 +2787,7 @@ function PluginSurfaceHostMount(props: Readonly<(
     [clientExecutableAdmission]);
     const controllerFacts = Object.freeze({
         ...baseControllerFacts,
+        isHostCurrent: pluginDisabled ? isDisabledPluginSurfaceCurrent : baseControllerFacts.isHostCurrent,
         daemonReachable: daemonInteraction.daemonReachable,
         resourceContext: baseControllerFacts.resourceContext?.kind === 'global' ? baseControllerFacts.resourceContext
             : baseControllerFacts.resourceContext ? { ...baseControllerFacts.resourceContext,
@@ -3534,6 +3546,10 @@ function PluginSurfaceHostMount(props: Readonly<(
             isRetryableMountedTargetFailure(mountedTargetRead) ? retryMountedTargetProjection : undefined,
         );
     };
+    if (pluginDisabled) {
+        return renderPluginSurfaceUnavailable('plugin_disabled', props.unavailableAction,
+            'unavailable', undefined, projectedBrand?.displayName);
+    }
     if (!renderGate.canRender) {
         if (renderGate.state === 'loading') {
             const { reason, state } = renderGate;
