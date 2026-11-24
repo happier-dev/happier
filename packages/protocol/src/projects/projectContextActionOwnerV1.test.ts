@@ -67,6 +67,24 @@ describe('personal Project context Account Action owner', () => {
     await expect(readProjectContextAttachmentTargetV1({ ...ports,
       readSource: async () => ({ ok: true, source: { ...source, id: 'wrong-source' }, canManage: true }),
     }, target)).rejects.toMatchObject({ code: 'project_context_unavailable' });
+    // HTTP boundaries return either their domain result, an Action failure, or malformed data.
+    // The captured owner must preserve refusals on initial read, attach re-read and write.
+    for (const [raw, code] of [
+      [{ ok: false, errorCode: 'source_backend_unavailable', error: 'Source write refused', effectAttempted: false }, 'source_backend_unavailable'],
+      [{ ok: false, error: 'source_unavailable' }, 'source_unavailable'],
+      [{ unexpected: true }, 'project_context_unavailable'],
+    ] as const) {
+      await expect(readProjectContextAttachmentTargetV1({ ...ports, readSource: async () => raw }, target))
+        .rejects.toMatchObject({ code });
+      let read = 0;
+      const reread = await readProjectContextAttachmentTargetV1({ ...ports,
+        readSource: async () => ++read === 1 ? { ok: true, source, canManage } : raw,
+      }, target);
+      await expect(reread.attach(entry.entry)).rejects.toMatchObject({ code });
+      const write = await readProjectContextAttachmentTargetV1({ ...ports, updateSource: async () => raw }, target);
+      await expect(write.attach(entry.entry)).rejects.toMatchObject({ code,
+        ...('errorCode' in raw ? { errorCode: raw.errorCode, effectAttempted: false } : {}) });
+    }
     await expect(shared.attach({ ...entry.entry, id: 'memory' })).resolves.toBe(true);
     expect(sourceWrites).toMatchObject([{ expectedRevision: 3, sourceId: 'source', patch: { attachment: {
       kind: 'attach', attachment: { purpose: 'context', entry: { id: 'memory' } },
