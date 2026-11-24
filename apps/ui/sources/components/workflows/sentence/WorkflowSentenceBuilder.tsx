@@ -30,6 +30,7 @@ import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentence
 import { useWorkflowEditorComposerCustody } from '../editor/useWorkflowEditorComposerCustody';
 import { useWorkflowSessionBinding } from '../editor/useWorkflowSessionBinding';
 import { WorkflowBlockListEditor } from '../editor/WorkflowBlockListEditor';
+import { WorkflowEventValueContext } from '../editor/WorkflowEventValueContext';
 import { WorkflowInspector } from '../editor/WorkflowInspector';
 import { useWorkflowEditorSelector } from '../editor/workflowEditorDraftStore';
 import { renderWorkflowCardFieldRow } from '../editor/workflowCardFieldRow';
@@ -166,6 +167,7 @@ function WorkflowSentenceBuilderBody(
     requests: actionFieldRequests.requests,
   });
   const triggers = sentence.triggers;
+  const eventValueContext = React.useMemo(() => ({ triggerEvents: triggers.triggerEvents }), [triggers.triggerEvents]);
   const whenClause = (
     <WorkflowTriggerSection
       presentation="sentence"
@@ -289,6 +291,7 @@ function WorkflowSentenceBuilderBody(
         <Text testID={`${TEST_ID}-title`} style={styles.title}>
           {builderTitle(props.resourceName)}
         </Text>
+        <WorkflowEventValueContext.Provider value={eventValueContext}>
         <WorkflowSentenceRowsContext.Provider value={props.sheet}>
         <WorkflowDocumentGridContext.Provider value="compact">
           <WorkflowSentenceView
@@ -339,6 +342,7 @@ function WorkflowSentenceBuilderBody(
           />
         </WorkflowDocumentGridContext.Provider>
         </WorkflowSentenceRowsContext.Provider>
+        </WorkflowEventValueContext.Provider>
         {savesAs}
       </View>
     </FloatingOverlay>

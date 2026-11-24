@@ -107,6 +107,51 @@ describe('Account trigger HTTP read failure and recovery', () => {
         expect(seed?.project).toEqual({ machineId: machine.id, directory: '~' });
     });
 
+    it('binds a selected Event field in the compact command Builder and carries it into the editor', async () => {
+        await loadSyncSingletonForTests();
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://sentence-event-${crypto.randomUUID()}.test`, accountId: 'sentence-event',
+            request: homeRequest(async () => json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 })),
+        });
+        disposals.push(() => account.dispose());
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { WorkflowSentenceBuilder } = await import('../sentence/WorkflowSentenceBuilder');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const { router } = await import('expo-router');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime === null) throw new Error('Expected the Builder Account lifetime');
+        const event = { pluginId: 'com.acme.events', localId: 'deployment-failed' };
+        const binding = { kind: 'trigger_event', event, path: ['state'] };
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        disposals.unshift(async () => restorePopoverGlobals());
+        const screen = await renderScreen(<WorkflowSentenceBuilder anchorRef={React.createRef<View>()}
+            intent={{
+                name: 'Deployment failed',
+                trigger: { kind: 'pluginEvent', enabled: true, eventRef: event, sourceInstanceId: 'environment',
+                    sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Deployment failed', filter: null,
+                    maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                        pluginId: event.pluginId, machineId: 'machine-a', materializationId: 'watcher',
+                    } } },
+                payloadSchema: { type: 'object', properties: { state: { type: 'string', title: 'State' } } },
+                step: { kind: 'action', id: 'command', actionId: 'machines.command.run', input: {
+                    command: { kind: 'literal', value: 'echo receipt' }, stdin: { kind: 'literal', value: '' },
+                } },
+            }} accountLifetime={lifetime} onRequestClose={() => {}} />);
+        disposals.push(() => screen.unmount());
+        const picker = screen.findAllByType(DropdownMenu)
+            .find(node => node.props.testID === 'workflow-builder-action-command-field-stdin-input-0-value');
+        if (picker === undefined) throw new Error('Expected the command value picker');
+        const option = JSON.stringify(binding);
+        expect(picker.props.items).toContainEqual(expect.objectContaining({ id: option, title: 'State' }));
+        await act(async () => picker.props.onSelect(option));
+        await screen.pressByTestIdAsync('workflow-builder-open-editor');
+        const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected the editor handoff');
+        const seed = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId), lifetime.scope);
+        expect(seed?.draft?.blocks).toMatchObject([{ id: 'command', input: { stdin: binding } }]);
+    });
+
     it('keeps a conditional Builder editable through its branch selections and full-editor handoff', async () => {
         await loadSyncSingletonForTests();
         const account = await restoreServerAccountForTest({
