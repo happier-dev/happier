@@ -122,8 +122,11 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
         const originalKeys = new Set(Object.keys(original).map(identity));
         for (const { result: contribution } of contributions) {
             if (contribution.kind === 'unavailable') { service = contribution; continue; }
+            if (contribution.release) {
+                const release = contribution.release;
+                releases.push(() => release.call(contribution));
+            }
             if (contribution.kind !== 'replace') continue;
-            releases.push(() => contribution.release());
             if (service.kind === 'unchanged') service = { kind: 'ready' };
             for (const [name, value] of Object.entries(contribution.defaults ?? {})) {
                 if (!secretNames.has(identity(name)) && !originalKeys.has(identity(name))) defaults[name] = value;

@@ -55,8 +55,8 @@ it('discovers the selected launched service from prepared originals, isolates cu
                 provenance: { CUSTOM_DATABASE: { source: 'dotenv', file: '.env' } } }; },
         } satisfies PluginServiceLaunchEnvironmentInputV1;
         const retained = await observer.prepare(launch);
-        if (retained.kind === 'replace') release = () => retained.release();
-        expect(retained).toMatchObject({ kind: 'replace' });
+        if (retained.kind === 'unchanged') release = retained.release;
+        expect(retained).toMatchObject({ kind: 'unchanged', release: expect.any(Function) });
         const list = (selectedScope: typeof scope = scope) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1),
             { scope: selectedScope }, identity);
         const result = await list();
@@ -75,9 +75,13 @@ it('discovers the selected launched service from prepared originals, isolates cu
         await expect(kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1), {
             scope: { ...scope, accountId: 'bob' },
         }, identity)).rejects.toMatchObject({ code: 'database_target_unavailable' });
-        if (retained.kind === 'replace') await retained.release();
+        await release?.();
+        release = undefined;
         expect(await list()).toMatchObject({ targets: [] });
-    } finally { await kit.dispose(); }
+    } finally {
+        await release?.();
+        await kit.dispose();
+    }
 });
 
 it('does not expose another Account launch or turn missing prepared identity into a database target', async () => {
@@ -96,7 +100,7 @@ it('does not expose another Account launch or turn missing prepared identity int
         try {
             expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1), { scope }, identity))
                 .toMatchObject({ targets: [] });
-        } finally { if (retained.kind === 'replace') await retained.release(); }
+        } finally { if (retained.kind === 'unchanged') await retained.release?.(); }
     } finally { await kit.dispose(); }
 });
 
@@ -128,12 +132,12 @@ it('resolves the discovered service original into a native operation and withdra
         expect(resolved.descriptor).toEqual(listed.targets[0]);
         expect(await connection.execute(input)).toMatchObject({ ok: true,
             results: [{ rows: [{ cells: [{ type: 'text', value: 'prepared-original' }] }] }] });
-        if (retained.kind === 'replace') await retained.release();
+        if (retained.kind === 'unchanged') await retained.release?.();
         await expect(targets.resolve({ identity, storage: emptyStorage, requester: 'person', input, access: 'read' }))
             .rejects.toMatchObject({ code: 'database_target_unavailable' });
     } finally {
         await connection?.close();
-        if (retained.kind === 'replace') await retained.release();
+        if (retained.kind === 'unchanged') await retained.release?.();
         await rm(directory, { recursive: true, force: true });
     }
 });
@@ -211,7 +215,7 @@ it('stores the worktree database agent level on this Machine: Read & write (asks
             expect(await set('none')).toEqual({ ok: true, agentAccess: 'none' });
             expect(values.size).toBe(1);
             expect(JSON.stringify([...values])).not.toContain('secret');
-        } finally { if (retained.kind === 'replace') await retained.release(); }
+        } finally { if (retained.kind === 'unchanged') await retained.release?.(); }
     } finally { await kit.dispose(); }
 });
 
@@ -303,7 +307,7 @@ it('lists private dotenv candidates for the selected checkout without starting a
             executionPlacement: { mode: 'spawn', machineId: workspace.machineId }, assignedPorts: {},
             async readEnvironment() { return { projectedEnvironment: { DATABASE_URL: 'postgresql://app@localhost/launched' }, provenance: {} }; },
         });
-        if (launch.kind === 'replace') release = launch.release;
+        if (launch.kind === 'unchanged') release = launch.release;
         expect(await list()).toMatchObject({ targets: [{ target: { ...scope,
             source: { kind: 'service', serviceId: 'postgres', variable: 'DATABASE_URL' } } }] });
     } finally {

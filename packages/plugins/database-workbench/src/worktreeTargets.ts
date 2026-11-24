@@ -159,7 +159,7 @@ export function createWorktreeDatabaseTargets(): Readonly<{
             const entry: Entry = { scope, serviceId: input.serviceId, variables, readEnvironment };
             const key = entryKey(entry);
             entries.set(key, entry);
-            return { kind: 'replace', async release() { if (entries.get(key) === entry) entries.delete(key); } };
+            return { kind: 'unchanged', async release() { if (entries.get(key) === entry) entries.delete(key); } };
         } },
         async list(request) {
             request.signal?.throwIfAborted();

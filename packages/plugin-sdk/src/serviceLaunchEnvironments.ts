@@ -27,7 +27,11 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     /** Original declared config projection from this same preparation; secret bindings stay excluded. */
     readDeclaredEnvironment?(): Promise<PluginServiceLaunchEnvironmentProjectionV1>;
 }>;
-export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{ kind: 'unchanged' }>
+export type PluginServiceLaunchEnvironmentResultV1 = Readonly<{
+    kind: 'unchanged';
+    /** Optional cleanup for an observation that does not change the launch. */
+    release?(): Promise<void>;
+}>
     | Readonly<{ kind: 'unavailable'; code: 'service_launch_environment_unavailable' | 'service_launch_environment_failed'; reason?: string }>
     | Readonly<{ kind: 'replace'; replacements?: Readonly<Record<string, string>>; defaults?: Readonly<Record<string, string>>;
         release(): Promise<void> }>;

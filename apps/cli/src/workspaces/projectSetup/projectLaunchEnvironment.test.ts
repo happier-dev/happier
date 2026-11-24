@@ -37,6 +37,28 @@ it('carries admitted launch custody to observers without placing it in the child
     expect(declared).toMatchObject({ projectedEnvironment: { CUSTOM_DATABASE: 'private-original' } });
     expect(result.kind === 'prepared' && result.launchInput.environment).toEqual({ CUSTOM_DATABASE: 'private-original' });
 });
+it('releases a read-only service observation without reporting a launch override', async () => {
+    const selected = await workspace();
+    let released = false;
+    const prepared = await prepareProjectLaunchEnvironment({
+        workspace: selected, originalEnvironment: { DATABASE_URL: 'private-original' },
+        requirements: [{ name: 'DATABASE_URL', kind: 'config', required: true }],
+        service: {
+            project: { serverId: 'home', projectId: 'project' }, serviceId: 'database',
+            executionPlacement: { mode: 'native', machineId: 'machine' }, assignedPorts: {},
+            async prepareServiceLaunchEnvironments() {
+                return [{ contribution: { pluginId: 'happier.database', localId: 'database-discovery' },
+                    result: { kind: 'unchanged' as const, async release() { released = true; } } }];
+            },
+        },
+    });
+    expect(prepared).toMatchObject({ kind: 'prepared', launchInput: {
+        service: { kind: 'unchanged' }, environment: { DATABASE_URL: 'private-original' },
+    } });
+    expect(released).toBe(false);
+    if (prepared.kind === 'prepared') await prepared.launchInput.releaseServiceEnvironment?.();
+    expect(released).toBe(true);
+});
 it('uses Windows key identity without suppressing distinct POSIX variable names', () => {
     const input = { originalEnvironment: { Path: 'host', token: 'private', KEEP: 'yes' },
         requirements: [{ name: 'TOKEN', kind: 'secret' as const, required: false }], invocationEnvironment: { PATH: 'invocation' } };

@@ -105,6 +105,10 @@ through the admitted checkout's filesystem boundary. The standard SQLite
 engine opens that file. The descriptor retains the selected path operand and
 keeps the resolved Machine filesystem path private.
 
+Read-only launch observers may return `unchanged` with a `release` hook. The
+launch owner calls that hook at the usual release boundary and leaves the child
+environment and launch readiness unchanged.
+
 The optional `requestListenerPorts(keys)` operation returns Protocol's existing
 `WorktreePortsResultV1`. The host binds the admitted execution root and launch
 signal to B's worktree port owner. A contribution requests its own named listeners
