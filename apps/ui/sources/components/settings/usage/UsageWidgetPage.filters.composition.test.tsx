@@ -18,7 +18,7 @@ import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-d
 import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema,
     WIDGET_SURFACE_ARTIFACT_KIND_V1, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
-import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { renderScreen, standardCleanup, flushHookEffects, findAllHostTestInstances, pressTestInstanceAsync } from '@/dev/testkit';
 import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
@@ -44,6 +44,7 @@ import { WidgetAreaLayoutBar } from '@/components/widgets/area/WidgetAreaLayoutB
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { UsagePeriodSummaryWidget } from './widgets/UsagePeriodSummaryWidget';
@@ -1333,17 +1334,23 @@ describe('mounted Usage page scope commands', () => {
             nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 900 } },
         }));
         // A batch-wide refusal has no accounting slice. The mounted body owns the quiet state.
-        const details = await vi.waitFor(() => {
-            const disclosure = screen.findAll(node => typeof node.type === 'string' && typeof node.props.testID === 'string'
-                && node.props.testID.startsWith('usage-area.widget.how-you-work:')
-                && node.props.testID.endsWith('.scopeRefused.technicalDetails.header'))[0];
-            expect(disclosure).toBeDefined();
-            return disclosure.props.testID as string;
+        const detailsName = t('approvals.technicalDetails');
+        const { disclosure, toggle } = await vi.waitFor(() => {
+            const widgetDisclosures = screen.findAllByType(WidgetSurface)
+                .flatMap(widget => widget.findAllByType(TechnicalDetailsDisclosure));
+            const match = widgetDisclosures.flatMap(disclosure =>
+                findAllHostTestInstances(disclosure, node =>
+                    (node.props.role ?? node.props.accessibilityRole) === 'button'
+                    && (node.props['aria-label'] ?? node.props.accessibilityLabel) === detailsName,
+                ).map(toggle => ({ disclosure, toggle })),
+            )[0];
+            expect(match).toBeDefined();
+            return match;
         });
         expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'))).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('denied');
-        await screen.pressByTestIdAsync(details);
-        expect(screen.getTextContent()).toContain('denied');
+        await pressTestInstanceAsync(toggle, detailsName);
+        expect(disclosure.findAllByType(Text).some(node => node.props.children === 'denied')).toBe(true);
         await flushHookEffects({ cycles: 30 });
         expect(posts(), 'a settled refusal does not cause an automatic second accounting read').toHaveLength(1);
     });
