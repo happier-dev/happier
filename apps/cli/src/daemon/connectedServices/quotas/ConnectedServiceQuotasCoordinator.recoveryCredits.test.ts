@@ -8,7 +8,12 @@ import {
 
 import { createClaudeSubscriptionQuotaFetcher } from '@/backends/claude/connectedServices/quotaFetcher';
 import { invalidateConnectedServiceAccountMode } from '@/cloud/connectedServices/resolveConnectedServiceAccountMode';
+import { createDaemonControlApp } from '@/daemon/controlServer';
+import { createDaemonServerWorkBudget } from '@/daemon/serverWork/createDaemonServerWorkBudget';
+import { createDaemonServerWorkScheduler } from '@/daemon/serverWork/createDaemonServerWorkScheduler';
+import { activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration } from '../accountUsage/startupActivation';
 import { ConnectedServiceQuotasCoordinator } from './ConnectedServiceQuotasCoordinator';
+import { resolveConnectedServiceQuotasDaemonOptions } from './resolveConnectedServiceQuotasDaemonOptions';
 
 type QuotaApi = ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['api'];
 const serviceId = 'claude-subscription' as const;
@@ -72,6 +77,58 @@ describe('connected-service recovery operation lifecycle', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     invalidateConnectedServiceAccountMode();
+  });
+
+  it('redeems the selected credit when startup inventory hydration fails', async () => {
+    const harness = await createRecoveryHarness();
+    const options = resolveConnectedServiceQuotasDaemonOptions({});
+    let recoveryCreditCoordinator: ConnectedServiceQuotasCoordinator | undefined;
+    const startLoop = vi.fn();
+    const activation = await activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
+      enabled: true,
+      serverWorkScheduler: createDaemonServerWorkScheduler({ budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }) }),
+      retry: {
+        signal: new AbortController().signal,
+        baseDelayMs: options.failureBackoffMinMs,
+        maxDelayMs: options.failureBackoffMaxMs,
+        jitterMs: options.failureBackoffMinMs * options.failureBackoffJitterPct,
+      },
+      quotaFetchers: [{ serviceId }],
+      awaitReadiness: async () => {},
+      hydrate: async () => { throw new Error('startup inventory unavailable'); },
+      createCoordinator: () => harness.coordinator,
+      onCoordinatorReady: (coordinator) => { recoveryCreditCoordinator = coordinator; },
+      startLoop,
+      onActivationError: () => {},
+    });
+    expect(activation.status).toBe('quota_policy_disabled');
+    expect(startLoop).not.toHaveBeenCalled();
+
+    const app = createDaemonControlApp({
+      getChildren: () => [], machineId: 'machine-test', runtimeId: 'runtime-test',
+      stopSession: async () => ({ status: 'stopped' }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-test' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'control-test',
+      handleConnectedServiceQuotaRecoveryCreditConsume: async (input) =>
+        await recoveryCreditCoordinator?.consumeRecoveryCreditForProfile(input) ?? {
+          ok: false, errorCode: 'connected_service_quota_recovery_credit_unavailable',
+          error: 'connected_service_quota_recovery_credit_unavailable',
+        },
+    });
+    try {
+      const response = await app.inject({
+        method: 'POST', url: '/connected-service-quota-recovery-credit/consume',
+        headers: { 'x-happier-daemon-token': 'control-test' },
+        payload: { serviceId, profileId, providerCreditId: 'other', idempotencyKey: 'manual-after-hydration-failure' },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ ok: true, result: { ok: true,
+        receipt: { providerCreditId: 'other', status: 'consumed' } } });
+      expect(harness.posts.map((post) => post.grant_id)).toEqual(['other']);
+    } finally {
+      await app.close();
+      harness.coordinator.dispose();
+    }
   });
 
   it.each(['cedar', 'juniper'] as const)('allows a second %s use after a successful refreshed observation', async (program) => {

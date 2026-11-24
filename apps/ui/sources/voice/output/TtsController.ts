@@ -1,7 +1,6 @@
 import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
 import type { VoicePlaybackStopperRegistrar } from '@/voice/runtime/VoicePlaybackController';
-import { playAudioBytesWithStopper } from '@/voice/output/playAudioBytesWithStopper';
-import { createStoppableSpeech } from '@/voice/output/stoppableSpeech';
+import { speakBufferedSpeech } from '@/voice/output/speakBufferedSpeech';
 
 /**
  * Speaks text with an OpenAI-compatible speech endpoint. Resolves when playback finishes or is
@@ -14,31 +13,12 @@ export async function speakOpenAiCompatText(opts: {
   voice: string;
   format: 'mp3' | 'wav';
   input: string;
+  readAloudChunkChars?: number;
   timeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
 }): Promise<void> {
-  const speech = createStoppableSpeech(opts.registerPlaybackStopper);
-  try {
-    const buffer = await fetchOpenAiCompatSpeechAudio({
-      baseUrl: opts.baseUrl,
-      apiKey: opts.apiKey,
-      model: opts.model,
-      voice: opts.voice,
-      format: opts.format,
-      input: opts.input,
-      timeoutMs: opts.timeoutMs,
-      signal: speech.signal,
-    });
-    if (speech.signal.aborted) return;
-    await playAudioBytesWithStopper({
-      bytes: buffer,
-      format: opts.format,
-      registerPlaybackStopper: speech.registerPlayback,
-    });
-  } catch (error) {
-    if (speech.signal.aborted) return;
-    throw error;
-  } finally {
-    speech.dispose();
-  }
+  return speakBufferedSpeech({
+    ...opts,
+    fetchAudio: (input, signal) => fetchOpenAiCompatSpeechAudio({ ...opts, input, signal }),
+  });
 }

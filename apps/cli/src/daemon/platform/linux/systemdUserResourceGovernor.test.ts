@@ -11,21 +11,11 @@ vi.mock('node:os', async (importOriginal) => {
 import {
   buildSystemdUserScopedLaunchSpec,
   isSystemdUserResourceGovernorReady,
-  shouldUseSystemdUserSessionResourceGovernor,
 } from './systemdUserResourceGovernor';
 
 describe('systemd user resource governor', () => {
   beforeEach(() => {
     vi.mocked(getPriority).mockReturnValue(0);
-  });
-
-  it.each([
-    ['linux background service', 'linux', 'background-service', true],
-    ['linux self-restart', 'linux', 'self-restart', true],
-    ['linux manual daemon', 'linux', 'manual', true],
-    ['non-linux self-restart', 'darwin', 'self-restart', false],
-  ] as const)('selects the session governor for %s', (_label, platform, startupSource, expected) => {
-    expect(shouldUseSystemdUserSessionResourceGovernor({ platform, startupSource })).toBe(expected);
   });
 
   it('wraps an admitted runner in the disposable jobs slice without imposing a CPU or memory cap', () => {

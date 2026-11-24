@@ -3346,72 +3346,80 @@ describe('socket update handling: plaintext update-session', () => {
         expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
     });
 
-    it('defers cache-only encrypted metadata and agent state while applying public projections', async () => {
-        storage.getState().replaceSessionListRenderables([
-            {
-                id: 's_cached_encrypted_metadata',
-                seq: 1,
-                createdAt: 1,
-                updatedAt: 1,
-                active: true,
-                activeAt: 1,
-                archivedAt: null,
-                metadataVersion: 1,
-                agentStateVersion: 1,
-                metadata: { path: '/tmp', host: 'localhost' },
-                thinking: true,
-                thinkingAt: 1,
-                presence: 'online',
-            },
-        ]);
-
-        const decryptMetadata = vi.fn(async () => ({ path: '/work', host: 'devbox', name: 'Renamed' }));
-        const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
-        const markSessionStateHydrationDeferred = vi.fn();
-        const params = buildBaseParams({
-            encryption: {
-                getSessionEncryption: () => ({
-                    decryptMetadata,
-                    decryptAgentState,
-                }),
-                getMachineEncryption: () => null,
-                removeSessionEncryption: () => {},
-            } as unknown as HandleUpdateContainerBaseParams['encryption'],
-            markSessionStateHydrationDeferred,
-        });
-
-        await handleUpdateContainer({
-            ...params,
-            updateData: {
-                id: 'u_encrypted_metadata_cache_only',
-                seq: 15,
-                createdAt: 1239,
-                body: {
-                    t: 'update-session',
+    it.each([false, true])('decrypts cache-only metadata only for a displayed row (displayed=%s)', async (displayed) => {
+        const { registerSessionListViewportDemand } = await import('@/sync/domains/session/listing/sessionListViewportDemand');
+        const serverId = 'server-a';
+        const release = registerSessionListViewportDemand(displayed ? [{ serverId, sessionId: 's_cached_encrypted_metadata' }] : []);
+        try {
+            storage.getState().replaceSessionListRenderables([
+                {
                     id: 's_cached_encrypted_metadata',
-                    metadata: { version: 2, value: 'encrypted-metadata' },
-                    agentState: { version: 3, value: 'encrypted-agent-state' },
+                    seq: 1,
+                    createdAt: 1,
+                    updatedAt: 1,
+                    active: true,
+                    activeAt: 1,
+                    archivedAt: null,
+                    metadataVersion: 1,
+                    agentStateVersion: 1,
+                    metadata: { path: '/tmp', host: 'localhost' },
+                    thinking: true,
+                    thinkingAt: 1,
+                    presence: 'online',
+                },
+            ]);
+
+            const decryptMetadata = vi.fn(async () => ({ path: '/work', host: 'devbox', name: 'Renamed' }));
+            const decryptAgentState = vi.fn(async () => ({ controlledByUser: true }));
+            const markSessionStateHydrationDeferred = vi.fn();
+            const params = buildBaseParams({
+                encryption: {
+                    getSessionEncryption: () => ({
+                        decryptMetadata,
+                        decryptAgentState,
+                    }),
+                    getMachineEncryption: () => null,
+                    removeSessionEncryption: () => {},
+                } as unknown as HandleUpdateContainerBaseParams['encryption'],
+                markSessionStateHydrationDeferred,
+            });
+
+            await handleUpdateContainer({
+                ...params,
+                sourceServerId: serverId,
+                updateData: {
+                    id: 'u_encrypted_metadata_cache_only',
+                    seq: 15,
+                    createdAt: 1239,
+                    body: {
+                        t: 'update-session',
+                        id: 's_cached_encrypted_metadata',
+                        metadata: { version: 2, value: 'encrypted-metadata' },
+                        agentState: { version: 3, value: 'encrypted-agent-state' },
+                        latestTurnStatus: 'completed',
+                        latestTurnStatusObservedAt: 1239,
+                    },
+                },
+            });
+
+            expect(decryptMetadata).toHaveBeenCalledTimes(displayed ? 1 : 0);
+            expect(decryptAgentState).not.toHaveBeenCalled();
+            expect(markSessionStateHydrationDeferred).toHaveBeenCalledWith('s_cached_encrypted_metadata');
+            expect(storage.getState().sessionListRenderables['s_cached_encrypted_metadata']).toEqual(
+                expect.objectContaining({
+                    metadata: expect.objectContaining(displayed ? { path: '/work', name: 'Renamed' } : { path: '/tmp' }),
+                    metadataVersion: displayed ? 2 : 1,
+                    agentStateVersion: 1,
                     latestTurnStatus: 'completed',
                     latestTurnStatusObservedAt: 1239,
-                },
-            },
-        });
-
-        expect(decryptMetadata).not.toHaveBeenCalled();
-        expect(decryptAgentState).not.toHaveBeenCalled();
-        expect(markSessionStateHydrationDeferred).toHaveBeenCalledWith('s_cached_encrypted_metadata');
-        expect(storage.getState().sessionListRenderables['s_cached_encrypted_metadata']).toEqual(
-            expect.objectContaining({
-                metadata: expect.objectContaining({ path: '/tmp', host: 'localhost' }),
-                metadataVersion: 1,
-                agentStateVersion: 1,
-                latestTurnStatus: 'completed',
-                latestTurnStatusObservedAt: 1239,
-                updatedAt: 1239,
-            }),
-        );
-        expect(params.invalidateSessions).not.toHaveBeenCalled();
-        expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+                    updatedAt: 1239,
+                }),
+            );
+            expect(params.invalidateSessions).not.toHaveBeenCalled();
+            expect((params.applySessions as unknown as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+        } finally {
+            release();
+        }
     });
 
     it('skips fresh cache-only timestamp-only activity patches until runtime freshness needs refresh', async () => {

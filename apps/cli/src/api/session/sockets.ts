@@ -1,5 +1,5 @@
 import { configuration } from '@/configuration';
-import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
+import { ConnectedServiceIdSchema, CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD } from '@happier-dev/protocol';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import { io, Socket } from 'socket.io-client'
 import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
@@ -25,7 +25,7 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
     });
 }
 
-export function createUserScopedSocket(opts: { token: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
+export function createUserScopedSocket(opts: { token: string; sessionUpdateInterest?: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
     const serverUrl = resolveServerHttpBaseUrl();
     const transports = configuration.socketIoTransports;
     return io(serverUrl, {
@@ -33,6 +33,7 @@ export function createUserScopedSocket(opts: { token: string }): Socket<ServerTo
             [CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD]: ConnectedServiceIdSchema.options,
             token: opts.token,
             clientType: 'user-scoped' as const,
+            ...(opts.sessionUpdateInterest ? { [SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD]: opts.sessionUpdateInterest } : {}),
         },
         path: '/v1/updates',
         reconnection: false,

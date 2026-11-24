@@ -1,15 +1,38 @@
+import { classifyConnectedServiceTransportFailure, isConnectedServicePreDispatchFailure } from '@/sync/api/account/connectedServiceNetworkError';
+import { readConnectedServiceApiErrorFields } from '@/sync/api/account/connectedServiceApiError';
 import { t } from '@/text';
+
+import { resolveConnectedServiceNetworkErrorMessage } from '../errors/connectedServiceNetworkErrorMessage';
+import { ConnectedServiceOauthRejectedError } from './connectedServiceOauthErrors';
+
+function isServerSideStatus(status: number | undefined): status is number {
+  return status === 408 || status === 429 || (typeof status === 'number' && status >= 500);
+}
 
 export function resolveConnectedServiceOauthErrorMessage(
   error: unknown,
   fallbackMessage: string,
+  phase?: 'exchange' | 'save',
 ): string {
   if (!(error instanceof Error)) return fallbackMessage;
+  const fields = readConnectedServiceApiErrorFields(error);
+  const wasNotSent = isConnectedServicePreDispatchFailure(error);
+  if ((phase === 'exchange' || phase === 'save') && !wasNotSent
+    && (classifyConnectedServiceTransportFailure(error) !== null
+      || isServerSideStatus(fields?.status)
+      || fields?.code === 'connect_oauth_exchange_outcome_unknown')) {
+    return t('connectedServices.oauthPaste.errors.exchangeOutcomeUnknown');
+  }
+  const networkMessage = resolveConnectedServiceNetworkErrorMessage(error);
+  if (networkMessage) return networkMessage;
+  if (error instanceof ConnectedServiceOauthRejectedError) {
+    return t('connectedServices.oauthPaste.errors.rejectedGeneric');
+  }
   const code = error.message.trim();
   if (!code) return fallbackMessage;
   if (code === 'connect_service_unsupported') return t('connectedServices.detail.errors.serviceUnsupportedServer');
 
-  if (code === 'connect_oauth_state_mismatch') return t('errors.oauthStateMismatch');
+  if (code === 'connect_oauth_state_mismatch') return t('connectedServices.oauthPaste.errors.stateMismatch');
   if (code === 'connect_oauth_timeout') return t('errors.connectionTimeout');
   if (
     'code' in error
@@ -24,6 +47,11 @@ export function resolveConnectedServiceOauthErrorMessage(
   ) {
     return t('errors.tokenExchangeFailed');
   }
-  if (code.startsWith('connect_oauth_')) return fallbackMessage;
-  return code;
+  if (code.startsWith('connect_oauth_')) {
+    const status = fields?.status;
+    return isServerSideStatus(status)
+      ? t('connectedServices.requestErrors.serverHttp', { status: String(status) })
+      : fallbackMessage;
+  }
+  return fallbackMessage;
 }

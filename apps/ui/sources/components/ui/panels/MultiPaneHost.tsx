@@ -12,6 +12,11 @@ import { shadowLevelStyle } from '@/shadowElevation';
 // part of them, so a square top-left corner reads as a slab wedged underneath; rounding it lets
 // the pane sit into the header instead. Matches the content sheet's seam radius.
 const PANE_TOP_CORNER_RADIUS_PX = 16;
+const overlayPaneCorners = {
+    borderTopLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+    borderBottomLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
+};
+const overlayPaneContentStyle = { ...overlayPaneCorners, overflow: 'hidden' as const };
 
 export type MultiPaneHostProps = Readonly<{
     main: React.ReactNode;
@@ -315,10 +320,8 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             // Overlay only. Docked, this pane is part of the layout and its seam is
                             // the hairline border; floating above the content it is a modal surface,
                             // so it takes the modal elevation and rounds the one edge that shows.
-                            // Its own `overflow` clips the content, not the shadow it casts.
-                            borderTopLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
-                            borderBottomLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
-                            overflow: 'hidden',
+                            // Clip the content inside the resizer so the handle can extend out.
+                            ...overlayPaneCorners,
                             ...shadowLevelStyle(theme.colors.shadowLevels[6]),
                             transform: [
                                 {
@@ -332,6 +335,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     >
                         <ResizableDockedPane
                             testID="multi-pane-details-overlay"
+                            contentStyle={overlayPaneContentStyle}
                             widthPx={detailsDockWidthPx}
                             minWidthPx={props.detailsDockMinWidthPx ?? 320}
                             maxWidthPx={props.detailsDockMaxWidthPx ?? 900}
@@ -379,9 +383,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             // a hidden/parked one is not.
                             ...(layout.right === 'overlay'
                                 ? {
-                                    borderTopLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
-                                    borderBottomLeftRadius: PANE_TOP_CORNER_RADIUS_PX,
-                                    overflow: 'hidden' as const,
+                                    ...overlayPaneCorners,
                                     ...shadowLevelStyle(theme.colors.shadowLevels[6]),
                                 }
                                 : null),
@@ -399,6 +401,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                     >
                         <ResizableDockedPane
                             testID="multi-pane-right-overlay"
+                            contentStyle={layout.right === 'overlay' ? overlayPaneContentStyle : undefined}
                             widthPx={rightDockWidthPx}
                             minWidthPx={props.rightDockMinWidthPx ?? 260}
                             maxWidthPx={props.rightDockMaxWidthPx ?? 720}

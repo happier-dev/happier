@@ -5847,7 +5847,7 @@ describe('createOpenCodeServerRuntime', () => {
     expect(committedCalls[committedCalls.length - 1]?.body?.message).toBe('OK');
   });
 
-  it('streams reasoning deltas through transcript-vNext with a stable happierStreamKey', async () => {
+  it('groups consecutive reasoning messages through transcript-vNext with one segment identity', async () => {
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MS', '1000000');
     vi.stubEnv('HAPPIER_STREAM_CHECKPOINT_MIN_CHARS', '1000000');
     try {
@@ -5894,12 +5894,21 @@ describe('createOpenCodeServerRuntime', () => {
         },
       });
 
-      await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_1' });
+      await emitAssistantMessageUpdated(client, { messageId: 'msg_asst_2', completed: null });
+      client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: { id: 'reason_2', type: 'reasoning', sessionID: 'ses_1', messageID: 'msg_asst_2', text: 'C' } },
+        },
+      });
+      await emitTerminalAssistantAndIdle(client, { messageId: 'msg_asst_2' });
 
       await expect(promptPromise).resolves.toBeUndefined();
 
       const committedCalls = getCommittedTranscriptRows(session, { type: 'thinking' });
-      expect(committedCalls.map((c) => c.body?.text)).toEqual(['A', 'AB']);
+      expect(committedCalls.at(-1)?.body?.text).toBe('AB\n\nC');
+      expect(new Set(committedCalls.map((c) => c.localId)).size).toBe(1);
       expect(committedCalls[0]?.localId).toBeTruthy();
       expect(committedCalls[1]?.localId).toBe(committedCalls[0]?.localId);
       expect(committedCalls[0]?.meta?.happierStreamKey).toBeTruthy();
@@ -5956,6 +5965,17 @@ describe('createOpenCodeServerRuntime', () => {
       await client.__emit({
         directory: '/tmp',
         payload: {
+          type: 'message.part.delta',
+          properties: {
+            sessionID: 'ses_1', messageID: 'msg_delayed_thought', partID: 'part_reasoning',
+            partType: 'reasoning', delta: 'Before the tool',
+          },
+        },
+      });
+
+      await client.__emit({
+        directory: '/tmp',
+        payload: {
           type: 'message.part.created',
           properties: {
             part: {
@@ -5989,6 +6009,22 @@ describe('createOpenCodeServerRuntime', () => {
       );
       expect(toolCallOrder).toBeGreaterThan(committedCalls[1]?.callOrder ?? 0);
 
+      expect(getCommittedTranscriptRows(session, { type: 'thinking' })).toEqual([]);
+      await emitAssistantMessageUpdated(client, { messageId: 'msg_delayed_thought', completed: null });
+      await client.__emit({
+        directory: '/tmp',
+        payload: {
+          type: 'message.part.updated',
+          properties: { part: {
+            id: 'part_reasoning', type: 'reasoning', sessionID: 'ses_1',
+            messageID: 'msg_delayed_thought', text: 'Before the tool',
+          } },
+        },
+      });
+      await flushTranscriptCommitMicrotasks();
+      const thoughtRows = getCommittedTranscriptRows(session, { type: 'thinking' });
+      expect(thoughtRows.at(-1)?.body?.text).toBe('Before the tool');
+      expect(new Set(thoughtRows.map((row) => row.localId)).size).toBe(1);
       await emitTerminalAssistantAndIdle(client, { messageId: 'msg_final_tool_boundary' });
     } finally {
       await runtime?.cancel().catch(() => {});
@@ -10201,6 +10237,42 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionMessagesList).toHaveBeenCalledWith({ sessionId: 'ses_remote' });
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
     expect(session.sendUserTextMessageCommitted).not.toHaveBeenCalled();
+  });
+
+  it.each(['success', 'failed'] as const)('publishes root-session V2 tools while running and after %s', async (outcome) => {
+    const { client, session, runtime, promptPromise } = await beginOpenCodePromptForTest();
+    const identity = { sessionID: 'ses_1', assistantMessageID: 'native-tool-message', id: 'native-root-tool' };
+    const input = outcome === 'success' ? { path: '/tmp/example.txt' } : {};
+    const emitNative = (type: string, data: Record<string, unknown>) => {
+      const normalized = normalizeOpenCodeV2Event(type, { ...identity, ...data });
+      return client.__emit({ directory: '/tmp', payload: normalized });
+    };
+    const calls = () => sentAgentMessagesOfType(session, 'tool-call');
+    const results = () => sentAgentMessagesOfType(session, 'tool-result');
+
+    try {
+      await emitNative('session.tool.input.started', { name: 'read' });
+      expect(calls()).toHaveLength(0);
+      const call = { input, executed: outcome === 'success' };
+      await Promise.all([emitNative('session.tool.called', call), emitNative('session.tool.called', call)]);
+      await expect.poll(calls).toMatchObject([{ callId: identity.id, name: 'read', input }]);
+      expect(results()).toHaveLength(0);
+
+      const terminal = outcome === 'success'
+        ? { content: [{ type: 'text', text: 'native file contents' }], executed: true }
+        : { error: { type: 'tool.execution', message: 'native tool failure' }, executed: false };
+      await emitNative(`session.tool.${outcome}`, terminal);
+      await emitNative(`session.tool.${outcome}`, terminal);
+      await emitTerminalAssistantAndIdle(client, { messageId: 'native-tool-turn-end' });
+      await promptPromise;
+
+      expect(calls()).toHaveLength(1);
+      expect(results()).toMatchObject([outcome === 'success'
+        ? { callId: identity.id, output: { output: 'native file contents' } }
+        : { callId: identity.id, isError: true, output: { status: 'failed', error: 'native tool failure' } }]);
+    } finally {
+      await runtime.reset();
+    }
   });
 
   it.each([false, true])('routes released V2 subagent tool progress until child termination (terminal before acknowledgement: %s)', async (terminalBeforeAcknowledgement) => {

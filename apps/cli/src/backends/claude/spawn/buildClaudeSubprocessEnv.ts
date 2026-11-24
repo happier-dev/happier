@@ -8,6 +8,7 @@ import {
 } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
 import { isValidEnvVarKey } from '@/terminal/runtime/envVarSanitization';
 import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
+import { DBUS_SESSION_BUS_ADDRESS_ENV_KEY } from '@/utils/env/linuxUserSessionEnv';
 import { isWindowsSystemEnvKey } from '@/utils/env/windowsSystemEnv';
 
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
@@ -47,6 +48,8 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
     'TEMP',
     'TMP',
     'SSH_AUTH_SOCK',
+    DBUS_SESSION_BUS_ADDRESS_ENV_KEY,
+    'PLAYWRIGHT_BROWSERS_PATH',
     'HTTP_PROXY',
     'HTTPS_PROXY',
     'NO_PROXY',
@@ -74,19 +77,13 @@ export function buildClaudeSubprocessEnv(params?: Readonly<{
   ];
 
   const out: Record<string, string> = Object.create(null);
-  const denyExact = new Set<string>([
-    'CLAUDE_CODE_OAUTH_REFRESH_TOKEN',
-    'CLAUDE_CODE_OAUTH_SCOPES',
-  ]);
-
   for (const [key, value] of Object.entries(baseEnv)) {
     const windowsSystemKey = isWindowsSystemEnvKey(key);
     // Windows defines system names such as ProgramFiles(x86), which are not
     // valid POSIX shell assignment names. Do not widen explicit env validation.
     if (!windowsSystemKey && !isValidEnvVarKey(key)) continue;
-    if (denyExact.has(key)) continue;
     if (typeof value !== 'string') continue;
-    if (windowsSystemKey || explicitSpawnEnvKeys.has(key) || isAllowedExactEnvKey(key, allowExact) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
+    if (windowsSystemKey || isAllowedExactEnvKey(key, explicitSpawnEnvKeys) || isAllowedExactEnvKey(key, allowExact) || allowPrefixes.some((prefix) => key.startsWith(prefix))) {
       out[key] = value;
     }
   }

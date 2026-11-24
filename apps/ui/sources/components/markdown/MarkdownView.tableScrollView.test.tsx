@@ -151,6 +151,40 @@ describe('MarkdownView (tables)', () => {
         ].join('\n'));
     }, 60_000);
 
+    it('renders inline formatting and opens external links the transcript handler declines', async () => {
+        mockPlatform('web');
+        const openWindow = vi.fn();
+        vi.stubGlobal('open', openWindow);
+        try {
+            const { MarkdownView } = await import('./MarkdownView');
+            const onLinkPress = vi.fn(() => false);
+            const markdown = '| **Item** | Link |\n| --- | --- |\n| **Website** | [Happier](https://happier.dev) |';
+            const screen = await renderScreen(<MarkdownView markdown={markdown} profile="transcript" onLinkPress={onLinkPress} />);
+            const texts = screen.findAllByType('Text');
+            const website = texts.find((node) => node.props.children === 'Website');
+            const link = texts.find((node) => node.props.children === 'Happier');
+
+            expect(website).toBeDefined();
+            expect(flattenTestStyle(website?.props.style)).toMatchObject({ fontFamily: 'Inter-SemiBold' });
+            expect(texts.some((node) => node.props.children === 'Item')).toBe(true);
+            expect(link?.props.accessibilityRole).toBe('link');
+            await pressTestInstanceAsync(link, 'external table link');
+            expect(onLinkPress).toHaveBeenCalledWith('https://happier.dev');
+            expect(openWindow).toHaveBeenCalledWith('https://happier.dev', '_blank', 'noopener,noreferrer');
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    }, 60_000);
+
+    it('keeps unmatched inline delimiters visible inside a finished table cell', async () => {
+        mockPlatform('web');
+        const { MarkdownView } = await import('./MarkdownView');
+        const screen = await renderScreen(<MarkdownView markdown={'| Expression |\n| --- |\n| 2 * 4 |\n| 2 * 4 * 6 |\n| Use one ` delimiter |'} />);
+
+        const visibleText = screen.findAllByType('Text').map((node) => node.props.children);
+        expect(visibleText).toEqual(expect.arrayContaining(['2 * 4', '2 * 4 * 6', 'Use one ` delimiter']));
+    }, 60_000);
+
     it('renders math table cells through the enriched renderer without losing horizontal scrolling', async () => {
         mockPlatform('android');
         const { MarkdownView } = await import('./MarkdownView');
@@ -222,15 +256,15 @@ describe('MarkdownView (tables)', () => {
         const idCell = cellStyle('22');
         const notesHeader = cellStyle('Notes');
         const notesCell = cellStyle(prose);
-        expect(idCell.flexBasis).toBe(idHeader.flexBasis);
+        expect(idCell.width).toBe(idHeader.width);
         expect(idCell.minWidth).toBe(idHeader.minWidth);
-        expect(notesCell.flexBasis).toBe(notesHeader.flexBasis);
+        expect(notesCell.width).toBe(notesHeader.width);
         expect(notesCell.minWidth).toBe(notesHeader.minWidth);
         // Short column never shrinks; prose column shrinks down to its floor.
         expect(idCell.flexShrink).toBe(0);
-        expect(idCell.minWidth).toBe(idCell.flexBasis);
+        expect(idCell.minWidth).toBe(idCell.width);
         expect(notesCell.flexShrink as number).toBeGreaterThan(0);
-        expect(notesCell.minWidth as number).toBeLessThan(notesCell.flexBasis as number);
+        expect(notesCell.minWidth as number).toBeLessThan(notesCell.width as number);
 
         const scrollView = screen.findAllByType('ScrollView' as any)[0]!;
         const contentStyle = flattenTestStyle(scrollView.props.contentContainerStyle);
@@ -239,7 +273,7 @@ describe('MarkdownView (tables)', () => {
 
         const frameStyle = flattenTestStyle(findNearestHostParent(findNearestHostParent(scrollView))?.props?.style);
         expect(frameStyle.maxWidth).toBe('100%');
-        expect(frameStyle.width as number).toBeGreaterThanOrEqual((idCell.flexBasis as number) + (notesCell.flexBasis as number));
+        expect(frameStyle.width as number).toBeGreaterThanOrEqual((idCell.width as number) + (notesCell.width as number));
     }, 60_000);
 
     it('copies the table as CSV, quoting cells that contain commas, quotes or line breaks', async () => {

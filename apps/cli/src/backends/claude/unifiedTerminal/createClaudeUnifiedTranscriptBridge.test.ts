@@ -267,7 +267,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     const bridge = createClaudeUnifiedTranscriptBridge({
       sessionId, transcriptPath, workingDirectory: dir, subscribeClaudeSessionHooks: replay.subscribe,
       onStartupReplayComplete: () => replay.finishStartup(),
-      proveAcceptedMainTranscript: value => {
+      onMainTranscriptForPromptAcceptance: value => {
         const match = discovery.findMatchingTranscript([value]);
         if (!match) return false;
         confirmation = arbiter.confirmPromptAcceptedByProviderIf(batch => (
@@ -694,7 +694,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         await outputCommit.promise;
         committed.push(String(message.uuid));
       },
-      proveAcceptedMainTranscript: (value) => {
+      onMainTranscriptForPromptAcceptance: (value) => {
         const match = discovery.findMatchingTranscript([value]);
         if (!match || !discovery.consumeAcceptedPromptMatch(match)) return false;
         committed.push('steer-local-id');
@@ -825,7 +825,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     const acceptedMatches: unknown[] = [];
     const onRawTranscriptValue = vi.fn();
     const onSessionFound = vi.fn();
-    const proveAcceptedMainTranscript = vi.fn((value: unknown) => {
+    const onMainTranscriptForPromptAcceptance = vi.fn((value: unknown) => {
       const match = acceptedPromptDiscovery.findMatchingTranscript([value]);
       if (!match) return false;
       acceptedMatches.push(match);
@@ -853,7 +853,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         await precedingOutputCommit.promise;
         committed.push(String(message.uuid));
       },
-      proveAcceptedMainTranscript,
+      onMainTranscriptForPromptAcceptance,
       loadCommittedClaudeJsonlMessageBaseline: async () => {
         baselineStarted.resolve();
         await baselineBarrier;
@@ -890,7 +890,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
           timestamp: enqueuedAt,
         },
       });
-      expect(proveAcceptedMainTranscript).not.toHaveBeenCalled();
+      expect(onMainTranscriptForPromptAcceptance).not.toHaveBeenCalled();
 
       await appendRawJsonl(transcriptPath, {
         parentUuid: 'sidechain-parent',
@@ -952,7 +952,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       await startPromise;
       await waitUntil(() => acceptedMatches.length === 1);
       expect(committed).toEqual(['startup-output', 'steer']);
-      expect(proveAcceptedMainTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      expect(onMainTranscriptForPromptAcceptance).toHaveBeenCalledWith(expect.objectContaining({
         type: 'attachment',
         uuid: 'known-resume-queued-command',
       }));
@@ -962,7 +962,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       })]);
       expect(onSessionFound).not.toHaveBeenCalled();
 
-      const proofCallsBeforeRotation = proveAcceptedMainTranscript.mock.calls.length;
+      const proofCallsBeforeRotation = onMainTranscriptForPromptAcceptance.mock.calls.length;
       subscribedHook?.({
         hook_event_name: 'SessionStart',
         source: 'compact',
@@ -987,7 +987,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         },
       });
       await waitMs(100);
-      expect(proveAcceptedMainTranscript).toHaveBeenCalledTimes(proofCallsBeforeRotation);
+      expect(onMainTranscriptForPromptAcceptance).toHaveBeenCalledTimes(proofCallsBeforeRotation);
     } finally {
       resolveBaseline?.();
       precedingOutputCommit.resolve();
@@ -1316,7 +1316,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         transcript_path: sidechainTranscriptPath,
         agent_id: 'subagent-1',
       });
-      expect(onSessionFound).toHaveBeenCalledTimes(1);
+      expect(onSessionFound).toHaveBeenCalledTimes(2);
 
       const movedHook: SessionHookData = {
         hook_event_name: 'UserPromptSubmit',
@@ -1324,8 +1324,13 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         transcript_path: movedTranscriptPath,
       };
       hook(movedHook);
-      expect(onSessionFound).toHaveBeenCalledTimes(2);
-      expect(onSessionFound).toHaveBeenLastCalledWith('sess_main', movedHook);
+      expect(onSessionFound).toHaveBeenCalledTimes(3);
+      expect(onSessionFound).toHaveBeenLastCalledWith('sess_main', {
+        hook_event_name: 'SessionStart',
+        source: 'startup',
+        session_id: 'sess_main',
+        transcript_path: movedTranscriptPath,
+      });
 
       await appendJsonl(movedTranscriptPath, {
         type: 'assistant',
@@ -1334,6 +1339,11 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         message: { role: 'assistant', content: [{ type: 'text', text: 'after move' }] },
       } as RawJSONLines);
       await waitUntil(() => onMessage.mock.calls.some(([message]) => message?.uuid === 'assistant_after_move'));
+      expect(onSessionFound).toHaveBeenCalledTimes(4);
+      expect(onSessionFound).toHaveBeenLastCalledWith('sess_main', expect.objectContaining({
+        hook_event_name: 'SessionStart',
+        transcript_path: movedTranscriptPath,
+      }));
 
       await appendJsonl(originalTranscriptPath, {
         type: 'assistant',
@@ -1645,7 +1655,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     }
   });
 
-  it('replays an early SessionStart through the identity owner, then re-reports once on exact proof', async () => {
+  it('re-reports an early SessionStart when the first native record echoes a prompt already accepted by the hook', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-claude-unified-transcript-proof-'));
     tempDirs.push(dir);
     const workspaceDir = join(dir, 'workspace');
@@ -1658,7 +1668,8 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     const acceptedPromptDiscovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
       acceptedPromptWindowMs: 5_000,
     });
-    acceptedPromptDiscovery.recordAcceptedPrompt({ message: exactPrompt });
+    const deliveryIdentity = { localIds: ['first-happier-message'] };
+    acceptedPromptDiscovery.recordAcceptedPrompt({ message: exactPrompt, deliveryIdentity });
 
     let upstreamHook: ((data: SessionHookData) => void) | undefined;
     const replayableHooks = createReplayableHookSubscription((callback) => {
@@ -1675,7 +1686,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       callback(data);
     };
     const onSessionFound = vi.fn();
-    const proveAcceptedMainTranscript = vi.fn((value: unknown) => (
+    const onMainTranscriptForPromptAcceptance = vi.fn((value: unknown) => (
       acceptedPromptDiscovery.findMatchingTranscript([value]) !== null
     ));
     const bridge = createClaudeUnifiedTranscriptBridge({
@@ -1685,7 +1696,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       claudeConfigDir,
       onMessage: vi.fn(),
       onSessionFound,
-      proveAcceptedMainTranscript,
+      onMainTranscriptForPromptAcceptance,
       subscribeClaudeSessionHooks: replayableHooks.subscribe,
       transcriptMissingWarningMs: 0,
     });
@@ -1703,12 +1714,6 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       // Global hook ingress publishes before the bridge subscribes; replay preserves the event for
       // this single identity owner, which validates and reports it exactly once.
       emitLifecycleHook(originalSessionStart);
-      await appendRawJsonl(transcriptPath, {
-        type: 'mode',
-        mode: 'normal',
-        sessionId,
-      });
-
       await bridge.start({ abortSignal: new AbortController().signal });
       expect(onSessionFound).toHaveBeenCalledTimes(1);
 
@@ -1733,17 +1738,16 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       });
       expect(onSessionFound).toHaveBeenCalledTimes(1);
 
-      await appendJsonl(transcriptPath, {
-        type: 'assistant',
-        uuid: 'unrelated_row_before_accepted_prompt',
-        timestamp: new Date().toISOString(),
+      expect(acceptedPromptDiscovery.consumeAcceptedPromptByBatch({
+        message: exactPrompt,
+        userMessageLocalIds: deliveryIdentity.localIds,
+      })).toBe(true);
+      expect(acceptedPromptDiscovery.recordAcceptedPromptHookEcho({
+        deliveryIdentity,
+        promptId: 'accepted-main-prompt-id',
         sessionId,
-        message: { role: 'assistant', content: [{ type: 'text', text: 'ready' }] },
-      } as RawJSONLines);
-      await waitMs(100);
-      expect(onSessionFound).toHaveBeenCalledTimes(1);
-
-      await appendJsonl(transcriptPath, {
+      })).toBe(true);
+      const firstNativeRow = {
         type: 'user',
         uuid: 'accepted_main_prompt',
         promptId: 'accepted-main-prompt-id',
@@ -1751,8 +1755,11 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         sessionId,
         isSidechain: false,
         message: { role: 'user', content: exactPrompt },
-      } as RawJSONLines);
-      await waitUntil(() => onSessionFound.mock.calls.length === 2);
+      } satisfies RawJSONLines;
+      expect(acceptedPromptDiscovery.findMatchingTranscript([firstNativeRow])).toBeNull();
+      await appendJsonl(transcriptPath, firstNativeRow);
+      await waitUntil(() => onMainTranscriptForPromptAcceptance.mock.calls.length > 0);
+      expect(onSessionFound).toHaveBeenCalledTimes(2);
       expect(onSessionFound).toHaveBeenLastCalledWith(sessionId, expect.objectContaining({
         hook_event_name: 'SessionStart',
         session_id: sessionId,
@@ -1769,8 +1776,8 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
         isSidechain: false,
         message: { role: 'user', content: exactPrompt },
       } as RawJSONLines);
-      const proofCallsBeforeRepeatedRow = proveAcceptedMainTranscript.mock.calls.length;
-      await waitUntil(() => proveAcceptedMainTranscript.mock.calls.length > proofCallsBeforeRepeatedRow);
+      const proofCallsBeforeRepeatedRow = onMainTranscriptForPromptAcceptance.mock.calls.length;
+      await waitUntil(() => onMainTranscriptForPromptAcceptance.mock.calls.length > proofCallsBeforeRepeatedRow);
       expect(onSessionFound).toHaveBeenCalledTimes(2);
 
       const compactSessionId = '13131313-1313-4131-8131-131313131313';
@@ -1824,7 +1831,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       classifyDiscoveredSession: ({ messages }) => (
         discovery.findMatchingTranscript(messages) ? 'main' : null
       ),
-      proveAcceptedMainTranscript: (value) => {
+      onMainTranscriptForPromptAcceptance: (value) => {
         const match = discovery.findMatchingTranscript([value]);
         if (!match || !discovery.consumeAcceptedPromptMatch(match)) return false;
         committed.push('hookless-pending');
@@ -2488,7 +2495,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
     });
     const onRawTranscriptValue = vi.fn();
     const acceptedMatches: unknown[] = [];
-    const proveAcceptedMainTranscript = vi.fn((value: unknown) => {
+    const onMainTranscriptForPromptAcceptance = vi.fn((value: unknown) => {
       const match = discovery.findMatchingTranscript([value]);
       if (!match) return false;
       acceptedMatches.push(match);
@@ -2500,7 +2507,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       transcriptPath,
       workingDirectory: dir,
       onRawTranscriptValue,
-      proveAcceptedMainTranscript,
+      onMainTranscriptForPromptAcceptance,
       loadCommittedClaudeJsonlMessageBaseline: async () => ({
         keys: new Set<string>(),
         complete: true,
@@ -2527,7 +2534,7 @@ describe('createClaudeUnifiedTranscriptBridge', () => {
       });
       await waitUntil(() => onRawTranscriptValue.mock.calls.length === historicalRows.length);
 
-      expect(proveAcceptedMainTranscript).not.toHaveBeenCalled();
+      expect(onMainTranscriptForPromptAcceptance).not.toHaveBeenCalled();
       expect(acceptedMatches).toHaveLength(0);
 
       for (const row of [

@@ -537,9 +537,7 @@ function emitHookEvent(hookEventName, payload = {}) {
 }
 
 void emitHookEvent('SessionStart', {
-    session_id: sessionId,
-    // Match the real Claude transcript location expected by the CLI handoff export path.
-    transcript_path: transcriptPath,
+  source: resumeSessionId ? 'resume' : 'startup',
 });
 
 async function runSdkStreamUntilEof() {

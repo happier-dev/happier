@@ -7,8 +7,23 @@ const mocks = vi.hoisted(() => {
     return {
         serverFetch: vi.fn(),
         runtimeFetchWithServerReachability: vi.fn(),
+        android: false,
+        notificationCategoriesModule: null as { androidActionPresentationV1?: boolean } | null,
     };
 });
+
+vi.mock('react-native', async (importOriginal) => {
+    const native = await importOriginal<typeof import('react-native')>();
+    return {
+        ...native,
+        Platform: { ...native.Platform, get OS() { return mocks.android ? 'android' : 'ios'; } },
+    };
+});
+
+vi.mock('expo-modules-core', async (importOriginal) => ({
+    ...await importOriginal<typeof import('expo-modules-core')>(),
+    requireOptionalNativeModule: (name: string) => name === 'ExpoNotificationCategoriesModule' ? mocks.notificationCategoriesModule : null,
+}));
 
 vi.mock('@/sync/http/client', () => ({
     serverFetch: mocks.serverFetch,
@@ -38,6 +53,26 @@ describe('apiPush', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+        mocks.android = false;
+        mocks.notificationCategoriesModule = null;
+    });
+
+    it('advertises action presentation only when the Android binary actually supports it', async () => {
+        const { registerPushToken } = await import('./apiPush');
+        const token = 'ExponentPushToken[android]';
+        mocks.serverFetch.mockImplementation(async () => jsonResponse({ success: true }));
+        mocks.android = true;
+        await registerPushToken(credentials, token, { retry: 'none' });
+        mocks.notificationCategoriesModule = { androidActionPresentationV1: true };
+        await registerPushToken(credentials, token, { retry: 'none' });
+        mocks.android = false;
+        await registerPushToken(credentials, token, { retry: 'none' });
+
+        expect(mocks.serverFetch.mock.calls.map(([, init]) => JSON.parse(init.body))).toEqual([
+            { token },
+            { token, androidActionPresentationV1: true },
+            { token },
+        ]);
     });
 
     it('fetchPushTokens parses a successful response', async () => {

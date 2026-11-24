@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
 
 import { createClaudePromptSubmitVerificationPolicy } from './claudePromptSubmitVerification';
+import { scrolledCjkPromptText, scrolledCjkScreenText } from './tuiControls/__fixtures__/scrolledCjkComposer';
 
 describe('createClaudePromptSubmitVerificationPolicy', () => {
   it('hands a positively foreign composer back without submitting it, while ambiguous capture still waits', async () => {
@@ -153,6 +154,63 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       promptText,
       screenText: screenText.replace('remaining', 'unrelated'),
     })).toThrow();
+  });
+
+  it('submits a scrolled composer whose prompt marker is above the viewport', async () => {
+    // 2026-11-19 live incident: detached 80x24 tmux. The provider
+    // scrolls the composer itself and replaces its prompt marker with this border.
+    const promptText = 'Review the whole implementation.\n\nExplain whether every fix addresses the cause.\n\nKeep the existing behavior and report any remaining uncertainty.';
+    const screenText = [
+      'Earlier assistant output.',
+      '─── ↑ 2 more ───────────────────────────────────────────────────────────────────',
+      '  Explain whether every fix addresses the cause.',
+      '',
+      '  Keep the existing behavior and report any remaining uncertainty.',
+      '────────────────────────────────────────────────────────────────────────────────',
+      '  Opus 5.5',
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const submitEnter = vi.fn(async () => 'success' as const);
+
+    expect(await runTerminalPromptSubmission({
+      promptText,
+      verifyStagedBeforeSubmit: async () => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter,
+      verifyAfterSubmit: async () => false,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+      postSubmitSettleMs: 0,
+    })).toEqual({ success: true });
+    expect(submitEnter).toHaveBeenCalledOnce();
+    expect(policy.isPromptStillPendingAfterSubmit({ promptText, screenText })).toBe(true);
+    expect(() => policy.isPromptStagedBeforeSubmit({
+      promptText,
+      screenText: screenText.replace('remaining uncertainty', 'a different user draft'),
+    })).toThrow();
+  });
+
+  it('submits the scrolled CJK prompt once and leaves an edited draft unsent', async () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const submitEnter = vi.fn(async () => 'success' as const);
+    const submit = (screenText: string) => runTerminalPromptSubmission({
+      promptText: scrolledCjkPromptText,
+      verifyStagedBeforeSubmit: async ({ promptText }) => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+      submitEnter,
+      verifyAfterSubmit: async () => false,
+      remainingTimeoutMs: () => 0,
+      wait: async () => {},
+      postSubmitSettleMs: 0,
+    });
+
+    expect(await submit(scrolledCjkScreenText)).toEqual({ success: true });
+    expect(await submit(scrolledCjkScreenText.replace('滚动的时候还', '滚动的时候也'))).toMatchObject({
+      success: false,
+      reason: 'verification_failed',
+      phase: 'after_write_before_enter',
+      submitMayHaveReachedPane: false,
+    });
+    expect(submitEnter).toHaveBeenCalledOnce();
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {

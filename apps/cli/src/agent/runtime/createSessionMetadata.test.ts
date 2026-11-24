@@ -9,6 +9,17 @@ const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
     'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
 
 describe('createSessionMetadata', () => {
+    it('records Direct storage before the provider supplies a transcript or a resume identity', () => {
+        const options = { flavor: 'claude' as const, machineId: 'machine-1' };
+        const { metadata } = createSessionMetadata({ ...options, transcriptStorage: 'direct' });
+
+        expect(metadata).toHaveProperty('directTranscriptPendingV1', true);
+        expect(metadata).not.toHaveProperty('directSessionV1');
+        expect(metadata).not.toHaveProperty('claudeSessionId');
+        expect(createSessionMetadata({ ...options, transcriptStorage: 'persisted' }).metadata)
+            .not.toHaveProperty('directTranscriptPendingV1');
+    });
+
     it('captures only the non-secret native account directories for later resume', () => {
         vi.stubEnv('CLAUDE_CONFIG_DIR', '/accounts/ambient');
         try {

@@ -1,4 +1,6 @@
 import { z } from "zod";
+
+import packageJson from "../../../../../package.json";
 import { type Fastify } from "../../types";
 import {
     ClientVersionCheckRequestV1Schema,
@@ -17,11 +19,11 @@ const LegacyClientVersionCheckResponseSchema = z.object({
 }).strict();
 
 /**
- * Registers the client version endpoints: a `GET` reachability probe and a
+ * Registers the client version endpoints: a `GET` server version and reachability probe and a
  * `POST` upgrade check accepting both the v1 protocol body and the legacy
  * `{ platform, version, app_id }` shape still sent by deployed native builds.
- * This endpoint reports distribution update state only. Protocol capabilities
- * are negotiated independently through `/v1/features`.
+ * The POST checks distribution update state. Clients negotiate protocol
+ * capabilities through `/v1/features`.
  */
 export function versionRoutes(app: Fastify) {
     app.get('/v1/version', {
@@ -29,6 +31,7 @@ export function versionRoutes(app: Fastify) {
             response: {
                 200: z.object({
                     ok: z.literal(true),
+                    version: z.string(),
                     source_sha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
                 }),
             },
@@ -37,6 +40,7 @@ export function versionRoutes(app: Fastify) {
         const sourceSha = String(process.env.HAPPIER_RELEASE_SOURCE_SHA ?? '').trim();
         return {
             ok: true as const,
+            version: packageJson.version,
             ...(/^[a-f0-9]{40}$/.test(sourceSha) ? { source_sha: sourceSha } : {}),
         };
     });

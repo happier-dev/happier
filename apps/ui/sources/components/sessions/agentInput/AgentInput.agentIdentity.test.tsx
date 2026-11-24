@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { AgentInputChipPickerOption } from './components/AgentInputChipPickerTypes';
 import { renderScreen } from '@/dev/testkit';
 import { installAgentInputAssetLoader, installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 
@@ -19,8 +20,10 @@ const codexMetadata = {
     agentRuntimeDescriptorV1: { v: 1, providerId: 'codex', provider: { backendMode: 'mcp' } },
 } as const;
 
-async function renderComposer(overrides: Partial<React.ComponentProps<typeof import('./AgentInput').AgentInput>> = {}) {
-    const { AgentInput } = await import('./AgentInput');
+// Load the composer before test timing; the first import traverses the full UI graph on this shared host.
+const { AgentInput } = await import('./AgentInput');
+
+async function renderComposer(overrides: Partial<React.ComponentProps<typeof AgentInput>> = {}) {
     return renderScreen(<AgentInput
         value=""
         onSend={() => {}}
@@ -64,6 +67,26 @@ describe('AgentInput agent identity', () => {
 
     it('retains the selected new-session Agent without metadata', async () => {
         expect(readEngineAgent(await renderComposer({ metadata: null }))).toBe('codex');
+    });
+
+    it.each([['codex', 'claude'], ['claude', 'codex']] as const)('keeps %s distinct after arming %s', async (source, target) => {
+        let rows: readonly AgentInputChipPickerOption[] = [];
+        const composeAgentPickerOptions = (current: readonly AgentInputChipPickerOption[]) => {
+            rows = current;
+            return [...current, { id: target, label: target, renderDetailContent: () => null }];
+        };
+        await renderComposer({
+            agentType: source,
+            agentLabel: target,
+            metadata: { path: '/repo', host: 'test.local', flavor: source },
+            armedContinuationTarget: { agentId: target, label: target },
+            composeAgentPickerOptions,
+        });
+        expect(rows[0]?.id).toBe(`engine:${source}`);
+        const icon = rows[0]?.icon;
+        if (!React.isValidElement<{ agentId: string }>(icon)) throw new Error('Expected a provider icon');
+        expect(icon.props.agentId).toBe(source);
+        expect(rows[0]?.label).not.toBe(target);
     });
 
     it('shows the armed continuation Agent while retaining the running Session', async () => {

@@ -99,7 +99,7 @@ export async function toggleReadAloud(params: Readonly<{
         };
       },
       onSpeaking: () => {},
-      takeOverReadAloud: false,
+      purpose: 'read-aloud',
     });
   } catch (error) {
     console.warn('[voice/readAloud] microphone cancellation failed', error instanceof Error ? error.message : error);

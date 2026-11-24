@@ -51,6 +51,14 @@ Auth flows:
 - `GET /v2/sessions/active?limit=...`
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
+  In 0.2 development, a dated Direct Session link sets initial activity from
+  the source update time, capped at the server’s current time. If no source
+  update time is supplied, activity starts at the current time. Creation uses
+  the earlier of the source creation time and initial activity, or initial
+  activity if the source creation time is missing. A dated replay returns the
+  existing Session unchanged. An undated load records current activity for an
+  inactive or archived Session and unarchives it if needed. An undated load of
+  an active, unarchived Session returns it unchanged.
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
 
@@ -162,6 +170,7 @@ and [encryption](encryption.md) for the owning wire and privacy boundaries.
 - `GET /v1/feed`
 
 ### Version and voice
+- `GET /v1/version` returns `ok: true`, the server package `version`, and optional `source_sha` when present in release metadata.
 - `POST /v1/version`
 - `POST /v1/voice/token`
 

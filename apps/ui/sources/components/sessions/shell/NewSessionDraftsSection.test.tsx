@@ -11,6 +11,7 @@ import {
     NewSessionDraftsSectionView,
     buildNewSessionDraftRowPresentation,
     deleteNewSessionDraftAfterConfirmation,
+    resolveNewSessionDraftLaunchState,
 } from './NewSessionDraftsSection';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -60,6 +61,11 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/icons/Icon', () => ({
     Icon: (props: any) => React.createElement('Icon', props),
     ICON_SIZE: { sm: 14, md: 16, lg: 18, xl: 20 },
+}));
+
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
+    ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
+    iconMatchedSpinnerSize: (size: number) => size,
 }));
 
 vi.mock('@/agents/registry/AgentIcon', () => ({
@@ -123,6 +129,63 @@ describe('NewSessionDraftsSection', () => {
         }), {});
 
         expect(presentation.statusKey).toBeNull();
+    });
+
+    it('reports the launch the action-operation owner is actually running, ahead of routine sync status', () => {
+        const launching = buildNewSessionDraftRowPresentation(draft(), {
+            launchStateByDraftId: new Map([['00000000-0000-4000-8000-000000000001', 'launching' as const]]),
+        });
+
+        expect(launching.statusKey).toBe('sessionDrafts.status.starting');
+        expect(launching.statusTone).toBeNull();
+    });
+
+    it('reports a failed launch as a danger status that outranks every other draft status', () => {
+        const failed = buildNewSessionDraftRowPresentation(draft({ status: 'conflict' }), {
+            launchStateByDraftId: new Map([['00000000-0000-4000-8000-000000000001', 'failed' as const]]),
+        });
+
+        expect(failed.statusKey).toBe('sessionDrafts.status.startFailed');
+        expect(failed.statusTone).toBe('danger');
+    });
+
+    it('says nothing extra while a settled launch still holds draft custody', () => {
+        const settled = buildNewSessionDraftRowPresentation(draft({ status: 'clean' }), {
+            launchStateByDraftId: new Map([['00000000-0000-4000-8000-000000000001', 'settled' as const]]),
+        });
+
+        expect(settled.statusKey).toBeNull();
+    });
+
+    it('derives the draft launch state from the action-operation owner rather than local launch metadata', () => {
+        const operation = {
+            version: 1 as const,
+            operationId: 'op-1',
+            requestId: 'nonce-1',
+            revision: 1,
+            actionId: 'session.spawn_new',
+            state: 'running' as const,
+            scope: { accountId: 'account-a', machineId: 'machine-a' },
+            title: 'Start session',
+            createdAt: 1,
+            cancellation: 'unsupported' as const,
+        };
+        const identity = {
+            operation,
+            custody: {} as any,
+            launchCurrentness: null,
+        };
+
+        expect(resolveNewSessionDraftLaunchState(null)).toBeNull();
+        expect(resolveNewSessionDraftLaunchState(identity)).toBe('launching');
+        expect(resolveNewSessionDraftLaunchState({
+            ...identity,
+            operation: { ...operation, state: 'failed' as const, error: { errorCode: 'E', error: 'boom' } },
+        })).toBe('failed');
+        expect(resolveNewSessionDraftLaunchState({
+            ...identity,
+            operation: { ...operation, state: 'succeeded' as const },
+        })).toBe('settled');
     });
 
     it('surfaces current machine and local attachment problems without exposing their raw state', () => {
@@ -288,7 +351,7 @@ describe('NewSessionDraftsSection', () => {
                 drafts={[projection]}
                 onContinue={vi.fn()}
                 onDelete={vi.fn(async () => false)}
-                deleteDisabledDraftIds={new Set([projection.draftId])}
+                launchStateByDraftId={new Map([[projection.draftId, 'settled' as const]])}
             />,
         );
 
@@ -296,6 +359,45 @@ describe('NewSessionDraftsSection', () => {
             disabled: true,
             accessibilityState: { disabled: true },
         });
+        await screen.unmount();
+    });
+
+    it('shows the running launch as a spinner on its own draft row, in every density', async () => {
+        const projection = draft();
+        const screen = await renderScreen(
+            <NewSessionDraftsSectionView
+                drafts={[projection]}
+                density="minimal"
+                onContinue={vi.fn()}
+                onDelete={vi.fn(async () => false)}
+                launchStateByDraftId={new Map([[projection.draftId, 'launching' as const]])}
+            />,
+        );
+
+        expect(screen.findByTestId(`session-draft-launching:new-session:${projection.draftId}`)).toBeTruthy();
+        expect(screen.findByTestId(`session-draft-delete:new-session:${projection.draftId}`)).toBeNull();
+        expect(screen.findByTestId(`session-draft-row:new-session:${projection.draftId}`)?.props.accessibilityLabel)
+            .toContain('sessionDrafts.status.starting');
+        await screen.unmount();
+    });
+
+    it('keeps a failed launch visible on its draft row even where the row has no status line', async () => {
+        const projection = draft();
+        const screen = await renderScreen(
+            <NewSessionDraftsSectionView
+                drafts={[projection]}
+                density="minimal"
+                onContinue={vi.fn()}
+                onDelete={vi.fn(async () => false)}
+                launchStateByDraftId={new Map([[projection.draftId, 'failed' as const]])}
+            />,
+        );
+
+        expect(screen.findByTestId(`session-draft-start-failed:new-session:${projection.draftId}`)).toBeTruthy();
+        expect(screen.findByTestId(`session-draft-launching:new-session:${projection.draftId}`)).toBeNull();
+        expect(screen.findByTestId(`session-draft-delete:new-session:${projection.draftId}`)).toBeNull();
+        expect(screen.findByTestId(`session-draft-row:new-session:${projection.draftId}`)?.props.accessibilityLabel)
+            .toContain('sessionDrafts.status.startFailed');
         await screen.unmount();
     });
 

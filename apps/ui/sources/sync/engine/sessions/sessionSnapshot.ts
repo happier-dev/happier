@@ -1,3 +1,4 @@
+import { getSessionListViewportDemandedIds } from '@/sync/domains/session/listing/sessionListViewportDemand';
 import {
     V2SessionListResponseSchema,
     isSessionEncryptionModeAllowedByClientRequirement,
@@ -17,12 +18,11 @@ import type { SessionListRenderableSession } from '@/sync/domains/session/listin
 import {
     buildSessionListRenderableFromSession,
     readRollbackEligibleTurnStarts,
-    type SessionListRenderableMetadata,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveSessionRuntimePresenceFields } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import { resolveSessionPresence } from '@/sync/domains/session/sessionLifecycleProjection';
 import type { SessionListCacheEntryV1 } from '@/sync/domains/state/warmCachePersistence';
-import { isSessionListCacheEntryMetadataUsable } from '@/sync/domains/state/warmCacheAdapters';
+import { readSessionListRenderableMetadataFromCacheEntry } from '@/sync/domains/state/warmCacheAdapters';
 import {
     createSessionDataKeyHydrationPlan,
     hydrateSessionDataKeys,
@@ -244,19 +244,7 @@ function buildRenderableFromRowAndCache(
         && currentRenderable.metadata != null;
     const currentAgentStateMatches = row.encryptionMode === 'plain'
         && currentRenderable?.agentStateVersion === row.agentStateVersion;
-    const metadataFromCache: SessionListRenderableMetadata | null = isSessionListCacheEntryMetadataUsable(cachedEntry)
-        ? {
-            name: cachedEntry.name,
-            summaryText: cachedEntry.summaryText ?? null,
-            path: cachedEntry.path,
-            homeDir: cachedEntry.homeDir ?? null,
-            host: cachedEntry.host ?? null,
-            machineId: cachedEntry.machineId ?? null,
-            flavor: cachedEntry.flavor ?? null,
-            directSessionV1: cachedEntry.directSessionV1 ?? null,
-            hiddenSystemSession: cachedEntry.hiddenSystemSession === true,
-        }
-        : null;
+    const metadataFromCache = readSessionListRenderableMetadataFromCacheEntry(cachedEntry);
     // A compact cache may predate canonical identity projection even at the same
     // metadata version. Prefer full metadata, which retains the runtime evidence.
     const useExistingSessionMetadata = existingMetadataMatches;
@@ -1632,6 +1620,7 @@ export async function fetchAndApplySessions(params: {
     if (shouldApplyRenderables) {
         const priorityHydrationSessionIds = new Set([
             ...normalizeSessionListHydrationSessionIds(params.priorityHydrationSessionIds),
+            ...getSessionListViewportDemandedIds(params.serverId),
         ]);
         for (const row of sessions) {
             if (isSessionListRowAttentionHydrationPriority(row)) {

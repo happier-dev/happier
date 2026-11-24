@@ -1,6 +1,7 @@
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import {
     readRollbackEligibleTurnStarts,
+    type SessionListRenderableMetadata,
     type SessionListRenderableSession,
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol';
@@ -109,15 +110,34 @@ function readRuntimeActivityProjectionFields(
     };
 }
 
-export function isSessionListCacheEntryMetadataUsable(entry: SessionListCacheEntryV1 | undefined): entry is SessionListCacheEntryV1 {
+function isSessionListCacheEntryMetadataUsable(entry: SessionListCacheEntryV1 | undefined): entry is SessionListCacheEntryV1 {
     if (!entry) return false;
     return hasNonEmptyString(entry.name)
         || hasNonEmptyString(entry.path)
         || hasNonEmptyString(entry.host)
         || hasNonEmptyString(entry.machineId)
         || hasNonEmptyString(entry.flavor)
+        || entry.directTranscriptPendingV1 === true
         || entry.directSessionV1 != null
         || entry.hiddenSystemSession === true;
+}
+
+export function readSessionListRenderableMetadataFromCacheEntry(
+    entry: SessionListCacheEntryV1 | undefined,
+): SessionListRenderableMetadata | null {
+    if (!isSessionListCacheEntryMetadataUsable(entry)) return null;
+    return {
+        name: entry.name,
+        summaryText: entry.summaryText ?? null,
+        path: entry.path,
+        homeDir: entry.homeDir ?? null,
+        host: entry.host ?? null,
+        machineId: entry.machineId ?? null,
+        flavor: entry.flavor ?? null,
+        directTranscriptPendingV1: entry.directTranscriptPendingV1,
+        directSessionV1: entry.directSessionV1 ?? null,
+        hiddenSystemSession: entry.hiddenSystemSession === true,
+    };
 }
 
 function areDirectSessionCacheEntriesEqual(
@@ -169,6 +189,7 @@ function areSessionListCacheEntriesEqual(
         && nextEntry.host === previousEntry.host
         && nextEntry.machineId === previousEntry.machineId
         && nextEntry.flavor === previousEntry.flavor
+        && nextEntry.directTranscriptPendingV1 === previousEntry.directTranscriptPendingV1
         && areDirectSessionCacheEntriesEqual(nextEntry.directSessionV1, previousEntry.directSessionV1)
         && nextEntry.hiddenSystemSession === previousEntry.hiddenSystemSession
         && nextEntry.hasPendingPermissionRequests === previousEntry.hasPendingPermissionRequests
@@ -206,7 +227,7 @@ function countOwnEntries(record: Readonly<Record<string, unknown>> | null | unde
 }
 
 export function buildSessionListRenderableFromCacheEntry(entry: SessionListCacheEntryV1): SessionListRenderableSession {
-    const metadataUsable = isSessionListCacheEntryMetadataUsable(entry);
+    const metadata = readSessionListRenderableMetadataFromCacheEntry(entry);
     return {
         id: entry.sessionId,
         seq: normalizeNonNegativeInteger(entry.seq) ?? 0,
@@ -223,17 +244,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         lastViewedSessionSeq: normalizeNonNegativeInteger(entry.lastViewedSessionSeq),
         metadataVersion: entry.metadataVersion,
         agentStateVersion: entry.agentStateVersion,
-        metadata: metadataUsable ? {
-            name: entry.name,
-            summaryText: entry.summaryText ?? null,
-            path: entry.path,
-            homeDir: entry.homeDir ?? null,
-            host: entry.host ?? null,
-            machineId: entry.machineId ?? null,
-            flavor: entry.flavor ?? null,
-            directSessionV1: entry.directSessionV1 ?? null,
-            hiddenSystemSession: entry.hiddenSystemSession === true,
-        } : null,
+        metadata,
         thinking: false,
         thinkingAt: 0,
         presence: resolveSessionPresence(entry),
@@ -260,7 +271,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         // Restoring the unread entry fact is what keeps the attention lane ordered
         // by a durable server fact instead of a per-boot, per-device one.
         unreadSince: entry.unreadSince ?? null,
-        metadataUnavailable: !metadataUsable,
+        metadataUnavailable: metadata === null,
     };
 }
 
@@ -339,6 +350,9 @@ export function buildSessionListCacheEntryFromRenderable(
         host: preserveMetadata ? previousEntry.host ?? null : session.metadata?.host ?? null,
         machineId: preserveMetadata ? previousEntry.machineId ?? null : session.metadata?.machineId ?? null,
         flavor: preserveMetadata ? previousEntry.flavor ?? null : session.metadata?.flavor ?? null,
+        directTranscriptPendingV1: preserveMetadata
+            ? previousEntry.directTranscriptPendingV1
+            : session.metadata?.directTranscriptPendingV1,
         directSessionV1: preserveMetadata ? previousEntry.directSessionV1 ?? null : session.metadata?.directSessionV1 ?? null,
         hiddenSystemSession: preserveMetadata
             ? previousEntry.hiddenSystemSession === true

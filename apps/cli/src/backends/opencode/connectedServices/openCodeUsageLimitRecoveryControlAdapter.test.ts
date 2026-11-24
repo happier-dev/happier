@@ -140,7 +140,10 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
     });
   });
 
-  it('anchors fallback timing to an existing intent instead of sliding from check-now time', async () => {
+  it.each([
+    { nowMs: 3_999, nextCheckAtMs: 4_000 },
+    { nowMs: 4_000, nextCheckAtMs: null },
+  ])('anchors fallback timing to the intent and waits for provider evidence at $nowMs', async ({ nowMs, nextCheckAtMs }) => {
     const intent: SessionUsageLimitRecoveryV1 = {
       v: 1,
       status: 'waiting',
@@ -155,7 +158,7 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
       selectedAuth: { kind: 'native' },
     };
     const adapter = createOpenCodeUsageLimitRecoveryControlAdapter({
-      nowMs: () => 5_000,
+      nowMs: () => nowMs,
       processEnv: { HAPPIER_OPENCODE_USAGE_LIMIT_RECOVERY_FALLBACK_BACKOFF_MS: '3000' },
     });
 
@@ -165,11 +168,12 @@ describe('openCodeUsageLimitRecoveryControlAdapter', () => {
       [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: intent,
     }))).resolves.toMatchObject({
       ok: true,
-      status: 'ready',
+      status: 'waiting',
       metadata: {
         sessionUsageLimitRecoveryV1: {
-          status: 'paused',
-          nextCheckAtMs: null,
+          status: 'waiting',
+          resetAtMs: null,
+          nextCheckAtMs,
         },
       },
     });

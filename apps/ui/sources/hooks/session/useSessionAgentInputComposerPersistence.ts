@@ -344,16 +344,16 @@ export function useSessionAgentInputComposerPersistence({
             };
         });
     }, [inputStateReadOptions, owner, scope]);
-    const setScopedStateWithInputState = React.useCallback(() => {
+    const setScopedStateWithInputState = React.useCallback((options: InputStateReadOptions) => {
         setScopedState((current) => {
             const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
                 ? current
-                : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
-            const nextInputState = readInputState(scope, owner, inputStateReadOptions);
+                : readScopedComposerPersistenceState(scope, owner, options);
+            const nextInputState = readInputState(scope, owner, options);
             if (base === current && areInputStatesValueEqual(base.inputState, nextInputState)) return current;
-            return withInputState(base, nextInputState, inputStateReadOptions);
+            return withInputState(base, nextInputState, options);
         });
-    }, [inputStateReadOptions, owner, scope]);
+    }, [owner, scope]);
     const pendingFlushScopeRef = React.useRef<ServerAccountScope | null | undefined>(undefined);
     const pendingFlushTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingStructuredFlushTargetRef = React.useRef<Readonly<{
@@ -515,9 +515,9 @@ export function useSessionAgentInputComposerPersistence({
             textLength,
             fontScale,
         }, { flush: false });
-        setScopedStateWithInputState();
+        setScopedStateWithInputState(inputStateReadOptions);
         scheduleUiStateFlush(scope);
-    }, [fontScale, owner, scheduleUiStateFlush, scope, setScopedStateWithInputState, textLength]);
+    }, [fontScale, inputStateReadOptions, owner, scheduleUiStateFlush, scope, setScopedStateWithInputState, textLength]);
 
     const onSelectionChangePersist = React.useCallback((selection: AgentInputTextSelection, nextTextLength: number) => {
         if (!owner) return;
@@ -526,15 +526,9 @@ export function useSessionAgentInputComposerPersistence({
             textLength: nextTextLength,
             fontScale,
         }, { flush: false });
-        setScopedState((current) => {
-            const base = isScopedComposerPersistenceStateCurrent(current, scope, owner)
-                ? current
-                : readScopedComposerPersistenceState(scope, owner, inputStateReadOptions);
-            const readOptions = { textLength: nextTextLength, fontScale };
-            return withInputState(base, readInputState(scope, owner, readOptions), readOptions);
-        });
+        setScopedStateWithInputState({ textLength: nextTextLength, fontScale });
         scheduleUiStateFlush(scope);
-    }, [fontScale, inputStateReadOptions, owner, scheduleUiStateFlush, scope]);
+    }, [fontScale, owner, scheduleUiStateFlush, scope, setScopedStateWithInputState]);
 
     const clearTransientInputState = React.useCallback(() => {
         if (!owner) return;

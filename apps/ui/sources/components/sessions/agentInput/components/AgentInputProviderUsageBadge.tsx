@@ -1,3 +1,4 @@
+import { AgentInputProviderQuotaLabel } from './AgentInputProviderQuotaLabel';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -16,11 +17,6 @@ import type {
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 
 import { AgentInputContentPopover } from './AgentInputContentPopover';
-
-type WebHoverablePressableState = Readonly<{
-    pressed: boolean;
-    hovered?: boolean;
-}>;
 
 type AgentInputProviderUsageBadgeProps = Readonly<{
     viewModel: ConnectedServiceQuotaGaugeViewModel;
@@ -50,6 +46,7 @@ function areProviderUsageMeterRowsEqual(
             || leftRow.usedLimitSemantics !== rightRow.usedLimitSemantics
             || leftRow.usedLimitLabel !== rightRow.usedLimitLabel
             || leftRow.resetLabel !== rightRow.resetLabel
+            || leftRow.resetAtMs !== rightRow.resetAtMs
             || leftRow.tone !== rightRow.tone
         ) {
             return false;
@@ -186,14 +183,12 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                 }}
                 onHoverIn={Platform.OS === 'web' ? () => setIsHovered(true) : undefined}
                 onHoverOut={Platform.OS === 'web' ? () => setIsHovered(false) : undefined}
-                style={(state) => {
-                    const hovered = (state as WebHoverablePressableState).hovered === true;
-                    return [
-                        styles.badge,
-                        { marginLeft: props.marginLeft ?? 0 },
-                        (state.pressed || hovered) ? styles.badgePressed : null,
-                    ];
-                }}
+                // Press feedback only: hovering opens the preview popover and must not resize the gauge.
+                style={(state) => [
+                    styles.badge,
+                    { marginLeft: props.marginLeft ?? 0 },
+                    state.pressed ? styles.badgePressed : null,
+                ]}
             >
                 <View style={styles.windowRing}>
                     {props.showLabels === true ? (
@@ -206,6 +201,7 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                         </Text>
                     ) : null}
                     <TokenUsageRing
+                        measures="remaining"
                         used={100 - rings[0].usedPct}
                         limit={100}
                         rings={rings.map(ring => ({
@@ -294,7 +290,12 @@ export const AgentInputProviderUsageBadge = React.memo(function AgentInputProvid
                                         {row.label}
                                     </Text>
                                     <Text style={styles.meterRight} numberOfLines={1}>
-                                        {row.detailRightLabel}
+                                        <AgentInputProviderQuotaLabel
+                                            resetAtMs={row.resetAtMs}
+                                            remainingPct={row.remainingPct}
+                                            detailLabel={row.detailRightLabel}
+                                            presented={open}
+                                        />
                                     </Text>
                                 </View>
                                 {row.remainingPct !== null ? <MeterBar

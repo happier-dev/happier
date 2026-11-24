@@ -27,6 +27,7 @@ function buildPreviewOptionItems(params: Readonly<{
   availability: PreviewEntry['availability'];
   sourceKind: PreviewEntry['sourceKind'];
   scopeKind: PreviewEntry['scopeKind'];
+  acpDelivery?: Extract<PreviewEntry, { sourceKind: 'managed' }>['acpDelivery'];
   disabled?: true;
 }>[] {
   const entries: PreviewEntry[] = [
@@ -43,6 +44,7 @@ function buildPreviewOptionItems(params: Readonly<{
     availability: entry.availability,
     sourceKind: entry.sourceKind,
     scopeKind: entry.scopeKind,
+    ...(entry.sourceKind === 'managed' && entry.acpDelivery ? { acpDelivery: entry.acpDelivery } : {}),
     ...(entry.availability === 'unavailable' ? { disabled: true as const } : {}),
   }));
   const limit = normalizeActionOptionLimit(params.limit);

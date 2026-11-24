@@ -177,7 +177,7 @@ export async function resolveClaudeAdoptEndpointRecovery(options: Readonly<{
     // A foreground shell is not transferable owned-host custody. A dead or
     // unproven host still belongs to the existing terminal disposition owner.
     if (attachment?.version !== 2) return null;
-    const adapter = (await createDefaultTerminalHostRegistry())[attachment.handle.kind];
+    const adapter = (await createDefaultTerminalHostRegistry({ forExistingAttachments: true }))[attachment.handle.kind];
     if (!adapter || (await evaluateTerminalHostLivenessForRecovery(adapter, attachment.handle)).status !== 'alive') return null;
     state = await readClaudeEndpointDescriptor({ ...options.existingSession, attachmentId: attachment.attachmentId });
   }

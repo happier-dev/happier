@@ -292,6 +292,8 @@ export const SidebarNavigator = React.memo(() => {
                         marginLeft: insetSplit.sidebar.margin,
                         paddingLeft: insetSplit.sidebar.padding,
                         flexShrink: 0,
+                        // The outward resize target must sit above the adjacent route content.
+                        zIndex: Platform.OS === 'web' && !effectiveSidebarCollapsed ? 1 : undefined,
                         backgroundColor: insetSplit.sidebar.padding > 0 ? theme.colors.background.canvas : undefined,
                     }}
                 >

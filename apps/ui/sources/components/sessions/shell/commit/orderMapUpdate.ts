@@ -42,18 +42,12 @@ function insertOrderKey(params: Readonly<{
     return [params.movedKey, ...withoutMoved];
 }
 
-function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string): Record<string, string[]> {
-    const out: Record<string, string[]> = {};
-    for (const [scopeKey, keys] of Object.entries(currentMap)) {
-        if (!Array.isArray(keys)) continue;
-        const nextKeys = keys.filter((key) => key !== movedKey);
-        if (nextKeys.length > 0) out[scopeKey] = nextKeys;
-    }
-    return out;
+function sameOrder(current: readonly string[], next: readonly string[]): boolean {
+    return current.length === next.length && current.every((key, index) => key === next[index]);
 }
 
 /**
- * Builds the next scoped order array after moving `movedKey`.
+ * Builds a patch containing only the changed scopes after moving `movedKey`.
  *
  * The LATEST current-map order is the baseline (it carries the user's most
  * recent intent, including background reorders). `directKeys` is the set of
@@ -69,14 +63,17 @@ function copyOrderMapWithoutMovedKey(currentMap: OrderMap, movedKey: string): Re
 export function buildOrderMapAfterMove(params: Readonly<{
     currentMap: OrderMap;
     scopeKey: string;
+    sourceScopeKey?: string | null;
+    orderKeyFilter?: (key: string) => boolean;
+    mergeDestinationKeys?: (keys: string[]) => string[];
     movedKey: string;
     directKeys: ReadonlyArray<string>;
     beforeKey?: string | null;
     afterKey?: string | null;
     maxKeys: number;
 }>): Record<string, string[]> {
-    const currentMap = copyOrderMapWithoutMovedKey(params.currentMap, params.movedKey);
-    const existingKeys = currentMap[params.scopeKey] ?? [];
+    const currentKeys = params.currentMap[params.scopeKey] ?? [];
+    const existingKeys = params.orderKeyFilter ? currentKeys.filter(params.orderKeyFilter) : currentKeys;
     const existingKeySet = new Set(dedupeOrderKeys(existingKeys));
     const newlyVisibleKeys = dedupeOrderKeys(params.directKeys)
         .filter((key) => key !== params.movedKey && !existingKeySet.has(key));
@@ -88,8 +85,14 @@ export function buildOrderMapAfterMove(params: Readonly<{
         afterKey: params.afterKey,
     }).slice(0, params.maxKeys);
 
-    return {
-        ...currentMap,
-        [params.scopeKey]: nextKeys,
-    };
+    const destinationKeys = params.mergeDestinationKeys?.(nextKeys) ?? nextKeys;
+    const changes: Record<string, string[]> = {};
+    if (!sameOrder(currentKeys, destinationKeys)) changes[params.scopeKey] = destinationKeys;
+    if (params.sourceScopeKey && params.sourceScopeKey !== params.scopeKey) {
+        const sourceKeys = params.currentMap[params.sourceScopeKey];
+        if (sourceKeys?.includes(params.movedKey)) {
+            changes[params.sourceScopeKey] = sourceKeys.filter((key) => key !== params.movedKey);
+        }
+    }
+    return changes;
 }

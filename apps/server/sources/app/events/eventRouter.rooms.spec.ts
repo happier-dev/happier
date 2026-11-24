@@ -71,10 +71,11 @@ describe("eventRouter (rooms)", () => {
         expect(emit).toHaveBeenCalledWith("ephemeral", expect.anything());
     });
 
-    it("routes all-interested-in-session to per-account session room + user-scoped rooms (excluding other users)", () => {
+    it("routes session deliveries to disjoint room audiences that still reach legacy workers", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();
-        ioTo.mockReturnValue({ emit });
+        const except = vi.fn(() => ({ emit }));
+        ioTo.mockReturnValue({ emit, except });
         eventRouter.setIo({ to: ioTo } as any);
 
         eventRouter.emitUpdate({
@@ -84,7 +85,9 @@ describe("eventRouter (rooms)", () => {
         });
 
         expect(ioTo).toHaveBeenCalledWith(["session:s1:u1", "user-scoped:u1"]);
-        expect(emit).toHaveBeenCalledWith("update", expect.anything());
+        expect(except).toHaveBeenCalledWith("narrow-session-interest:u1");
+        expect(ioTo).toHaveBeenCalledWith(["account-socket-session-interest:s1:u1"]);
+        expect(emit).toHaveBeenCalledTimes(2);
     });
 
     it("routes machine-scoped-only to machine + user-scoped rooms", () => {
@@ -138,7 +141,7 @@ describe("eventRouter (rooms)", () => {
     it("never emits per-account update containers to shared session/machine rooms", () => {
         const ioTo = vi.fn();
         const emit = vi.fn();
-        ioTo.mockReturnValue({ emit });
+        ioTo.mockReturnValue({ emit, except: () => ({ emit }) });
         eventRouter.setIo({ to: ioTo } as any);
 
         eventRouter.emitUpdate({
@@ -185,7 +188,7 @@ describe("eventRouter (rooms)", () => {
         vi.spyOn(Math, "random").mockReturnValue(0);
         const ioTo = vi.fn();
         const emit = vi.fn();
-        ioTo.mockReturnValue({ emit });
+        ioTo.mockReturnValue({ emit, except: () => ({ emit }) });
         eventRouter.setIo({ to: ioTo } as any);
 
         eventRouter.emitUpdate({
@@ -207,7 +210,7 @@ describe("eventRouter (rooms)", () => {
         vi.spyOn(Math, "random").mockReturnValue(0.99);
         const ioTo = vi.fn();
         const emit = vi.fn();
-        ioTo.mockReturnValue({ emit });
+        ioTo.mockReturnValue({ emit, except: () => ({ emit }) });
         eventRouter.setIo({ to: ioTo } as any);
 
         eventRouter.emitEphemeral({

@@ -167,10 +167,11 @@ import {
   isTerminalHostPhysicallyRetiredStopResult,
   type StopSessionResult,
 } from './sessions/stopSessionContract';
-import { waitForExistingSessionExitIfStopRequested } from './sessions/waitForExistingSessionExitIfStopRequested';
+import { waitForExistingSessionExitIfStopRequested, waitForTrackedSessionRunnersExit } from './sessions/waitForExistingSessionExitIfStopRequested';
 import { waitForTerminatingSessionRunnerExit } from './sessions/waitForTerminatingSessionRunnerExit';
 import { waitForTrackedRunnerProcessesExit } from './sessions/waitForTrackedRunnerProcessesExit';
 import { readProcessRunState } from './processRunState';
+import { isTrackedSessionRunnerCurrent, readTrackedSessionRunner } from './sessionRunnerProcessIdentity';
 import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
 import {
   classifyTrackedSessionRunnerPresence,
@@ -218,14 +219,10 @@ import { createCliUpdateMetadataPublisher, type CliUpdateMetadataPublisher } fro
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { buildHostedRunnerSpawnConfig, buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
-import {
-  migrateTrackedSessionProcessesOutOfDaemonServiceCgroup,
-} from './platform/linux/migrateTrackedSessionProcessesOutOfDaemonServiceCgroup';
 import { removeRuntimeAuthFailureReportOutboxItemsForSession } from './connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
 import { drainRuntimeAuthFailureReportOutboxToDaemon } from './connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutboxDrain';
 import { createConnectedServiceRecoverySupersessionCleaner } from './connectedServices/continuation/continuationRecoverySupersession';
-import { buildCgroupSelfMigratingHappyCliLaunchSpec } from './platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
-import { shouldUseSystemdUserSessionResourceGovernor } from './platform/linux/systemdUserResourceGovernor';
+import { resolveSystemdUserSessionLaunchSpec } from './platform/linux/resolveSystemdUserSessionLaunchSpec';
 import { applySpawnedChildOomScoreAdjustment } from './platform/linux/applySpawnedChildOomScoreAdjustment';
 import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windowsSessionConsoleMode';
 import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spawnHappyCliVisibleConsole';
@@ -473,6 +470,7 @@ import type { TerminalHostHandle } from '@/integrations/terminalHost/_types';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { resetAccountSettingsRefreshBackoff } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createProviderAccountSettingsController } from './lifecycle/providerAccountSettings';
@@ -769,7 +767,8 @@ function toConnectedServiceSwitchEffectiveBinding(
 }
 
 function resolveConnectedServiceRestartProcessGroupPid(tracked: TrackedSession): number | null {
-  return tracked.startedBy === 'daemon' && tracked.childProcess && Number.isInteger(tracked.pid) && tracked.pid > 0
+  return tracked.startedBy === 'daemon' && tracked.childProcess?.pid === tracked.pid
+    && readTrackedSessionRunner(tracked).pid === tracked.pid && Number.isInteger(tracked.pid) && tracked.pid > 0
     ? tracked.pid
     : null;
 }
@@ -1837,6 +1836,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         resume: () => void;
       }> | null = null;
       let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
+      let connectedServiceQuotaRuntime: ConnectedServiceQuotasCoordinator | null = null;
       const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
       const connectedServiceRuntimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
       const providerAccountUsageStore = createProviderAccountUsageStore();
@@ -2203,7 +2203,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
 	          connectedServiceQuotasLoopHandle = null;
 	        };
 	        const flushConnectedServiceQuotaPersistenceForShutdown = async (): Promise<void> => {
-	          const result = await connectedServiceQuotasCoordinator?.flushInBandQuotaPersistence(2_000);
+	          const result = await connectedServiceQuotaRuntime?.flushInBandQuotaPersistence(2_000);
           if (!result?.timedOut) return;
           logger.warn('[DAEMON RUN] Connected-service quota persistence did not drain before shutdown', result);
         };
@@ -2378,7 +2378,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const physicallyRetiredTerminalAttachmentIdBySessionId = new Map<string, string>();
         let terminalHostAdaptersPromise: ReturnType<typeof createDefaultTerminalHostRegistry> | null = null;
         const loadTerminalHostAdapters = async () => await (
-          terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry()
+          terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry({ forExistingAttachments: true })
         );
         const retireTerminalControlServiceabilityForCurrentAccount = async (
           input: Omit<Parameters<typeof retireExactTerminalControlServiceability>[0], 'credentials'>,
@@ -2406,21 +2406,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               terminalMode: attachmentInfo.terminal.mode ?? attachmentInfo.handle.kind,
             });
           },
-          areTrackedRunnersExited: async ({ trackedPids }) => {
-            const exited = await waitForTrackedRunnerProcessesExit({
-              runners: trackedPids.map((pid) => ({ pid })),
-              timeoutMs: 0,
-              pollIntervalMs: 0,
-            });
-            if (!exited) return false;
-
-            for (const pid of trackedPids) {
-              await onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
-            }
-            return true;
-          },
+          areTrackedRunnersExited: async ({ trackedPids }) => await waitForTrackedSessionRunnersExit({
+            pidToTrackedSession,
+            trackedPids,
+            timeoutMs: 0,
+            pollIntervalMs: 0,
+            onExitObserved: (pid, exit) => onChildExited(pid, exit),
+          }),
           waitForTrackedRunnersExit: async ({ sessionId, trackedPids }) => {
-            await waitForExistingSessionExitIfStopRequested({
+            const exited = await waitForExistingSessionExitIfStopRequested({
               sessionId,
               pidToTrackedSession,
               timeoutMs: configuration.daemonStopSessionWaitForExitMs,
@@ -2428,7 +2422,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               trackedPids,
               onExitObserved: (pid, exit) => onChildExited(pid, exit),
             });
-            return trackedPids.every((pid) => !pidToTrackedSession.has(pid));
+            return exited && trackedPids.every((pid) => !pidToTrackedSession.has(pid));
           },
         });
 
@@ -2858,18 +2852,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           logger.debug('[DAEMON RUN] Connected-service group home startup reconciliation failed (non-fatal)', error);
         });
         connectedServiceMaterializedHomeCleanupLoopHandle?.trigger();
-        if (shouldUseSystemdUserSessionResourceGovernor({ platform: process.platform, startupSource })) {
-          const migratedTrackedSessionProcesses = await migrateTrackedSessionProcessesOutOfDaemonServiceCgroup({
-            trackedSessions: pidToTrackedSession.values(),
-            daemonPid: process.pid,
-            startupSource,
-          });
-          if (migratedTrackedSessionProcesses.length > 0) {
-            logger.debug('[DAEMON RUN] Moved reattached session runner process(es) out of the daemon service cgroup', {
-              migrations: migratedTrackedSessionProcesses,
-            });
-          }
-        }
 
         const recordConnectedServiceContinuationProviderActivity =
           createConnectedServiceProviderActivityProofRecorder({
@@ -2964,10 +2946,12 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             ) {
               continue;
             }
+            const runner = readTrackedSessionRunner(tracked);
             const ownsTrackedRunner = () => pidToTrackedSession.get(pid) === tracked
               && tracked.pid === pid && tracked.startedBy === 'daemon'
+              && isTrackedSessionRunnerCurrent(tracked, runner)
               && normalizeSpawnNonceForAck(tracked.spawnOptions?.spawnNonce) === spawnNonce;
-            const runState = await readProcessRunState(pid).catch(() => null);
+            const runState = await readProcessRunState(runner.pid).catch(() => null);
             if (runState !== 'servable' || !ownsTrackedRunner()) continue;
             const result = buildSpawnAcceptedResult({
               pid,
@@ -2983,14 +2967,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               && !shutdownInitiated && typeof tracked.stopRequestedAtMs !== 'number'
               && tracked.reportMarkerCustody?.retiring !== true;
             const markerMatchesRunner = (marker: Awaited<ReturnType<typeof readSessionMarkerForPid>>) => Boolean(
-              marker && marker.pid === pid && marker.happySessionId === sessionId
+              marker && marker.pid === runner.pid && marker.happySessionId === sessionId
               && marker.happyHomeDir === configuration.happyHomeDir
               && marker.startedBy !== 'terminal'
               && normalizeSpawnNonceForAck(marker.respawn?.spawnNonce) === spawnNonce
-              && (!marker.processInstanceFingerprint || marker.processInstanceFingerprint === tracked.processInstanceFingerprint)
-              && (!marker.processCommandHash || marker.processCommandHash === tracked.processCommandHash)
+              && (!marker.processInstanceFingerprint || marker.processInstanceFingerprint === runner.processInstanceFingerprint)
+              && (!marker.processCommandHash || marker.processCommandHash === runner.processCommandHash)
             );
-            const marker = await readSessionMarkerForPid(pid);
+            const marker = await readSessionMarkerForPid(runner.pid);
             if (!ownsReadyRunner() || !markerMatchesRunner(marker)) return result;
             const readAttachment = () => readTerminalAttachmentState({ happyHomeDir: configuration.happyHomeDir, sessionId });
             const attachmentMatchesRunner = (attachment: Awaited<ReturnType<typeof readAttachment>>) => {
@@ -3012,7 +2996,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             // committed hosting evidence that still belongs to this runner after RPC.
             const probe = await probeSessionRunnerServiceability(sessionId);
             if (probe.state !== 'runner_present' || probe.control.state !== 'servable' || !ownsReadyRunner()) return result;
-            const [currentMarker, currentAttachment] = await Promise.all([readSessionMarkerForPid(pid), readAttachment()]);
+            const [currentMarker, currentAttachment] = await Promise.all([readSessionMarkerForPid(runner.pid), readAttachment()]);
             const attachmentUnchanged = attachment.status === 'present'
               ? currentAttachment.status === 'present' && (attachment.info.version === 1
                 ? currentAttachment.info.version === 1 && matchesLegacyTerminalAttachmentSnapshot(currentAttachment.info, attachment.info)
@@ -4680,24 +4664,20 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 windowsHide: true,
                 env: childProcessEnv,
               };
-              const cgroupSelfMigratingLaunchSpec =
-                shouldUseSystemdUserSessionResourceGovernor({ platform: process.platform, startupSource })
-                  ? await buildCgroupSelfMigratingHappyCliLaunchSpec({
-                    args,
-                    daemonPid: process.pid,
-                    environment: childProcessEnv,
-                    launchOptions: runnerLaunchOptions,
-                  })
-                  : null;
-              const happyProcess = cgroupSelfMigratingLaunchSpec
+              const scopedLaunchSpec = await resolveSystemdUserSessionLaunchSpec({
+                args,
+                environment: childProcessEnv,
+                launchOptions: runnerLaunchOptions,
+              });
+              const happyProcess = scopedLaunchSpec
                 ? spawnChildProcess(
-                  cgroupSelfMigratingLaunchSpec.filePath,
-                  cgroupSelfMigratingLaunchSpec.args,
+                  scopedLaunchSpec.filePath,
+                  scopedLaunchSpec.args,
                   {
                     ...spawnOptions,
                     env: {
                       ...childProcessEnv,
-                      ...(cgroupSelfMigratingLaunchSpec.env ?? {}),
+                      ...(scopedLaunchSpec.env ?? {}),
                     },
                   },
                 )
@@ -5147,7 +5127,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         });
 
         const observePlannedRunnerRetirement = (tracked: TrackedSession, sessionId: string): void => {
-          if (tracked.childProcess) return;
+          if (tracked.childProcess?.pid === readTrackedSessionRunner(tracked).pid) return;
           void waitForExistingSessionExitIfStopRequested({
             sessionId,
             pidToTrackedSession,
@@ -5192,10 +5172,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             pidToTrackedSession,
             canSignal: () => resolveSessionRunnerActivityDisabledReason(input.sessionId) ?? true,
             isShuttingDown: isDaemonShuttingDown,
-            requestSignal: async ({ shouldSignal, onSignalFailure, onProcessAlreadyMissing }) =>
+            requestSignal: async ({ runnerPid, shouldSignal, onSignalFailure, onProcessAlreadyMissing }) =>
               // K5:gated_restart raw signal is owned by planned runner restart deferral/reservation.
               await requestConnectedServiceSessionRestartSignal({
-                pid: input.tracked.pid,
+                pid: runnerPid,
                 processGroupPid: resolveConnectedServiceRestartProcessGroupPid(input.tracked),
                 delayMs: input.restartSignalDelayMs,
                 shouldSignal,
@@ -5275,11 +5255,11 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           pidToTrackedSession,
           canSignal: () => resolveSessionRunnerActivityDisabledReason(input.sessionId) ?? true,
           isShuttingDown: isDaemonShuttingDown,
-          requestSignal: async ({ shouldSignal, onSignalFailure, onProcessAlreadyMissing }) =>
+          requestSignal: async ({ runnerPid, shouldSignal, onSignalFailure, onProcessAlreadyMissing }) =>
             // K5:gated_restart version refresh uses the planned restart primitive without
             // connected-service deferral/target metadata; this call is only the signal adapter.
             await requestConnectedServiceSessionRestartSignal({
-              pid: input.tracked.pid,
+              pid: runnerPid,
               processGroupPid: resolveConnectedServiceRestartProcessGroupPid(input.tracked),
               delayMs: 0,
               shouldSignal,
@@ -7360,14 +7340,14 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         snapshot: input.snapshot,
       }),
       handleConnectedServiceQuotaRecoveryCreditConsume: async (input) => {
-        if (!connectedServiceQuotasCoordinator) {
+        if (!connectedServiceQuotaRuntime) {
           return {
             ok: false as const,
             errorCode: 'connected_service_quota_recovery_credit_unavailable',
             error: 'connected_service_quota_recovery_credit_unavailable',
           };
         }
-        return await connectedServiceQuotasCoordinator.consumeRecoveryCreditForProfile(input);
+        return await connectedServiceQuotaRuntime.consumeRecoveryCreditForProfile(input);
       },
       handleCodexChatGptAuthTokensRefresh: async (input) => {
         if (!connectedServiceRefreshCoordinator) {
@@ -8134,6 +8114,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               now: () => Date.now(),
               randomBytes: (length) => randomBytes(length),
               }),
+              onCoordinatorReady: (coordinator) => { connectedServiceQuotaRuntime = coordinator; },
               startLoop: (coordinator) => {
                 registerCurrentConnectedServiceTrackedSessionTargets();
                 const loopHandle = startConnectedServiceQuotasLoop({
@@ -8946,6 +8927,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   // FIX-1a (incident Jun-11 H-A): keep the account-settings snapshot fresh on
                   // (re)connect. Cheap no-op when a scope-matching snapshot is already active;
                   // populates it when the startup warm-up failed (e.g. started offline).
+                  // A reconnect supersedes any Settings refresh backoff from the outage.
+                  resetAccountSettingsRefreshBackoff();
                   await warmActiveAccountSettingsSnapshotBestEffort({ credentials });
                   await providerAccountSettings.refresh().catch((error) => {
                     logger.warn('[DAEMON RUN] Failed to apply provider account settings on reconnect', error);
@@ -9149,7 +9132,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         connectedServiceMaterializedHomeCleanupLoopHandle.stop();
         connectedServiceMaterializedHomeCleanupLoopHandle = null;
       }
-      connectedServiceQuotasCoordinator?.dispose();
+      connectedServiceQuotaRuntime?.dispose();
+      connectedServiceQuotaRuntime = null;
       connectedServiceQuotasCoordinator = null;
       providerAccountSettings.stop();
       localServerStormCleanup?.();

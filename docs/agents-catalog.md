@@ -235,6 +235,12 @@ a matching Claude transcript, or an accepted Codex turn/native attachment
 materialization. Observed ids remain available inside the live runner for hook
 and transcript correlation while provisional.
 
+Both Claude terminal modes use the transcript scanner to request a new proof
+check when the first matching native record arrives for a trusted session. The
+unified terminal can do this after `UserPromptSubmit` has already confirmed the
+first prompt. The session metadata writer validates the native file before
+publishing the id and path together.
+
 This changes publication timing, not the recorded identity format or resume
 failure policy. Established identities are retained; unavailable native state
 still fails closed without starting a replacement conversation or consuming the

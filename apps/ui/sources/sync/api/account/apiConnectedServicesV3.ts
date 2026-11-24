@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { serverFetch } from '@/sync/http/client';
+import { connectedServiceFetch } from './connectedServiceNetworkError';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
 import { createConnectedServiceApiError } from './connectedServiceApiError';
@@ -42,7 +42,8 @@ export async function registerConnectedServiceCredentialPlain(
   } & ConnectedServiceCredentialPlainWriteRevisionBoundary>,
 ): Promise<ConnectedServiceCredentialRevisionBoundaryV1> {
     await assertConnectedServiceOperationSupported(params.serviceId);
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'registerConnectedServiceCredentialPlain',
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
       {
         method: 'POST',
@@ -93,7 +94,8 @@ export async function deleteConnectedServiceCredentialV3(
     if (params.cleanupGroupReferences) query.set('cleanupGroupReferences', 'true');
     query.set('expectedCredentialRevision', params.expectedCredentialRevision);
     const path = `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential?${query.toString()}`;
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'deleteConnectedServiceCredentialV3',
       path,
       {
         method: 'DELETE',
@@ -134,7 +136,8 @@ export async function getConnectedServiceCredentialPlain(
   content: Readonly<{ t: 'plain'; v: ConnectedServiceCredentialRecordV1 }>;
 }> & ConnectedServiceCredentialRevisionBoundaryV1> {
   return await backoff(async () => {
-    const response = await serverFetch(
+    const response = await connectedServiceFetch(
+      'getConnectedServiceCredentialPlain',
       `/v3/connect/${encodeURIComponent(params.serviceId)}/profiles/${encodeURIComponent(params.profileId)}/credential`,
       {
         method: 'GET',

@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { getPriority } from 'node:os';
 
+import { DBUS_SESSION_BUS_ADDRESS_ENV_KEY } from '@/utils/env/linuxUserSessionEnv';
+
 export const HAPPIER_JOBS_SLICE_NAME = 'happier-jobs.slice';
 export const HAPPIER_CRITICAL_SLICE_NAME = 'happier-critical.slice';
 export const HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES = 4 * 1024 * 1024 * 1024;
@@ -21,15 +23,6 @@ export type SystemdUserScopedLaunchSpec = Readonly<{
   args: string[];
   env?: Record<string, string>;
 }>;
-
-export function shouldUseSystemdUserSessionResourceGovernor(params: Readonly<{
-  platform: NodeJS.Platform;
-  startupSource: string | undefined;
-}>): boolean {
-  // Startup source describes lifecycle ownership, not resource policy. Stack/TUI-managed
-  // Linux daemons are intentionally labelled "manual" and need the same session isolation.
-  return params.platform === 'linux';
-}
 
 export type SystemdUserResourceGovernorExecFile = (
   command: string,
@@ -56,7 +49,7 @@ const defaultExecFile: SystemdUserResourceGovernorExecFile = (command, args, opt
 });
 
 function hasSystemdUserBus(environment: NodeJS.ProcessEnv): boolean {
-  return String(environment.DBUS_SESSION_BUS_ADDRESS ?? '').trim().length > 0;
+  return String(environment[DBUS_SESSION_BUS_ADDRESS_ENV_KEY] ?? '').trim().length > 0;
 }
 
 function parseSystemdProperties(raw: string): ReadonlyMap<string, string> {

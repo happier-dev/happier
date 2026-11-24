@@ -52,6 +52,12 @@ const NATIVE_PERMISSION = [
   'Esc to cancel · Tab to amend',
 ].join('\n');
 
+const COUNTDOWN_PERMISSION = NATIVE_PERMISSION.replace('Do you want to proceed?', [
+  'Dangerous rm operation on possibly-empty variable path: "$probeRoot/$probeItem"',
+  '⚠ Claude Code will automatically block this request in 0:29, to avoid holding',
+  ' up an unattended session', '', 'Do you want to proceed?',
+].join('\n'));
+
 function nativePermission(state: ClaudeScreenState): ClaudeUnifiedVisibleNativeToolDialog | null {
   const presentation = parseClaudeNativePermissionScreen(state.text);
   if (!presentation) return null;
@@ -178,6 +184,21 @@ describe('answerClaudeUnifiedRegisteredDialog', () => {
       initialState, expectedIdentity: getClaudeUnifiedDialogIdentity(initial), resolveDialog: nativePermission,
       isCurrent: () => true, settleMs: 0, wait: async () => undefined,
       verifyPollIntervalMs: 1, verifyPollTimeoutMs: 2,
+    })).resolves.toMatchObject({ status: 'dialog_changed' });
+    expect(port.sentKeys).toEqual([]);
+  });
+
+  it.each([
+    COUNTDOWN_PERMISSION.replace('possibly-empty variable path', 'a changed removal target'),
+    COUNTDOWN_PERMISSION.replace('remember python3 *', 'remember every command'),
+    COUNTDOWN_PERMISSION.replace('0:29, to avoid holding', '0:28, with a different safety warning'),
+  ])('keeps changed safety context and permission scopes blocked during a countdown', async (changed) => {
+    const initialState = parseClaudeScreenState(COUNTDOWN_PERMISSION);
+    const initial = nativePermission(initialState)!;
+    const port = createFakeControlPort({ captures: [changed] });
+    await expect(answerClaudeUnifiedRegisteredDialog({ port, dialogId: 'tool_permission', choice: '1',
+      initialState, expectedIdentity: getClaudeUnifiedDialogIdentity(initial), resolveDialog: nativePermission,
+      isCurrent: () => true, settleMs: 0, wait: async () => undefined,
     })).resolves.toMatchObject({ status: 'dialog_changed' });
     expect(port.sentKeys).toEqual([]);
   });

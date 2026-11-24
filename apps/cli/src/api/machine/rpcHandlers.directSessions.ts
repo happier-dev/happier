@@ -424,6 +424,8 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
         runtimeDescriptor: parsed.data.runtimeDescriptor,
         titleHint: parsed.data.titleHint,
         directoryHint: parsed.data.directoryHint,
+        sourceCreatedAtMs: parsed.data.sourceCreatedAtMs,
+        sourceUpdatedAtMs: parsed.data.sourceUpdatedAtMs,
         source: validatedSource.source,
       });
       return { ok: true, sessionId: res.sessionId, created: res.created } satisfies DirectSessionLinkEnsureResponse;

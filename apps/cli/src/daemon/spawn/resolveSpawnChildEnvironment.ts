@@ -8,6 +8,7 @@ import type { SpawnSessionErrorCode } from '@/rpc/handlers/registerSessionHandle
 import { resolveCanonicalCodexBackendMode } from '@/rpc/handlers/codexBackendMode';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
+import { isAllowedExactEnvKey } from '@/utils/env/isAllowedExactEnvKey';
 import { validateDaemonSpawn, type DaemonSpawnHooks } from '../spawnHooks';
 import { readBuiltInCatalogAgentIdFromBackendTarget } from '../sessions/resolveTrackedSessionCatalogAgentId';
 import { buildAuthEnvUnexpandedErrorMessage, findUnexpandedAuthEnvironmentReferences } from './authEnvValidation';
@@ -24,6 +25,7 @@ import {
 } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from './spawnExplicitEnvKeysMarker';
 import { stripDaemonOwnedChildEnvOverrides } from './stripDaemonOwnedChildEnvOverrides';
+import { selectMachineSessionEnvironment } from './selectMachineSessionEnvironment';
 import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialize/providerMaterializerTypes';
 import { resolveExistingSessionHandoffStateThroughCatalog } from '@/backends/catalog';
 import { ExistingSessionStateUnavailableError } from '@/session/handoff/sessionHandoffErrors';
@@ -155,10 +157,10 @@ export async function resolveSpawnChildEnvironment(params: {
     params.logDebug('[DAEMON RUN] No profile environment variables provided by caller; skipping profile env injection');
   }
 
-  const explicitEnvKeysForChild = Array.from(new Set<string>([
+  const authoredEnvKeys = new Set([
     ...Object.keys(profileEnv),
     ...Object.keys(sanitizedAuthEnv),
-  ]));
+  ]);
 
   const sessionProfileEnv: Record<string, string> = {};
   if (params.options.profileId !== undefined) {
@@ -257,9 +259,6 @@ export async function resolveSpawnChildEnvironment(params: {
   const extraEnvForChild = { ...extraEnv };
   delete extraEnvForChild.TMUX_SESSION_NAME;
   delete extraEnvForChild.TMUX_TMPDIR;
-  if (explicitEnvKeysForChild.length > 0) {
-    extraEnvForChild[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = JSON.stringify(explicitEnvKeysForChild);
-  }
   if (params.daemonSpawnHooks?.buildExtraEnvForChild) {
     const hookExtraEnvForChild = params.daemonSpawnHooks.buildExtraEnvForChild({
       experimentalCodexAcp: effectiveExperimentalCodexAcp,
@@ -305,6 +304,17 @@ export async function resolveSpawnChildEnvironment(params: {
   }
   if (codexAcpFallbackMessage) {
     extraEnvForChild.HAPPIER_CODEX_ACP_FALLBACK_TO_MCP_MESSAGE = codexAcpFallbackMessage;
+  }
+
+  const childOverlayKeys = new Set([...Object.keys(extraEnvForChild), 'TMUX_SESSION_NAME', 'TMUX_TMPDIR']);
+  const explicitEnvKeysForChild = new Set(authoredEnvKeys);
+  for (const [name, value] of Object.entries(selectMachineSessionEnvironment(params.processEnv))) {
+    if (isAllowedExactEnvKey(name, childOverlayKeys)) continue;
+    extraEnvForChild[name] = value;
+    explicitEnvKeysForChild.add(name);
+  }
+  if (explicitEnvKeysForChild.size > 0) {
+    extraEnvForChild[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = JSON.stringify([...explicitEnvKeysForChild]);
   }
 
   if (params.options.handoffStateTransfer === 'existing') {

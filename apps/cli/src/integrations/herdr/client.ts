@@ -117,9 +117,20 @@ function* textRequestChunks(method: string, paneId: string, text: string): Gener
   }
 }
 
+/**
+ * Herdr's Windows server writes a marker file at the socket path and listens on the named pipe
+ * `\\.\pipe\` plus that path (`interprocess` GenericNamespaced). Node connects to the marker file
+ * itself and fails with ENOTSOCK. Paths that are already pipe names, including this module's
+ * Windows test server, stay unchanged. POSIX paths are filesystem sockets.
+ */
+export function resolveHerdrSocketEndpoint(socketPath: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return socketPath;
+  return socketPath.toLowerCase().startsWith('\\\\.\\pipe\\') ? socketPath : `\\\\.\\pipe\\${socketPath}`;
+}
+
 function request(socketPath: string, method: string, params: JsonRecord, timeoutMs: number): Promise<JsonRecord> {
   return new Promise((resolve, reject) => {
-    const socket = createConnection(socketPath);
+    const socket = createConnection(resolveHerdrSocketEndpoint(socketPath));
     socket.setEncoding('utf8');
     let settled = false;
     let buffer = '';
@@ -156,7 +167,7 @@ function request(socketPath: string, method: string, params: JsonRecord, timeout
 }
 
 export function createHerdrClient(params: Readonly<{
-  binary: string;
+  binary: string | null;
   sessionName: string;
   socketPath?: string;
   actionTimeoutMs: number;
@@ -166,8 +177,13 @@ export function createHerdrClient(params: Readonly<{
 
   type StartupContext = Readonly<{ env: NodeJS.ProcessEnv; socketPath: string; sessionDir: string }>;
 
+  function requireBinary(): string {
+    if (params.binary === null) throw new HerdrApiError('binary_unavailable');
+    return params.binary;
+  }
+
   async function listSessions(env?: NodeJS.ProcessEnv): Promise<readonly Readonly<{ name: string; socketPath: string; sessionDir: string | null; running: boolean }>[]> {
-    const { stdout } = await execFileAsync(params.binary, ['session', 'list', '--json'], {
+    const { stdout } = await execFileAsync(requireBinary(), ['session', 'list', '--json'], {
       timeout: params.actionTimeoutMs,
       windowsHide: true,
       ...(env ? { env } : {}),
@@ -223,7 +239,7 @@ export function createHerdrClient(params: Readonly<{
     const args = context || params.sessionName === 'default'
       ? ['server']
       : ['--session', params.sessionName, 'server'];
-    const server = spawn(params.binary, args, {
+    const server = spawn(requireBinary(), args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,

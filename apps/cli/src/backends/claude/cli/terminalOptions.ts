@@ -179,6 +179,12 @@ function parseAdvancedOptions(
     }
 }
 
+/** Carry the session model into a legacy local launch without changing reusable provider args. */
+export function withClaudeSessionModelArgs(args: string[] | undefined, modelId: string | undefined): string[] | undefined {
+    if (!modelId || parseClaudeSdkFlagOverridesFromArgs(args).model) return args;
+    return [...(args ?? []), '--model', modelId];
+}
+
 export function resolveClaudeTerminalCliOptions(params: Readonly<{
     mode: EnhancedMode;
     claudeArgs?: readonly string[];

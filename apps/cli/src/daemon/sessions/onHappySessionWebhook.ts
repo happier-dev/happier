@@ -17,6 +17,7 @@ import { readProcessRunState } from '../processRunState';
 import type { TrackedSession } from '../types';
 import { hashProcessCommand, writeSessionMarker } from '../sessionRegistry';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
+import { readTrackedSessionRunner } from '../sessionRunnerProcessIdentity';
 
 const DEFAULT_PARENT_PID_LOOKUP_TIMEOUT_MS = 1000;
 const PARENT_PID_LOOKUP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PARENT_PID_LOOKUP_TIMEOUT_MS';
@@ -50,7 +51,13 @@ export function adoptReportedSessionRunnerIdentity(
   reportedPid: number,
   processInstanceFingerprint?: string,
 ): void {
-  if (tracked.pid !== reportedPid) tracked.sessionRunnerPid = reportedPid;
+  if (tracked.pid === reportedPid && tracked.sessionRunnerPid) return;
+  if (readTrackedSessionRunner(tracked).pid !== reportedPid) {
+    tracked.sessionRunnerPid = reportedPid;
+    delete tracked.processCommand;
+    delete tracked.processCommandHash;
+    delete tracked.processInstanceFingerprint;
+  }
   if (processInstanceFingerprint) tracked.processInstanceFingerprint = processInstanceFingerprint;
 }
 
@@ -289,33 +296,35 @@ export function createOnHappySessionWebhook(params: Readonly<{
       const proc = await findHappyProcessByPidFn(pid);
       const discoveredProcessCommand =
         typeof proc?.command === 'string' && proc.command.trim().length > 0 ? proc.command : undefined;
+      const trackedRunner = trackedForPid && readTrackedSessionRunner(trackedForPid).pid === pid ? trackedForPid : undefined;
       const trackedProcessCommand =
-        typeof trackedForPid?.processCommand === 'string' && trackedForPid.processCommand.trim().length > 0
-          ? trackedForPid.processCommand
+        typeof trackedRunner?.processCommand === 'string' && trackedRunner.processCommand.trim().length > 0
+          ? trackedRunner.processCommand
           : undefined;
       const daemonChildSpawnArgsCommand =
-        trackedForPid?.startedBy === 'daemon' &&
-        Array.isArray(trackedForPid.childProcess?.spawnargs) &&
-        trackedForPid.childProcess.spawnargs.length > 0
-          ? trackedForPid.childProcess.spawnargs
+        trackedRunner?.startedBy === 'daemon' &&
+        trackedRunner.childProcess?.pid === pid &&
+        Array.isArray(trackedRunner.childProcess.spawnargs) &&
+        trackedRunner.childProcess.spawnargs.length > 0
+          ? trackedRunner.childProcess.spawnargs
               .filter((arg): arg is string => typeof arg === 'string' && arg.trim().length > 0)
               .join(' ')
           : undefined;
       const processCommand = discoveredProcessCommand ?? trackedProcessCommand ?? daemonChildSpawnArgsCommand;
       const processCommandHash = processCommand ? hashProcessCommand(processCommand) : undefined;
       const processInstanceFingerprint = readProcessInstanceFingerprintSync(pid)
-        ?? trackedForPid?.processInstanceFingerprint;
+        ?? trackedRunner?.processInstanceFingerprint;
       if (processCommandHash) {
         // Store on the tracked session too so stopSession can require a match.
-        if (trackedForPid) {
-          trackedForPid.processCommandHash = processCommandHash;
-          trackedForPid.processCommand = processCommand;
+        if (trackedRunner) {
+          trackedRunner.processCommandHash = processCommandHash;
+          trackedRunner.processCommand = processCommand;
         }
       } else {
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
       }
-      if (trackedForPid && processInstanceFingerprint) {
-        adoptReportedSessionRunnerIdentity(trackedForPid, pid, processInstanceFingerprint);
+      if (trackedRunner && processInstanceFingerprint) {
+        adoptReportedSessionRunnerIdentity(trackedRunner, pid, processInstanceFingerprint);
       }
 
       const storedCredentials =

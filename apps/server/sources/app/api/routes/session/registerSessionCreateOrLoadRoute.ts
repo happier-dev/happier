@@ -14,6 +14,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { z } from "zod";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
+    DIRECT_SESSION_LINK_TAG_PREFIX,
     isSessionEncryptionModeAllowedByStoragePolicy,
     resolveEffectiveDefaultAccountEncryptionMode,
 } from "@happier-dev/protocol";
@@ -39,12 +40,19 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 agentState: z.string().nullish(),
                 dataEncryptionKey: z.string().nullish(),
                 encryptionMode: z.enum(["e2ee", "plain"]).optional(),
+                sourceCreatedAtMs: z.number().int().min(0).optional(),
+                sourceUpdatedAtMs: z.number().int().min(0).optional(),
             })
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
         const { tag, metadata, agentState, dataEncryptionKey } = request.body;
+        const historicalLink = tag.startsWith(DIRECT_SESSION_LINK_TAG_PREFIX)
+            && /^[a-f0-9]{64}$/.test(tag.slice(DIRECT_SESSION_LINK_TAG_PREFIX.length));
+        const sourceCreatedAtMs = historicalLink ? request.body.sourceCreatedAtMs : undefined;
+        const sourceUpdatedAtMs = historicalLink ? request.body.sourceUpdatedAtMs : undefined;
+        const hasSourceDates = sourceCreatedAtMs !== undefined || sourceUpdatedAtMs !== undefined;
         const requestedEncryptionMode = request.body.encryptionMode;
         const policy = readEncryptionFeatureEnv(process.env);
 
@@ -71,7 +79,8 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     { module: "session-create", sessionId: existing.id, userId, tag },
                     `Found existing session: ${existing.id} for tag ${tag}`,
                 );
-                if (existing.active && existing.archivedAt === null) {
+                // A dated link request can replay the birth. A resume omits the source dates.
+                if (hasSourceDates || (existing.active && existing.archivedAt === null)) {
                     return { session: existing, loadUpdate: null, resolution: "existing" as const };
                 }
 
@@ -153,7 +162,12 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         ? "plain"
                         : requestedOrAccountOrDefault;
 
-            const createdAt = new Date();
+            const now = Date.now();
+            const meaningfulActivityAtMs = Math.min(now, sourceUpdatedAtMs ?? now);
+            const createdAt = new Date(Math.min(
+                meaningfulActivityAtMs,
+                sourceCreatedAtMs ?? meaningfulActivityAtMs,
+            ));
             const created = await tx.session.create({
                 data: {
                     accountId: userId,
@@ -162,7 +176,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                     metadata,
                     agentState: agentState ?? null,
                     createdAt,
-                    meaningfulActivityAt: createdAt,
+                    meaningfulActivityAt: new Date(meaningfulActivityAtMs),
                     dataEncryptionKey:
                         effectiveEncryptionMode === "plain"
                             ? undefined

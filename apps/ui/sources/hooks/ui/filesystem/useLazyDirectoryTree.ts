@@ -351,19 +351,12 @@ export function useLazyDirectoryTree(input: {
         if (!enabled) return;
         if (expandedDirectories.size === 0) return;
 
-        let cancelled = false;
-        const loadExpandedDirectories = async () => {
-            for (const dir of expandedDirectories) {
-                if (cancelled) return;
-                if (!dir) continue;
-                await loadDirectory(dir, { forceReload: shouldForceReloadExpandedDirectories });
-            }
-        };
-
-        void loadExpandedDirectories();
-        return () => {
-            cancelled = true;
-        };
+        // Start every requested reload before any result can rerender the tree and
+        // consume the reload token. Each directory load already guards its scope.
+        for (const dir of expandedDirectories) {
+            if (!dir) continue;
+            void loadDirectory(dir, { forceReload: shouldForceReloadExpandedDirectories });
+        }
     }, [enabled, expandedDirectories, loadDirectory, shouldForceReloadExpandedDirectories]);
 
     const nodes = React.useMemo(() => {

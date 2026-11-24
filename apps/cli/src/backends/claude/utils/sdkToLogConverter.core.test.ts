@@ -12,6 +12,24 @@ describe('SDKToLogConverter core conversion', () => {
   });
 
   describe('User messages', () => {
+    it.each([{ isSynthetic: true }, { isMeta: true }])('withholds generated text while retaining tool results (%j)', provenance => {
+      const text: SDKUserMessage = {
+        type: 'user',
+        uuid: 'skill-context',
+        parent_tool_use_id: null,
+        ...provenance,
+        message: { role: 'user', content: [{ type: 'text', text: 'Internal skill context' }] },
+      };
+      const result: SDKUserMessage = {
+        ...text,
+        uuid: 'skill-result',
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'skill', content: 'Launching skill' }] },
+      };
+
+      expect(converter.convert(text)).toBeNull();
+      expect(converter.convert(result)).toMatchObject({ parentUuid: null, message: result.message });
+    });
+
     it('converts SDK user message to log format', () => {
       const sdkMessage: SDKUserMessage = {
         type: 'user',

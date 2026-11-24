@@ -41,6 +41,8 @@ import type {
   AgentPromptPayload,
 } from '../core';
 import { logger } from '@/ui/logger';
+import { managedMcpDirectEndpoint } from '@/mcp/servers/managedMcpDirectEndpoint';
+import { normalizeAcpMcpCapabilities, type AcpMcpCapabilities } from './normalizeAcpMcpCapabilities';
 import { delay } from '@/utils/time';
 import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
 import { createAcpStderrLogSummarizer } from './diagnostics/summarizeAcpStderrForLogs';
@@ -944,6 +946,7 @@ export class AcpBackend implements AgentBackend {
   private negotiatedSessionCapabilities: NegotiatedAcpSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;
   private negotiatedSessionLoadSupport: boolean | null = null;
   private negotiatedAgentVersion: string | undefined;
+  private negotiatedMcpCapabilities: AcpMcpCapabilities | null = null;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
   private replayCapture: AcpReplayCapture | null = null;
@@ -1362,14 +1365,20 @@ export class AcpBackend implements AgentBackend {
   }
 
   private buildAcpMcpServersForSessionRequest(): NewSessionRequest['mcpServers'] {
-    return Object.entries(this.options.mcpServers ?? {}).map(([name, config]) => ({
-      name,
-      command: config.command,
-      args: config.args || [],
-      env: config.env
-        ? Object.entries(config.env).map(([envName, envValue]) => ({ name: envName, value: envValue }))
-        : [],
-    } satisfies NewSessionRequest['mcpServers'][number]));
+    return Object.entries(this.options.mcpServers ?? {}).map(([name, config]): NewSessionRequest['mcpServers'][number] => {
+      const remote = config[managedMcpDirectEndpoint];
+      if (remote && this.negotiatedMcpCapabilities?.[remote.transport]) {
+        return { name, type: remote.transport, url: remote.url, headers: [] };
+      }
+      return {
+        name,
+        command: config.command,
+        args: config.args ?? [],
+        env: config.env
+          ? Object.entries(config.env).map(([envName, envValue]) => ({ name: envName, value: envValue }))
+          : [],
+      };
+    });
   }
 
   private readMcpStartupFailure(request: NewSessionRequest, error: unknown): Readonly<{
@@ -1419,6 +1428,7 @@ export class AcpBackend implements AgentBackend {
     this.negotiatedSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;
     this.negotiatedSessionLoadSupport = null;
     this.negotiatedAgentVersion = undefined;
+    this.negotiatedMcpCapabilities = null;
 
     connection?.close();
 
@@ -2170,6 +2180,7 @@ export class AcpBackend implements AgentBackend {
     const negotiatedSessionCapabilities = readAcpNegotiatedSessionCapabilities(agentCapabilities);
     this.negotiatedSessionCapabilities = negotiatedSessionCapabilities;
     this.negotiatedSessionLoadSupport = negotiatedSessionLoadSupport;
+    this.negotiatedMcpCapabilities = normalizeAcpMcpCapabilities(agentCapabilities?.mcpCapabilities);
 
     if (this.options.authentication) {
       const advertisedMethodIds = new Set<string>();
@@ -4594,6 +4605,7 @@ export class AcpBackend implements AgentBackend {
     this.connection = null;
     this.acpSessionId = null;
     this.negotiatedSessionCapabilities = NO_NEGOTIATED_ACP_SESSION_CAPABILITIES;
+    this.negotiatedMcpCapabilities = null;
     this.toolCalls.dispose();
     await this.plans.reset();
     this.planStatePublisher = null;
