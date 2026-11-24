@@ -8,7 +8,7 @@ describe('createAcpAgentMessageForwarder', () => {
       const sent: ACPMessageData[] = [];
       const forwarder = createAcpAgentMessageForwarder({
         sendAcp: (_provider, body) => { sent.push(body); },
-        provider: 'slices', sidechainId: 'review-run', makeId: () => 'progress',
+        provider: 'clawpatch', sidechainId: 'review-run', makeId: () => 'progress',
       });
       forwarder.forward({ type: 'event', name: 'thinking', payload });
       forwarder.forward({ type: 'event', name: 'available_commands_update', payload: { text: 'not progress' } });

@@ -7,7 +7,7 @@ const runtime: PluginDynamicResourceRuntime = {
   read({ context }) {
     const review = context.kind === 'surface' ? context.review : undefined;
     const children: PluginUiDeclarativeNodeV2[] = [];
-    if (review?.kind === 'finding' && review.namespace === 'happier.review.slices') {
+    if (review?.kind === 'finding' && review.namespace === 'happier.review.clawpatch') {
       const evidence = review.extension !== null && typeof review.extension === 'object' && !Array.isArray(review.extension)
         // Array.isArray's type predicate does not eliminate readonly JSON arrays.
         ? review.extension as PluginUiJsonObjectV1 : {};
@@ -21,7 +21,7 @@ const runtime: PluginDynamicResourceRuntime = {
           children: [{ kind: 'text', text: value }] });
       }
     } else if (review?.kind === 'engineOptions') {
-      children.push({ kind: 'text', text: 'Slice review uses the selected provider, model and repository slices.' });
+      children.push({ kind: 'text', text: 'clawpatch uses the selected provider, model and repository slices.' });
       for (const [field, label] of [['provider', 'Native provider'], ['model', 'Model'], ['featureIds', 'Selected slices']] as const) {
         const value = review.options[field];
         const display = Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').join(', ')
@@ -29,7 +29,7 @@ const runtime: PluginDynamicResourceRuntime = {
         if (display) children.push({ kind: 'status', label, value: display });
       }
     } else if (review?.kind === 'page') {
-      children.push({ kind: 'text', text: 'Slice evidence appears with each finding in this Review, including reproduction and regression guidance.' });
+      children.push({ kind: 'text', text: 'clawpatch evidence appears with each finding in this Review, including reproduction and regression guidance.' });
     }
     return JSON.stringify(definePluginDeclarativeDocumentV1({ version: 1, root: { kind: 'stack', gap: 'medium', children } }));
   },

@@ -3,8 +3,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExecService, PluginProcessOutput, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import { runSliceReview } from './run.js';
-import { createSliceExecutionRunFactory } from './execution.js';
+import { runClawpatchReview } from './run.js';
+import { createClawpatchExecutionRunFactory } from './execution.js';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { activate, PLUGIN_MANIFEST } from '../../manifest.js';
 import type { AgentExecutionRunEvent, AgentExecutionRunOpenRequest, AgentExecutionRunRuntimeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -29,7 +29,7 @@ function finding(id: string, featureId: string) {
 }
 
 async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' = 'success', reviewCompletion?: Promise<void>) {
-  const directory = await mkdtemp(join(tmpdir(), 'happier-slices-')); directories.push(directory);
+  const directory = await mkdtemp(join(tmpdir(), 'happier-clawpatch-')); directories.push(directory);
   const controller = new AbortController();
   const state = join(directory, 'repository-a');
   const commands: string[][] = [];
@@ -85,11 +85,11 @@ async function fixture(mode: 'success' | 'counts-only' | 'failed' | 'cancelled' 
     };
   } };
   return { directory, state, commands, environments, controller, exec, selected: () => selected,
-    run: () => runSliceReview({ exec, fs: { getPluginDataDirectory: async () => state }, cwd: directory,
+    run: () => runClawpatchReview({ exec, fs: { getPluginDataDirectory: async () => state }, cwd: directory,
       stateRelativePath: 'repository-a', signal: controller.signal }) };
 }
 
-describe('native slice review', () => {
+describe('native clawpatch review', () => {
   it.each([
     { workspaceWrites: 'deny', unset: [], expected: 'read-only' },
     { workspaceWrites: 'allow', unset: [], expected: 'bypass' },
@@ -98,20 +98,20 @@ describe('native slice review', () => {
     const f = await fixture();
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {
-      const factory = activation.registration('agents', 'slices')?.factory;
-      if (!factory) throw new Error('Missing slice reviewer registration');
-      const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'slices' }, signal: f.controller.signal });
+      const factory = activation.registration('agents', 'clawpatch')?.factory;
+      if (!factory) throw new Error('Missing clawpatch reviewer registration');
+      const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: 'clawpatch' }, signal: f.controller.signal });
       // Host OS/process services are the boundary; registered factory and finite flow remain real.
-      const context = { agent: { id: 'slices' }, signal: f.controller.signal, services: {
+      const context = { agent: { id: 'clawpatch' }, signal: f.controller.signal, services: {
         exec: f.exec, fs: { getPluginDataDirectory: async () => f.state },
       } } as unknown as AgentExecutionRunRuntimeContextV1;
       const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'native-write-policy', cwd: f.directory,
-        profile: { pluginId: 'happier.review.slices', localId: 'review' },
+        profile: { pluginId: 'happier.review.clawpatch', localId: 'review' },
         configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: null, updatedAtMs: 0 },
           permissionIntent: { value: null, updatedAtMs: 0 }, options: {}, ...(workspaceWrites ? { workspaceWrites } : {}) },
         launchEnvironment: { values: { CLAWPATCH_CODEX_SANDBOX: 'bypass', NATIVE_REVIEW_MARKER: 'retained' }, unset: [...unset] },
         input: { text: 'Review the repository', structuredInput: { scope: 'repository',
-          engines: { slices: { provider: 'mock' } }, scmReviewScope: {
+          engines: { clawpatch: { provider: 'mock' } }, scmReviewScope: {
             scope: 'repository', status: 'supported', worktreeRoot: f.directory,
           } } } };
       const runtime = await agent.executionRuns!.open(request, context);
@@ -131,10 +131,10 @@ describe('native slice review', () => {
     let releaseReview = () => {};
     const reviewCompletion = new Promise<void>(resolve => { releaseReview = resolve; });
     const f = await fixture('success', reviewCompletion);
-    const context = { agent: { id: 'slices' }, signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
-    const runtime = await createSliceExecutionRunFactory().open({ kind: 'create', runId: 'live-progress', cwd: f.directory,
-      profile: { pluginId: 'happier.review.slices', localId: 'review' }, input: { text: 'Review the repository', structuredInput: {
-        scope: 'repository', engines: { slices: { provider: 'mock' } }, scmReviewScope: {
+    const context = { agent: { id: 'clawpatch' }, signal: f.controller.signal, services: { exec: f.exec, fs: { getPluginDataDirectory: async () => f.state } } } as unknown as AgentExecutionRunRuntimeContextV1;
+    const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: 'live-progress', cwd: f.directory,
+      profile: { pluginId: 'happier.review.clawpatch', localId: 'review' }, input: { text: 'Review the repository', structuredInput: {
+        scope: 'repository', engines: { clawpatch: { provider: 'mock' } }, scmReviewScope: {
           scope: 'repository', status: 'supported', worktreeRoot: f.directory,
         },
       } } }, context);
@@ -164,11 +164,11 @@ describe('native slice review', () => {
     expect(ReviewFindingsV2Schema.parse(JSON.parse(output.text)).findings).toHaveLength(2);
   });
   it.each(['success', 'failed'] as const)('publishes substantive native findings for host normalization when the native result is %s', async mode => {
-    const engineId = mode === 'success' ? 'happier.review.slices/slices' : 'slices';
+    const engineId = mode === 'success' ? 'happier.review.clawpatch/clawpatch' : 'clawpatch';
     const f = await fixture(mode);
     const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-    const factory = activation.registration('agents', 'slices')?.factory;
-    if (!factory) throw new Error('Missing slice reviewer registration');
+    const factory = activation.registration('agents', 'clawpatch')?.factory;
+    if (!factory) throw new Error('Missing clawpatch reviewer registration');
     const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: engineId }, signal: f.controller.signal });
     // Only host I/O services are substituted; the runtime, scope schema and adapter remain real.
     const context = { agent: { id: engineId }, signal: f.controller.signal, services: {
@@ -176,7 +176,7 @@ describe('native slice review', () => {
       managedServices: { dependencies: { ensure: async () => ({ state: 'ready', id: 'review-executable', version: '0.8.4', sourceId: 'test' }) } },
     } } as unknown as AgentExecutionRunRuntimeContextV1;
     const request: AgentExecutionRunOpenRequest = { kind: 'create', runId: 'host-run', cwd: f.directory,
-      profile: { pluginId: 'happier.review.slices', localId: 'review' }, input: { text: 'Find lost writes', structuredInput: {
+      profile: { pluginId: 'happier.review.clawpatch', localId: 'review' }, input: { text: 'Find lost writes', structuredInput: {
         reviewers: [{ kind: 'engine', engineId }], instructions: 'Find lost writes', scope: 'repository', engines: { [engineId]: { provider: 'mock' } },
         scmReviewScope: { kind: 'review_scm_scope.v1', scope: 'repository', status: 'supported', scmBackendId: 'git', scmMode: '.git',
           repositoryRoot: f.directory, worktreeRoot: f.directory, baseRef: { source: 'unavailable', ref: null },
@@ -193,14 +193,14 @@ describe('native slice review', () => {
     if (!output || output.kind !== 'output-delta') throw new Error('Missing canonical review output');
     const review = ReviewFindingsV2Schema.parse(JSON.parse(output.text));
     expect(review.reviewOutcome).toBe(mode === 'failed' ? 'failed' : 'complete');
-    expect(review.findings[0]?.extensions?.['happier.review.slices']).toMatchObject({
+    expect(review.findings[0]?.extensions?.['happier.review.clawpatch']).toMatchObject({
       nativeFindingId: 'one', featureId: 'slice-a', confidence: 'high', reproduction: 'Run two concurrent writes.',
     });
     expect(f.commands.at(-1)).toContain('--prompt-file');
     expect(f.commands.at(-1)).toEqual(expect.arrayContaining(['--provider', 'mock']));
     await runtime.dispose();
     const before = f.commands.length;
-    const bound = await createSliceExecutionRunFactory().open({ ...request, providerBinding: {
+    const bound = await createClawpatchExecutionRunFactory().open({ ...request, providerBinding: {
       connectionId: 'selected-provider', upstream: { protocol: 'openai.responses', normalizedUrl: 'https://example.com/v1', credential: 'apiKey' },
       model: { id: 'selected-model', name: 'Selected model' }, materialization: { v: 1, kind: 'spawnEnv' },
     } }, context);
@@ -217,7 +217,7 @@ describe('native slice review', () => {
     expect(f.selected()).toEqual(['slice-a', 'slice-b']);
     expect(result.status).toBe('completed');
     expect(result.findings).toHaveLength(2);
-    expect(result.findings[0]).toMatchObject({ id: 'slices-1', filePath: 'slice-a.ts', startLine: 4, severity: 'blocker',
+    expect(result.findings[0]).toMatchObject({ id: 'clawpatch-1', filePath: 'slice-a.ts', startLine: 4, severity: 'blocker',
       summary: 'The write is lost before commit.', suggestion: 'Commit before returning.' });
     expect(result.findings[0]?.confidence).toBeUndefined();
     expect(result.findingEvidence[0]).toMatchObject({ runId: 'native-run', featureId: 'slice-a', confidence: 'high',

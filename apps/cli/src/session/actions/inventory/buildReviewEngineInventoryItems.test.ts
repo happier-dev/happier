@@ -140,14 +140,14 @@ describe('buildReviewEngineInventoryItems', () => {
   });
 
   it('preserves repository-only profiles and generic repository reviewers through inventory selection', async () => {
-    const agents = ['generic', 'slices'].map(id => projectManifestAgentContribution({
+    const agents = ['generic', 'clawpatch'].map(id => projectManifestAgentContribution({
       pluginId: 'acme.review', provenance: 'external', source: { kind: 'path' },
       definition: PluginAgentContributionV2Schema.parse({ id, title: id, primary: 'executionRuns', runtime: { kind: 'custom' },
         capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } } }),
     }));
     const registrySnapshot = { agentDefinitionsById: new Map(agents.map(agent => [agent.id, agent])), executionRunProfiles: [] };
     const profileCatalog = buildExecutionRunProfileCatalog([{ pluginId: 'acme.review', definition: {
-      id: 'slices', title: 'Slices', intent: 'review', compatibleAgents: ['slices'], promptAsset: 'prompt',
+      id: 'clawpatch', title: 'clawpatch', intent: 'review', compatibleAgents: ['clawpatch'], promptAsset: 'prompt',
       metadata: { reviewScopes: ['repository'] },
       defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'requestResponse' },
     } }], { resolveAgentIdentity: id => agents.find(agent => agent.id === id)?.identity ?? null });

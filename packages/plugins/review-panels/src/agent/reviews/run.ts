@@ -1,9 +1,9 @@
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { FileSystemService } from '@happier-dev/plugin-sdk/fs';
-import { normalizePanelReview, PanelReviewError, type PanelReviewResult } from './document.js';
+import { normalizeRoborevReview, RoborevReviewError, type RoborevReviewResult } from './document.js';
 
-export type PanelReviewRunInput = Readonly<{
+export type RoborevReviewRunInput = Readonly<{
   /** Host-issued unique create-run identity; this adapter does not resume runs. */
   runId: string;
   cwd: string;
@@ -16,10 +16,10 @@ export type PanelReviewRunInput = Readonly<{
   onProgress?: () => void;
 }>;
 
-export async function runPanelReview(
+export async function runRoborevReview(
   services: Readonly<{ exec: Pick<ExecService, 'run'>; fs: Pick<FileSystemService, 'getPluginDataDirectory' | 'writeFile'> }>,
-  input: PanelReviewRunInput,
-): Promise<PanelReviewResult> {
+  input: RoborevReviewRunInput,
+): Promise<RoborevReviewResult> {
   input.signal.throwIfAborted();
   const dataDirectory = await services.fs.getPluginDataDirectory({ relativePath: `runs/${input.runId}`, signal: input.signal });
   input.signal.throwIfAborted();
@@ -30,7 +30,7 @@ export async function runPanelReview(
     env: { ...input.env, ROBOREV_DATA_DIR: dataDirectory, ROBOREV_TELEMETRY_ENABLED: '0', NO_COLOR: '1' },
   };
   const command = async (
-    phase: Exclude<PanelReviewError['phase'], 'document'>,
+    phase: Exclude<RoborevReviewError['phase'], 'document'>,
     args: readonly string[],
     options?: Parameters<ExecService['run']>[1],
   ): Promise<PluginProcessResult> => {
@@ -40,7 +40,7 @@ export async function runPanelReview(
     // Native wait uses 1 for either a completed FAIL verdict or a job failure.
     // The selected stored document, never this exit code, supplies the result.
     if (observed.kind !== 'exit' || (observed.exitCode !== 0 && !(phase === 'wait' && observed.exitCode === 1))) {
-      throw new PanelReviewError('panel_native_process_failed', phase, observed.kind === 'exit' ? observed.exitCode : undefined, result.termination);
+      throw new RoborevReviewError('roborev_native_process_failed', phase, observed.kind === 'exit' ? observed.exitCode : undefined, result.termination);
     }
     return result;
   };
@@ -60,12 +60,12 @@ export async function runPanelReview(
     const listed = await command('list', ['job', 'list', '--json']);
     let jobs: unknown;
     try { jobs = JSON.parse(new TextDecoder().decode(listed.stdout)); }
-    catch { throw new PanelReviewError('panel_job_missing', 'list'); }
-    if (!Array.isArray(jobs) || jobs.length !== 1) throw new PanelReviewError('panel_job_missing', 'list');
+    catch { throw new RoborevReviewError('roborev_job_missing', 'list'); }
+    if (!Array.isArray(jobs) || jobs.length !== 1) throw new RoborevReviewError('roborev_job_missing', 'list');
     const selected: unknown = jobs[0];
     if (!selected || typeof selected !== 'object' || !('id' in selected)
       || typeof selected.id !== 'number' || !Number.isSafeInteger(selected.id) || selected.id < 1) {
-      throw new PanelReviewError('panel_job_missing', 'list');
+      throw new RoborevReviewError('roborev_job_missing', 'list');
     }
     jobId = selected.id;
     input.onProgress?.();
@@ -78,9 +78,9 @@ export async function runPanelReview(
     try {
       record = JSON.parse(new TextDecoder().decode(shown.stdout));
     } catch {
-      throw new PanelReviewError('panel_document_invalid', 'document');
+      throw new RoborevReviewError('roborev_document_invalid', 'document');
     }
-    return normalizePanelReview(record, jobId);
+    return normalizeRoborevReview(record, jobId);
   } catch (error) {
     primary = { error };
     throw error;
@@ -95,9 +95,9 @@ export async function runPanelReview(
     try { await command('stop', ['daemon', 'stop']); }
     catch (error) { cleanupErrors.push(error); }
     if (cleanupErrors.length > 0) {
-      if (primary !== null) throw new AggregateError([primary.error, ...cleanupErrors], 'Panel review and native cleanup failed');
+      if (primary !== null) throw new AggregateError([primary.error, ...cleanupErrors], 'roborev and native cleanup failed');
       if (cleanupErrors.length === 1) throw cleanupErrors[0];
-      throw new AggregateError(cleanupErrors, 'Panel review native cleanup failed');
+      throw new AggregateError(cleanupErrors, 'roborev native cleanup failed');
     }
   }
 }

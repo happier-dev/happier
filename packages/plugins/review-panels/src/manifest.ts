@@ -2,40 +2,40 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AGENT_DEFINITION } from './agent/definition.js';
-import { createPanelExecutionRunFactory } from './agent/reviews/execution.js';
-import { createPanelReviewExecutionProfile } from './agent/reviews/profile.js';
+import { createRoborevExecutionRunFactory } from './agent/reviews/execution.js';
+import { createRoborevReviewExecutionProfile } from './agent/reviews/profile.js';
 
-const createPanelRuntime: AgentRuntimeFactory = () => Object.freeze({ executionRuns: createPanelExecutionRunFactory() });
+const createRoborevRuntime: AgentRuntimeFactory = () => Object.freeze({ executionRuns: createRoborevExecutionRunFactory() });
 
-export const PANELS_PLUGIN = definePlugin({
-  id: 'happier.review.panels',
+export const ROBOREV_PLUGIN = definePlugin({
+  id: 'happier.review.roborev',
   version: '0.0.0',
-  displayName: 'Panel reviews',
+  displayName: 'roborev',
   description: 'Native single and panel code reviews on the selected Machine.',
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
-  hostAccess: { required: [{ id: 'panel-workspace', capability: 'filesystem',
+  hostAccess: { required: [{ id: 'roborev-workspace', capability: 'filesystem',
     reason: 'Review the admitted workspace with the native reviewer.', scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
-  { id: 'panel-process', capability: 'process', reason: 'Run and stop the native reviewer for one admitted review.',
+  { id: 'roborev-process', capability: 'process', reason: 'Run and stop the native reviewer for one admitted review.',
     scope: { executables: [{ kind: 'managedDependency', id: 'review-executable' }], envKeys: ['ROBOREV_DATA_DIR', 'ROBOREV_TELEMETRY_ENABLED', 'NO_COLOR'] } }], optional: [] },
-  agents: { panels: { declaration: { title: 'Panel reviewer', runtime: { kind: 'custom' }, primary: 'executionRuns',
+  agents: { roborev: { declaration: { title: 'roborev', runtime: { kind: 'custom' }, primary: 'executionRuns',
     connectedAccounts: [], sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
     capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
       skills: { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported' },
       executionRuns: { open: ['create'], checkpoint: false, stop: true },
     }),
-  }, factory: createPanelRuntime } },
-  executionRunProfiles: { review: createPanelReviewExecutionProfile() },
+  }, factory: createRoborevRuntime } },
+  executionRunProfiles: { review: createRoborevReviewExecutionProfile() },
   resources: { 'review-prompt-resource': { kind: 'prompt', path: './resources/review-prompt.md', contentType: 'text/markdown' } },
-  promptAssets: { 'review-prompt': { kind: 'systemPrompt', resource: 'review-prompt-resource', target: { kind: 'agent', agent: 'panels' } } },
+  promptAssets: { 'review-prompt': { kind: 'systemPrompt', resource: 'review-prompt-resource', target: { kind: 'agent', agent: 'roborev' } } },
   managedDependencies: {
     'review-executable': {
-      title: 'Panel review executable',
+      title: 'roborev executable',
       executable: 'roborev',
       platforms: ['linux', 'macos', 'windows'],
       architectures: ['x64', 'arm64'],
       sources: [{
         kind: 'githubReleaseBinary',
-        installId: 'dep.review-panels',
+        installId: 'dep.review-roborev',
         repo: 'kenn-io/roborev',
         distTag: 'latest',
         archiveLayout: 'single_executable',
@@ -55,4 +55,4 @@ export const PANELS_PLUGIN = definePlugin({
   },
 });
 
-export const { manifest: PLUGIN_MANIFEST, activate } = PANELS_PLUGIN;
+export const { manifest: PLUGIN_MANIFEST, activate } = ROBOREV_PLUGIN;

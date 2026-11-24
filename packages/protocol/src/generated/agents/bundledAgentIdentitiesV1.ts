@@ -106,4 +106,12 @@ export const BUNDLED_AGENT_CONTRIBUTION_IDENTITIES_V1: Readonly<Record<
     pluginId: 'happier.agent.muse',
     localId: 'muse',
   }),
+  'roborev': Object.freeze({
+    pluginId: 'happier.review.roborev',
+    localId: 'roborev',
+  }),
+  'clawpatch': Object.freeze({
+    pluginId: 'happier.review.clawpatch',
+    localId: 'clawpatch',
+  }),
 });

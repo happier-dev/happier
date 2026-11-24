@@ -1,8 +1,8 @@
-export function createPanelReviewExecutionProfile() {
+export function createRoborevReviewExecutionProfile() {
   return {
-    id: 'review', intent: 'review' as const, title: 'Panel review',
+    id: 'review', intent: 'review' as const, title: 'roborev',
     description: 'Run a single reviewer or a repository-configured native panel.',
-    promptAsset: 'review-prompt', compatibleAgents: ['panels'],
+    promptAsset: 'review-prompt', compatibleAgents: ['roborev'],
     actions: [{ kind: 'hostAction' as const, actionId: 'reviews.comments.create' as const }],
     defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
     optionsSchema: {
@@ -19,4 +19,4 @@ export function createPanelReviewExecutionProfile() {
 }
 
 /** Values have already crossed the shared profile options admission boundary. */
-export type PanelReviewOptions = Readonly<{ panel?: string; reviewType?: string; agent?: string; reasoning?: string }>;
+export type RoborevReviewOptions = Readonly<{ panel?: string; reviewType?: string; agent?: string; reasoning?: string }>;

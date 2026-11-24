@@ -9,11 +9,11 @@ export type SliceFindingEvidence = Readonly<{
 }>;
 
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid native slice document');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid native clawpatch document');
   return value as Record<string, unknown>;
 }
 function text(value: unknown): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid native slice text');
+  if (typeof value !== 'string' || !value.trim()) throw new Error('Invalid native clawpatch text');
   return value;
 }
 function nullableText(value: unknown): string | null {
@@ -21,12 +21,12 @@ function nullableText(value: unknown): string | null {
   return text(value);
 }
 function array(value: unknown): unknown[] {
-  if (!Array.isArray(value)) throw new Error('Invalid native slice list');
+  if (!Array.isArray(value)) throw new Error('Invalid native clawpatch list');
   return value;
 }
 function line(value: unknown): number | null {
   if (value === null || value === 0) return null;
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('Invalid native slice location');
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error('Invalid native clawpatch location');
   return value;
 }
 function versioned(value: unknown): Record<string, unknown> {
@@ -72,7 +72,7 @@ export function readSliceFinding(value: unknown, expectedId: string, runId: stri
   });
   const primary = locations[0];
   const suggestion = nullableText(native.recommendation);
-  const finding: ReviewFinding = { id: `slices-${index + 1}`, title: text(native.title), summary: text(native.reasoning), category, severity,
+  const finding: ReviewFinding = { id: `clawpatch-${index + 1}`, title: text(native.title), summary: text(native.reasoning), category, severity,
     ...(primary ? { filePath: primary.path, ...(primary.startLine ? { startLine: primary.startLine, endLine: primary.endLine! } : {}) } : {}),
     ...(suggestion ? { suggestion } : {}),
     ...(locations.length ? { evidence: locations.map(item => [item.path, item.symbol, item.quote].filter(Boolean).join(': ')).join('\n') } : {}) };

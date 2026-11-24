@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
-import { runPanelReview, type PanelReviewRunInput } from './run.js';
+import { runRoborevReview, type RoborevReviewRunInput } from './run.js';
 
 function completed(stdout = '', exitCode = 0): PluginProcessResult {
   return {
@@ -13,7 +13,7 @@ function completed(stdout = '', exitCode = 0): PluginProcessResult {
 
 function fixture() {
   const controller = new AbortController();
-  const input: PanelReviewRunInput = {
+  const input: RoborevReviewRunInput = {
     runId: 'review-42', cwd: '/repo', executable: { kind: 'managedDependency', id: 'review-executable' },
     reviewArgs: ['--since', 'base-sha', '--sha', 'head-sha', '--panel', 'default'],
     env: { SELECTED_CREDENTIAL: 'selected-value' }, signal: controller.signal,
@@ -36,7 +36,7 @@ function fixture() {
 describe('finite native panel run', () => {
   it('uses isolated durable state, reads only its selected job, and stops at completion', async () => {
     const { input, run, services } = fixture();
-    expect(await runPanelReview(services, input)).toMatchObject({ outcome: 'complete', verdict: 'pass', findings: [] });
+    expect(await runRoborevReview(services, input)).toMatchObject({ outcome: 'complete', verdict: 'pass', findings: [] });
     expect(services.fs.getPluginDataDirectory).toHaveBeenCalledWith({ relativePath: 'runs/review-42', signal: input.signal });
     // Constant process work, independent of stored review history and panel size.
     expect(run.mock.calls.map(([request]) => request.args)).toEqual([
@@ -53,7 +53,7 @@ describe('finite native panel run', () => {
 
   it('uses native quiet submission to suppress automatic hook maintenance', async () => {
     const { input, run, services } = fixture();
-    await runPanelReview(services, { ...input, env: { ...input.env,
+    await runRoborevReview(services, { ...input, env: { ...input.env,
       GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'diff.algorithm', GIT_CONFIG_VALUE_0: 'histogram',
       GIT_CONFIG_PARAMETERS: "'color.ui=false'",
     } });
@@ -77,7 +77,7 @@ describe('finite native panel run', () => {
       } }));
       return completed();
     });
-    expect(await runPanelReview(services, input)).toMatchObject({ outcome: 'complete', verdict: 'fail', findings: [{ summary: 'Incorrect result.' }] });
+    expect(await runRoborevReview(services, input)).toMatchObject({ outcome: 'complete', verdict: 'fail', findings: [{ summary: 'Incorrect result.' }] });
   });
 
   it('selects the native job without requiring a rendered enqueue receipt', async () => {
@@ -86,14 +86,14 @@ describe('finite native panel run', () => {
     run.mockImplementation(async (request, options) => request.args?.[0] === 'review'
       ? completed()
       : original(request, options));
-    expect(await runPanelReview(services, input)).toMatchObject({ verdict: 'pass', outcome: 'complete' });
+    expect(await runRoborevReview(services, input)).toMatchObject({ verdict: 'pass', outcome: 'complete' });
   });
 
   it.each(['[]', '[{"id":1},{"id":2}]', '[{"id":"42"}]', 'not-json'])('refuses missing, ambiguous or malformed native job selection: %s', async listing => {
     const { input, run, services } = fixture();
     const original = run.getMockImplementation()!;
     run.mockImplementation((request, options) => request.args?.[1] === 'list' ? Promise.resolve(completed(listing)) : original(request, options));
-    await expect(runPanelReview(services, input)).rejects.toMatchObject({ code: 'panel_job_missing' });
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ code: 'roborev_job_missing' });
     expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
   });
 
@@ -108,7 +108,7 @@ describe('finite native panel run', () => {
       if (phase === 'wrong-job' && args?.[1] === 'show') return completed(JSON.stringify({ job_id: 99, structured_output: { schema_version: 3, verdict: 'pass', summary: 'Another review.', findings: [] } }));
       return original(request, options);
     });
-    await expect(runPanelReview(services, input)).rejects.toThrow();
+    await expect(runRoborevReview(services, input)).rejects.toThrow();
     expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
   });
 
@@ -122,7 +122,7 @@ describe('finite native panel run', () => {
       }
       return original(request, options);
     });
-    await expect(runPanelReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
     expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
     expect(run.mock.calls.at(-2)?.[0].args).toEqual(['job', 'cancel', '42']);
     expect(run.mock.calls.at(-1)?.[1]?.signal?.aborted).not.toBe(true);
@@ -138,7 +138,7 @@ describe('finite native panel run', () => {
       }
       return original(request, options);
     });
-    await expect(runPanelReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
     expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
     if (phase !== 'start') expect(run.mock.calls.at(-2)?.[0].args).toEqual(['job', 'cancel', '42']);
     else expect(run.mock.calls.map(([request]) => request.args)).toEqual([['daemon', 'start'], ['daemon', 'stop']]);
@@ -147,7 +147,7 @@ describe('finite native panel run', () => {
   it('starts no native process when already canceled', async () => {
     const { input, controller, run, services } = fixture();
     controller.abort();
-    await expect(runPanelReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ name: 'AbortError' });
     expect(run).not.toHaveBeenCalled();
     expect(services.fs.getPluginDataDirectory).not.toHaveBeenCalled();
   });
@@ -163,7 +163,7 @@ describe('finite native panel run', () => {
       if (request.args?.[1] === 'stop') return completed('', 1);
       return original(request, options);
     });
-    await expect(runPanelReview(services, input)).rejects.toMatchObject({
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({
       name: 'AggregateError', errors: [expect.objectContaining({ name: 'AbortError' }), expect.objectContaining({ phase: 'stop' })],
     });
   });
@@ -172,6 +172,6 @@ describe('finite native panel run', () => {
     const { input, run, services } = fixture();
     const original = run.getMockImplementation()!;
     run.mockImplementation(async (request, options) => request.args?.[1] === 'stop' ? completed('', 1) : original(request, options));
-    await expect(runPanelReview(services, input)).rejects.toMatchObject({ code: 'panel_native_process_failed', phase: 'stop' });
+    await expect(runRoborevReview(services, input)).rejects.toMatchObject({ code: 'roborev_native_process_failed', phase: 'stop' });
   });
 });

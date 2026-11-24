@@ -1,9 +1,9 @@
-const PANELS_AGENT_ID = 'panels';
+const ROBOREV_AGENT_ID = 'roborev';
 
 export const AGENT_DEFINITION = Object.freeze({
-  id: PANELS_AGENT_ID,
+  id: ROBOREV_AGENT_ID,
   core: {
-    id: PANELS_AGENT_ID, cliSubcommand: PANELS_AGENT_ID, detectKey: PANELS_AGENT_ID,
+    id: ROBOREV_AGENT_ID, cliSubcommand: ROBOREV_AGENT_ID, detectKey: ROBOREV_AGENT_ID,
     flavorAliases: [], cloudConnect: null, connectedServices: null,
     resume: { vendorResume: 'unsupported' as const },
     sessionStorage: { direct: false, persisted: false },

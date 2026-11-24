@@ -149,7 +149,7 @@ else {
   } else if (args[0] === 'review' && fs.existsSync(${JSON.stringify(nativeHoldPath)})) {
     setInterval(() => {}, 1000);
   } else if (args[0] === 'review') {
-    const runId = 'native-slices';
+    const runId = 'native-clawpatch';
     const ids = ['slice-a', 'slice-b'];
     for (const [index, featureId] of ids.entries()) {
       console.error('clawpatch review feature-start index=' + (index + 1) + ' total=2 feature=' + featureId);
@@ -194,7 +194,7 @@ else {
       // Pinned npm dependencies execute their package bin, never a PATH shim.
       // Seed that native boundary in this fixture's private managed install.
       const command = resolveAgentCliManagedCommandPathForRuntime({
-        id: 'dep.review-slices', title: 'Slice review', binaryName: 'clawpatch', sourcePreferenceDefault: 'managed-first',
+        id: 'dep.review-clawpatch', title: 'clawpatch', binaryName: 'clawpatch', sourcePreferenceDefault: 'managed-first',
         managedInstall: { kind: 'managed_package', packageName: 'clawpatch@0.8.4', binaryName: 'clawpatch' },
         manualInstallKind: 'none', manualInstallRecipes: {}, acceptsJavaScriptFileOverride: false,
       }, { processEnv: { ...process.env, HAPPIER_HOME_DIR: homeDir } });
@@ -631,8 +631,8 @@ else {
       .toMatchObject({ run: { status: 'failed', error: { code: 'coderabbit_scope_unsupported' } } });
     expect((await readFile(codeRabbitAuditPath, 'utf8')).trim().split('\n')).toHaveLength(5);
   });
-  it('F4 native slices preserve distinct evidence and findings through public Actions, New round and Stop', async () => {
-    let result = await startNativeReview('slices', { scope: 'repository' });
+  it('F4 native clawpatch preserves distinct evidence and findings through public Actions, New round and Stop', async () => {
+    let result = await startNativeReview('clawpatch', { scope: 'repository' });
     const firstRunId = result.run.runId;
     const reviewId = result.run.display?.groupId;
     let originalIds: string[] = [];
@@ -647,8 +647,8 @@ else {
       }
       expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: {
         reviewOutcome: 'complete', findings: [
-          { extensions: { 'happier.review.slices': { featureId: 'slice-a' } } },
-          { extensions: { 'happier.review.slices': { featureId: 'slice-b' } } },
+          { extensions: { 'happier.review.clawpatch': { featureId: 'slice-a' } } },
+          { extensions: { 'happier.review.clawpatch': { featureId: 'slice-b' } } },
         ],
       } });
       const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
@@ -656,7 +656,7 @@ else {
       if (round === 1) originalIds = persisted.items.map(item => item.id).sort();
       else expect(persisted.items.map(item => item.id).sort()).toEqual(originalIds);
       for (const item of persisted.items) {
-        expect(item.author).toEqual({ kind: 'executionRun', agentId: 'slices', runId: firstRunId });
+        expect(item.author).toEqual({ kind: 'executionRun', agentId: 'clawpatch', runId: firstRunId });
         expect(item.appearances).toEqual(expect.arrayContaining([expect.objectContaining({ roundOrdinal: round, runId: result.run.runId })]));
       }
       expect(ReviewGetResponseV1Schema.parse(await act('review.get', { reviewId })).review)
@@ -668,7 +668,7 @@ else {
     expect(commands[0]?.state.startsWith(machine.workspaceDir)).toBe(false);
     await stopNativeRound(firstRunId, sliceAuditPath, args => args[0] === 'review');
   });
-  it('F4 native panel with an explicitly write-enabled Role preserves a failed member and substantive evidence through public Actions, New round and Stop', async () => {
+  it('F4 native roborev with an explicitly write-enabled Role preserves a failed member and substantive evidence through public Actions, New round and Stop', async () => {
     const panelRecord = structuredClone(panelNativeReview);
     panelRecord.panel.members[1]!.status = 'failed';
     await writeFile(panelReplyPath, JSON.stringify(panelRecord));
@@ -679,7 +679,7 @@ else {
     }));
     expect(captured.success).toBe(true);
     if (!captured.success) throw new Error(captured.errorCode);
-    let result = await startNativeReview('panels', { comparisonId: captured.comparison.id }, {
+    let result = await startNativeReview('roborev', { comparisonId: captured.comparison.id }, {
       roleId: await createWriteEnabledReviewRole(),
     });
     const firstRunId = result.run.runId;
@@ -696,7 +696,7 @@ else {
         result = ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: next.runId, includeStructured: true }));
       }
       expect(result, JSON.stringify(result)).toMatchObject({ run: { status: 'succeeded' }, reviewFindings: { reviewOutcome: 'partial', findings: [{
-        suggestion: 'Return the selected value.', extensions: { 'happier.review.panels': {
+        suggestion: 'Return the selected value.', extensions: { 'happier.review.roborev': {
           verdict: 'fail', sources: [1], members: [{ status: 'done' }, { status: 'failed' }],
         } },
       }] } });
@@ -707,7 +707,7 @@ else {
         && Array.isArray(command.args) && command.args[0] === 'review')).toHaveLength(round);
       const persisted = ReviewCommentListResponseV1Schema.parse(await act('reviews.comments.list', { reviewId }));
       expect(persisted.items).toHaveLength(1);
-      expect(persisted.items[0]?.author).toEqual({ kind: 'executionRun', agentId: 'panels', runId: firstRunId });
+      expect(persisted.items[0]?.author).toEqual({ kind: 'executionRun', agentId: 'roborev', runId: firstRunId });
       if (round === 1) firstCommentId = persisted.items[0]!.id;
       else expect(persisted.items[0]?.id).toBe(firstCommentId);
       expect(persisted.items[0]?.appearances).toEqual(expect.arrayContaining([

@@ -1,7 +1,7 @@
 import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
-export type PanelReviewResult = Readonly<{
+export type RoborevReviewResult = Readonly<{
   outcome: 'complete' | 'partial' | 'failed';
   summary: string;
   verdict: 'pass' | 'fail' | 'unable_to_review' | null;
@@ -16,20 +16,20 @@ export type PanelReviewResult = Readonly<{
   members: readonly Readonly<{ jobId: number; name: string; agent: string; status: string; verdict: string | null }>[];
 }>;
 
-export class PanelReviewError extends Error {
+export class RoborevReviewError extends Error {
   constructor(
-    readonly code: 'panel_document_invalid' | 'panel_document_unsupported' | 'panel_job_mismatch' | 'panel_job_missing' | 'panel_native_process_failed',
+    readonly code: 'roborev_document_invalid' | 'roborev_document_unsupported' | 'roborev_job_mismatch' | 'roborev_job_missing' | 'roborev_native_process_failed',
     readonly phase: 'document' | 'start' | 'review' | 'list' | 'wait' | 'show' | 'cancel' | 'stop',
     readonly exitCode?: number,
     readonly termination?: PluginProcessResult['termination'],
   ) {
     super(`${code} (${phase})`);
-    this.name = 'PanelReviewError';
+    this.name = 'RoborevReviewError';
   }
 }
 
 function invalid(): never {
-  throw new PanelReviewError('panel_document_invalid', 'document');
+  throw new RoborevReviewError('roborev_document_invalid', 'document');
 }
 
 function object(value: unknown): Record<string, unknown> {
@@ -55,16 +55,16 @@ const categories = {
 } as const;
 
 /** v0.75.0 job show --json; native document schema versions 1–3. */
-export function normalizePanelReview(value: unknown, expectedJobId?: number): PanelReviewResult {
+export function normalizeRoborevReview(value: unknown, expectedJobId?: number): RoborevReviewResult {
   const record = object(value);
   if (expectedJobId !== undefined && record.job_id !== expectedJobId) {
-    throw new PanelReviewError('panel_job_mismatch', 'document');
+    throw new RoborevReviewError('roborev_job_mismatch', 'document');
   }
-  if (record.structured_output == null) throw new PanelReviewError('panel_document_unsupported', 'document');
+  if (record.structured_output == null) throw new RoborevReviewError('roborev_document_unsupported', 'document');
   const document = object(record.structured_output);
   const version = document.schema_version;
   if (version !== 1 && version !== 2 && version !== 3) {
-    throw new PanelReviewError('panel_document_unsupported', 'document');
+    throw new RoborevReviewError('roborev_document_unsupported', 'document');
   }
   const summary = text(document.summary);
   if (!Array.isArray(document.findings)) invalid();
@@ -76,7 +76,7 @@ export function normalizePanelReview(value: unknown, expectedJobId?: number): Pa
   const members = record.panel == null ? [] : (() => {
     const panel = object(record.panel);
     if (!Array.isArray(panel.members)) invalid();
-    return panel.members.map((entry): PanelReviewResult['members'][number] => {
+    return panel.members.map((entry): RoborevReviewResult['members'][number] => {
       const member = object(entry);
       return {
         jobId: positiveInteger(member.job_id), name: optionalText(member.name) ?? text(member.agent),
@@ -84,7 +84,7 @@ export function normalizePanelReview(value: unknown, expectedJobId?: number): Pa
       };
     });
   })();
-  const findingEvidence: Array<PanelReviewResult['findingEvidence'][number]> = [];
+  const findingEvidence: Array<RoborevReviewResult['findingEvidence'][number]> = [];
   const findings = document.findings.map((entry, index): ReviewFinding => {
     const finding = object(entry);
     const severity = text(finding.severity);
@@ -109,7 +109,7 @@ export function normalizePanelReview(value: unknown, expectedJobId?: number): Pa
     const sources = finding.sources == null ? []
       : Array.isArray(finding.sources) ? finding.sources.map(positiveInteger) : invalid();
     if (sourceLabels.length > 0 && sources.some((source) => source > sourceLabels.length)) invalid();
-    const id = `panels-${index + 1}`;
+    const id = `roborev-${index + 1}`;
     findingEvidence.push({ findingId: id, kind, topic, sources, sourceLabels });
     return {
       id, title: problem.split('\n')[0]!, summary: problem,

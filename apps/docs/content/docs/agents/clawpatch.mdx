@@ -1,15 +1,15 @@
 ---
-title: Slice review (development preview)
+title: clawpatch (development preview)
 description: Run repository Hunts with native slice evidence and retained engine state.
 ---
 
-Slice review examines a repository in native slices and returns ordinary Happier
+clawpatch examines a repository in native slices and returns ordinary Happier
 findings with reproduction steps, evidence and suggested regression tests.
 
 ## Availability
 
 This optional plugin is available in unreleased 0.3 development source as
-`happier.review.slices`. Enable the bundled plugin on the Machine that will run
+`happier.review.clawpatch`. Enable the bundled plugin on the Machine that will run
 the review, then explicitly install its native dependency through the plugin's
 setup flow. See [plugin packaging and installation](/plugins/packaging). The
 managed dependency uses Happier's JavaScript runtime; a system Node installation
@@ -18,7 +18,7 @@ native dependency.
 
 ## Run a Hunt
 
-Choose a repository Hunt and select **Slice review** as the reviewer. Configure
+Choose a repository Hunt and select **clawpatch** as the reviewer. Configure
 the native provider and model for that Machine, then start the review. The model
 backend must already have working access in the selected launch environment.
 Real provider login remains release validation; the development process probes

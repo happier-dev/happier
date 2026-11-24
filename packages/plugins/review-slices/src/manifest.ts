@@ -2,22 +2,22 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import type { AgentRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AGENT_DEFINITION } from './agent/definition.js';
-import { createSliceExecutionRunFactory } from './agent/reviews/execution.js';
+import { createClawpatchExecutionRunFactory } from './agent/reviews/execution.js';
 import { reviewPresentationResource } from './ui/reviewPresentation.js';
 
-const createRuntime: AgentRuntimeFactory = () => Object.freeze({ executionRuns: createSliceExecutionRunFactory() });
+const createRuntime: AgentRuntimeFactory = () => Object.freeze({ executionRuns: createClawpatchExecutionRunFactory() });
 
-export const SLICES_PLUGIN = definePlugin({
-  id: 'happier.review.slices', version: '0.0.0', displayName: 'Slice review',
+export const CLAWPATCH_PLUGIN = definePlugin({
+  id: 'happier.review.clawpatch', version: '0.0.0', displayName: 'clawpatch',
   description: 'Review repository slices with native evidence and resumable engine state.',
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
-    { id: 'slices-workspace', capability: 'filesystem', reason: 'Read the admitted repository for slice review.',
+    { id: 'clawpatch-workspace', capability: 'filesystem', reason: 'Read the admitted repository with clawpatch.',
       scope: { locations: [{ root: 'workspace' }], access: ['read'] } },
-    { id: 'slices-process', capability: 'process', reason: 'Run the managed slice reviewer.',
+    { id: 'clawpatch-process', capability: 'process', reason: 'Run the managed clawpatch reviewer.',
       scope: { executables: [{ kind: 'managedDependency', id: 'review-executable' }] } },
   ], optional: [] },
-  agents: { slices: { declaration: { title: 'Slice review', primary: 'executionRuns', runtime: { kind: 'custom' },
+  agents: { clawpatch: { declaration: { title: 'clawpatch', primary: 'executionRuns', runtime: { kind: 'custom' },
     sessionModeDescriptor: AGENT_DEFINITION.sessionModeDescriptor,
     catalog: { vendorResume: { support: 'unsupported' } },
     capabilities: projectAgentCapabilitiesV2FromDefinition(AGENT_DEFINITION.core, {
@@ -26,8 +26,8 @@ export const SLICES_PLUGIN = definePlugin({
     }),
   }, factory: createRuntime } },
   executionRunProfiles: { review: {
-    id: 'review', intent: 'review', title: 'Slice review', description: 'Hunt for defects across repository slices.',
-    promptAsset: 'review-prompt', compatibleAgents: ['slices'],
+    id: 'review', intent: 'review', title: 'clawpatch', description: 'Hunt for defects across repository slices.',
+    promptAsset: 'review-prompt', compatibleAgents: ['clawpatch'],
     actions: [{ kind: 'hostAction', actionId: 'reviews.comments.create' }],
     defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
     optionsSchema: { type: 'object', additionalProperties: false, properties: {
@@ -40,30 +40,30 @@ export const SLICES_PLUGIN = definePlugin({
   ui: {
     views: [
       { id: 'finding-evidence', container: 'reviewFinding', target: { kind: 'app' }, renderer: 'review-content-renderer',
-        title: { key: 'plugins.reviewSlices.finding', fallback: 'Slice evidence' } },
+        title: { key: 'plugins.reviewClawpatch.finding', fallback: 'clawpatch evidence' } },
       { id: 'engine-options', container: 'reviewEngineOptions', target: { kind: 'app' }, renderer: 'review-content-renderer',
-        title: { key: 'plugins.reviewSlices.options', fallback: 'Slice options' } },
+        title: { key: 'plugins.reviewClawpatch.options', fallback: 'clawpatch options' } },
       { id: 'review-overview', container: 'appPage', target: { kind: 'app', context: 'review' }, renderer: 'review-content-renderer',
-        title: { key: 'plugins.reviewSlices.page', fallback: 'Slice review' } },
+        title: { key: 'plugins.reviewClawpatch.page', fallback: 'clawpatch' } },
     ],
     renderers: [{ id: 'review-content-renderer', kind: 'declarative',
-      root: { kind: 'text', text: { key: 'plugins.reviewSlices.unavailable', fallback: 'Slice evidence is unavailable.' } },
+      root: { kind: 'text', text: { key: 'plugins.reviewClawpatch.unavailable', fallback: 'clawpatch evidence is unavailable.' } },
       documentSource: { kind: 'resource', resourceId: 'review-presentation' } }],
   },
   resources: {
     'review-presentation': reviewPresentationResource,
     'review-prompt-resource': { kind: 'prompt', path: './resources/review-prompt.md', contentType: 'text/markdown' },
   },
-  promptAssets: { 'review-prompt': { kind: 'systemPrompt', resource: 'review-prompt-resource', target: { kind: 'agent', agent: 'slices' } } },
+  promptAssets: { 'review-prompt': { kind: 'systemPrompt', resource: 'review-prompt-resource', target: { kind: 'agent', agent: 'clawpatch' } } },
   managedDependencies: {
     'review-executable': {
-      title: 'Slice review executable', executable: 'clawpatch',
+      title: 'clawpatch executable', executable: 'clawpatch',
       platforms: ['linux', 'macos', 'windows'], architectures: ['x64', 'arm64'],
-      sources: [{ kind: 'managedJavaScriptPackage', installId: 'dep.review-slices',
+      sources: [{ kind: 'managedJavaScriptPackage', installId: 'dep.review-clawpatch',
         packageName: 'clawpatch', version: '0.8.4' }],
     },
   },
 });
 
-export const PLUGIN_MANIFEST = SLICES_PLUGIN.manifest;
-export const activate = SLICES_PLUGIN.activate;
+export const PLUGIN_MANIFEST = CLAWPATCH_PLUGIN.manifest;
+export const activate = CLAWPATCH_PLUGIN.activate;

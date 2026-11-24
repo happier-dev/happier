@@ -24,6 +24,13 @@ pre-validate it. If the displayed package, manifest, artifact, or source facts
 change before approval is applied, the operation fails and must be reviewed
 again.
 
+Optional native review plugins in 0.3 development source declare their executable
+through the same managed-dependency installation owner. Install the plugin on
+the reviewing Machine, then explicitly install its native dependency before
+starting a review. Plugin installation does not start a review or its daemon.
+See [clawpatch](/agents/clawpatch) and [roborev](/agents/roborev)
+for their supported scopes and model-access prerequisites.
+
 ## Visibility and execution machines
 
 In 0.3 development source, app-level plugin UI is discovered across the Account's

@@ -6,7 +6,7 @@ import { createSecureTempDirectorySync } from '@happier-dev/plugin-sdk/fs';
 import type { ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 import { readSliceFinding, readSliceRun, readSliceSelection, type SliceFindingEvidence } from './state.js';
 
-export type SliceReviewResult = Readonly<{
+export type ClawpatchReviewResult = Readonly<{
   status: 'completed' | 'partial' | 'failed';
   nativeRunId: string | null;
   findings: readonly ReviewFinding[];
@@ -14,7 +14,7 @@ export type SliceReviewResult = Readonly<{
   errors: readonly Readonly<{ message: string; code: string | null }>[];
 }>;
 
-export type RunSliceReviewInput = Readonly<{
+export type RunClawpatchReviewInput = Readonly<{
   exec: Pick<ExecService, 'run' | 'spawn'>;
   fs: Pick<FileSystemService, 'getPluginDataDirectory'>;
   cwd: string;
@@ -30,7 +30,7 @@ export type RunSliceReviewInput = Readonly<{
 }>;
 
 function checkCancellation(signal: AbortSignal): void {
-  if (signal.aborted) throw new DOMException('Slice review cancelled', 'AbortError');
+  if (signal.aborted) throw new DOMException('clawpatch cancelled', 'AbortError');
 }
 
 function succeeded(result: PluginProcessResult): boolean {
@@ -39,7 +39,7 @@ function succeeded(result: PluginProcessResult): boolean {
 }
 
 function decode(result: PluginProcessResult): unknown {
-  if (result.stdoutTruncated) throw new Error('Native slice result is incomplete');
+  if (result.stdoutTruncated) throw new Error('Native clawpatch result is incomplete');
   return JSON.parse(Buffer.from(result.stdout).toString('utf8'));
 }
 
@@ -52,7 +52,7 @@ async function exists(path: string): Promise<boolean> {
 
 /** Native 0.8.4 owns mapping, scheduling and retained state. This adapter only
  * selects explicit slices and joins this invocation's run IDs to native records. */
-export async function runSliceReview(input: RunSliceReviewInput): Promise<SliceReviewResult> {
+export async function runClawpatchReview(input: RunClawpatchReviewInput): Promise<ClawpatchReviewResult> {
   checkCancellation(input.signal);
   const directory = await input.fs.getPluginDataDirectory({ relativePath: input.stateRelativePath, signal: input.signal });
   const common = ['--no-input', '--root', input.cwd, '--state-dir', directory, '--json'];
@@ -93,7 +93,7 @@ export async function runSliceReview(input: RunSliceReviewInput): Promise<SliceR
       }
     } else result = await input.exec.run(request, options);
     checkCancellation(input.signal);
-    if (result.termination.requestedBy.kind === 'abort') throw new DOMException('Slice review cancelled', 'AbortError');
+    if (result.termination.requestedBy.kind === 'abort') throw new DOMException('clawpatch cancelled', 'AbortError');
     return result;
   };
   if (!await exists(join(directory, 'project.json'))) {
@@ -105,7 +105,7 @@ export async function runSliceReview(input: RunSliceReviewInput): Promise<SliceR
     await readFile(join(directory, 'features', name), 'utf8')))))).filter(item => item.status !== 'skipped').map(item => item.featureId);
   const featureIds = input.featureIds ?? activeIds;
   if (featureIds.length === 0) return { status: 'completed', nativeRunId: null, findings: [], findingEvidence: [], errors: [] };
-  const selection = createSecureTempDirectorySync({ prefix: 'review-slices-selection' });
+  const selection = createSecureTempDirectorySync({ prefix: 'review-clawpatch-selection' });
   let result: PluginProcessResult;
   try {
     const selectionPath = join(selection.path, 'slices.txt');
@@ -121,7 +121,7 @@ export async function runSliceReview(input: RunSliceReviewInput): Promise<SliceR
   const runId = response && typeof response === 'object' && 'run' in response && typeof response.run === 'string'
     ? response.run
     : !result.stderrTruncated ? /(?:^|\n)clawpatch review start run=([A-Za-z0-9_-]+)(?:\s|$)/u.exec(Buffer.from(result.stderr).toString('utf8'))?.[1] : undefined;
-  if (!runId) throw new Error('Native slice review did not identify its run');
+  if (!runId) throw new Error('Native clawpatch review did not identify its run');
   const run = readSliceRun(JSON.parse(await readFile(join(directory, 'runs', `${safeRecordId(runId)}.json`), 'utf8')), runId);
   const mapped = await Promise.all(run.findingIds.map(async (id, index) => readSliceFinding(JSON.parse(
     await readFile(join(directory, 'findings', `${safeRecordId(id)}.json`), 'utf8')), id, runId, index)));

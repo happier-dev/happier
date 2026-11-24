@@ -12,10 +12,10 @@ function completed(stdout = '', exitCode = 0): PluginProcessResult {
 }
 
 async function runFixture(options: { engineId?: string; failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean } = {}) {
-  const engineId = options.engineId ?? 'panels';
+  const engineId = options.engineId ?? 'roborev';
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
-  const factory = activation.registration('agents', 'panels')?.factory;
-  if (!factory) throw new Error('Expected panel reviewer Agent registration');
+  const factory = activation.registration('agents', 'roborev')?.factory;
+  if (!factory) throw new Error('Expected roborev reviewer Agent registration');
   const controller = new AbortController();
   const agent = await factory({ plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, agent: { id: engineId }, signal: controller.signal });
   const record = structuredClone(selectedReview);
@@ -38,7 +38,7 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
     return completed();
   });
   const writeFile = vi.fn(async () => {});
-  const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'panels', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/panels` },
+  const context = { plugin: { id: PLUGIN_MANIFEST.id, version: '0.0.0' }, contribution: { id: 'roborev', qualifiedId: `${PLUGIN_MANIFEST.id}/agents/roborev` },
     surface: 'agent', signal: controller.signal, agent: { id: engineId }, services: { availability: () => ({ status: 'available' }),
       exec: { run }, fs: { getPluginDataDirectory: async () => '/plugin-data/runs/test', writeFile } },
   } as unknown as AgentRuntimeContext;
@@ -75,7 +75,7 @@ async function runFixture(options: { engineId?: string; failedMember?: boolean; 
   return { events, output: output ? ReviewFindingsV2Schema.parse(JSON.parse(output)) : null, run, writeFile };
 }
 
-describe('activated panel reviewer', () => {
+describe('activated roborev reviewer', () => {
   it.each([
     { selectedPaths: ['selected.ts'] },
     { selectedFiles: ['selected.ts'] },
@@ -85,14 +85,14 @@ describe('activated panel reviewer', () => {
     { sessionCapture: true },
   ])('refuses subjects the native whole-worktree command cannot preserve: %j', async options => {
     const result = await runFixture(options);
-    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'panel_scope_unsupported' } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_scope_unsupported' } });
     expect(result.run).not.toHaveBeenCalled();
     expect(result.output).toBeNull();
   });
   it('runs selected native panel/type and exposes attributed findings through the shared result schema', async () => {
     const result = await runFixture({ selectedPaths: [], selectedFiles: [] });
     expect(result.events.at(-1)?.kind).toBe('run-complete');
-    expect(result.output).toMatchObject({ reviewOutcome: 'complete', findings: [{ extensions: { 'happier.review.panels': {
+    expect(result.output).toMatchObject({ reviewOutcome: 'complete', findings: [{ extensions: { 'happier.review.roborev': {
       verdict: 'fail', sources: [1], members: [{ name: 'first' }, { name: 'second' }],
     } } }] });
     expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
@@ -102,7 +102,7 @@ describe('activated panel reviewer', () => {
       new TextEncoder().encode('review_guidelines = "Review this change."\n'), { signal: expect.any(AbortSignal) });
   });
   it('translates captured endpoints without re-resolving the ambient branch', async () => {
-    const result = await runFixture({ captured: true, engineId: 'happier.review.panels/panels' });
+    const result = await runFixture({ captured: true, engineId: 'happier.review.roborev/roborev' });
     expect(result.output?.comparisonId).toBe('captured');
     expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
       .toEqual(['review', '--sha', 'base-oid..head-oid', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);
@@ -131,13 +131,13 @@ describe('activated panel reviewer', () => {
   ])('completes the transport so the host can materialize a $outcome review and its findings', async ({ options, outcome, secondMemberStatus }) => {
     const result = await runFixture(options);
     expect(result.events.at(-1)?.kind).toBe('run-complete');
-    expect(result.output).toMatchObject({ reviewOutcome: outcome, findings: [{ extensions: { 'happier.review.panels': {
+    expect(result.output).toMatchObject({ reviewOutcome: outcome, findings: [{ extensions: { 'happier.review.roborev': {
       members: [{ status: 'done' }, { status: secondMemberStatus }],
     } } }] });
   });
   it('refuses missing structured data through the real finite runtime', async () => {
     const result = await runFixture({ missingDocument: true });
-    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'panel_document_unsupported' } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'roborev_document_unsupported' } });
     expect(result.output).toBeNull();
   });
   it('cancels the selected job before stopping its daemon and settling Stop', async () => {
@@ -147,6 +147,6 @@ describe('activated panel reviewer', () => {
   });
   it('keeps failed native cleanup visible when Stop was requested', async () => {
     const result = await runFixture({ cancel: true, cleanupFailure: true });
-    expect(result.events.at(-1)).toMatchObject({ kind: 'run-cancelled', diagnostic: { code: 'panel_cleanup_failed' } });
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-cancelled', diagnostic: { code: 'roborev_cleanup_failed' } });
   });
 });

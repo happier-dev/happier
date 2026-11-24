@@ -31,6 +31,8 @@ export const AGENT_IDS = Object.freeze([
   'deepsec',
   'custom-acp',
   'muse',
+  'roborev',
+  'clawpatch',
 ] as const);
 
 /**
@@ -148,6 +150,14 @@ export const BUNDLED_AGENT_CONTRIBUTION_IDENTITIES: Readonly<Record<
   'muse': Object.freeze({
     pluginId: 'happier.agent.muse',
     localId: 'muse',
+  }),
+  'roborev': Object.freeze({
+    pluginId: 'happier.review.roborev',
+    localId: 'roborev',
+  }),
+  'clawpatch': Object.freeze({
+    pluginId: 'happier.review.clawpatch',
+    localId: 'clawpatch',
   }),
 });
 

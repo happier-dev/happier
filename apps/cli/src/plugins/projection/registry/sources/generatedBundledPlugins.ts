@@ -192,4 +192,20 @@ export const BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS: readonly BundledFi
     implementationOwnerId: "deepsec",
     registrationFamily: "agents",
   }),
+  Object.freeze({
+    identity: Object.freeze({
+      pluginId: "happier.review.roborev",
+      localId: "roborev",
+    }),
+    implementationOwnerId: "roborev",
+    registrationFamily: "agents",
+  }),
+  Object.freeze({
+    identity: Object.freeze({
+      pluginId: "happier.review.clawpatch",
+      localId: "clawpatch",
+    }),
+    implementationOwnerId: "clawpatch",
+    registrationFamily: "agents",
+  }),
 ]);

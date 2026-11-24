@@ -315,11 +315,11 @@ test('flags an agent that ships in the app with no page', () => {
 });
 
 test('accepts agents and review engines whose pages are deliberately named differently', () => {
-  const definitions = join(fixture({ 'defs.ts': '  "auggie": Object.freeze(({\n  "slices": Object.freeze(({\n  "panels": Object.freeze(({\n' }), 'defs.ts');
+  const definitions = join(fixture({ 'defs.ts': '  "auggie": Object.freeze(({\n  "clawpatch": Object.freeze(({\n  "roborev": Object.freeze(({\n' }), 'defs.ts');
   const contentRoot = fixture({
     'agents/augment.mdx': '# Auggie\n',
-    'agents/slice-review.mdx': '# Slice review\n',
-    'agents/panel-review.mdx': '# Panel review\n',
+    'agents/clawpatch.mdx': '# clawpatch\n',
+    'agents/roborev.mdx': '# roborev\n',
   });
 
   assert.deepEqual(checkAgentPageCoverage({ contentRoot, agentDefinitionsFile: definitions }), []);

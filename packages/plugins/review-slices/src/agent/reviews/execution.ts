@@ -1,35 +1,35 @@
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
 import { createFiniteExecutionRunHostRuntime, type AgentExecutionRunRuntimeFactory } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ReviewFindingsV2, ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
-import { runSliceReview, type RunSliceReviewInput } from './run.js';
+import { runClawpatchReview, type RunClawpatchReviewInput } from './run.js';
 
-export type SliceReviewOptions = Pick<RunSliceReviewInput, 'provider' | 'model' | 'featureIds'>;
+export type ClawpatchReviewOptions = Pick<RunClawpatchReviewInput, 'provider' | 'model' | 'featureIds'>;
 
 /** The host admits scope and validates the profile's options once. This leaf
  * translates that admitted input into the native repository-only contract. */
-export function createSliceExecutionRunFactory(): AgentExecutionRunRuntimeFactory {
+export function createClawpatchExecutionRunFactory(): AgentExecutionRunRuntimeFactory {
   return Object.freeze({
     open(request, context) {
-      if (request.kind !== 'create') throw new Error('Slice reviews support create only');
+      if (request.kind !== 'create') throw new Error('clawpatch supports create only');
       return createFiniteExecutionRunHostRuntime({
         request, signal: context.signal,
-        unsupportedSendDiagnostic: { code: 'slices_follow_up_unsupported', severity: 'error', message: 'Start a new slice review round for another run.' },
-        mapFailure: () => ({ code: 'slices_review_failed', severity: 'error', message: 'Slice review could not finish. Check the native installation and selected model access.' }),
+        unsupportedSendDiagnostic: { code: 'clawpatch_follow_up_unsupported', severity: 'error', message: 'Start a new clawpatch round for another run.' },
+        mapFailure: () => ({ code: 'clawpatch_review_failed', severity: 'error', message: 'clawpatch could not finish. Check the native installation and selected model access.' }),
         async execute({ signal, emit }) {
           const review = request.input.structuredInput as ReviewStartInput;
           const scope = review.scmReviewScope;
           if (review.scope !== 'repository' || scope?.scope !== 'repository' || scope.status !== 'supported' || !scope.worktreeRoot) {
-            return { status: 'failed', diagnostic: { code: 'slices_scope_unsupported', severity: 'error', message: 'Slice reviews require an admitted repository scope.' } };
+            return { status: 'failed', diagnostic: { code: 'clawpatch_scope_unsupported', severity: 'error', message: 'clawpatch requires an admitted repository scope.' } };
           }
           // Options have already crossed the host profile-schema boundary.
-          const options = (review.engines[context.agent.id] ?? {}) as SliceReviewOptions;
+          const options = (review.engines[context.agent.id] ?? {}) as ClawpatchReviewOptions;
           if (request.providerBinding || request.modelSelection?.providerConnectionId) {
-            return { status: 'failed', diagnostic: { code: 'slices_provider_binding_unsupported', severity: 'error', message: 'The native slice reviewer cannot translate this Provider binding. Select its configured native model access.' } };
+            return { status: 'failed', diagnostic: { code: 'clawpatch_provider_binding_unsupported', severity: 'error', message: 'The native clawpatch reviewer cannot translate this Provider binding. Select its configured native model access.' } };
           }
-          const result = await runSliceReview({ exec: context.services.exec, fs: context.services.fs,
+          const result = await runClawpatchReview({ exec: context.services.exec, fs: context.services.fs,
             cwd: scope.worktreeRoot,
             // This plugin owns the native state identity; the SDK owns its storage root.
-            stateRelativePath: `repositories/${computeCanonicalDomainSeparatedDigest('review-slices.repository.v1', [scope.worktreeRoot])}`,
+            stateRelativePath: `repositories/${computeCanonicalDomainSeparatedDigest('review-clawpatch.repository.v1', [scope.worktreeRoot])}`,
             ...options, model: request.modelSelection?.modelId ?? options.model,
             instructions: review.instructions, signal,
             environment: { ...request.launchEnvironment?.values,
@@ -44,13 +44,13 @@ export function createSliceExecutionRunFactory(): AgentExecutionRunRuntimeFactor
             },
           });
           const output: ReviewFindingsV2 = {
-            runRef: { runId: request.runId, callId: request.runId, backendId: 'slices' },
+            runRef: { runId: request.runId, callId: request.runId, backendId: 'clawpatch' },
             reviewOutcome: result.status === 'completed' ? 'complete' : result.status,
-            summary: `${result.findings.length} slice review findings (${result.status})`,
-            overviewMarkdown: result.errors.length ? 'Some native slice work could not finish.' : 'Native repository slice review.',
+            summary: `${result.findings.length} clawpatch findings (${result.status})`,
+            overviewMarkdown: result.errors.length ? 'Some native clawpatch work could not finish.' : 'Native clawpatch repository review.',
             findings: result.findings.map((finding, index) => {
               const evidence = result.findingEvidence[index]!;
-              return { ...finding, extensions: { 'happier.review.slices': {
+              return { ...finding, extensions: { 'happier.review.clawpatch': {
                 ...evidence, locations: evidence.locations.map(location => ({ ...location })),
               } } };
             }),

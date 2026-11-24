@@ -40,6 +40,8 @@ export const BUNDLED_AGENT_DEFINITION_IDS: readonly string[] = Object.freeze([
   "qwen",
   "coderabbit",
   "deepsec",
+  "roborev",
+  "clawpatch",
 ]);
 
 const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
@@ -4588,6 +4590,117 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
     "dynamicProbe": "static-only",
     "nonAcpApplyScope": "next_prompt",
     "supportsSelection": false
+  },
+  "sessionModeDescriptor": {
+    "runtimeSwitch": "none",
+    "semantics": "none",
+    "source": "none"
+  },
+  "sessionModesKind": "none"
+}) as const),
+  "roborev": Object.freeze(({
+  "core": {
+    "cliSubcommand": "roborev",
+    "cloudConnect": null,
+    "connectedServices": null,
+    "detectKey": "roborev",
+    "flavorAliases": [],
+    "handoff": {
+      "vendorStateTransfer": "unsupported"
+    },
+    "id": "roborev",
+    "resume": {
+      "vendorResume": "unsupported"
+    },
+    "sessionCapabilities": {
+      "sessionFork": {
+        "conversation": "unsupported",
+        "fromMessage": "unsupported"
+      },
+      "sessionListing": "unsupported",
+      "sessionRollback": {
+        "conversation": "unsupported"
+      }
+    },
+    "sessionStorage": {
+      "direct": false,
+      "persisted": false
+    },
+    "skills": {
+      "delivery": "none",
+      "liveReload": "unsupported",
+      "nativeDisable": "unsupported"
+    },
+    "tools": {
+      "delivery": "unsupported",
+      "support": "unsupported"
+    }
+  },
+  "id": "roborev",
+  "modelConfig": {
+    "allowedModes": [
+      "review"
+    ],
+    "defaultMode": "review",
+    "dynamicProbe": "static-only",
+    "nonAcpApplyScope": "next_prompt",
+    "supportsFreeform": true,
+    "supportsSelection": true
+  },
+  "sessionModeDescriptor": {
+    "runtimeSwitch": "none",
+    "semantics": "none",
+    "source": "none"
+  },
+  "sessionModesKind": "none"
+}) as const),
+  "clawpatch": Object.freeze(({
+  "core": {
+    "cliSubcommand": "clawpatch",
+    "cloudConnect": null,
+    "connectedServices": null,
+    "detectKey": "clawpatch",
+    "flavorAliases": [],
+    "handoff": {
+      "vendorStateTransfer": "unsupported"
+    },
+    "id": "clawpatch",
+    "resume": {
+      "vendorResume": "unsupported"
+    },
+    "sessionCapabilities": {
+      "sessionFork": {
+        "conversation": "unsupported",
+        "fromMessage": "unsupported"
+      },
+      "sessionListing": "unsupported",
+      "sessionRollback": {
+        "conversation": "unsupported"
+      }
+    },
+    "sessionStorage": {
+      "direct": false,
+      "persisted": false
+    },
+    "skills": {
+      "delivery": "none",
+      "liveReload": "unsupported",
+      "nativeDisable": "unsupported"
+    },
+    "tools": {
+      "delivery": "unsupported",
+      "support": "unsupported"
+    }
+  },
+  "id": "clawpatch",
+  "modelConfig": {
+    "allowedModes": [
+      "review"
+    ],
+    "defaultMode": "review",
+    "dynamicProbe": "static-only",
+    "nonAcpApplyScope": "next_prompt",
+    "supportsSelection": true
   },
   "sessionModeDescriptor": {
     "runtimeSwitch": "none",

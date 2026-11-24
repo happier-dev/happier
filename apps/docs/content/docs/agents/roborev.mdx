@@ -1,15 +1,15 @@
 ---
-title: Panel review (development preview)
+title: roborev (development preview)
 description: Run finite native panel reviews and preserve structured verdict evidence.
 ---
 
-Panel review runs a single native reviewer or a configured panel and returns
+roborev runs a single native reviewer or a configured panel and returns
 ordinary Happier findings with native verdict and member attribution.
 
 ## Availability
 
 This optional plugin is available in unreleased 0.3 development source as
-`happier.review.panels`. Enable the bundled plugin on the reviewing Machine,
+`happier.review.roborev`. Enable the bundled plugin on the reviewing Machine,
 then explicitly install its native dependency through the plugin's setup flow.
 See [plugin packaging and installation](/plugins/packaging). Its managed
 dependency uses the vendor's published release archive and Happier's platform
@@ -17,7 +17,7 @@ and checksum handling. Enabling the plugin starts no daemon or review.
 
 ## Run a review
 
-Select **Panel review** for a supported change review. Choose the native agent,
+Select **roborev** for a supported change review. Choose the native agent,
 model and reasoning options; panel mode consumes the repository's native panel
 configuration. The selected backend needs working model access on that Machine.
 Real provider authentication remains release validation.

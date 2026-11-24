@@ -25,4 +25,6 @@ export const BUNDLED_AGENT_PRESENTATION: Readonly<Record<string, BundledAgentPre
   'qwen': Object.freeze({ name: 'Qwen Code', identityColor: null }),
   'coderabbit': Object.freeze({ name: 'CodeRabbit', identityColor: null }),
   'deepsec': Object.freeze({ name: 'DeepSec', identityColor: null }),
+  'roborev': Object.freeze({ name: 'roborev', identityColor: null }),
+  'clawpatch': Object.freeze({ name: 'clawpatch', identityColor: null }),
 });

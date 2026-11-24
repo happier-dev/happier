@@ -14681,7 +14681,7 @@ presentation inputs, not an options writer. Closed findings
 do not mount a renderer. Withdrawing a finding contribution leaves the core
 finding and decision controls in place. Resource context equality already
 includes the complete Review context, so changed evidence uses a fresh demanded
-Resource view without a new cache or refresh timer. The Slice review engine
+Resource view without a new cache or refresh timer. The clawpatch engine
 demonstrates all three contexts with one ordinary declarative-document Resource.
 
 The public `@happier-dev/plugin-ui` components `HappierReviewFinding` and

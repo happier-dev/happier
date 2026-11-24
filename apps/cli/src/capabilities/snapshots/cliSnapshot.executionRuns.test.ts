@@ -14,7 +14,7 @@ it('reports admitted execution-only reviewers without requiring a Session CLI', 
   const home = await createProbeTempDir('happier-reviewer-inventory-');
   const fixture = await createAdmittedPluginRuntimeFixture({
     controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['happier.review.slices', 'happier.review.panels'] },
+    runtimeOptions: { pluginIds: ['happier.review.clawpatch', 'happier.review.roborev'] },
   });
   const agents = fixture.registry.contributes.agents;
   const names = agents.map(agent => agent.id);

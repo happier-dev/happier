@@ -124,7 +124,7 @@ describe('review comments UI state', () => {
     it('filters detached Run authors by engine identity while preserving their Run provenance', () => {
         const state = applyReviewCommentList(createEmptyReviewCommentsState(), { items: [
             comment({ id: 'native', author: { kind: 'executionRun', agentId: 'coderabbit', runId: 'native-run' } }),
-            comment({ id: 'different-engine', author: { kind: 'executionRun', agentId: 'slices', runId: 'other-run' } }),
+            comment({ id: 'different-engine', author: { kind: 'executionRun', agentId: 'clawpatch', runId: 'other-run' } }),
             comment({ id: 'session', author: { kind: 'agent', agentId: 'coderabbit', sessionId: 'session' } }),
         ], cursor: null });
         expect(selectReviewComments(state, { authorKind: 'executionRun', authorId: 'coderabbit' }))

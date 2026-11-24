@@ -16,6 +16,16 @@ const engine = (engineId: string) => ({ value: engineId, engineId, label: engine
   capabilities: { structuredNarration: true, sessionTranscript: true } });
 
 describe('review.start selected source transcript', () => {
+  it('starts a repository reviewer from the repository inventory rather than the changes inventory', async () => {
+    const executor = createActionExecutor({
+      reviewEnginesList: async ({ scope }) => ({ items: scope === 'repository' ? [engine('clawpatch')] : [] }),
+      executionRunStart: async () => ({ runId: 'repository-run', callId: 'call', sidechainId: 'call' }),
+    });
+    const result = await executor.execute('review.start', { sessionId: 'review-session',
+      reviewers: [{ kind: 'engine', engineId: 'clawpatch' }], reviewRound,
+      scope: 'repository', instructions: 'Review repository slices.' }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true, result: { results: [{ ok: true, result: { runId: 'repository-run' } }] } });
+  });
 
   it('reads once at admission and supplies the same ordinary input to engine, Session/bot and model Workflow reviewers', async () => {
     let reads = 0;

@@ -1,6 +1,6 @@
-# Panel reviews
+# roborev
 
-This 0.3 development plugin contributes the Panel reviewer Agent and Review
+This 0.3 development plugin contributes the roborev Agent and Review
 profile. Shared Review admission owns comparison scope and validates this
 profile's options. The plugin translates admitted inputs into the native CLI
 and returns ordinary findings through the shared review result contract.
@@ -20,7 +20,7 @@ connected Provider bindings are reported as unsupported. Committed captured
 endpoints and uncommitted working-tree changes are supported. Repository-wide
 and combined committed/uncommitted reviews are unsupported.
 
-`runPanelReview` takes host Exec/filesystem services and already admitted native
+`runRoborevReview` takes host Exec/filesystem services and already admitted native
 scope/options arguments. Every create run uses a separate `runs/<runId>` directory
 under the host's durable plugin data root. It starts the native daemon only for
 the run, writes the admitted instructions as native `review_guidelines`,
@@ -48,6 +48,6 @@ Findings retain their suggested fix and native source attribution. Native
 verdicts remain evidence, separate from a person's verdict. An absent or unknown
 structured document is unsupported, an unable-to-review result is failed, and failed panel
 members preserve substantive findings with partial completeness. Typed native
-evidence occupies the `happier.review.panels` finding extension. Native enqueue
+evidence occupies the `happier.review.roborev` finding extension. Native enqueue
 and wait completion supply progress events; no synthesized percentages, idle
 watcher, daemon tail, timer or retry is added.

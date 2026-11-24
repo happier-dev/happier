@@ -122,6 +122,16 @@ export const GENERATED_SESSION_PRESENTATION_COMPAT_V1 = Object.freeze([
     flavorAliases: Object.freeze(['deepsec']),
     vendorResumeIdField: null,
   }),
+  Object.freeze({
+    agentId: 'roborev',
+    flavorAliases: Object.freeze(['roborev']),
+    vendorResumeIdField: null,
+  }),
+  Object.freeze({
+    agentId: 'clawpatch',
+    flavorAliases: Object.freeze(['clawpatch']),
+    vendorResumeIdField: null,
+  }),
 ] as const);
 
 function normalizePresentationIdentifier(value: unknown): string | null {

@@ -1,4 +1,4 @@
-# Slice reviews
+# clawpatch
 
 This 0.3 development package declares the native executable through the host's
 managed JavaScript-package installer. The observed external contract is the
@@ -6,7 +6,7 @@ published `clawpatch@0.8.4` npm package. Its execution-run Agent and review
 profile consume the shared admitted repository scope, validated engine options
 and namespaced finding extensions through the public SDK.
 
-`runSliceReview` accepts host Exec/filesystem services and an admitted repository
+`runClawpatchReview` accepts host Exec/filesystem services and an admitted repository
 and plugin-owned repository storage path. Native state lives beneath the existing durable
 plugin data root, outside the repository. Initialization happens only when native
 project state is absent; subsequent runs preserve the engine's state.
