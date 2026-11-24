@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { reportCollectionLayout } from '@/dev/testkit/harness/collectionLayoutHarness';
 
 vi.mock('react-native', async () =>
@@ -135,6 +135,42 @@ describe('LocalServiceCaptureView', () => {
       await settle();
       expect(capture.calls).toHaveLength(2);
       expect(finite.calls.filter(call => call.actionId.endsWith('/capture/endpoints/list'))).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+
+  it('keeps the settled empty Logs view while pushed reads overlap, then shows the new log', async () => {
+    const finite = machine(() => ({ ok: true, source, coverage, enabled: true }));
+    const refresh = createDeferred<unknown>();
+    const log = {
+      id: 'log-arrived', worktree: 'checkout-main', kind: 'log', source: 'otlp',
+      at: Date.now(), serviceName: 'dev', bodyPrefix: 'checkout completed', bodyPrefixTruncated: false,
+    };
+    let reads = 0;
+    const capture = machine(() => {
+      reads += 1;
+      if (reads === 1) return { ok: true, source, items: [] };
+      if (reads === 2) return refresh.promise;
+      return { ok: true, source, items: [log] };
+    });
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
+    const screen = await renderScreen(view(finite.invoke, 'logs', transport));
+    try {
+      await settle();
+      expect(screen.findByTestId('capture-waiting')).not.toBeNull();
+      expect(capture.calls).toHaveLength(1);
+
+      await act(async () => transport.invalidate());
+      await act(async () => transport.invalidate());
+      expect(capture.calls).toHaveLength(2);
+      expect(screen.findByTestId('capture-waiting')).not.toBeNull();
+      expect(screen.findByTestId('telemetry.capture.logs.empty')).toBeNull();
+
+      await act(async () => refresh.resolve({ ok: true, source, items: [log] }));
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.logs.card')).not.toBeNull();
+      expect(screen.findByTestId('capture-waiting')).toBeNull();
+      expect(finite.calls).toHaveLength(1);
+      expect(capture.calls).toHaveLength(3);
     } finally { await screen.unmount(); }
   });
 

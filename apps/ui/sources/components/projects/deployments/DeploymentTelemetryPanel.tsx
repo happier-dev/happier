@@ -243,7 +243,8 @@ export function useTelemetryCaptureList(
       data,
       window: snapshot?.window,
       readAt: snapshot?.window.until ?? null,
-      reading,
+      // A push refresh keeps the last admitted page, including an empty page.
+      reading: data === null && reading,
       failure: resource?.error ? resource.error.code ?? 'telemetry_unavailable' : current?.failure ?? null,
       loadingMore: active && current?.pending === true && pendingPage.current !== null,
     },
