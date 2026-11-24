@@ -2101,13 +2101,45 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Home operands authored with the creator's local profile follow this
     // already-verified Account replay Home. Never rewrite the stored/signed
     // proposal, another target, or exact-daemon/external replay custody.
-    const replayHomeInput = <T>(replayedActionId: string | null, input: T): T => appOwnedReplay
-      && (replayedActionId?.startsWith('machines.') || replayedActionId === 'deployments.bindings.set'
-        || isProjectSourceActionIdV1(replayedActionId))
-      && origin?.success && replayServerId
-      && readRecord(input).serverId === origin.data.serverId
-      ? { ...input, serverId: replayServerId }
-      : input;
+    const replayHomeInput = <T>(replayedActionId: string | null, input: T): T => {
+      if (!appOwnedReplay || !origin?.success || !replayServerId
+        || replayServerId === origin.data.serverId || !replayedActionId) return input;
+      const originServerId = origin.data.serverId;
+      const operands = readRecord(input);
+      const replayAddress = <T extends Readonly<{ serverId: string }>>(address: T) => ({ ...address, serverId: replayServerId });
+      if (replayedActionId.startsWith('machines.') || replayedActionId === 'deployments.bindings.set'
+        || isProjectSourceActionIdV1(replayedActionId)) {
+        return operands.serverId === originServerId ? { ...input, serverId: replayServerId } : input;
+      }
+      if (isActionFamilyId(replayedActionId, WidgetDefinitionActionIdV1Schema)
+        || isActionFamilyId(replayedActionId, WidgetLayoutFragmentActionIdV1Schema)) {
+        const account = readWidgetDefinitionActionAccountV1(input) ?? readWidgetLayoutFragmentActionAccountV1(input);
+        const session = readWidgetDefinitionActionSessionV1(input);
+        return {
+          ...input,
+          ...(account?.serverId === originServerId ? { account: replayAddress(account) } : {}),
+          ...(session?.serverId === originServerId ? { session: replayAddress(session) } : {}),
+        };
+      }
+      if (isActionFamilyId(replayedActionId, WidgetInstanceActionIdV1Schema)) {
+        // The Home layout is addressed by the Account. Other surfaces can carry
+        // their server label in a persisted layout identity.
+        const surface = readWidgetActionSurfaceV1(input);
+        const destination = readWidgetActionDestinationV1(input);
+        const replaySurface = surface?.owner.kind === 'home' && surface.serverId === originServerId
+          ? replayAddress(surface) : null;
+        const replayDestination = destination?.owner.kind === 'home' && destination.serverId === originServerId
+          ? replayAddress(destination) : null;
+        if (!replaySurface && !replayDestination) return input;
+        return {
+          ...input,
+          ...(replaySurface ? operands.surface
+            ? { surface: replaySurface } : { ref: { ...readRecord(operands.ref), surface: replaySurface } } : {}),
+          ...(replayDestination ? { to: { ...readRecord(operands.to), surface: replayDestination } } : {}),
+        };
+      }
+      return input;
+    };
     const executionInput = replayHomeInput(actionId, replayInput);
     const reviewedChildren = readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren);
     // Source moves compare their freshly prepared child plan with the reviewed

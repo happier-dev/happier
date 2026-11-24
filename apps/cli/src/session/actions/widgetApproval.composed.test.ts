@@ -1,7 +1,7 @@
 import fastify from 'fastify';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { expect, it, vi } from 'vitest';
-import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1, buildHomeHubArtifactIdV1, encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1, buildHomeHubArtifactIdV1, encodePlainArtifactStoredContent, decodePlainArtifactStoredContent, normalizeActionsSettingsV1, projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
 import { createRegistryInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -12,6 +12,76 @@ import * as daemonControl from '@/daemon/controlClient';
 import { createCounterWidgetFixture, registerAccountHomeHttp, registerPlainArtifactRoutes } from './widgetApproval.testkit';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+
+it.each(['delete', 'update', 'add'] as const)('applies widget %s when the app approves a CLI Ask from another Home profile', async operation => {
+    const app = fastify();
+    const home = 'http://widget-approval.test';
+    const restore = installAxiosFastifyAdapter({ app, origin: home });
+    const accountId = 'widget-owner';
+    const serverIdentityId = 'srv_widget_approval';
+    const creatorProfile = 'cli-local-profile';
+    const reviewerProfile = 'app-local-profile';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null };
+    const features = registerAccountHomeHttp(app, { accountId, serverId: serverIdentityId });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+    const artifacts = registerPlainArtifactRoutes(app, accountId);
+    const common = { token, credentials, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
+        serverIdentityId, serverHttpBaseUrl: home };
+    const { executor: cli } = createCliActionExecutorHarness({ ...common, serverId: creatorProfile, actionsSettingsProvider: {
+        getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {
+            'widgets.definition.delete': { approvalRequiredSurfaces: ['cli'] },
+            'widgets.definition.update': { approvalRequiredSurfaces: ['cli'] },
+            'widgets.item.add': { approvalRequiredSurfaces: ['cli'] },
+        } }),
+        getAccountSettings: () => ({}),
+    } });
+    const { executor: appExecutor } = createCliActionExecutorHarness({ ...common, serverId: reviewerProfile }, {
+        isApprovalExecutionOriginCurrent: async ({ origin }) => origin.accountId === accountId && origin.serverIdentityId === serverIdentityId,
+    });
+    const artifactId = '80101104-0000-4000-8000-000000000001';
+    const account = { serverId: creatorProfile, accountId };
+    const cliContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: creatorProfile,
+        serverIdentityId, runtimeAccountId: accountId } as const;
+    try {
+        const created = await cli.execute('widgets.definition.create', { account, artifactId, definition: {
+            name: 'Watched pull requests', sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+            inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Watched pull requests' } } },
+        } }, { ...cliContext, bypassApprovals: true });
+        expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { definition: { id: artifactId } } });
+        const surface = { ...account, owner: { kind: 'home' } } as const;
+        const reviewerContext = { surface: 'ui', authority: 'present_user', serverId: reviewerProfile, serverIdentityId,
+            runtimeAccountId: accountId } as const;
+        const homeArtifactId = buildHomeHubArtifactIdV1(accountId);
+        const original = artifacts.read(artifactId);
+        expect(original).toBeDefined();
+        const requestContext = { ...cliContext, actionRequestId: `widget-${operation}` };
+        const asked = operation === 'delete' ? await cli.execute('widgets.definition.delete', { account, artifactId }, requestContext)
+            : operation === 'update' ? await cli.execute('widgets.definition.update', { account, artifactId, patch: { name: 'Updated widget' } }, requestContext)
+                : await cli.execute('widgets.item.add', { surface, instance: { v: 1, id: 'watched-prs',
+                    definition: { kind: 'artifact', artifactId }, bindings: {} } }, requestContext);
+        expect(asked, JSON.stringify(asked)).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+        if (!asked.ok || typeof asked.result !== 'object' || !asked.result || !('artifactId' in asked.result)
+            || typeof asked.result.artifactId !== 'string') throw new Error('Missing approval Artifact');
+        expect(artifacts.read(artifactId)).toEqual(original);
+        expect(artifacts.read(homeArtifactId)).toBeUndefined();
+        const result = await appExecutor.execute('approval.request.decide', { artifactId: asked.result.artifactId, decision: 'approve' }, reviewerContext);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        if (operation === 'delete') {
+            expect(artifacts.read(artifactId)).toBeUndefined();
+        } else if (operation === 'update') {
+            expect(await appExecutor.execute('widgets.definition.get', { account: { ...account, serverId: reviewerProfile }, artifactId }, reviewerContext))
+                .toMatchObject({ ok: true, result: { definition: { id: artifactId, name: 'Updated widget' } } });
+        } else {
+            expect(await appExecutor.execute('widgets.item.list', { surface: { ...surface, serverId: reviewerProfile } }, reviewerContext))
+                .toMatchObject({ ok: true, result: { instances: expect.arrayContaining([
+                    expect.objectContaining({ instance: expect.objectContaining({ id: 'watched-prs',
+                        definition: { kind: 'artifact', artifactId } }) }),
+                ]) } });
+        }
+    } finally { restore(); vi.restoreAllMocks(); await app.close(); }
+});
 
 it('replays approved installed Board inputs on the hosting Session without an ambient CLI Session', async () => {
     const app = fastify();

@@ -218,6 +218,16 @@ export function registerAccountArtifactRoutes<const Mode extends 'plain' | 'e2ee
         rows.set(row.id, next);
         return { success: true, headerVersion: next.headerVersion, bodyVersion: next.bodyVersion };
     });
+    app.delete<{ Params: { id: string; headerVersion: string; bodyVersion: string } }>(
+        '/v1/artifacts/:id/revision/:headerVersion/:bodyVersion', async ({ params }, reply) => {
+            const row = rows.get(params.id);
+            if (!row) return reply.code(404).send({ error: 'not_found' });
+            if (row.headerVersion !== Number(params.headerVersion) || row.bodyVersion !== Number(params.bodyVersion)) {
+                return reply.code(409).send({ error: 'version-mismatch' });
+            }
+            rows.delete(params.id);
+            return { success: true };
+        });
     return { seed, read: (id: string) => rows.get(id) };
 }
 
