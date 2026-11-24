@@ -8326,9 +8326,8 @@ The unreleased native Machine host integration also has a closed
 `machines.services.logs.read`; `expectedGeneration` selects the observed service
 owner and `sourceRevision` selects the existing native log source. The canonical
 Resource identity includes both fields, so a replacement never borrows an
-earlier owner's bytes. It uses the
-incumbent Resource read/open/next/close RPCs, log cursor and invalidation lifecycle,
-not a plugin contribution or another log transport. The receiving daemon invokes
+earlier owner's bytes. It uses the native host Resource owner and the existing log
+cursor and invalidation lifecycle. The receiving daemon invokes
 that same logs Action before reading or installing the native watcher; reopening
 repeats admission. Native owner retirement terminates the subscription and releases
 its watcher before the retirement response settles. This reference does not add a
@@ -8341,11 +8340,14 @@ travels in the existing Action failure envelope to the originating UI's shared
 confirmation presenter. Confirmation re-enters that same captured Account with the
 review digest; refusal or cancellation installs no watcher. This native review has
 no approval Artifact. The admitted Resource retains its private requester and
-executor for its lifetime. NEXT and CLOSE bind the captured Account and complete
-reference, including generation, source and cursor. Cancellation or native-owner
-retirement releases that exact watcher. Plain and E2EE composed checks exercise this
-path through Home and an installed test adapter; they do not establish bundled native
-activation or a loaded development-daemon logs journey.
+executor for its lifetime. In 0.3 development, native Resource watches admit one
+open through Home and receive changes through the existing per-Machine socket
+continuation. The continuation binds the captured Account, Machine installation
+and complete Resource reference. The daemon seals each update with the admitted
+Action codec for E2EE Accounts. An idle watch sends zero repeat Resource requests.
+Unmount and native-owner retirement release the observer, and reconnect admits
+a new watch. Older clients use NEXT and CLOSE with their captured Account and
+complete reference.
 Generic Machine Resource RPC does not supply the original Action provenance
 and fails closed. The finite reference selects the initial page after its existing
 cursor, when present. Finite pages delivered by the native watch continue the

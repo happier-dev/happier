@@ -1104,6 +1104,10 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   serverRequired(RPC_METHODS.KILL_SESSION, 'durable_session_write', 'Session kill is a durable/destructive lifecycle mutation and must stay server-routed.', 'use', SERVER_REQUIRED_SCOPE),
   serverRequired(RPC_METHODS.BASH, 'ambiguous', 'Shell execution has broad side-effect and access-policy ambiguity and must stay server-routed.', 'manage', undefined, undefined, true),
   EXTERNAL_ACTION_DAEMON_DISPATCH_ROUTE_POLICY,
+  { method: RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW, routeClass: 'server_required',
+    rationale: 'Host Resource observation retains the signed original Account Action for the lifetime of its socket continuation.',
+    ownerPacket: 'PMS-5', rpcClassification: 'internal_only', sharedMachineAccess: 'use',
+    scope: SERVER_REQUIRED_SCOPE, serverRequiredReason: 'auth' },
 ] satisfies readonly MachineRpcRoutePolicyV1[]);
 
 // cli-v0.2.17 registered this retired raw Session method. Retain its refusal

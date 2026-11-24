@@ -1,3 +1,9 @@
+import { callSocketRpc } from '@happier-dev/sync-client';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
+import { createScopedSocketConnectParams } from '@/sync/runtime/orchestration/serverScopedRpc/createScopedSocketConnectParams';
+import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { ACTION_INVOKE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
@@ -56,6 +62,8 @@ type MachineCustody = Readonly<{
     accountMode: 'plain' | 'e2ee'; installationId: string; installationPublicKey?: Uint8Array;
     custodian: Readonly<{ accountId: string; displayName?: string | null }>;
 }>;
+
+type HostResourceFrameReceiver = (value: unknown) => void;
 
 type Material = Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
 type DeploymentReviewTransport = Readonly<{
@@ -214,6 +222,7 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     invocation?: ExternalActionRequesterInvocationV1;
     reviewedChild?: ReviewedActionChildHttpProofV1;
     onTransportIssued?: () => void;
+    onHostResourceFrame?: HostResourceFrameReceiver;
 }>): Promise<ActionExecuteResult> {
     const { account, binding } = params;
     const headers = { 'Content-Type': 'application/json',
@@ -398,6 +407,35 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         account.assertCurrent();
         params.signal?.throwIfAborted();
     }
+    if (params.onHostResourceFrame && binding.target.kind === 'machine') {
+        const receive = params.onHostResourceFrame;
+        const machineId = binding.target.machineId;
+        return await withActionAccountRequestSignal(account, params.signal, signal =>
+            runWithServerRequestAuthorityForServerAccountScope<ActionExecuteResult>({ scope: account.accountLifetime.scope,
+                activeRequest: account.request, ...(signal ? { signal } : {}) }, async authority => {
+                const socket = await createEphemeralServerSocketClient({
+                    ...createScopedSocketConnectParams(authority.context, authority.transferCarrierCustody), ...(signal ? { signal } : {}),
+                });
+                try {
+                    account.assertCurrent();
+                    const final = await callSocketRpc<unknown>({ socket, randomBytes: getRandomBytes,
+                        target: { kind: 'machine', id: machineId }, method: RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW,
+                        params: request, content: { mode: 'plain' }, timeoutMs: null, signal,
+                        onContinuation: async raw => {
+                            account.assertCurrent();
+                            signal?.throwIfAborted();
+                            const result = readSuccessfulResponse(raw);
+                            if (!result.ok) throw new Error(result.errorCode);
+                            receive(result.result);
+                            return null;
+                        } });
+                    return readSuccessfulResponse(final);
+                } catch (error) {
+                    signal?.throwIfAborted();
+                    return failure(readRpcErrorCode(error) ?? 'target_unavailable');
+                } finally { socket.disconnect(); }
+            }));
+    }
     const retainsEffectReceipt = isActionEffectResult(getActionSpec(binding.actionId).sideEffectClass);
     const path = `/v1/actions/${binding.actionId}`;
     const init = { method: 'POST', headers, body: JSON.stringify(request), signal: params.signal };
@@ -457,6 +495,10 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
             }
             return classified;
         }
+        return readSuccessfulResponse(payload);
+    }
+
+    function readSuccessfulResponse(payload: unknown): ActionExecuteResult {
         if (envelope.v === 2 && material) return openExternalActionResponseV2({ envelope: payload, binding, material, request: envelope }) ?? failure(invalid);
         const parsed = parseExternalActionResponseEnvelopeV1(payload);
         return parsed && parsed.actionId === binding.actionId && parsed.requestId === envelope.requestId
@@ -485,6 +527,7 @@ type OriginalAccountMachineActionParams = DeploymentReviewTransport & Readonly<{
     machineServiceLogsGeneration?: Parameters<typeof sealExternalActionRequestV2>[0]['machineServiceLogsGeneration'];
     registryThemeContent?: Parameters<typeof sealExternalActionRequestV2>[0]['registryThemeContent'];
     onTransportIssued?: () => void;
+    onHostResourceFrame?: HostResourceFrameReceiver;
 }>;
 
 /** Every original Account Machine ingress carries the same mounted plugin provenance. */
@@ -613,6 +656,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         ...(params.deploymentReview ? { deploymentReview: params.deploymentReview } : {}),
         ...(params.onDeploymentCandidateAuthorized ? { onDeploymentCandidateAuthorized: params.onDeploymentCandidateAuthorized } : {}),
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),
+        ...(params.onHostResourceFrame ? { onHostResourceFrame: params.onHostResourceFrame } : {}),
         ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
         ...(pluginInvocation ? { pluginInvocation } : {}),
         ...(params.invocation ? { invocation: params.invocation } : {}),

@@ -33,6 +33,48 @@ const GENERATION = 'registry:eu4b';
 const roots: string[] = [];
 
 describe('native host Resource binding', () => {
+    it('holds an admitted observer across idle time, publishes a changed digest once and releases it on cancellation', async () => {
+        const owner = createStablePluginUiResourceWatchOwner({
+            isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,
+        });
+        const lifetime = new AbortController();
+        const baseline = digest(Buffer.from('initial'));
+        const changed = digest(Buffer.from('changed'));
+        const admit = vi.fn();
+        const send = vi.fn();
+        const dispose = vi.fn();
+        let publish: (value: string) => void = () => {};
+        vi.useFakeTimers();
+        try {
+            const observing = owner.followHost({
+                accountId: 'requester', subscriptionId: 'services', resource: {
+                    hostRead: 'machines.services.list', input: { serverId: 'home', machineId: 'machine' },
+                },
+                async bind(_signal, emit) {
+                    admit();
+                    publish = emit;
+                    return { digest: baseline, dispose };
+                },
+                signal: lifetime.signal,
+                onOpen: async () => {},
+                onEvent: async (event) => { send(event); },
+            });
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(admit).toHaveBeenCalledTimes(1);
+            expect(send).toHaveBeenCalledTimes(0);
+            publish(changed);
+            publish(changed);
+            await vi.advanceTimersByTimeAsync(0);
+            expect(send.mock.calls).toEqual([[{ version: 1, subscriptionId: 'services', kind: 'invalidated', digest: changed }]]);
+            lifetime.abort();
+            await observing;
+            expect(dispose).toHaveBeenCalledTimes(1);
+        } finally {
+            lifetime.abort();
+            owner.retire();
+            vi.useRealTimers();
+        }
+    });
     it('delivers every finite page to its exact watch with acknowledgement backpressure', async () => {
         const owner = createStablePluginUiResourceWatchOwner({
             isPluginConsumerCurrent: () => false, readPluginOccurrenceId: () => null,

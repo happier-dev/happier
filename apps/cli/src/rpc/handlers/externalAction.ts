@@ -1,3 +1,4 @@
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createExternalActionDaemonDispatchResponse, ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionExecuteResult, ExternalActionDaemonDispatchRequest, ExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -112,7 +113,10 @@ export function registerExternalActionRpcHandler(
   rpc: RpcHandlerRegistrar,
   options: ExternalActionRpcRegistrationOptions,
 ): void {
-  rpc.registerHandler(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, async (raw, context) => {
+  const register = (method: typeof EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 | typeof RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW) =>
+    rpc.registerHandler(method, async (raw, context) => {
+    const sender = method === RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW ? context?.sendHostResourceWatchFrame : undefined;
+    if (method === RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW && !sender) return forbidden();
     // RpcHandlerManager also rejects this before dispatch. Keep the assertion
     // at the receiver so an in-process registrar cannot bypass the closed
     // server-origin transport contract.
@@ -183,6 +187,7 @@ export function registerExternalActionRpcHandler(
       executor: options.executor,
       ...(request.observeSessionBirth ? { observeSessionBirth: true } : {}),
       invokeResource: options.invokeResource,
+      ...(sender ? { sendHostResourceWatchFrame: sender } : {}),
       acquirePluginRuntimeRegistryLease: options.acquirePluginRuntimeRegistryLease,
       resolvePluginExecutionOriginContext: options.resolvePluginExecutionOriginContext,
       resolveAccountPluginExecutionSelection: options.resolveAccountPluginExecutionSelection,
@@ -196,4 +201,6 @@ export function registerExternalActionRpcHandler(
     if (result.kind === 'invalid_request') return result;
     return createExternalActionDaemonDispatchResponse(result.prepared);
   });
+  register(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1);
+  if (options.invokeResource) register(RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW);
 }

@@ -56,6 +56,7 @@ import {
     bindExternalActionExecutionAuthorizationHttpPathV1,
     createExternalActionDaemonDispatchResponseV1,
 } from "@happier-dev/protocol/actions";
+import { RPC_METHODS } from "@happier-dev/protocol/rpc/methods";
 import {
     SOCKET_RPC_EVENTS,
     type SocketRpcRequestPayload,
@@ -73,6 +74,7 @@ import { reconcileExternalActionTarget } from '../../../../../cli/src/daemon/ext
 
 import { createExternalActionDaemonDispatcher } from "./externalActionDispatcher";
 import { DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE } from "../socket";
+import { registerSocketRpcHandlers } from "./rpc/registerSocketRpcHandlers";
 import { buildRpcMethodRoom } from "./rpc/rpcMethodRoom";
 import { registerExternalActionRoutes } from "../routes/actions/registerExternalActionRoutes";
 import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
@@ -192,6 +194,84 @@ describe("external Action server-to-daemon request carrier", () => {
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it('retains a shared Machine Resource watch for the signed Account and refuses another Account holding the same packet', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const installationId = randomUUID();
+        await db.machine.create({ data: {
+            id: machineId, accountId: owner.id, installationId, installationPublicKey: nacl.sign.keyPair().publicKey,
+            metadata: encodePlainMachineStoredContent({ host: 'services', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/services', happyHomeDir: '/home/services/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
+            active: true, operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
+        } });
+        const team = await db.team.create({ data: { name: 'Service observers' } });
+        await db.teamMembership.createMany({ data: [owner.id, requester.id].map(accountId => ({
+            teamId: team.id, accountId, role: 'member',
+        })) });
+        const grant = await inTx(tx => setMachineAccessGrantInTx(tx, {
+            actorAccountId: owner.id, machineId, principal: { kind: 'team', teamId: team.id }, level: 'view',
+        }));
+        expect(grant).toMatchObject({ kind: 'saved', readiness: 'ready' });
+        const actionId = 'machines.services.list';
+        const serverId = await getOrCreateServerIdentityId();
+        const actionInput = { serverId, machineId };
+        const request = { v: 1, machineId, envelope: { v: 1, requestId: 'services-watch', target: { kind: 'machine', machineId },
+            input: actionInput, resourceContinuation: { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+                params: { machineId, subscriptionId: 'services', resource: { hostRead: actionId, input: actionInput } } } } };
+        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        const io = new Server(app.server, { path: '/v1/updates', transports: ['websocket'] });
+        const forwardRpc = vi.fn(async ({ targetUserId, callParams }) => {
+            expect(targetUserId).toBe(owner.id);
+            const received = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
+            expect(received.principal.accountId).toBe(requester.id);
+            expect(received.executionAuthorization?.binding.installationId).toBe(installationId);
+            const prepared = prepareExternalActionResponseEnvelopeV1({ v: 1, actionId, requestId: received.envelope.requestId,
+                execution: { ok: true, result: { ok: true, subscriptionId: 'services', digest: `sha256:${'a'.repeat(64)}` } } });
+            return { ok: true as const, result: createExternalActionDaemonDispatchResponseV1(prepared) };
+        });
+        const dispatch = createExternalActionDaemonDispatcher({ io, forwardRpc });
+        registerExternalActionRoutes(app, { dispatch });
+        io.use(async (socket, next) => {
+            const credential = await auth.verifyToken(socket.handshake.auth.token);
+            if (!credential) return next(new Error('No Account'));
+            Object.assign(socket.data, { userId: credential.userId, clientType: 'user-scoped',
+                authTokenKind: credential.authTokenKind, authAuthority: credential.authority, tokenEpoch: credential.tokenEpoch });
+            registerSocketRpcHandlers({ userId: credential.userId, io, socket, forwardExternalActionToMachine: dispatch });
+            next();
+        });
+        const sockets: ReturnType<typeof ioClient>[] = [];
+        try {
+            const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
+            const otherToken = await auth.createToken(other.id, undefined, { kind: 'account', authority: 'present_user' });
+            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: request });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const executionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const endpoint = await app.listen({ host: '127.0.0.1', port: 0 });
+            for (const bearer of [token, otherToken]) {
+                const socket = ioClient(endpoint, { path: '/v1/updates', transports: ['websocket'], auth: { token: bearer } });
+                sockets.push(socket);
+                await waitForConnection(socket);
+            }
+            const packet = { method: `${machineId}:${RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW}`,
+                requestId: 'parked-resource', continuation: true, timeoutMs: null, params: { ...request, executionAuthorization } };
+            await expect(sockets[0]!.timeout(5_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, packet)).resolves.toMatchObject({ ok: true });
+            await expect(sockets[1]!.timeout(5_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, packet)).resolves
+                .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+            await db.account.update({ where: { id: requester.id }, data: { tokenEpoch: { increment: 1 } } });
+            await expect(sockets[0]!.timeout(5_000).emitWithAck(SOCKET_RPC_EVENTS.CALL, packet)).resolves
+                .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+            expect(forwardRpc).toHaveBeenCalledTimes(1);
+        } finally {
+            sockets.forEach(socket => socket.disconnect());
+            await io.close();
+            await app.close();
+        }
     });
 
     it('relays a present-user approval decision to a Team-granted Machine through production placement', async () => {

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import * as scopedSocket from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ExternalActionRequestEnvelopeV1Schema, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -28,10 +30,55 @@ beforeEach(async () => {
 });
 afterEach(async () => { await homes.reset(); });
 
+function installHostResourceWatchSocket(input: {
+    actionId: string;
+    digest(): string;
+    onOpen?(watch: { invalidate(digest: string): void; refuse(code: string): void }): void;
+    onDisconnect?(): void;
+}) {
+    return vi.spyOn(scopedSocket, 'createEphemeralServerSocketClient').mockImplementation(async () => {
+        let deliver: ((value: unknown) => void) | undefined;
+        let stop: (() => void) | undefined;
+        let opened = false;
+        const emitWithAck = async (event: string, packet: { requestId: string; params: { envelope: unknown } }) => {
+            expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(packet.params.envelope);
+            if (envelope.resourceContinuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
+                throw new Error('Expected a Resource watch open');
+            }
+            const subscriptionId = envelope.resourceContinuation.params.subscriptionId;
+            const requestId = packet.requestId;
+            deliver?.({ requestId, selectedSocketId: 'daemon-socket' });
+            const publish = (result: unknown) => deliver?.({ requestId, senderSocketId: 'daemon-socket', callId: 'a'.repeat(32),
+                params: { v: 1, actionId: input.actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
+            publish({ ok: true, subscriptionId, digest: input.digest() });
+            opened = true;
+            return await new Promise(resolve => {
+                const refuse = (code: string) => resolve({ ok: false, errorCode: code, error: code });
+                stop = () => refuse('cancelled');
+                input.onOpen?.({
+                    refuse,
+                    invalidate(digest) {
+                        publish({ ok: true, status: 'event', event: { version: 1, subscriptionId, kind: 'invalidated', digest } });
+                    },
+                });
+            });
+        };
+        return {
+            connected: true, emitWithAck, timeout: () => ({ emitWithAck }), getSocketId: () => 'ui-socket',
+            on(event, listener) { if (event === SOCKET_RPC_EVENTS.CONTINUATION) deliver = listener; },
+            off(event) { if (event === SOCKET_RPC_EVENTS.CONTINUATION) deliver = undefined; },
+            emit(event) { if (event === SOCKET_RPC_EVENTS.CANCEL) stop?.(); },
+            disconnect() { if (opened) input.onDisconnect?.(); },
+        };
+    });
+}
+
 it.each([
     { refusal: 'target_unavailable', recovery: 'registry' },
     { refusal: 'target_unavailable', recovery: 'reconnect' },
     { refusal: 'credential_scope_denied', recovery: 'none' },
+    { refusal: 'none', recovery: 'steady-detail' },
 ] as const)(
     'settles Machine Services $refusal with zero idle requests and recovery via $recovery', async ({ refusal, recovery }) => {
     const machineId = `machine-${recovery}`;
@@ -65,36 +112,33 @@ it.each([
     const bytes = Buffer.from(JSON.stringify({ kind: 'snapshot', services: [] }));
     const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
     const requests: string[] = [];
+    let liveWatches = 0;
+    let pushes = 0;
+    let change: (() => void) | undefined;
     let refused = true;
     let refuseParkedWatch: (() => void) | undefined;
-    let credentialDenied = false;
     const read = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ;
     const open = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN;
-    const next = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT;
-    homes.answer(serverId, path, { select: (body, request) => {
+    homes.answer(serverId, path, { select: body => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
         const continuation = envelope.resourceContinuation;
-        if (!continuation) throw new Error('Expected a Machine Services Resource continuation');
+        if (continuation?.method !== read) throw new Error('Idle watches must never send another Action HTTP request');
         requests.push(continuation.method);
-        const reply = (result: unknown): HomeDomainAnswer => ({ body: { v: 1, actionId,
-            requestId: envelope.requestId, execution: { ok: true, result } } });
-        if (continuation.method === read) return reply({ ok: true, resource: continuation.params.resource,
-            contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest });
-        const denied = { status: 403, body: { error: 'credential_scope_denied', requestId: envelope.requestId } };
-        if (credentialDenied) return denied;
-        if (continuation.method === open) return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
-        if (refusal === 'target_unavailable' && refused) return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId } };
-        return new Promise<HomeDomainAnswer>(resolve => {
-            const idle = () => resolve(reply({ ok: true, status: 'idle' }));
-            if (refusal === 'credential_scope_denied') refuseParkedWatch = () => {
-                credentialDenied = true;
-                resolve(denied);
-            };
-            request.signal?.addEventListener('abort', idle, { once: true });
-            if (request.signal?.aborted) idle();
-        });
+        const reply: HomeDomainAnswer = { body: { v: 1, actionId, requestId: envelope.requestId,
+            execution: { ok: true, result: { ok: true, resource: continuation.params.resource,
+                contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest } } } };
+        return reply;
     } });
+    const socket = installHostResourceWatchSocket({ actionId, digest: () => digest, onOpen(watch) {
+        requests.push(open);
+        liveWatches++;
+        refuseParkedWatch = () => watch.refuse(refusal);
+        change = () => {
+            pushes++;
+            watch.invalidate(`sha256:${'a'.repeat(64)}`);
+        };
+        if (refusal === 'target_unavailable' && refused) queueMicrotask(() => watch.refuse(refusal));
+    }, onDisconnect() { liveWatches--; } });
     const scope = { serverId, accountId: 'account' };
     const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const transport = createDeploymentReadTransport(lifetime);
@@ -127,9 +171,17 @@ it.each([
     const measureBindings = vi.spyOn(machineServiceResource, 'createMachineServiceResourceBinding')
         .mockImplementation(measureBinding);
     vi.useFakeTimers();
-    const stop = transport.observeEnvironmentCollectionHealth!(scope, rows, () => {}, { signal: abort.signal });
+    const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
+    if (recovery === 'steady-detail') Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
+    const publishDetail = vi.fn();
+    const firstRow = rows[0]!;
+    const detail = { ...createDeploymentEnvironmentDetailV1({ environment: firstRow.environment }),
+        runtimeTargetLink: firstRow.runtimeTargetLink, builtInUrls: null, memberVersions: {}, secretRevisions: [] };
+    const stop = recovery === 'steady-detail'
+        ? transport.observeEnvironmentHealth!(scope, detail, publishDetail, { signal: abort.signal })
+        : transport.observeEnvironmentCollectionHealth!(scope, rows, () => {}, { signal: abort.signal });
     try {
-        await vi.waitFor(() => expect(requests).toContain(next));
+        await vi.waitFor(() => expect(requests).toContain(open));
         expect(admissions.filter(admission => admission.method === read).map(admission => admission.machineId)).toEqual([machineId]);
         expect(new Set(admissions.map(admission => admission.machineId))).toEqual(new Set([machineId]));
         expect(attachments).toEqual([machineId]);
@@ -142,6 +194,24 @@ it.each([
             refuseParkedWatch?.();
         }
         const openCount = requests.length;
+        if (recovery === 'steady-detail') {
+            const published = publishDetail.mock.calls.length;
+            const authorized = admissions.length;
+            const homeRequests = homes.requestsFor('/v1/machines/read-batch').length;
+            publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'unrelated-machine' }, 'authority');
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect({ homeRequests: homes.requestsFor('/v1/machines/read-batch').length - homeRequests,
+                authorizations: admissions.length - authorized, actions: requests.length - openCount,
+                publishes: publishDetail.mock.calls.length - published }).toEqual({
+                homeRequests: 0, authorizations: 0, actions: 0, publishes: 0,
+            });
+            expect(liveWatches).toBe(1);
+            change?.();
+            await vi.waitFor(() => expect(requests.filter(method => method === read)).toHaveLength(2));
+            expect(pushes).toBe(1);
+            expect(admissions.filter(entry => entry.method === open)).toHaveLength(1);
+            return;
+        }
         await vi.advanceTimersByTimeAsync(60_000);
         expect(requests.slice(openCount)).toEqual([]);
         if (refusal === 'credential_scope_denied') {
@@ -163,7 +233,6 @@ it.each([
         expect(requests).toHaveLength(openCount);
         recover(machineId);
         await vi.waitFor(() => expect(requests.filter(method => method === open)).toHaveLength(2));
-        await vi.waitFor(() => expect(requests.filter(method => method === next)).toHaveLength(2));
         await vi.waitFor(() => expect(resource.selection.getSnapshot()).toMatchObject({
             pending: 'idle', subscription: 'live', freshness: 'fresh', value: { kind: 'snapshot', services: [] },
         }));
@@ -179,6 +248,11 @@ it.each([
         abort.abort();
         stop();
         measureBindings.mockRestore();
+        socket.mockRestore();
+        if (recovery === 'steady-detail') {
+            if (anyDescriptor) Object.defineProperty(AbortSignal, 'any', anyDescriptor);
+            else Reflect.deleteProperty(AbortSignal, 'any');
+        }
         vi.useRealTimers();
     }
 });
@@ -223,30 +297,19 @@ it.each([true, false])('keeps selected Domain facts on unavailability, with acti
     let unavailable = false;
     let deliver: (() => void) | undefined;
     const methods: string[] = [];
-    homes.answer(serverId, actionPath, { select: async (body, request) => {
+    homes.answer(serverId, actionPath, { select: body => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
         expect(envelope.input).toMatchObject(input);
         const continuation = envelope.resourceContinuation;
-        if (!continuation) throw new Error('Expected existing current-health Resource continuation');
+        if (continuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error('Expected a current-health Resource read');
         methods.push(continuation.method);
-        const reply = (result: unknown): HomeDomainAnswer => ({ body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) return reply(unavailable
-            ? { ok: false, code: 'machine_unavailable', reason: 'unavailable' }
-            : { ok: true, resource: reference, contentType: 'application/json', ...content() });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
-            return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
-        const subscriptionId = continuation.params.subscriptionId;
-        return new Promise<HomeDomainAnswer>(resolve => {
-            deliver = () => {
-                deliver = undefined;
-                resolve(reply({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated', subscriptionId,
-                    digest: unavailable ? `sha256:${createHash('sha256').update('unavailable').digest('hex')}` : content().digest } }));
-            };
-            const abort = () => resolve(reply({ ok: true, status: 'idle' }));
-            request.signal?.addEventListener('abort', abort, { once: true });
-            if (request.signal?.aborted) abort();
-        });
+        const result = unavailable ? { ok: false, code: 'machine_unavailable', reason: 'unavailable' }
+            : { ok: true, resource: reference, contentType: 'application/json', ...content() };
+        return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } };
+    } });
+    const socket = installHostResourceWatchSocket({ actionId, digest: () => content().digest, onOpen(watch) {
+        deliver = () => watch.invalidate(unavailable
+            ? `sha256:${createHash('sha256').update('unavailable').digest('hex')}` : content().digest);
     } });
     const retirementCallbacks = new Set<() => void>();
     const lifetime = { scope: { serverId, accountId: 'account' }, isCurrent: () => true, onRetire(callback: () => void) {
@@ -283,7 +346,7 @@ it.each([true, false])('keeps selected Domain facts on unavailability, with acti
                 await vi.waitFor(() => expect(items[0]).toMatchObject({ domain, health: undefined, healthUnavailableReason: 'coverage_unavailable' }));
             }
         }
-    } finally { abort.abort(); stop(); }
+    } finally { abort.abort(); stop(); socket.mockRestore(); }
     expect(retirementCallbacks.size).toBe(0);
 });
 
@@ -322,27 +385,15 @@ it('shares current edge health between a three-Environment list and the selected
     } });
     let deliver: (() => void) | undefined;
     let reads = 0;
-    homes.answer(serverId, actionPath, { select: async (body, request) => {
+    homes.answer(serverId, actionPath, { select: body => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
-        const continuation = envelope.resourceContinuation;
-        if (!continuation) throw new Error('Expected current edge Resource continuation');
-        const reply = (result: unknown): HomeDomainAnswer => ({ body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true, result } } });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) {
-            reads++;
-            return reply({ ok: true, resource: reference, contentType: 'application/json', ...content() });
-        }
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN)
-            return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest: content().digest });
-        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
-        const subscriptionId = continuation.params.subscriptionId;
-        return new Promise<HomeDomainAnswer>(resolve => {
-            deliver = () => resolve(reply({ ok: true, status: 'event', event: {
-                version: 1, kind: 'invalidated', subscriptionId, digest: content().digest,
-            } }));
-            const abort = () => resolve(reply({ ok: true, status: 'idle' }));
-            request.signal?.addEventListener('abort', abort, { once: true });
-            if (request.signal?.aborted) abort();
-        });
+        if (envelope.resourceContinuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error('Expected a current-edge Resource read');
+        reads++;
+        return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true,
+            result: { ok: true, resource: reference, contentType: 'application/json', ...content() } } } };
+    } });
+    const socket = installHostResourceWatchSocket({ actionId, digest: () => content().digest, onOpen(watch) {
+        deliver = () => watch.invalidate(content().digest);
     } });
     let aggregate: DeploymentEnvironmentHealthAggregateV1 | undefined;
     const abort = new AbortController();
@@ -380,20 +431,17 @@ it('shares current edge health between a three-Environment list and the selected
             expect(rowFacts.get(detail.environment.id)).toMatchObject({ status: 'down', edgeUnreachable: true });
             expect(aggregate).toBe(rowFacts.get(detail.environment.id));
         });
-        await vi.waitFor(() => expect(deliver).not.toBe(healthy));
-        const first = deliver;
+        expect(edgeStates.filter(state => state === 'down')).toHaveLength(1);
+        expect(deliver).toBe(healthy);
         observation = null;
-        first?.();
+        healthy?.();
         await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'unknown' }] }));
-        await vi.waitFor(() => expect(deliver).not.toBe(first));
-        const second = deliver;
         observation = proof;
-        second?.();
+        healthy?.();
         await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'up' }] }));
-        await vi.waitFor(() => expect(deliver).not.toBe(second));
         observation = { ...proof, targetLinkRevision: link.revision + 1 };
         deliver?.();
         await vi.waitFor(() => expect(aggregate).toMatchObject({ members: [{ machineId: 'edge', status: 'unknown' }] }));
-    } finally { abort.abort(); stopCollection(); }
+    } finally { abort.abort(); stopCollection(); socket.mockRestore(); }
     expect(retirementCallbacks.size).toBe(0);
 });

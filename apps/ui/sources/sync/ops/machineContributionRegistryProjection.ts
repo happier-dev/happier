@@ -226,7 +226,7 @@ export type MachinePluginUiResourceTransportReason = MachinePluginTransportReaso
 /** Home refusals that settle a Resource read or watch. */
 export function classifyMachinePluginUiResourceRefusal(code: string): 'target_unavailable' | 'denied' | undefined {
     if (code === 'target_unavailable') return 'target_unavailable';
-    if (code === 'credential_scope_denied') return 'denied';
+    if (code === 'credential_scope_denied' || code === RPC_ERROR_CODES.FORBIDDEN) return 'denied';
     return undefined;
 }
 
@@ -1284,7 +1284,8 @@ type ResourceTransportInput<T> = T extends unknown ? Omit<T, 'machineId'> : neve
 /** Native host Resources continue through the same original-Account Action ingress. */
 async function invokeOriginalAccountHostResource(
     continuation: NonNullable<Parameters<typeof executeOriginalAccountMachineAction>[0]['resourceContinuation']>,
-    options: Readonly<{ serverId?: string | null; accountId?: string | null; signal?: AbortSignal }>,
+    options: Readonly<{ serverId?: string | null; accountId?: string | null; signal?: AbortSignal;
+        onHostResourceFrame?: (value: unknown) => void }>,
 ): Promise<unknown> {
     const { resource, machineId } = continuation.params;
     const serverId = options.serverId ?? ('serverId' in resource.input && typeof resource.input.serverId === 'string' ? resource.input.serverId : undefined);
@@ -1305,6 +1306,7 @@ async function invokeOriginalAccountHostResource(
                 errorCode: 'admission_unavailable', error: 'admission_unavailable' });
             return executeOriginalAccountMachineAction({ account, actionId, requestId: invocationContext.actionRequestId!,
                 machineId, input, resourceContinuation: continuation, ...(invocation ? { invocation } : {}),
+                ...(options.onHostResourceFrame ? { onHostResourceFrame: options.onHostResourceFrame } : {}),
                 ...(options.signal ? { signal: options.signal } : {}) });
         };
         const first = await issue(resource.input, context);
@@ -1392,6 +1394,40 @@ export async function machinePluginUiResourceWatchOpen(
         return parsed.success
             ? { supported: true, result: parsed.data }
             : { supported: false, reason: 'error' };
+    } catch (error) {
+        return { supported: false, reason: classifyMachinePluginTransportError(error) };
+    }
+}
+
+/** A native host watch uses the originating Account's Action codec for the whole observation. */
+export async function machinePluginUiHostResourceFollow(
+    machineId: string,
+    opts: Readonly<{
+        serverId?: string | null; accountId?: string | null; signal: AbortSignal;
+        subscriptionId: string;
+        resource: Extract<DaemonPluginUiResourceWatchOpenRequest, { resource: { hostRead: string } }>['resource'];
+        onOpen: (digest: string | undefined) => void;
+        onEvent: (event: Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true; status: 'event' }>['event']) => void;
+    }>,
+): Promise<MachinePluginUiResourceWatchOpenResult> {
+    try {
+        const { subscriptionId, resource } = opts;
+        const response = await invokeOriginalAccountHostResource({
+            method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, params: { machineId, resource, subscriptionId },
+        }, { ...opts, onHostResourceFrame(value) {
+            const open = DaemonPluginUiResourceWatchOpenResponseSchema.safeParse(value);
+            if (open.success && open.data.ok && open.data.subscriptionId === subscriptionId) {
+                opts.onOpen(open.data.digest);
+                return;
+            }
+            const next = DaemonPluginUiResourceWatchNextResponseSchema.safeParse(value);
+            if (!next.success || !next.data.ok || next.data.status !== 'event' || next.data.event.subscriptionId !== subscriptionId) {
+                throw new Error('Invalid host Resource watch frame');
+            }
+            opts.onEvent(next.data.event);
+        } });
+        const parsed = DaemonPluginUiResourceWatchOpenResponseSchema.safeParse(response);
+        return parsed.success ? { supported: true, result: parsed.data } : { supported: false, reason: 'error' };
     } catch (error) {
         return { supported: false, reason: classifyMachinePluginTransportError(error) };
     }

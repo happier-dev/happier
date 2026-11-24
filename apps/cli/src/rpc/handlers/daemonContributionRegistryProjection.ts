@@ -2838,9 +2838,21 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 const owner = lease.registry.uiResourceWatches;
                 if (!owner) throw new PluginError({ code: 'service_admission_unavailable' });
                 const accountId = await hostResources.accountId(context, requestData.resource);
-                const opened = await owner.openHost({ accountId, subscriptionId: requestData.subscriptionId,
+                const admission: Parameters<typeof owner.openHost>[0] = { accountId, subscriptionId: requestData.subscriptionId,
                     resource: requestData.resource,
-                    bind: (signal, emit, retire) => hostResources.observe(requestData.resource, requestData.machineId, context, signal, emit, retire) });
+                    bind: (signal, emit, retire) => hostResources.observeAdmitted(requestData.resource, requestData.machineId, context, signal, emit, retire) };
+                if (context?.followHostResource) {
+                    const follow = context.followHostResource;
+                    let baseline: { subscriptionId: string; digest: string } | undefined;
+                    await owner.followHost({ ...admission, ...follow, signal: context.signal,
+                        onOpen: async opened => {
+                            baseline = opened;
+                            await lease.release();
+                            await follow.onOpen(opened);
+                        } });
+                    return DaemonPluginUiResourceWatchOpenResponseSchema.parse({ ok: true, ...baseline });
+                }
+                const opened = await owner.openHost(admission);
                 try { await hostResources.current(context); }
                 catch (error) { await owner.close({ hostAccountId: accountId, subscriptionId: requestData.subscriptionId }); throw error; }
                 return DaemonPluginUiResourceWatchOpenResponseSchema.parse({ ok: true, ...opened });

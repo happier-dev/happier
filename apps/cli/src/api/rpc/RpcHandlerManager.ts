@@ -156,7 +156,7 @@ const SERVER_ORIGIN_RPC_FAMILIES: readonly Readonly<{
     { methods: [SESSION_SERVER_START_DAEMON_RPC_METHOD_V1], isAuthorization: isSocketRpcSessionServerStartServerOriginAuthorizationContext, serverOnly: true },
     { methods: [MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1],
         isAuthorization: value => ManagedPluginWebhookOriginV1Schema.safeParse(value).success, serverOnly: true },
-    { methods: [EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, MANAGED_FINITE_WAKE_RPC_METHOD], isAuthorization: isSocketRpcActionApiServerOriginAuthorizationContext, serverOnly: true },
+    { methods: [EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW, MANAGED_FINITE_WAKE_RPC_METHOD], isAuthorization: isSocketRpcActionApiServerOriginAuthorizationContext, serverOnly: true },
     { methods: [RPC_METHODS.DAEMON_MACHINE_ACCESS_LOSS], isAuthorization: isSocketRpcMachineAccessLossServerOriginAuthorizationContext, serverOnly: true },
     { methods: [RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION], isAuthorization: isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext, serverOnly: true, requiresMachineAdmission: true },
     { methods: SOCKET_RPC_SERVER_ORIGIN_MACHINE_READ_METHODS, isAuthorization: isSocketRpcMachineReadServerOriginAuthorizationContext, serverOnly: false, bindsMachineRead: true },
@@ -1292,6 +1292,13 @@ export class RpcHandlerManager {
                     handler => { onRequest = handler; }, () => controller.abort(new Error('RPC operation Stop requested')));
                 localActionContext = { ...localActionContext, ...remoteOperation };
             }
+            if (privateMethod === RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW) {
+                const returnTo = SocketRpcContinuationReturnV1Schema.safeParse(request.continuationReturn);
+                if (request.continuation !== true || !returnTo.success || !this.socket || !requestId) return await deny('machine_admission');
+                operationContinuation = createSocketRpcContinuation({ socket: this.socket, requestId, method: request.method,
+                    content: { mode: 'plain' }, returnTo: returnTo.data, signal: controller.signal,
+                    onRequest: async () => { throw new Error('Host Resource watch only sends updates'); } });
+            }
             const projectOpenRequestId = source === 'authenticated_home_socket'
                 && targetMethod === RPC_METHODS.PROJECTS_OPEN && machineAdmission?.success
                 && request.projectOpenRequestId !== undefined
@@ -1306,6 +1313,8 @@ export class RpcHandlerManager {
                     ? 'plain' : source === 'local_session_channel' ? admittedContent.mode : rpcContent.mode,
                 ...(sessionBrowserContent ? { sessionBrowserContent } : {}),
                 signal: controller.signal,
+                ...(privateMethod === RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW && operationContinuation
+                    ? { sendHostResourceWatchFrame: operationContinuation.call } : {}),
                 reportSessionEffect: (effect: NonNullable<RpcHandlerActiveExecution['sessionEffect']>) => this.reportSessionEffect(handlerExecutionId, effect),
                 reportOperationDiagnostics: (operation: RpcOperationDiagnostics) => this.reportOperationDiagnostics(diagnostic, operation),
                 requestStartedAtMs,
@@ -1438,7 +1447,7 @@ export class RpcHandlerManager {
         /** Installed host forwards an already-admitted requester; input never supplies authority. */
         rpcContext?: Pick<RpcHandlerContext, 'machineAdmission' | 'verifyMachineAdmissionCurrent' | 'callerInputAuthorization'
             | 'callerAuthority' | 'callerInputConstraints' | 'sessionActionOrigin' | 'originalActionEnvelope'
-            | 'requesterSessionBootstrap' | 'localActionContext' | 'workspaceSyncSourceWriterTargetRouting' | 'sessionProjectOpenRows'>;
+            | 'followHostResource' | 'requesterSessionBootstrap' | 'localActionContext' | 'workspaceSyncSourceWriterTargetRouting' | 'sessionProjectOpenRows'>;
     }>): Promise<unknown> {
         return await this.invokeLocalHandler(method, params, this.handlers.get(this.getPrefixedMethod(method)), options);
     }
@@ -1535,6 +1544,7 @@ export class RpcHandlerManager {
                         callerInputAuthorization: options.rpcContext.callerInputAuthorization,
                         sessionActionOrigin: options.rpcContext.sessionActionOrigin,
                         originalActionEnvelope: options.rpcContext.originalActionEnvelope,
+                        followHostResource: options.rpcContext.followHostResource,
                         requesterSessionBootstrap: options.rpcContext.requesterSessionBootstrap,
                         ...(options.rpcContext.sessionProjectOpenRows ? {
                             sessionProjectOpenRows: options.rpcContext.sessionProjectOpenRows } : {}),

@@ -26,6 +26,7 @@ import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@h
 import { SIGNED_ROOT_ACTION_OUTPUT_SCHEMAS, PublicActionIdSchema, SignedRootActionIdSchema, isPluginProvenanceOnlyActionId } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionResponseEnvelopeV1, ExternalActionTargetV1, PreparedExternalActionResponseEnvelope, ExternalActionEncryptionBindingV2, ExternalActionExecutionAuthorizationV1, ExternalActionServerPrincipalV1, SignedRootActionId } from '@happier-dev/protocol/actions';
 import type { ActionStartDiagnosticV1 } from '@happier-dev/protocol/actions/executor/actionStartDiagnostics';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
@@ -231,6 +232,7 @@ async function executeExternalActionRequest(input: Readonly<{
   /** Home-produced Machine facts from the closed receiving transport, never Action input. */
   machineAdmission?: RpcActionExecutorContext['machineAdmission'];
   /** Exact installed Resource dispatcher; only the verified original logs invocation reaches it. */
+  sendHostResourceWatchFrame?: RpcHandlerContext['sendHostResourceWatchFrame'];
   invokeResource?: (method: string, params: unknown, context: RpcHandlerContext) => Promise<unknown>;
   signal?: AbortSignal;
   /** Receiving host progress sink; never accepted from an Action envelope. */
@@ -562,6 +564,12 @@ async function executeExternalActionRequest(input: Readonly<{
     || !sameMachineServiceLogsResourceInput(decodedInput, logsOperands, input.currentMachineId, actionId.data))) return { kind: 'invalid_request',
     errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
     ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
+
+  if (input.sendHostResourceWatchFrame && (logsOperands.resourceContinuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
+    || logsOperands.resourceContinuation.params.resource.hostRead === 'database.connection')) {
+    return { kind: 'invalid_request', errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
+      requestId: envelope.data.requestId };
+  }
 
   let effectMayHaveStarted = false;
   const prepareResponse = prepare;
@@ -1180,11 +1188,22 @@ async function executeExternalActionRequest(input: Readonly<{
       const continuation = logsOperands.resourceContinuation;
       if (context.surface !== 'ui' || context.actionCaller?.kind !== 'host' || !context.signal
         || !originalRootCurrentness || !admittedAuthorization) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
+      const sendResourceFrame = input.sendHostResourceWatchFrame;
+      const send = async (value: unknown) => {
+        const response = prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,
+          execution: { ok: true, result: value } });
+        if (response.kind !== 'response') throw new Error('Host Resource delivery could not be prepared');
+        await sendResourceFrame!(response.prepared.response);
+      };
       const result = await input.invokeResource!(continuation.method, continuation.params, {
         signal: context.signal, callerInputAuthorization: admittedAuthorization,
         ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
         verifyMachineAdmissionCurrent: originalRootCurrentness, originalActionEnvelope: envelope.data,
         localActionContext: context,
+        ...(sendResourceFrame ? { followHostResource: {
+          onOpen: opened => send({ ok: true, ...opened }),
+          onEvent: event => send({ ok: true, status: 'event', event }),
+        } } : {}),
       });
       const response = parseMachineServiceLogsResourceResponse(continuation.method, result);
       return response.success ? { ok: true, result: response.data }

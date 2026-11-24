@@ -1180,6 +1180,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
         // only after currentness, room membership, and handler setup complete.
         rpcHandler(userId, socket, {
             io,
+            forwardExternalActionToMachine: app.forwardExternalActionToMachine,
             sessionPublisherPresence,
             ephemeralRunnerAdmission,
         });

@@ -1,10 +1,11 @@
-import { projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
+import { PluginUiMachineServiceReadReferenceV1Schema, projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
-import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
+import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiHostResourceFollow, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
 import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { isRuntimeActive, subscribeToRuntimeActiveChange, waitForRuntimeActive } from '@/utils/runtime/isRuntimeActive';
 
 import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -19,6 +20,7 @@ export type PluginSurfaceResourceWatchTransport = Readonly<{
     open: typeof machinePluginUiResourceWatchOpen;
     next: typeof machinePluginUiResourceWatchNext;
     close: typeof machinePluginUiResourceWatchClose;
+    follow?: typeof machinePluginUiHostResourceFollow;
 }>;
 const RECONNECT_BACKOFF_MS = [250, 1_000, 2_500, 5_000] as const;
 type PluginSurfaceResourceDigest = Extract<PluginUiResourceSubscriptionEventV1, { kind: 'invalidated' }>['digest'];
@@ -48,6 +50,7 @@ type ActiveWatch = {
     readonly deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
     readonly onRefused?: (code: string) => void;
     readonly controller: AbortController;
+    readonly pushed?: true;
     lastDigest: PluginSurfaceResourceDigest | null;
     closed: boolean;
     releaseStore?: () => void;
@@ -374,6 +377,80 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         })();
     }
 
+    function followHost(watch: ActiveWatch, resource: Parameters<typeof machinePluginUiHostResourceFollow>[1]['resource'],
+        openingSignal?: AbortSignal): Promise<WatchOpenResult> {
+        return new Promise(resolve => {
+            let opened = false;
+            let failures = 0;
+            const lifetime = watch.controller.signal;
+            const cancelOpen = () => { retire(watch.subscriptionId); };
+            openingSignal?.addEventListener('abort', cancelOpen, { once: true });
+            const stopOpening = () => openingSignal?.removeEventListener('abort', cancelOpen);
+            const follower = input.transport?.follow ?? machinePluginUiHostResourceFollow;
+            void (async () => {
+                try {
+                    if (openingSignal?.aborted) cancelOpen();
+                    while (!watch.closed && isCurrent()) {
+                        await waitForRuntimeActive(lifetime);
+                        if (watch.closed || !isCurrent()) break;
+                        const activity = new AbortController();
+                        const stopActivity = subscribeToRuntimeActiveChange(() => {
+                            if (!isRuntimeActive()) activity.abort();
+                        });
+                        const { signal, dispose } = mergeAbortSignals([lifetime, activity.signal]);
+                        let outcome: Awaited<ReturnType<typeof follower>>;
+                        try {
+                            outcome = await follower(requireMachineId(), {
+                                serverId: daemon.serverId, ...accountTarget, resource, subscriptionId: watch.subscriptionId, signal,
+                                onOpen(digest) {
+                                    if (signal.aborted || !isCurrent()) return;
+                                    const current = PluginUiArtifactDigestV1Schema.safeParse(digest);
+                                    if (!current.success) throw new Error('Invalid host Resource watch digest');
+                                    failures = 0;
+                                    const changed = opened && current.data !== watch.lastDigest;
+                                    watch.lastDigest = current.data;
+                                    if (changed) watch.deliver(invalidatedEvent(watch.subscriptionId, current.data));
+                                    if (!opened) {
+                                        opened = true;
+                                        stopOpening();
+                                        resolve({ ok: true, digest: current.data });
+                                    }
+                                },
+                                onEvent(event) {
+                                    if (!opened || signal.aborted || !isCurrent()) return;
+                                    if (event.kind === 'invalidated') watch.lastDigest = event.digest;
+                                    watch.deliver(event);
+                                    if (event.kind === 'error' || event.kind === 'complete') retire(watch.subscriptionId);
+                                },
+                            });
+                        } finally {
+                            dispose();
+                            stopActivity();
+                        }
+                        if (watch.closed || !isCurrent()) break;
+                        if (activity.signal.aborted) continue;
+                        const unsupported = outcome.supported ? null : mapMachinePluginUiResourceTransportFailure(outcome.reason);
+                        const code = outcome.supported ? outcome.result.ok ? 'target_unavailable' : outcome.result.code
+                            : unsupported!.code;
+                        const refusal = classifyMachinePluginUiResourceRefusal(code);
+                        const terminal = refusal === 'denied' || unsupported?.retryable === false
+                            || outcome.supported && !outcome.result.ok && outcome.result.reason !== 'unavailable';
+                        if (!opened) { resolve({ ok: false, terminal, reason: code }); break; }
+                        if (settleRefusal(watch, code)) break;
+                        if (terminal) { watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', code)); break; }
+                        await delay(RECONNECT_BACKOFF_MS[Math.min(failures++, RECONNECT_BACKOFF_MS.length - 1)]!, lifetime);
+                    }
+                } catch {
+                    if (opened && !watch.closed && isCurrent()) watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', 'target_unavailable'));
+                } finally {
+                    stopOpening();
+                    if (watches.get(watch.subscriptionId) === watch) retire(watch.subscriptionId);
+                    if (!opened) resolve({ ok: false, terminal: true, reason: 'plugin_resource_aborted' });
+                }
+            })();
+        });
+    }
+
     function retire(subscriptionId: string): void {
         const watch = watches.get(subscriptionId);
         if (!watch) return;
@@ -384,6 +461,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         watch.controller.abort();
         watches.delete(subscriptionId);
         if (watch.releaseStore) { watch.releaseStore(); return; }
+        if (watch.pushed) return;
         void close(requireMachineId(), {
             serverId: daemon.serverId,
             ...accountTarget,
@@ -464,6 +542,14 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     retire(params.subscriptionId);
                     return { ok: false, terminal: true, reason: 'plugin_resource_aborted' };
                 }
+            }
+            const host = !params.readAuthority && !params.actionRead ? hostReferenceFor(params.resourceId, context) : null;
+            const native = PluginUiMachineServiceReadReferenceV1Schema.safeParse(host);
+            if (native.success && native.data.hostRead !== 'database.connection') {
+                const watch: ActiveWatch = { ...params, context, pushed: true, controller: new AbortController(),
+                    lastDigest: null, closed: false };
+                watches.set(params.subscriptionId, watch);
+                return followHost(watch, native.data, params.signal);
             }
             let opened: WatchOpenResult;
             try {

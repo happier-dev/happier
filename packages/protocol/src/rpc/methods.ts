@@ -177,6 +177,7 @@ export const RPC_METHODS = {
   // subscription and returns the current digest, `next` parks until an
   // invalidation or its bounded budget elapses, `close` retires it. No payload
   // rides the event — the observer re-reads through the snapshot read above.
+  DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW: 'daemon.plugins.ui.hostResource.follow',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN: 'daemon.plugins.ui.resources.watch.open',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT: 'daemon.plugins.ui.resources.watch.next',
   DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE: 'daemon.plugins.ui.resources.watch.close',

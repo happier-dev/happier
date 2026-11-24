@@ -9,7 +9,8 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionInputAdmissionProtocolVersion } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
+import { type SocketRpcContinuationReturnV1, ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExternalActionApprovalDecisionEnvelopeAdmissionV1,
     projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
@@ -114,7 +115,13 @@ export type ExternalActionDaemonDispatcher = (
         admittedMachine: ExternalActionDispatchMachineAdmission;
         admittedAuthenticationEvidence?: readonly import('@happier-dev/protocol/auth/authToken').AuthTokenAuthenticationEvidenceV1[];
     }> | Readonly<{ executionAuthorization?: undefined; admittedMachine?: undefined; admittedAuthenticationEvidence?: undefined }>),
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{
+        signal?: AbortSignal;
+        continuation?: Readonly<{
+            returnTo: SocketRpcContinuationReturnV1;
+            cancellation: NonNullable<Parameters<typeof forwardRpcCall>[0]['cancellation']>;
+        }>;
+    }>,
 ) => Promise<ExternalActionDaemonDispatchResult>;
 
 export type ExternalActionForwardRpcCall = typeof forwardRpcCall;
@@ -966,7 +973,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         };
         const requestId = options.signal ? randomUUID() : null;
         let targetSocketId: string | null = null;
-        const cancellation = requestId && options.signal
+        const cancellation = options.continuation?.cancellation ?? (requestId && options.signal
             ? {
                 targetRequestId: requestId,
                 signal: options.signal,
@@ -974,7 +981,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                     targetSocketId = targetSocket.id;
                 },
             }
-            : null;
+            : null);
         const cancelTarget = (): void => {
             if (!targetSocketId || !requestId) return;
             try {
@@ -991,7 +998,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         };
         // Session birth owns its lifetime once the guest receives the request.
         // The HTTP signal still retires target discovery and the ACK waiter.
-        const cancelTargetSignal = request.actionId === 'session.spawn_new' ? undefined : options.signal;
+        const cancelTargetSignal = request.actionId === 'session.spawn_new' || options.continuation ? undefined : options.signal;
         cancelTargetSignal?.addEventListener("abort", cancelTarget, { once: true });
 
         const callParams = {
@@ -1004,7 +1011,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         const relay = {
             io: params.io,
             targetUserId: currentAuthorization.binding.custodianAccountId,
-            method: `${machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+            method: `${machineId}:${options.continuation ? RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW : EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
             timeoutMs: null,
             authorization: ACTION_API_SERVER_ORIGIN,
             ...requesterContext,
@@ -1022,6 +1029,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 },
                 ...(finiteWake?.kind === 'ready' ? { callerLifetime: { signal: finiteSignal, isCurrent: finiteWake.isCurrent } } : {}),
                 ...(cancellation ? { cancellation } : {}),
+                ...(options.continuation ? { continuationReturn: options.continuation.returnTo } : {}),
             }), request.envelope.requestId);
         } finally {
             cancelTargetSignal?.removeEventListener("abort", cancelTarget);

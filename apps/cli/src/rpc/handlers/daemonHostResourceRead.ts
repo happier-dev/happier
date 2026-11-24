@@ -48,10 +48,9 @@ export function createDaemonHostResourceRead(input: Readonly<{
         if (!own) throw new PluginError({ code: 'requester_credentials_unavailable' });
         return own;
     };
-    const accountId = async (context?: RpcHandlerContext, reference?: LogsReference, onDisclosureLost?: () => void) => {
+    const accountId = async (context?: RpcHandlerContext, reference?: LogsReference) => {
         const actionId = resolvePluginUiHostReadActionIdV1(reference?.hostRead ?? 'machines.services.logs');
         const refuse: (code: string) => never = (code) => {
-            onDisclosureLost?.();
             throw new PluginError({ code });
         };
         await current(context);
@@ -98,12 +97,11 @@ export function createDaemonHostResourceRead(input: Readonly<{
         // the daemon's own credential is only the same-process fallback above.
         return actorAccountId;
     };
-    const read = async (reference: LogsReference, machineId: string, context?: RpcHandlerContext,
-        observation?: ReadObservation, onDisclosureLost = observation?.retire) => {
+    const readAdmitted = async (reference: LogsReference, machineId: string, context?: RpcHandlerContext,
+        observation?: ReadObservation) => {
         // Connection references are unwrapped into the declared Resource owner at RPC ingress.
         if (reference.hostRead === 'database.connection') throw new PluginError({ code: 'plugin_resource_service_unavailable' });
         const actionId = resolvePluginUiHostReadActionIdV1(reference?.hostRead ?? 'machines.services.logs');
-        await accountId(context, reference, onDisclosureLost);
         const request = reference.input;
         getActionSpec(actionId).inputSchema.parse(request);
         if (request.machineId !== machineId) throw new PluginError({ code: 'machine_target_mismatch' });
@@ -141,8 +139,11 @@ export function createDaemonHostResourceRead(input: Readonly<{
         accountId,
         releaseAccountId,
         current,
-        read,
-        async observe(reference: LogsReference, machineId: string, context: RpcHandlerContext | undefined,
+        async read(reference: LogsReference, machineId: string, context?: RpcHandlerContext) {
+            await accountId(context, reference);
+            return readAdmitted(reference, machineId, context);
+        },
+        async observeAdmitted(reference: LogsReference, machineId: string, context: RpcHandlerContext | undefined,
             signal: AbortSignal, emit: HostResourceWatchEmit, end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>> {
             if (reference.hostRead === 'database.connection') throw new PluginError({ code: 'plugin_resource_service_unavailable' });
             if (reference.hostRead === 'deployments.health.edge') {
@@ -154,7 +155,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
                 }
                 const onChange = projection.subscribe(() => {
                     if (signal.aborted) return;
-                    void read(reference, machineId, context).then(value => {
+                    void readAdmitted(reference, machineId, context).then(value => {
                         if (!signal.aborted) emit(value.digest);
                     }).catch(error => {
                         if (!signal.aborted) end({ code: 'unavailable',
@@ -163,7 +164,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
                 }, { environmentId: reference.input.environmentId, targetLinkId: reference.input.targetLinkId,
                     ...(reference.input.domainIds ? { domainIds: reference.input.domainIds } : {}) });
                 try {
-                    const initial = await read(reference, machineId, context);
+                    const initial = await readAdmitted(reference, machineId, context);
                     return { digest: initial.digest, async dispose() { onChange.dispose(); await lease.release(); } };
                 } catch (error) { onChange.dispose(); await lease.release(); throw error; }
             }
@@ -177,7 +178,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
             const cancelled = () => retire();
             context?.signal.addEventListener('abort', cancelled, { once: true });
             try {
-                const initial = await read(reference, machineId, context, { signal, retire,
+                const initial = await readAdmitted(reference, machineId, context, { signal, retire,
                     invalidate(digest) {
                         if (signal.aborted) return;
                         // The producer already established the changed fact. The
@@ -189,8 +190,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
                         // The retained admission remains local; pushed Machine
                         // access loss closes this watch through its owner.
                         try {
-                            await accountId(context, reference, retire);
-                            if (signal.aborted) return;
+
                             const bytes = Buffer.from(JSON.stringify(value), 'utf8');
                             const digest: `sha256:${string}` = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
                             await emit(digest, delivery === 'pages'

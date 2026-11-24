@@ -115,6 +115,9 @@ export type RpcHandlerContext = Readonly<{
     workspaceSyncSourceExecution?: import('@happier-dev/protocol/socketRpc').WorkspaceSyncSourceExecutionV1;
     /** Validated transport correlation; authenticated relays replace caller values before dispatch. */
     transportRequestId?: string;
+    sendHostResourceWatchFrame?: (frame: unknown) => Promise<unknown>;
+    followHostResource?: Pick<Parameters<import('@/plugins/runtime/invocation/services/uiResourceWatch').PluginUiResourceWatchOwner['followHost']>[0],
+        'onOpen' | 'onEvent'>;
     /** Home-stamped request identity for an admitted Project Open operation. */
     projectOpenRequestId?: string;
     /**

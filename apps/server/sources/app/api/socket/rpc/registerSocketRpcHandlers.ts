@@ -115,6 +115,8 @@ import {
 } from "../restrictedSocketAdmission";
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from "../machineSocketInstallationProof";
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, resolveCurrentSessionMachineFromServer } from "../externalActionDispatcher";
+import type { ExternalActionDaemonDispatcher } from "../externalActionDispatcher";
+import { forwardHostResourceWatch } from "../forwardHostResourceWatch";
 import { forwardRpcCall } from "./forwardRpcCall";
 import type { RpcForwardTargetGuard } from "./_types";
 import { buildMachineRpcAvailabilityRoom, buildRpcMethodRoom } from "./rpcMethodRoom";
@@ -425,6 +427,7 @@ const RESERVED_SERVER_ORIGIN_DAEMON_RPC_METHODS = new Set<string>([
     RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_ADMISSION,
     AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1,
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1,
+    RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW,
     MANAGED_FINITE_WAKE_RPC_METHOD,
     SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
     MANAGED_PLUGIN_WEBHOOK_DAEMON_RPC_METHOD_V1,
@@ -453,6 +456,7 @@ function isSessionServerStartReservedRpcMethod(method: string): boolean {
 function isExternalActionReservedRpcMethod(method: string): boolean {
     return method === EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1
         || method.endsWith(`:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`)
+        || method === RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW || method.endsWith(`:${RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW}`)
         || method === MANAGED_FINITE_WAKE_RPC_METHOD || method.endsWith(`:${MANAGED_FINITE_WAKE_RPC_METHOD}`);
 }
 
@@ -837,6 +841,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
     socket: Socket;
     io: Server;
     sessionPublisherPresence?: SessionPublisherPresenceForRpc;
+    forwardExternalActionToMachine?: ExternalActionDaemonDispatcher;
     ephemeralRunnerAdmission?: RestrictedSocketAdmission | null;
 }>): void {
     const ownedMethods = new Set<string>();
@@ -1218,6 +1223,28 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 return;
             }
             const timeoutMs = parsedTimeout.data;
+            if (method?.endsWith(`:${RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW}`)
+                && (data as { continuation?: unknown })?.continuation === true) {
+                const forward = params.forwardExternalActionToMachine;
+                if (!callerRequestId || !cancellation || !forward || params.ephemeralRunnerAdmission != null || timeoutMs !== null) {
+                    callback?.(buildForbiddenRpcResponse());
+                    return;
+                }
+                const active = cancellation;
+                const requestId = callerRequestId;
+                const response = await forwardHostResourceWatch({
+                    actorAccountId: params.userId, socket: params.socket, forward,
+                    machineId: method.slice(0, -RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW.length - 1), request: callParams,
+                    continuation: { returnTo: { socketId: params.socket.id, requestId },
+                        cancellation: { targetRequestId: active.targetRequestId, signal: active.controller.signal,
+                            onTargetSelected(target) {
+                                active.targetSocketId = target.id;
+                                params.socket.emit(SOCKET_RPC_EVENTS.CONTINUATION, { requestId, selectedSocketId: target.id });
+                            } } },
+                });
+                callback?.(response);
+                return;
+            }
             if (method?.endsWith(`:${RPC_METHODS.CAPABILITIES_INVOKE}`)) {
                 const installationResponse = await forwardManagedInstallationResponse({ io: params.io, socket: params.socket,
                     actorAccountId: params.userId, method, params: callParams, timeoutMs,

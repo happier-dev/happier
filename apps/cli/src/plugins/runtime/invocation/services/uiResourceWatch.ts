@@ -59,16 +59,26 @@ export type PluginUiResourceWatchPollResult =
 
 export type HostResourceWatchError = Pick<Extract<PluginUiResourceSubscriptionEventV1, { kind: 'error' }>, 'code' | 'diagnostics'>;
 export type HostResourceWatchEmit = (digest: string, pages?: readonly PluginUiResourceContentV1[]) => void | Promise<void>;
+type HostWatchAdmission = Readonly<{
+    accountId: string;
+    subscriptionId: string;
+    resource: PluginUiHostReadReferenceV1;
+    bind(signal: AbortSignal, emit: HostResourceWatchEmit,
+        end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>>;
+}>;
+
+type HostWatchContinuation = Readonly<{
+    signal: AbortSignal;
+    onOpen(opened: Readonly<{ subscriptionId: string; digest: string }>): Promise<void>;
+    onEvent(event: PluginUiResourceSubscriptionEventV1): Promise<void>;
+}>;
+
 export type PluginUiResourceWatchOwner = Readonly<{
     invokeDemand(input: PluginResourceDemandInvocation): Promise<import('@happier-dev/plugin-sdk').JsonValue>;
     /** Host Account demand shares this transport owner without a plugin occurrence. */
-    openHost(params: Readonly<{
-        accountId: string;
-        subscriptionId: string;
-        resource: PluginUiHostReadReferenceV1;
-        bind(signal: AbortSignal, emit: HostResourceWatchEmit,
-            end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>>;
-    }>): Promise<Readonly<{ subscriptionId: string; digest: string }>>;
+    openHost(params: HostWatchAdmission): Promise<Readonly<{ subscriptionId: string; digest: string }>>;
+    /** Runs the same admitted host observer until the open transport ends. */
+    followHost(params: HostWatchAdmission & HostWatchContinuation): Promise<void>;
     /**
      * Establish one daemon-side subscription and answer with the digest this
      * occurrenceId currently observes. The digest is the resynchronization
@@ -165,6 +175,7 @@ type UiResourceWatch = {
     readonly pluginId?: string;
     readonly hostAccountId?: string;
     readonly hostResource?: PluginUiHostReadReferenceV1;
+    readonly continuous?: true;
     readonly resourceId: string;
     /** Owns the bound Resource context for this exact open watch lifetime. */
     readonly bindingController: AbortController;
@@ -258,7 +269,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
     function sweepIdle(): void {
         const deadline = nowMs() - UI_RESOURCE_WATCH_IDLE_RECLAIM_MS;
         for (const watch of [...watches.values()]) {
-            if (watch.waiter === null && watch.lastPolledAtMs < deadline) {
+            if (!watch.continuous && watch.waiter === null && watch.lastPolledAtMs < deadline) {
                 releaseWatch(watch, null);
             }
         }
@@ -292,6 +303,118 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
         });
     }
 
+    async function bindHost(openParams: HostWatchAdmission, signal?: AbortSignal) {
+        if (retired) fail('plugin_resource_service_unavailable', 'Resource owner is retired');
+        sweepIdle();
+        const accountId = openParams.accountId;
+        const subscriptionId = boundedId(openParams.subscriptionId, 'Resource watch subscription id is invalid');
+        const key = requestedWatchKey({ hostAccountId: accountId }, subscriptionId);
+        const existing = watches.get(key);
+        if (existing) releaseWatch(existing, { status: 'idle' });
+        const watch: UiResourceWatch = { key, subscriptionId, hostAccountId: accountId, ...(signal ? { continuous: true as const } : {}), hostResource: openParams.resource, resourceId: openParams.resource.hostRead,
+            bindingController: new AbortController(), producer: null, brokerSubscription: null, pending: null,
+            waiter: null, lastPolledAtMs: nowMs(), terminal: null, closed: false };
+        watches.set(key, watch);
+        let observedDigest: string | undefined;
+        const publish: HostResourceWatchEmit = (digest, pages) => {
+            if (pages) {
+                if (!isWatchCurrent(watch)) return undefined;
+                // These are ordered finite results of THIS admitted observer.
+                // Awaiting handOff keeps the existing single pending slot as
+                // backpressure, including while the observer is attaching.
+                return handOff(watch, PluginUiResourceSubscriptionEventV1Schema.parse({
+                    version: 1, subscriptionId, kind: 'pages', pages,
+                }));
+            }
+            if (!isWatchCurrent(watch) || observedDigest === digest) return undefined;
+            observedDigest = digest;
+            // Binding can observe before it returns its admitted baseline.
+            // Keep the latest fact here, then compare it to that baseline.
+            if (!watch.producer) return undefined;
+            const event = invalidatedEvent(subscriptionId, digest);
+            if (watch.waiter) settleWaiter(watch, { status: 'event', event });
+            else {
+                // Invalidation is payload-free: one pending signal always asks for current bytes.
+                watch.pending?.release();
+                watch.pending = { event, release() {} };
+            }
+            return undefined;
+        };
+        try {
+            const producer = await openParams.bind(signal ? AbortSignal.any([signal, watch.bindingController.signal]) : watch.bindingController.signal, publish,
+                error => releaseWatch(watch, { status: 'event', event: terminalErrorEvent(subscriptionId,
+                error?.code ?? 'expired_resource', error?.diagnostics ?? ['service_unavailable']) }));
+            if (!isWatchCurrent(watch)) {
+                await producer.dispose();
+                fail('service_unavailable', 'Service Resource retired during admission');
+            }
+            watch.producer = producer;
+            const duringBind = observedDigest;
+            observedDigest = producer.digest;
+            if (duringBind !== undefined) publish(duringBind);
+            return { watch, digest: producer.digest };
+        } catch (error) { releaseWatch(watch, null); throw error; }
+    }
+
+    async function receive(watch: UiResourceWatch, signal: AbortSignal | undefined, waitMs: number | null): Promise<PluginUiResourceWatchPollResult> {
+        if (watch.waiter) {
+            fail('plugin_resource_subscription_busy', 'Resource watch subscription already has a poll in flight');
+        }
+        if (signal?.aborted) {
+            releaseWatch(watch, null);
+            if (watch.hostAccountId !== undefined) await watch.cleanup;
+            return { status: 'idle' };
+        }
+        if (watch.terminal) {
+            if (watch.hostAccountId !== undefined) await watch.cleanup;
+            const terminal = watch.terminal;
+            watch.terminal = null;
+            if (watches.get(watch.key) === watch) watches.delete(watch.key);
+            return terminal;
+        }
+        if (!isWatchCurrent(watch)) {
+            releaseWatch(watch, null);
+            if (watch.hostAccountId !== undefined) await watch.cleanup;
+            return {
+                status: 'event',
+                event: terminalErrorEvent(watch.subscriptionId, 'stale_surface', ['plugin_generation_stale']),
+            };
+        }
+        const pending = watch.pending;
+        if (pending) {
+            watch.pending = null;
+            pending.release();
+            return { status: 'event', event: pending.event };
+        }
+        const result = await new Promise<PluginUiResourceWatchPollResult>((resolve) => {
+            let settled = false;
+            const settle = (result: PluginUiResourceWatchPollResult): void => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                signal?.removeEventListener('abort', onAbort);
+                if (watch.waiter === settle) watch.waiter = null;
+                resolve(result);
+            };
+            const onAbort = (): void => {
+                settle({ status: 'idle' });
+                // The transport owning this poll is gone and no further
+                // call from this surface may ever arrive, so release the
+                // exact watch now: the producer stops observing and the
+                // subscription leaves the map. A client that still wants
+                // the resource re-opens, which is the documented reconnect
+                // path — this owner adds no timer sweeper or count cap.
+                releaseWatch(watch, null);
+            };
+            const timer = waitMs === null ? undefined : setTimeout(() => { settle({ status: 'idle' }); }, waitMs);
+            timer?.unref?.();
+            signal?.addEventListener('abort', onAbort, { once: true });
+            watch.waiter = settle;
+        });
+        if (watch.hostAccountId !== undefined && watch.closed) await watch.cleanup;
+        return result;
+    }
+
     return Object.freeze({
         async invokeDemand(input) {
             const watch = watches.get(watchKey(input.callerPluginId, input.subscriptionId, input.requesterAccountId));
@@ -305,56 +428,24 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 context: watch.demand.context, requesterAccountId: input.requesterAccountId, input: input.input, signal });
         },
         async openHost(openParams) {
-            if (retired) fail('plugin_resource_service_unavailable', 'Resource owner is retired');
-            sweepIdle();
-            const accountId = openParams.accountId;
-            const subscriptionId = boundedId(openParams.subscriptionId, 'Resource watch subscription id is invalid');
-            const key = requestedWatchKey({ hostAccountId: accountId }, subscriptionId);
-            const existing = watches.get(key);
-            if (existing) releaseWatch(existing, { status: 'idle' });
-            const watch: UiResourceWatch = { key, subscriptionId, hostAccountId: accountId, hostResource: openParams.resource, resourceId: openParams.resource.hostRead,
-                bindingController: new AbortController(), producer: null, brokerSubscription: null, pending: null,
-                waiter: null, lastPolledAtMs: nowMs(), terminal: null, closed: false };
-            watches.set(key, watch);
-            let observedDigest: string | undefined;
-            const publish: HostResourceWatchEmit = (digest, pages) => {
-                if (pages) {
-                    if (!isWatchCurrent(watch)) return undefined;
-                    // These are ordered finite results of THIS admitted observer.
-                    // Awaiting handOff keeps the existing single pending slot as
-                    // backpressure, including while the observer is attaching.
-                    return handOff(watch, PluginUiResourceSubscriptionEventV1Schema.parse({
-                        version: 1, subscriptionId, kind: 'pages', pages,
-                    }));
-                }
-                if (!isWatchCurrent(watch) || observedDigest === digest) return undefined;
-                observedDigest = digest;
-                // Binding can observe before it returns its admitted baseline.
-                // Keep the latest fact here, then compare it to that baseline.
-                if (!watch.producer) return undefined;
-                const event = invalidatedEvent(subscriptionId, digest);
-                if (watch.waiter) settleWaiter(watch, { status: 'event', event });
-                else {
-                    // Invalidation is payload-free: one pending signal always asks for current bytes.
-                    watch.pending?.release();
-                    watch.pending = { event, release() {} };
-                }
-                return undefined;
-            };
+            const { watch, digest } = await bindHost(openParams);
+            return { subscriptionId: watch.subscriptionId, digest };
+        },
+        async followHost(openParams) {
+            const { watch, digest } = await bindHost(openParams, openParams.signal);
             try {
-                const producer = await openParams.bind(watch.bindingController.signal, publish,
-                    error => releaseWatch(watch, { status: 'event', event: terminalErrorEvent(subscriptionId,
-                    error?.code ?? 'expired_resource', error?.diagnostics ?? ['service_unavailable']) }));
-                if (!isWatchCurrent(watch)) {
-                    await producer.dispose();
-                    fail('service_unavailable', 'Service Resource retired during admission');
+                openParams.signal.throwIfAborted();
+                await openParams.onOpen({ subscriptionId: watch.subscriptionId, digest });
+                while (!openParams.signal.aborted) {
+                    const result = await receive(watch, openParams.signal, null);
+                    if (result.status === 'idle') return;
+                    await openParams.onEvent(result.event);
+                    if (result.event.kind === 'error') return;
                 }
-                watch.producer = producer;
-                const duringBind = observedDigest;
-                observedDigest = producer.digest;
-                if (duringBind !== undefined) publish(duringBind);
-                return { subscriptionId, digest: producer.digest };
-            } catch (error) { releaseWatch(watch, null); throw error; }
+            } finally {
+                releaseWatch(watch, { status: 'idle' });
+                await watch.cleanup;
+            }
         },
         async open(openParams) {
             if (retired) fail('plugin_generation_stale', 'Plugin occurrenceId is stale');
@@ -575,64 +666,9 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             if (watch.hostAccountId !== undefined && (!nextParams.resource || !sameStrictJsonValue(watch.hostResource, nextParams.resource))) {
                 fail('plugin_resource_subscription_unknown', 'Resource watch reference does not match its admitted subscription');
             }
-            if (watch.waiter) {
-                fail('plugin_resource_subscription_busy', 'Resource watch subscription already has a poll in flight');
-            }
+            if (watch.continuous) fail('plugin_resource_subscription_unknown', 'Resource watch belongs to its open transport');
             watch.lastPolledAtMs = nowMs();
-            if (nextParams.signal?.aborted) {
-                releaseWatch(watch, null);
-                if (watch.hostAccountId !== undefined) await watch.cleanup;
-                return { status: 'idle' };
-            }
-            if (watch.terminal) {
-                if (watch.hostAccountId !== undefined) await watch.cleanup;
-                const terminal = watch.terminal;
-                watch.terminal = null;
-                watches.delete(watch.key);
-                return terminal;
-            }
-            if (!isWatchCurrent(watch)) {
-                releaseWatch(watch, null);
-                if (watch.hostAccountId !== undefined) await watch.cleanup;
-                return {
-                    status: 'event',
-                    event: terminalErrorEvent(subscriptionId, 'stale_surface', ['plugin_generation_stale']),
-                };
-            }
-            const pending = watch.pending;
-            if (pending) {
-                watch.pending = null;
-                pending.release();
-                return { status: 'event', event: pending.event };
-            }
-            const waitMs = normalizeWaitMs(nextParams.waitMs);
-            const result = await new Promise<PluginUiResourceWatchPollResult>((resolve) => {
-                let settled = false;
-                const settle = (result: PluginUiResourceWatchPollResult): void => {
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    nextParams.signal?.removeEventListener('abort', onAbort);
-                    if (watch.waiter === settle) watch.waiter = null;
-                    resolve(result);
-                };
-                const onAbort = (): void => {
-                    settle({ status: 'idle' });
-                    // The transport owning this poll is gone and no further
-                    // call from this surface may ever arrive, so release the
-                    // exact watch now: the producer stops observing and the
-                    // subscription leaves the map. A client that still wants
-                    // the resource re-opens, which is the documented reconnect
-                    // path — this owner adds no timer sweeper or count cap.
-                    releaseWatch(watch, null);
-                };
-                const timer = setTimeout(() => { settle({ status: 'idle' }); }, waitMs);
-                timer.unref?.();
-                nextParams.signal?.addEventListener('abort', onAbort, { once: true });
-                watch.waiter = settle;
-            });
-            if (watch.hostAccountId !== undefined && watch.closed) await watch.cleanup;
-            return result;
+            return receive(watch, nextParams.signal, normalizeWaitMs(nextParams.waitMs));
         },
         close(closeParams) {
             const subscriptionId = boundedId(closeParams.subscriptionId, 'Resource watch subscription id is invalid');
