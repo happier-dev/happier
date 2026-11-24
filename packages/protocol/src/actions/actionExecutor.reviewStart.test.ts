@@ -782,7 +782,10 @@ describe('createActionExecutor (review.start)', () => {
       } },
     });
     expect(result).toMatchObject({ ok: true, result: { intent: 'review', sessionId: null } });
-    expect(reviewEnginesList.mock.calls[0]?.[0]).toEqual({ sessionId: null, machineId: 'machine-1', includeDisabled: false, scope: 'worktree' });
+    expect(reviewEnginesList.mock.calls[0]?.[0]).toEqual({
+      sessionId: null, machineId: 'machine-1', includeDisabled: false, scope: 'worktree',
+      engineIds: ['agent:happier.agent.codex/codex'],
+    });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({ intent: 'review', cwd: '/repo' }),
       expect.objectContaining({ workflowRunId: 'workflow-1', targetMachineId: 'machine-1', actionRequestId: 'review-request',
         actionCaller: expect.objectContaining({ kind: 'workflowRun', runId: 'workflow-1' }) }));
@@ -1175,6 +1178,7 @@ describe('createActionExecutor (review.start)', () => {
       sessionId: 's1',
       includeDisabled: false,
       scope: 'paths',
+      engineIds: ['coderabbit'],
     });
     expect(res).toMatchObject({
       ok: true,
