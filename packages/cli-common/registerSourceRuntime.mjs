@@ -62,7 +62,13 @@ try {
     inheritedEnvironment.set(key, process.env[key]);
     process.env[key] = value;
   }
-  await import('tsx');
+  // A capture can share its installed tsx with an inherited checkout preload.
+  // Register explicitly: a cached side-effect import would leave this tree's
+  // newly installed content pin above tsx, replacing transformed JS with TS.
+  const { register: registerEsm } = await import('tsx/esm/api');
+  registerEsm({ tsconfig });
+  const { register: registerCjs } = await import('tsx/cjs/api');
+  registerCjs();
 } finally {
   for (const [key, value] of inheritedEnvironment) {
     if (value === undefined) delete process.env[key];

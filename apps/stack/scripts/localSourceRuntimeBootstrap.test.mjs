@@ -49,7 +49,7 @@ test('dependency preparation starts without loading packages it must install', (
 test('ordinary source tools retain source runtime registration', () => {
   const result = observeColdSourcePreload('apps/stack/scripts/utils/dev_targets/qa_browser.mjs');
   assert.equal(result.failure, 'ERR_MODULE_NOT_FOUND');
-  assert.deepEqual(result.externalRequests, ['tsx']);
+  assert.deepEqual(result.externalRequests, ['tsx/esm/api']);
 });
 
 test('OS custody runs without loading source tooling or installed dependencies', async t => {
