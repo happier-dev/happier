@@ -444,16 +444,20 @@ async function checkGroup({ repo, git, head, composed, priority, replayScratchRo
     const admissionAt = performance.now();
     return await withAdmittedCommitEntryPhase({ repo, tree: last.exact.tree, projects }, async (compareAdmittedEntryLoads, regenerate) => {
       console.error(`commit gate: preparation admission ${Math.round(performance.now() - admissionAt)} ms`);
-      const tree = cli || approvals ? await generateGroupTree({ git, tree: last.exact.tree, projections, regenerate,
-        replayScratchRoot, timing }) : last.exact.tree;
+      let tree = last.exact.tree;
       const accepted = [];
       for (const { writer, exact, commit } of composed) {
-        // Only the final commit carries the combined generated outputs. The fast checks
-        // still judge every individual commit against the parent it will expose.
-        const finalTree = writer === last.writer ? tree : exact.tree;
+        // Check the earlier commits before generating the projection that only
+        // the final commit carries. Each check sees the tree it will expose.
+        const isLast = writer === last.writer;
+        if (isLast && (cli || approvals)) {
+          tree = await generateGroupTree({ git, tree, projections, regenerate, replayScratchRoot, timing });
+        }
+        const finalTree = isLast ? tree : exact.tree;
         const result = await checkPreparedPacket({ repo, git, head: exact.base, packet: writer.packet,
           exact: { ...exact, tree: finalTree }, message: writer.message, priority });
-        if (result.gate || result.priorityExpired) return result;
+        if (result.priorityExpired) return result;
+        if (result.gate) return { gate: result.gate, refusedWriter: writer };
         const verifiedCommit = finalTree === exact.tree ? commit : writer.createCommit({ ...exact, tree: finalTree });
         accepted.push({ writer, commit: verifiedCommit, head: exact.base, tree: finalTree });
       }
@@ -476,6 +480,12 @@ async function verifyGroup({ head, writers, timing, ...context }) {
   if (result.priorityExpired) return result;
   if (result.accepted) return { ...result, refused: [], tip: result.accepted.at(-1).commit };
   if (composed.length === 1) return { accepted: [], tip: head, refused: [{ writer: composed[0].writer, gate: result.gate }] };
+  if (result.refusedWriter) {
+    const writer = result.refusedWriter;
+    console.error(`commit gate: excluding writer ${writer.id ?? 'at the head'} after its ${result.gate.check} refused`);
+    const passing = await verifyGroup({ head, writers: writers.filter(candidate => candidate !== writer), timing, ...context });
+    return { ...passing, refused: [{ writer, gate: result.gate }, ...passing.refused] };
+  }
 
   const candidates = composed.map(({ writer }) => writer);
   const middle = Math.floor(candidates.length / 2);

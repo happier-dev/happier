@@ -695,11 +695,13 @@ test('only a packet that clears a fleet preflight input drift runs ahead of wait
   await wrongBytes.closed;
 });
 
-for (const scenario of ['one check and regeneration', 'bisected refusal', 'arrival during the check']) {
+for (const scenario of ['one check and regeneration', 'bisected refusal', 'known missing import', 'arrival during the check']) {
   test(`checks queued CLI packets as one exact tree (${scenario})`, { skip: !hasFlock }, async t => {
-    const bad = scenario === 'bisected refusal';
+    const badEntry = scenario === 'bisected refusal';
+    const badImport = scenario === 'known missing import';
+    const bad = badEntry || badImport;
     const late = scenario === 'arrival during the check';
-    const ownsProjection = !late && !bad;
+    const ownsProjection = !late && !badEntry;
     const { f } = treeGraphReplayFixture(t);
     const probeLog = path.join(f.cwd, 'group-probes');
     const projectionLog = path.join(f.cwd, 'group-generations');
@@ -760,7 +762,10 @@ export const actions = ${JSON.stringify(ids)};
     const writers = [];
     const startWriter = async id => {
       const file = `apps/cli/src/group-${id}.mjs`;
-      f.write(file, bad && id === 2 ? 'throw new Error("bad group packet");\n' : 'export const value = 1;\n');
+      let source = 'export const value = 1;\n';
+      if (id === 2 && badEntry) source = 'throw new Error("bad group packet");\n';
+      if (id === 2 && badImport) source = 'import "./missing-group-producer.mjs";\n';
+      f.write(file, source);
       const message = `group-message-${id}`;
       f.write(message, `test: group packet ${id}\n`);
       if (ownsProjection) f.write(projection, projected([id]));
@@ -800,16 +805,19 @@ export const actions = ${JSON.stringify(ids)};
     for (const [i, writer] of writers.entries()) assert.equal((await writer.closed)[0], expectedStatuses[i], writer.stderr());
     const probes = fs.readFileSync(probeLog, 'utf8').trim().split('\n').map(line => JSON.parse(line).map(name => Number(name[6])));
     const all = [1, 2, 3, 4];
-    assert.deepEqual(probes, bad ? [all, [1, 2], [1], [1, 2], [1, 3, 4]] : late ? [all, [...all, 5]] : [all]);
+    const expectedProbes = badEntry ? [all, [1, 2], [1], [1, 2], [1, 3, 4]]
+      : badImport ? [[1, 3, 4]] : late ? [all, [...all, 5]] : [all];
+    assert.deepEqual(probes, expectedProbes);
     assert.equal(Number(f.git('rev-list', '--count', `${head}..HEAD`)), bad ? 3 : late ? 5 : 4);
     const reflog = f.git('reflog', '-3', '--format=%H', 'HEAD').split('\n');
     assert.equal(reflog[late ? 2 : 1], head);
     if (late) assert.equal(f.git('rev-parse', 'HEAD^').trim(), reflog[1]);
-    if (bad) assert.match(writers[1].stderr(), /bad group packet/u);
+    if (badEntry) assert.match(writers[1].stderr(), /bad group packet/u);
+    if (badImport) assert.match(writers[1].stderr(), /missing-group-producer/u);
     if (ownsProjection) {
       const generations = fs.readFileSync(projectionLog, 'utf8').trim().split('\n');
       assert.equal(generations.length, 1);
-      assert.equal(f.git('show', `HEAD:${projection}`), projected(all));
+      assert.equal(f.git('show', `HEAD:${projection}`), projected(badImport ? [1, 3, 4] : all));
     }
   });
 }
