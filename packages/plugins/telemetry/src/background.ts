@@ -12,13 +12,18 @@ export type LocalCaptureInput = Omit<Parameters<typeof bindLocalCapture>[0], 'ru
  projectScope: CaptureProjectScope; ownerAccountId: string;
 }>;
 type LocalCaptureLease = Awaited<ReturnType<typeof bindLocalCapture>>;
+type LocalCaptureBinding = CaptureProjectScope & {
+ ownerAccountId: string;
+ partition: string;
+ restartRequired?: true;
+};
 type PartitionListener = () => void;
 type CaptureRuntimeContext = { signal: AbortSignal; services: { storage: { daemon: DaemonDatabaseService; account?: PluginAccountStorageScope } } };
 type RunningCapture = {
  runtime: CaptureRuntime;
  signal: AbortSignal;
  accountStorage: PluginAccountStorageScope | undefined;
- leases: Map<LocalCaptureLease, CaptureProjectScope & Readonly<{ ownerAccountId: string }>>;
+ leases: Map<LocalCaptureLease, LocalCaptureBinding>;
  pending: Set<Promise<LocalCaptureLease>>;
 };
 
@@ -93,13 +98,26 @@ export function createCaptureBackgroundOwner() {
   databaseDefinition,
   acquireRuntime,
   async readEnabled(scope: CaptureProjectScope): Promise<boolean> { return await readCapturePreference(running?.accountStorage, scope); },
+  readRestartRequired(partition: string): boolean {
+   for (const binding of running?.leases.values() ?? []) {
+    if (binding.partition === partition && binding.restartRequired) return true;
+   }
+   return false;
+  },
   /** Stops only the requesting Account's own recordings of this project. */
   async stopProjectCapture(scope: CaptureProjectScope, ownerAccountId: string): Promise<void> {
    const state = running;
    if (!state) return;
    await Promise.allSettled([...state.pending]);
+   const changed = new Set<string>();
    await Promise.all([...state.leases].filter(([, selected]) => selected.ownerAccountId === ownerAccountId && selected.serverId === scope.serverId
-    && selected.machineId === scope.machineId && selected.projectId === scope.projectId).map(([lease]) => lease.stopRecording()));
+    && selected.machineId === scope.machineId && selected.projectId === scope.projectId).map(async ([lease, selected]) => {
+    await lease.stopRecording();
+    if (selected.restartRequired || (lease.endpoint === undefined && Object.keys(lease.replacements).length === 0)) return;
+    selected.restartRequired = true;
+    if (state.leases.has(lease)) changed.add(selected.partition);
+   }));
+   if (running === state && changed.size > 0) publish([...changed]);
   },
   run: run satisfies BackgroundServiceRunner,
   readRuntime(): CaptureRuntime | null { return shared?.runtime ?? null; },
@@ -120,10 +138,13 @@ export function createCaptureBackgroundOwner() {
    const state = running;
    if (!state || state.signal.aborted) throw new PluginError({ code: 'plugin_service_unavailable', message: 'Local database capture is not running' });
    const acquisition = bindLocalCapture({ ...input, runtime: state.runtime }).then(bound => {
+    const binding: LocalCaptureBinding = { ...input.projectScope, ownerAccountId: input.ownerAccountId, partition: input.partition };
     const lease: LocalCaptureLease = { ...bound, async release() {
-     try { await bound.release(); } finally { state.leases.delete(lease); }
+     try { await bound.release(); } finally {
+      if (state.leases.delete(lease) && binding.restartRequired && running === state) publish([binding.partition]);
+     }
     } };
-    state.leases.set(lease, { ...input.projectScope, ownerAccountId: input.ownerAccountId });
+    state.leases.set(lease, binding);
     return lease;
    });
    state.pending.add(acquisition);

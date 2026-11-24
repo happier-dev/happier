@@ -201,6 +201,10 @@ service, check **Review output** on its row in **Dev servers** and use that rowâ
 off capture stops recording and keeps running services connected until they
 stop.
 
+When the selected worktree reports that a restart is required, restart affected
+services from their rows in **Dev servers**. A service that was already running
+when you turned capture on also needs a restart to pick up capture settings.
+
 When an Environment has a collector, its **Telemetry** tab shows **Endpoints**,
 **Traces**, **Logs**, and **Queries** for the selected time window. Open a trace
 to inspect the request and the steps that contributed to its duration. Use the

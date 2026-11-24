@@ -272,13 +272,15 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
 export function createCapturePublicActionProducers(options: Readonly<{
     admitSource: CaptureSourceAdmission;
     acquireRuntime: ReturnType<typeof createCaptureBackgroundOwner>['acquireRuntime'];
+    readRestartRequired: ReturnType<typeof createCaptureBackgroundOwner>['readRestartRequired'];
     configureCapture?: CapturePublicActionProducers['configureCapture'];
 }>): CapturePublicActionProducers {
     async function withSource<T>(input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext,
-        actionId: database.DatabaseActionIdV1, read: (readers: ReturnType<typeof createCaptureSelectedSourceReaders>) => Promise<T>): Promise<T> {
+        actionId: database.DatabaseActionIdV1,
+        read: (readers: ReturnType<typeof createCaptureSelectedSourceReaders>, partition: string) => Promise<T>): Promise<T> {
         const scope = await options.admitSource(input, context, actionId);
         const lease = await options.acquireRuntime(context);
-        try { return await read(createCaptureSelectedSourceReaders({ ...scope, runtime: lease.runtime })); }
+        try { return await read(createCaptureSelectedSourceReaders({ ...scope, runtime: lease.runtime }), scope.partition); }
         finally { await lease.release(); }
     }
     return {
@@ -286,12 +288,13 @@ export function createCapturePublicActionProducers(options: Readonly<{
             return withSource(input, context, database.TELEMETRY_COSTS_READ_ACTION_ID_V1, readers => readers.readCapturedCosts(input));
         },
         async captureStatus(input, context) {
-            return withSource(input, context, database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, async readers => {
+            return withSource(input, context, database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, async (readers, partition) => {
                 const status = await readers.captureStatus(input);
+                if (status.source.kind !== 'worktree') return status;
                 const storage = context.services.storage.account;
-                return status.source.kind === 'worktree' && storage
-                    ? { ...status, enabled: await readCapturePreference(storage, status.source) }
-                    : status;
+                const enabled = storage ? await readCapturePreference(storage, status.source) : undefined;
+                return { ...status, ...(enabled === undefined ? {} : { enabled }),
+                    ...(options.readRestartRequired(partition) ? { restartRequired: true as const } : {}) };
             });
         },
         async listCapturedQueries(input, context) {

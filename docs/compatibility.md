@@ -10482,6 +10482,11 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, the selected Worktree capture status reports
+`restartRequired: true` when recording has stopped and a live launch still
+holds its capture bindings. An omitted field leaves the restart status
+unknown. Load matching client and daemon sources for the closed result shape.
+
 Unreleased 0.3 Domain admission accepts an optional collector deployment
 identity in the derived native placement. Home matches it against the selected
 collector Machine's App enrollment and stores that association in the

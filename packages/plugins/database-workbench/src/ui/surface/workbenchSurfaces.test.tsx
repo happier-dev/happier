@@ -1003,11 +1003,13 @@ describe('Database workbench surfaces', () => {
     const clear = databaseActionLocalIdV1(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1);
     const daemon = daemonAnswers([descriptor]);
     let enabled = true;
+    let retainedBinding = false;
     const executeAction = vi.fn(async (request: PluginUiTestkitExecuteActionInput) => {
       if (typeof request.action !== 'string' && request.action.localId === status) {
         expect(request.action.pluginId).toBe('happier.telemetry');
         expect(request.input).toEqual({ source });
-        return { ok: true, source, enabled, coverage: { lostObservations: 0, reason: 'receiver_unavailable' } };
+        return { ok: true, source, enabled, coverage: { lostObservations: 0, reason: 'receiver_unavailable' },
+          ...(retainedBinding ? { restartRequired: true } : {}) };
       }
       return daemon(request);
     });
@@ -1016,6 +1018,7 @@ describe('Database workbench surfaces', () => {
         return { ok: true as const, result: { ok: true } };
       }
       enabled = (request.input as { enabled: boolean }).enabled;
+      if (!enabled) retainedBinding = true;
       return { ok: true as const, result: { ok: true, enabled } };
     });
     const actionControl = createPluginUiActionControlTestHost(captureWrite);
@@ -1037,6 +1040,7 @@ describe('Database workbench surfaces', () => {
       expect(statusCalls).toHaveLength(1);
       expect(captureWrite).not.toHaveBeenCalled();
       await act(async () => actionControl.press('Turn off capture'));
+      expect(await fixture.getByText('Restart affected services in Dev servers to apply the capture change.')).toBeTruthy();
       expect(await fixture.getByText('Capture is off')).toBeTruthy();
       await act(async () => actionControl.press('Turn on capture'));
       expect(await fixture.getByText('Capture is on')).toBeTruthy();

@@ -74,6 +74,9 @@ export function CaptureConfiguration({ scope }: Readonly<{
     <Stack gap="small">
       <Text tone="secondary" value={pending
         ? t('plugins.database.capture.checking', 'Checking capture status…') : statusText} />
+      {status?.restartRequired ? <Text tone="secondary" value={t(
+        'plugins.database.capture.restartRequired', 'Restart affected services in Dev servers to apply the capture change.',
+      )} /> : null}
       {status?.coverage.reason ? <Text tone="secondary" value={t(
         'plugins.database.capture.incomplete', 'Capture coverage is incomplete ({reason}).',
         { reason: status.coverage.reason.replaceAll('_', ' ') },

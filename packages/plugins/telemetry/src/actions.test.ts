@@ -6,7 +6,9 @@ import { createCaptureActionProducers, createCaptureActions, createCaptureSelect
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as database from '@happier-dev/database-protocol';
-import { createCaptureBackgroundOwner } from './background.js';
+import { createCaptureBackgroundOwner, localCaptureBackground } from './background.js';
+import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
+import { captureSourcePartition } from './partition.js';
 import { createCaptureRuntime } from './runtime.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
@@ -169,5 +171,40 @@ describe('capture Action producer bindings', () => {
             await expect(createCaptureActionProducers({ runtime, stopProjectCapture: scope => owner.stopProjectCapture(scope, 'account') }).configure({ project, enabled: true }))
                 .rejects.toMatchObject({ code: 'plugin_service_unavailable' });
         } finally { await lease?.release(); lifetime.abort(); await running; fixture.close(); account.close(); }
+    });
+
+    it('reports restart for a stopped capture binding until the selected launch releases it', async () => {
+        const fixture = createCaptureSqliteFixture(), account = accountStorageFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const owner = localCaptureBackground, lifetime = new AbortController();
+        const storage = { daemon: { async database() { return fixture.db; } }, account: account.storage };
+        const running = owner.run({ signal: lifetime.signal, services: { storage, events: { host: { subscribe: () => ({ dispose() {} }) } } } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN, services: { storage } });
+        const caller = { requesterAccount: { accountId: 'account' }, chosenMachine: { machineId: project.machineId, installationId: 'installed' } };
+        const source = { kind: 'worktree' as const, ...project, workspaceId: 'selected' };
+        const other = { ...source, workspaceId: 'other' };
+        const status = (selected: typeof source, invocation = caller) =>
+            host.invokeAction(database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1), { source: selected }, invocation);
+        const configure = (enabled: boolean) => host.invokeAction(database.databaseActionLocalIdV1(database.DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1), { project, enabled }, caller);
+        const launch = (selected: typeof source, otlpPort?: number) => owner.acquireLocalCapture({ enabled: true, projectScope: project,
+            ownerAccountId: caller.requesterAccount.accountId, physicalRootIdentity: `/physical/${selected.workspaceId}`,
+            partition: captureSourcePartition(selected, caller.requesterAccount.accountId), urls: [], otlpPort, signal: lifetime.signal });
+        let selected: Awaited<ReturnType<typeof launch>> | undefined, withoutBinding: Awaited<ReturnType<typeof launch>> | undefined;
+        try {
+            await vi.waitFor(() => expect(owner.readRuntime()).not.toBeNull());
+            await expect(configure(true)).resolves.toMatchObject({ ok: true, enabled: true });
+            selected = await launch(source, 0);
+            withoutBinding = await launch(other);
+            expect(selected.endpoint).toBeDefined();
+            expect(await status(source)).not.toHaveProperty('restartRequired');
+            await expect(configure(false)).resolves.toMatchObject({ ok: true, enabled: false });
+            expect(await status(source)).toMatchObject({ ok: true, enabled: false, restartRequired: true });
+            expect(await status(other)).not.toHaveProperty('restartRequired');
+            expect(await status(source, { ...caller, requesterAccount: { accountId: 'another-account' } })).not.toHaveProperty('restartRequired');
+            await expect(configure(true)).resolves.toMatchObject({ ok: true, enabled: true });
+            expect(await status(source)).toMatchObject({ ok: true, enabled: true, restartRequired: true });
+            await selected.release();
+            expect(await status(source)).not.toHaveProperty('restartRequired');
+        } finally { await selected?.release(); await withoutBinding?.release(); lifetime.abort(); await running; await host.dispose(); fixture.close(); account.close(); }
     });
 });
