@@ -48,27 +48,40 @@ export function resolveHappierStateAnnouncement(semantics?: 'status' | 'alert') 
  * none, so the lift would only read as slack below it. The container declares it; the frame decides the lift.
  */
 export const HappierSurfaceStateFit = createContext<'fill' | 'content'>('fill');
+/** Inside a `start` frame the frame owns the state's vertical room; the tile draws none of its own (page variant). */
+const HappierSurfaceStateStartFrame = createContext(false);
 
 /** The container owns placement; adapters supply themed content, never a second frame. */
 export function HappierSurfaceStateFrame(props: Readonly<{
   size?: HappierStateSize;
+  /**
+   * `start`: under a page's own header and tabs the state stands where the first section would be (the page
+   * variant, `HAPPIER_EMPTY_STATE_FRAME.page`), never floated in the middle of a tall page. Default `center`.
+   */
+  placement?: 'center' | 'start';
   testID?: string;
   accessibilitySemantics?: 'status' | 'alert';
   children: ReactNode;
 }>) {
   const metrics = props.size ? HAPPIER_STATE_SIZE_METRICS[props.size] : null;
   const lift = useContext(HappierSurfaceStateFit) === 'content' ? 0 : metrics?.liftPx ?? 0;
+  const start = props.placement === 'start';
   return (
-    <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={metrics
+    <View testID={props.testID} {...resolveHappierStateAnnouncement(props.accessibilitySemantics)} style={start
+      ? { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingHorizontal: 24,
+          paddingTop: HAPPIER_EMPTY_STATE_FRAME.page.paddingTop, paddingBottom: HAPPIER_EMPTY_STATE_FRAME.page.paddingBottom }
+      : metrics
       ? { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24 + lift }
       : { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <HappierSurfaceStateStartFrame.Provider value={start}>
       <View testID={props.testID ? `${props.testID}-card` : undefined} style={metrics
         ? { width: '100%', alignItems: 'center', maxWidth: metrics.measurePx }
         // Unsized, the card still takes its frame's width up to the measure: a centred card with no width
         // shrink-wraps, and on iOS its words then lay out at their natural width past the screen's edges.
-        : { width: '100%', maxWidth: 560, alignSelf: 'center', padding: 24 }}>
+        : { width: '100%', maxWidth: 560, alignSelf: 'center', padding: start ? 0 : 24 }}>
         {props.children}
       </View>
+      </HappierSurfaceStateStartFrame.Provider>
     </View>
   );
 }
@@ -642,8 +655,9 @@ export function HappierInfoState({
 }: HappierInfoStateProps) {
   const metrics = size ? HAPPIER_STATE_SIZE_METRICS[size] : null;
   const hasAction = action !== null && action !== undefined;
-  // Unsized: the padding wraps copy and action together, never the copy alone.
+  // Unsized: the padding wraps copy and action together, never the copy alone; a `start` frame owns that room itself.
   const frames = hasAction && !size;
+  const startFrame = useContext(HappierSurfaceStateStartFrame);
   return (
     <View
       testID={testID}
@@ -653,7 +667,7 @@ export function HappierInfoState({
       accessibilityState={busy === true ? { busy: true } : undefined}
       aria-live={accessibilityLiveRegion === 'none' ? 'off' : accessibilityLiveRegion}
       aria-busy={busy || undefined}
-      style={{ width: '100%', alignItems: 'center', paddingVertical: frames ? INFO_STATE_VERTICAL_PADDING : 0 }}
+      style={{ width: '100%', alignItems: 'center', paddingVertical: frames && !startFrame ? INFO_STATE_VERTICAL_PADDING : 0 }}
     >
       <InfoStateFramesTile.Provider value={frames}>{children}</InfoStateFramesTile.Provider>
       {hasAction ? (

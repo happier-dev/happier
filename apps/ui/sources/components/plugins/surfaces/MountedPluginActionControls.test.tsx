@@ -73,4 +73,18 @@ describe('mounted Action control accessibility', () => {
             expect(screen.findByTestId('plugin-surface-action-control:resolve')?.props.accessibilityLabel).toBeUndefined();
         } finally { await screen.unmount(); f.controls.dispose(); }
     });
+    it('draws a described control as a pressable row with its glyph, description and disclosure', async () => {
+        const f = fixture();
+        await f.bind({ title: 'Add telemetry to this app', icon: 'pulse', disclosure: true,
+            description: 'Prepares a session that sets up OpenTelemetry.' });
+        const screen = await renderScreen(<MountedPluginActionControls controls={f.controls} />);
+        try {
+            const row = screen.findByTestId('plugin-surface-action-control:resolve');
+            expect(row).toBeTruthy();
+            expect(screen.root.findAll(node => node.props.children === 'Prepares a session that sets up OpenTelemetry.')).not.toHaveLength(0);
+            // The row ends in the list row's own disclosure chevron.
+            expect(screen.root.findAll(node => node.props.testID === 'plugin-surface-action-control:resolve'
+                && node.props.showChevron === true)).not.toHaveLength(0);
+        } finally { await screen.unmount(); f.controls.dispose(); }
+    });
 });

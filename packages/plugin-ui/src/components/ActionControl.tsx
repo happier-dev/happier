@@ -21,6 +21,12 @@ export type ActionControlProps = Readonly<{
   titleKey?: string;
   accessibilityLabel?: string;
   variant?: PluginUiActionControlPresentation['variant'];
+  /** Leading glyph from the portable icon vocabulary. */
+  icon?: PluginUiActionControlPresentation['icon'];
+  /** One line under the title; the host then draws the control as a pressable row, not a button. */
+  description?: string;
+  /** The row leads somewhere (a Composer, a page): the host ends it in its disclosure chevron. */
+  disclosure?: boolean;
   disabled?: boolean;
   signal?: PluginCancellationOptions['signal'];
   /** Unsupported or withdrawn hosts keep the author's explanation, with no raw-execution fallback. */
@@ -40,7 +46,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
   const translate = usePluginTranslation();
   const title = resolveAuthorText(translate, props.title, props.titleKey)
     ?? translate('happier.plugin-ui.action.execute', 'Run');
-  const { accessibilityLabel, disabled, variant, signal } = props;
+  const { accessibilityLabel, disabled, variant, icon, description, disclosure, signal } = props;
   const actionKey = typeof props.action === 'string' ? JSON.stringify(props.action)
     : JSON.stringify([props.action.pluginId, props.action.localId]);
   const nextPresentation: PluginUiActionControlPresentation = {
@@ -48,6 +54,9 @@ export function ActionControl(props: ActionControlProps): ReactNode {
     ...(accessibilityLabel === undefined ? {} : { accessibilityLabel }),
     ...(disabled === undefined ? {} : { disabled }),
     ...(variant === undefined ? {} : { variant }),
+    ...(icon === undefined ? {} : { icon }),
+    ...(description === undefined ? {} : { description }),
+    ...(disclosure === undefined ? {} : { disclosure }),
   };
   const latest = useRef(props);
   const presentation = useRef(nextPresentation);
@@ -114,7 +123,7 @@ export function ActionControl(props: ActionControlProps): ReactNode {
       latest.current.onUnavailable?.(error);
     });
     return () => { active = false; };
-  }, [host, actionKey, signal, title, accessibilityLabel, disabled, variant]);
+  }, [host, actionKey, signal, title, accessibilityLabel, disabled, variant, icon, description, disclosure]);
 
   if (unavailable) return props.fallback ?? null;
   return renderInline ? renderInline({ control: bound, presentation: nextPresentation, reviewedInput: props.reviewedInput }) : null;

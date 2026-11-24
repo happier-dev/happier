@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { PluginUiActionControlPresentationV1, PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import { useUnistyles } from 'react-native-unistyles';
 import { RoundButton, type RoundButtonDisplay } from '@/components/ui/buttons/RoundButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { Item } from '@/components/ui/lists/Item';
+import { resolvePluginUiIconName } from './iconToken/resolvePluginUiIconToken';
 import {
     readPluginActionControlPlacement,
     type MountedPluginActionControl,
@@ -21,19 +25,36 @@ function PluginActionControlButton({ controls, id, contributedPluginId, presenta
     busy: boolean;
     reviewedInput?: PluginUiJsonValueV1;
 }>) {
+    const { theme } = useUnistyles();
+    const testID = id === undefined ? {} : { testID: `plugin-surface-action-control:${id}` };
+    const onPress = () => { if (id !== undefined) void controls.press(id, reviewedInput); };
+    // A described control is a row (glyph, title over its line, the disclosure when it leads somewhere): the list
+    // row's own anatomy, so it reads like every other row that opens something.
     // The host's button for an author's Action.Control stands at the plugin Button's own default size (`normal`, the page
     // control height), so it lines up with the author's Buttons and segmented controls beside it (DBW 02:57Z, Run).
     return <>
         {/* Targeted mounts can render this control before its callee's Action slice has been read. */}
         {controls.projectionScope && contributedPluginId
             ? <PluginSurfaceProjectionDemand pluginId={contributedPluginId} accountScope={controls.projectionScope} /> : null}
-        <RoundButton size="normal" title={presentation.title}
-            accessibilityLabel={presentation.accessibilityLabel}
-            display={DISPLAY[presentation.variant ?? 'secondary']}
-            disabled={busy || presentation.disabled}
-            loading={busy}
-            {...(id === undefined ? {} : { testID: `plugin-surface-action-control:${id}` })}
-            onPress={() => { if (id !== undefined) void controls.press(id, reviewedInput); }} />
+        {presentation.description !== undefined
+            ? <Item title={presentation.title} subtitle={presentation.description} subtitleLines={0}
+                accessibilityLabel={presentation.accessibilityLabel}
+                icon={presentation.icon ? <Icon name={resolvePluginUiIconName(presentation.icon)} color={theme.colors.text.secondary} /> : undefined}
+                showChevron={presentation.disclosure === true}
+                disabled={busy || presentation.disabled}
+                loading={busy}
+                {...testID}
+                onPress={onPress} />
+            : <RoundButton size="normal" title={presentation.title}
+                accessibilityLabel={presentation.accessibilityLabel}
+                display={DISPLAY[presentation.variant ?? 'secondary']}
+                leading={presentation.icon
+                    ? <Icon name={resolvePluginUiIconName(presentation.icon)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                    : undefined}
+                disabled={busy || presentation.disabled}
+                loading={busy}
+                {...testID}
+                onPress={onPress} />}
     </>;
 }
 

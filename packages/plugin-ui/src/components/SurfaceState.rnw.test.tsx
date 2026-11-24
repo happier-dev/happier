@@ -99,6 +99,29 @@ describe('SurfaceState: the shared full state composition', () => {
     mount.unmount();
   });
 
+  it('stands a page state at the top under its page header, with its second way after the note', async () => {
+    const mount = mountSurface(
+      <SurfaceState
+        testID="setup"
+        kind="empty"
+        size="page"
+        placement="start"
+        title="See which statements cost the most"
+        body={<span>Ask an agent…</span>}
+        note="Tables work without it."
+        alternative={<span>Add telemetry to this app</span>}
+      />,
+    );
+    const text = textOf(mount.container);
+    const order = ['See which statements cost the most', 'Ask an agent…', 'Tables work without it.', 'Add telemetry to this app']
+      .map((part) => text.indexOf(part));
+    expect(order.every((index) => index >= 0), text).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const frame = mount.container.querySelector<HTMLElement>('[data-testid="setup"]');
+    expect(frame && getComputedStyle(frame).justifyContent).toBe('flex-start');
+    mount.unmount();
+  });
+
   it('draws a line state as one sentence with an inline recovery that cannot run while unavailable', async () => {
     let retried = 0;
     const mount = mountSurface(

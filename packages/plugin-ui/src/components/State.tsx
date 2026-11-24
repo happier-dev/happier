@@ -493,6 +493,11 @@ export type SurfaceStateProps = Readonly<{
    * one quiet sentence among a list's rows. Omit it to use the container the host mounted the surface in.
    */
   size?: HappierStateSize | 'line';
+  /**
+   * `start` for a state under the page's own header and tabs: it stands where the first section would be instead
+   * of floating in the middle of a tall page. Default `center`.
+   */
+  placement?: 'center' | 'start';
   /** Overrides the kind's glyph. */
   icon?: IconName;
   /** The present, under the copy ("Reconnecting · next try in 8 s"); `busy` draws a working ring. */
@@ -510,6 +515,8 @@ export type SurfaceStateProps = Readonly<{
   noteKey?: string;
   /** A quiet "How it works" link after the note. */
   learnMore?: SurfaceStateAction;
+  /** A second way forward that stands apart from the state, after its note (a handoff row). Never drawn in a `line`. */
+  alternative?: ReactNode;
   /** Diagnostic detail behind a collapsed "Details" disclosure on a failure. Never the sentence. */
   details?: string;
   /** Static states stay quiet; opt in when a lifecycle transition needs announcing. */
@@ -552,6 +559,7 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
       : hostAction ? { action: { label: hostAction.label, onPress: hostAction.onPress }, actionSlot: undefined } : {}),
     description: undefined, descriptionKey: undefined, note: undefined, noteKey: undefined, details: undefined, icon: undefined,
     body: undefined, live: undefined, actionCaption: undefined, secondaryAction: undefined, learnMore: undefined,
+    alternative: undefined,
   };
   const translate = usePluginTranslation();
   const theme = usePluginTheme();
@@ -630,10 +638,12 @@ function SurfaceStateAdapterView(authored: SurfaceStateProps & Readonly<{ action
       testID={props.testID}
       kind={props.kind}
       size={size}
+      placement={props.placement}
       glyph={glyph}
       lineText={<>{title}{title && description ? ' · ' : null}{description}</>}
       live={props.live}
       body={line ? undefined : props.body}
+      alternative={line ? undefined : props.alternative}
       actionCaption={props.actionCaption}
       action={resolveAction(props.action)}
       secondaryAction={resolveAction(props.secondaryAction)}

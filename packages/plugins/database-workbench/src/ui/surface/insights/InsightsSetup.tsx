@@ -9,6 +9,7 @@ import {
   Button,
   Divider,
   ErrorState,
+  Icon,
   Row,
   Stack,
   SurfaceState,
@@ -133,9 +134,10 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
   </>;
 }
 
-function SetupTaskControl({ task, directory, title, accessibilityLabel, variant = 'secondary' }: Readonly<{
+function SetupTaskControl({ task, directory, title, accessibilityLabel, presentation }: Readonly<{
   task: DatabaseTaskEvidenceV1; directory?: string; title: string; accessibilityLabel?: string;
-  variant?: 'secondary' | 'plain';
+  /** Host presentation beyond the title: the agent glyph, or the handoff row's purpose line and disclosure. */
+  presentation?: Readonly<{ icon?: 'generate' | 'pulse'; description?: string; disclosure?: boolean }>;
 }>) {
   const t = usePluginTranslation();
   const [error, setError] = React.useState<{ title: string; details?: string } | null>(null);
@@ -164,16 +166,16 @@ function SetupTaskControl({ task, directory, title, accessibilityLabel, variant 
       });
     },
   });
-  return <><Action.Control {...control} title={title} variant={variant}
+  return <><Action.Control {...control} title={title} variant="secondary" {...presentation}
       {...(accessibilityLabel === undefined ? {} : { accessibilityLabel })} />
     {error ? <ErrorState layout="line" {...error} /> : null}
   </>;
 }
 
-export function AddTelemetrySetup({ scope, variant }: Readonly<{
+export function AddTelemetrySetup({ scope, presentation = 'button' }: Readonly<{
   scope: Extract<WorkbenchLaunchInput['scope'], { kind: 'worktree' }>;
-  /** Beside the statistics setup it is the quieter second path; alone (an empty rail) it is the one action. */
-  variant?: 'secondary' | 'plain';
+  /** Beside the statistics setup it is the handoff row (glyph, purpose, disclosure); alone (an empty rail) the one action. */
+  presentation?: 'button' | 'row';
 }>) {
   const t = usePluginTranslation();
   const workspace = ProtocolWorkspaceAddressV1Schema.safeParse(scope.workspace);
@@ -182,7 +184,9 @@ export function AddTelemetrySetup({ scope, variant }: Readonly<{
   return <SetupTaskControl
     task={{ kind: 'add_telemetry', sourceScope: { serverId, machineId }, scope }}
     directory={rootPath}
-    {...(variant === undefined ? {} : { variant })}
+    {...(presentation === 'row' ? { presentation: { icon: 'pulse', disclosure: true,
+      description: t('plugins.database.insights.setup.telemetryWhy',
+        'Prepares a session that sets up OpenTelemetry, so each request’s queries show here.') } } : {})}
     title={t('plugins.database.insights.setup.addTelemetry', 'Add telemetry to this app')} />;
 }
 
@@ -191,7 +195,7 @@ function CopySetting({ setting }: Readonly<{ setting: string }>) {
   const translate = usePluginTranslation();
   const hostApi = usePluginHostApi();
   const feedback = useHappierCopyFeedback();
-  return <Button variant="plain" size="small"
+  return <Button variant="plain" size="small" icon={<Icon name={feedback.isCopied() ? 'check' : 'copy'} size="small" />}
     title={feedback.isCopied()
       ? translate('plugins.database.insights.setup.copied', 'Copied')
       : translate('plugins.database.insights.setup.copy', 'Copy the setting')}
@@ -224,6 +228,9 @@ export function InsightsSetup(
   return (
     <SurfaceState
       kind={setup ? 'empty' : 'unavailable'}
+      // Under the Insights tabs (or the rail's picker) the state stands where the list would start (lab dbInsights).
+      placement="start"
+      icon="chart"
       {...(props.size ? { size: props.size } : {})}
       title={
         setup
@@ -237,37 +244,32 @@ export function InsightsSetup(
             )
       }
       description={describeReason(translate, props.observation.reason, descriptor?.target.kind)}
-      {...(remediation || canEnable || askForStatistics || worktree || props.onRetry
+      {...(remediation || canEnable || askForStatistics || props.onRetry
         ? {
             body: (
-              <Stack gap="medium">
-                {/* One row: the way to turn it on, then the setting itself, then a recheck (lab dbInsights/notEnabled). */}
-                {canEnable || askForStatistics || remediation || props.onRetry ? <Row gap="small" wrap justify="center">
+                /* One row: the way to turn it on, then the setting itself, then a recheck (lab dbInsights/notEnabled). */
+                <Row gap="small" wrap justify="center">
                   {canEnable ? <EnableStatistics target={descriptor.target} onRetry={props.onRetry} /> : null}
                   {askForStatistics && sourceScope ? <SetupTaskControl
                     task={{ kind: 'enable_pg_stat_statements', engineId: 'postgresql', target, sourceScope,
                       stats: { request: STATEMENTS_BY_TOTAL_TIME, reason: props.observation.reason } }}
                     {...(machineWorkspace?.success ? { directory: machineWorkspace.data.rootPath } : {})}
+                    presentation={{ icon: 'generate' }}
                     accessibilityLabel={translate('plugins.database.insights.setup.askAgentLabel', 'Ask an agent to enable pg_stat_statements')}
                     title={translate('plugins.database.insights.setup.askAgent', 'Ask an agent…')} /> : null}
                   {remediation ? <CopySetting setting={remediation} /> : null}
-                  {props.onRetry ? <Button variant="plain" size="small" onPress={props.onRetry}
+                  {props.onRetry ? <Button variant="plain" size="small" icon={<Icon name="refresh" size="small" />} onPress={props.onRetry}
                     title={translate('plugins.database.retry', 'Try again')} /> : null}
-                </Row> : null}
-                {/* A second way to see what each request costs, ranked below the statistics setup. */}
-                {worktree ? <Stack gap="small">
-                  <Divider />
-                  <Stack gap="none">
-                    <Row><AddTelemetrySetup variant="plain" scope={{ kind: 'worktree', accountId: worktree.accountId,
-                      installationId: worktree.installationId, projectKey: worktree.projectKey, workspace: worktree.workspace }} /></Row>
-                    <Text tone="secondary" value={translate('plugins.database.insights.setup.telemetryWhy',
-                      'Prepares a session that sets up OpenTelemetry, so each request’s queries show here.')} />
-                  </Stack>
-                </Stack> : null}
-              </Stack>
+                </Row>
             ),
           }
         : {})}
+      // A second way to see what each request costs, apart from the statistics setup, after its note (lab dbInsights).
+      {...(worktree ? { alternative: <Stack gap="none">
+        <Divider />
+        <AddTelemetrySetup presentation="row" scope={{ kind: 'worktree', accountId: worktree.accountId,
+          installationId: worktree.installationId, projectKey: worktree.projectKey, workspace: worktree.workspace }} />
+      </Stack> } : {})}
       note={translate(
         'plugins.database.insights.setup.alt',
         'Tables, indexes and live activity work without it.',

@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionExecuteResultSchema } from '../../actions/actionExecutionResult.js';
 import { PluginUiJsonValueV1Schema } from '../contributions/ui/json.js';
 import { PluginUiMountedActionReferenceV1Schema } from './hostApiRequests.js';
+import { PluginUiIconTokenV1Schema } from '../contributions/ui/tokens.js';
 
 const Id = z.string().check(z.trim(), z.minLength(1));
 
@@ -12,6 +13,12 @@ export const PluginUiActionControlPresentationV1Schema = lazyZodSchema(() => z.s
   accessibilityLabel: z.optional(Id),
   disabled: z.optional(z.boolean()),
   variant: z.optional(z.enum(['primary', 'secondary', 'plain', 'destructive'])),
+  /** The control's leading glyph, from the portable icon vocabulary. */
+  icon: z.optional(PluginUiIconTokenV1Schema),
+  /** One line under the title: the host draws the control as a pressable row instead of a button. */
+  description: z.optional(Id),
+  /** A row that leads somewhere (a Composer, a page) ends in the host's disclosure chevron. */
+  disclosure: z.optional(z.boolean()),
 }));
 export type PluginUiActionControlPresentationV1 = z.infer<typeof PluginUiActionControlPresentationV1Schema>;
 export const PluginUiActionControlPreparationV1Schema = lazyZodSchema(() => z.strictObject({

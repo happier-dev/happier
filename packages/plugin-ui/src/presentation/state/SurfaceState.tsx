@@ -142,6 +142,8 @@ export type HappierSurfaceStateProps = Readonly<{
   size?: HappierSurfaceStateSize;
   /** `inline` is the state inside a sheet among other content; whole-pane states stay centred. */
   layout?: 'centered' | 'inline';
+  /** A whole-surface state under a page's own header and tabs stands at the top (`start`); see `HappierSurfaceStateFrame`. */
+  placement?: 'center' | 'start';
   /** The line's sentence (title · reason), already composed by the adapter. */
   lineText?: ReactNode;
   /**
@@ -179,6 +181,11 @@ export type HappierSurfaceStateProps = Readonly<{
   note?: string;
   /** Caller-owned controls that belong with the action: a choice it affects, or why it cannot proceed. Lines omit it. */
   actionFooter?: ReactNode;
+  /**
+   * A second way forward that stands apart from the state: after its note, across the state's measure (a handoff row
+   * such as "Add telemetry to this app"). Lines omit it.
+   */
+  alternative?: ReactNode;
   learnMore?: HappierSurfaceStateAction;
   /** Raw machine code: a collapsed disclosure on a failure, a testID marker otherwise. Never the sentence. */
   diagnosticCode?: string | null;
@@ -426,6 +433,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
       {props.actionFooter && !footerInGroup ? <View style={{ alignSelf: 'stretch', alignItems: 'center', marginTop: quiet.gapPx }}>{props.actionFooter}</View> : null}
       {quietLine}
       {diagnosticDetails}
+      {props.alternative ? <View style={{ alignSelf: 'stretch', width: '100%', marginTop: metrics?.actionGapPx ?? STACK_GAP_PX }}>{props.alternative}</View> : null}
     </>
   );
   // The live region holds the state's sentence; a diagnostic disclosure stays outside it, so expanding
@@ -528,6 +536,7 @@ export function HappierSurfaceState(props: HappierSurfaceStateProps) {
     <HappierSurfaceStateFrame
       testID={props.testID}
       size={size}
+      placement={props.placement}
       accessibilitySemantics={disclosure ? undefined : props.accessibilitySemantics}
     >
       {announceSentence(

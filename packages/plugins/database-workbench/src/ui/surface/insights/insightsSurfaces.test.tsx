@@ -503,6 +503,13 @@ describe('Database Insights surfaces', () => {
       expect(
         await page.queryByText('See which statements cost the most'),
       ).toBeTruthy();
+      // Add telemetry is the lab's handoff row (glyph, purpose line, disclosure), not a bare title;
+      // Ask an agent… carries the agent glyph (lab dbInsights/notEnabled).
+      expect(actionControl.presentation('Add telemetry to this app')).toMatchObject({
+        description: 'Prepares a session that sets up OpenTelemetry, so each request’s queries show here.',
+        icon: 'pulse', disclosure: true,
+      });
+      expect(actionControl.presentation('Ask an agent…')).toMatchObject({ icon: 'generate' });
       // The setting travels by Copy (lab dbInsights/notEnabled); the page does not print it.
       await page.press(await page.getByRole('button', { name: 'Copy the setting' }));
       expect(writeClipboard).toHaveBeenCalledWith(expect.objectContaining({
