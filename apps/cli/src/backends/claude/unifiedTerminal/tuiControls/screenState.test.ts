@@ -1438,6 +1438,72 @@ describe('parseClaudeScreenState — scrolled CJK composer draft', () => {
   });
 });
 
+// 2026-11-24 live incident (Claude Code 2.1.331, named session): the rule rows of the composer box
+// carry arbitrary labels. A session name sits in the top rule next to `↑ N more`, `↓ N more` sits in
+// the bottom rule. Rule rows are recognised by structure (starts and ends with `─`), not by label.
+describe('parseClaudeScreenState — labelled composer rule rows', () => {
+  const rule = (...labels: string[]): string => ['─'.repeat(3), ...labels.flatMap((label) => [` ${label} `, '─'.repeat(12)])].join('');
+  const viewport = ['  The first visible draft paragraph.', '', '  The last visible draft paragraph.'];
+  const visible = 'The first visible draft paragraph.\n\nThe last visible draft paragraph.';
+  const screen = (top: string, bottom: string): string => [
+    '❯ An earlier submitted prompt', 'Earlier assistant output.', top, ...viewport, bottom, '  Opus 5.5', '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+
+  const CLAUDE_2_1_331_SCROLLED_NAMED_COMPOSER = readFileSync(
+    new URL('./__fixtures__/claude-2.1.331-scrolled-named-composer.ansi', import.meta.url),
+    'utf8',
+  );
+
+  it('reads the real capture of a scrolled composer whose top rule also carries the session name', () => {
+    const state = parseClaudeScreenState(CLAUDE_2_1_331_SCROLLED_NAMED_COMPOSER);
+    expect(state.composerContent).toMatch(/^fr-Kopf gelandet 483d2ec6/);
+    expect(state.composerContent).toMatch(/verweise darauf, statt sie zu wiederholen\.$/);
+    expect(state.userDraftPresent).toBe(true);
+  });
+
+  it.each([
+    ['overflow marker only', rule('↑ 2 more'), rule()],
+    ['session name after the marker', rule('↑ 2 more', 'Website-Auftrag Fortsetzung'), rule()],
+    ['session name before the marker', rule('Website-Auftrag Fortsetzung', '↑ 2 more'), rule()],
+    ['marker above and below', rule('↑ 2 more'), rule('↓ 3 more')],
+    ['name in both rules', rule('↑ 12 more', 'Name'), rule('↓ 3 more', 'Name')],
+    ['a label the parser has never seen', rule('↑ 2 more', 'build 7/9 · ⏱ 3m'), rule('unseen label')],
+  ])('reads the viewport when the rules carry %s', (_name, top, bottom) => {
+    const state = parseClaudeScreenState(screen(top, bottom));
+    expect(state.composerContent).toBe(visible);
+    expect(state.userDraftPresent).toBe(true);
+  });
+
+  it('keeps a labelled bottom rule out of a visible prompt row', () => {
+    const state = parseClaudeScreenState([
+      'Earlier assistant output.',
+      rule('Website-Auftrag Fortsetzung'),
+      '❯ The first visible draft row',
+      '  The second visible draft row',
+      rule('↓ 4 more'),
+      '  ⏵⏵ auto mode on (shift+tab to cycle)',
+    ].join('\n'));
+    expect(state.composerContent).toBe('The first visible draft row\nThe second visible draft row');
+  });
+
+  it('does not treat rows that are not complete rules, or a rule without the overflow marker, as a composer', () => {
+    // The row must end with `─`: trailing prose makes it transcript text.
+    expect(parseClaudeScreenState(screen(`${rule('↑ 2 more')} trailing prose`, rule())).composerContent)
+      .toBe('An earlier submitted prompt');
+    // A plain labelled rule without the overflow marker hides no prompt row.
+    expect(parseClaudeScreenState(screen(rule('Website-Auftrag Fortsetzung'), rule())).composerContent)
+      .toBe('An earlier submitted prompt');
+    // The viewport must be closed by a rule row.
+    expect(parseClaudeScreenState(screen(rule('↑ 2 more'), '  not a rule')).composerContent)
+      .toBe('An earlier submitted prompt');
+  });
+
+  it('lets a newer normal prompt win over an older labelled scrolled viewport', () => {
+    const older = screen(rule('↑ 2 more', 'Name'), rule('↓ 1 more'));
+    expect(parseClaudeScreenState(`${older}\n❯ current draft`).composerContent).toBe('current draft');
+  });
+});
+
 describe('parseClaudeScreenState — soft-wrapped composer draft (C11)', () => {
   const WRAPPED = [
     '⏺ BRAVO',

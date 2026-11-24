@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
@@ -211,6 +213,26 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
       submitMayHaveReachedPane: false,
     });
     expect(submitEnter).toHaveBeenCalledOnce();
+  });
+
+  it('submits a scrolled composer whose top rule also carries the session name (2026-11-24 incident)', async () => {
+    const screenText = readFileSync(
+      new URL('./tuiControls/__fixtures__/claude-2.1.331-scrolled-named-composer.ansi', import.meta.url),
+      'utf8',
+    );
+    const promptText = [
+      '/compact Ich räume jetzt den Kontext auf.',
+      'Danach geht es mit der Schweizer Fassung weiter.',
+      'fr-Kopf gelandet 483d2ec6 und live geprüft. #699 wartet auf Johanna..',
+      'Behalte in der Zusammenfassung: Auftrag, naechster Schritt, Entscheidungen samt Grund, verworfene Wege samt Grund, Artefakt-Kennungen (Pfade, Zweig, PR, CI-IDs, Task- und Subagent-IDs) und offene Nutzerfragen. Verwirf Tool-Ausgaben und abgeschlossene Teilaufgaben ausser deren Ergebnis. Die Fleet-Uebergabe wird nach dem Compact automatisch wieder eingespielt; verweise darauf, statt sie zu wiederholen.',
+    ].join('\n');
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    expect(policy.isPromptStagedBeforeSubmit({ promptText, screenText })).toBe(true);
+    // A visibly changed character must still be rejected.
+    expect(() => policy.isPromptStagedBeforeSubmit({
+      promptText,
+      screenText: screenText.replace('wieder eingespielt', 'wieder eingespielX'),
+    })).toThrow();
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {

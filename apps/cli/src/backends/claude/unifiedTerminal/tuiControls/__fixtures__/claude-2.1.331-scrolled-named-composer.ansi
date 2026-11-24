@@ -1,0 +1,24 @@
+● Die französische Menü-Korrektur ist live: Der Server liefert das volle Menü
+  aus, und Commit 483d2ec6 ist mit grünen CI-Prüfungen gelandet. Falls bei dir
+  noch nur „Tarifs“ steht, hilft ein Neuladen mit Strg+Umschalt+R; danach kommt
+  die Schweizer Fassung (de-CH), während ich bei Kommentar #699 auf Johannas
+  Antwort warte. · summary
+
+  Ran 2 shell commands
+
+● Ich räume jetzt den Kontext auf. Danach geht es mit der Schweizer Fassung
+  weiter, der Wecker ist gestellt.
+
+✻ Brewed for 14m 38s · done 8:13 PM · 8 shells still running
+
+─── ↑ 2 more ───────────────────────────────────── Website-Auftrag Fortsetzung ─
+  fr-Kopf gelandet 483d2ec6 und live geprüft. #699 wartet auf Johanna..
+  Behalte in der Zusammenfassung: Auftrag, naechster Schritt, Entscheidungen
+  samt Grund, verworfene Wege samt Grund, Artefakt-Kennungen (Pfade, Zweig,
+  PR, CI-IDs, Task- und Subagent-IDs) und offene Nutzerfragen. Verwirf
+  Tool-Ausgaben und abgeschlossene Teilaufgaben ausser deren Ergebnis. Die
+  Fleet-Uebergabe wird nach dem Compact automatisch wieder eingespielt;
+  verweise darauf, statt sie zu wiederholen.
+────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5
+  ⏵⏵ bypass permissions on · 8 shells
