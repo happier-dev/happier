@@ -9946,6 +9946,112 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
+  it.each(['unavailable', 'refused'] as const)('keeps the mounted Work count unknown when a refresh returns %s', async failure => {
+    const machineId = 'work-refresh-machine';
+    const sessionId = workContribution.sessionId;
+    const metadata = { machineId, path: '/repo', host: 'test', homeDir: '/home/test' };
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [workContribution] });
+      if (request.path === `/v2/sessions/${sessionId}`) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+        id: sessionId, createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900, metadata,
+      }) });
+      return undefined;
+    });
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions([createSessionFixture({ id: sessionId, active: true, serverId: scope.serverId,
+      metadata,
+    })]);
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+      id: machineId, accountId: 'account-a', machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 },
+    })]);
+    const checkpoint = { sessionId, turnId: workContribution.turnId, repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
+    const linked = { ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github' as const, displayName: 'Forge',
+      baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
+    number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'open' as const } };
+    const held = createDeferred<void>();
+    let phase: 'read' | 'fail' | 'hold' = 'read';
+    scmTransport.mockImplementation(async request => {
+      const current = phase;
+      if (current === 'read') return workBatch(request, { status: 'partial', pullRequestsRead: true, evidence: [linked],
+        branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: checkpoint.commitSha } }],
+      });
+      if (current === 'hold') await held.promise;
+      if (failure === 'refused') return workBatch(request, { status: 'error', evidence: [], branchEvidence: [], errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      return workBatch(request, { status: 'error', errorCode: 'BACKEND_UNAVAILABLE' });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, session: sessionId, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, includeCoach: false,
+      includeComparison: false, workProjection: 'detail' });
+    const pageQueries = [query, normalizeUsageQuery({ ...query, includeWorkEvidence: false })];
+    const store = getUsageQueryResourceStore(captured);
+    const entryFor = (queries: typeof pageQueries) => store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries }) });
+    const pageEntry = entryFor(pageQueries);
+    const actionEntry = entryFor([query]);
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const readAction = async (settled = false) => {
+      const response = await executor.execute('usage.query', { queries: [query] }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        ...(settled ? { usageQueryReadiness: 'public_profile' as const } : {}),
+      });
+      if (!response.ok) throw new Error(response.errorCode);
+      return UsageQueryBatchResultSchema.parse(response.result).results[0]!;
+    };
+    const key = getUsageQueryKey(query);
+    const readPage = () => decodeUsageQueryResource(pageEntry.getSnapshot().value!).results.find(slice => slice.key === key)!;
+    const outcomes = (slice: ReturnType<typeof readPage>) => slice.work?.outcomes.map(row => row.pullRequest.number) ?? [];
+    const workStatus = (slice: ReturnType<typeof readPage>) => slice.sources.find(source => source.source === 'work')?.status;
+    const stopPage = pageEntry.subscribe(() => {}, true);
+    const stopAction = actionEntry.subscribe(() => {}, false);
+    try {
+      await pageEntry.refresh();
+      const baseline = await readAction(true);
+      expect(baseline.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
+      expect(outcomes(baseline)).toEqual([1]);
+      expect(baseline.accounting?.totals.eventCount).toBe(1);
+      await expect.poll(() => readPage().workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
+
+      const retained = failure === 'unavailable' ? [1] : [];
+      const terminal = failure === 'unavailable' ? 'stale' : 'error';
+      const checkFailedPage = async () => {
+        phase = 'fail';
+        await pageEntry.refresh();
+        await expect.poll(() => workStatus(readPage())).toBe(terminal);
+        const failedPage = readPage();
+        expect(outcomes(failedPage)).toEqual(retained);
+        expect(failedPage.workSummary?.mergedPrCount).toBeUndefined();
+        expect(failedPage.workSummary?.pullRequestsRead).toBeUndefined();
+        expect(failedPage.accounting?.totals).toMatchObject(baseline.accounting!.totals);
+      };
+      if (failure === 'unavailable') await checkFailedPage();
+
+      phase = 'hold';
+      const replacement = actionEntry.refresh();
+      try {
+        const interim = await readAction();
+        expect(workStatus(interim)).toBe('pending');
+        expect(outcomes(interim)).toEqual([1]);
+        expect.soft(interim.workSummary?.mergedPrCount).toBeUndefined();
+        expect.soft(interim.workSummary?.pullRequestsRead).toBeUndefined();
+        expect(interim.key).toBe(key);
+        expect(interim.accounting?.totals).toEqual(baseline.accounting?.totals);
+      } finally { held.resolve(); await replacement; }
+      const settledAction = await readAction(true);
+      expect(outcomes(settledAction)).toEqual(retained);
+      expect(workStatus(settledAction)).toBe(terminal);
+      expect(settledAction.workSummary?.mergedPrCount).toBeUndefined();
+      expect(settledAction.workSummary?.pullRequestsRead).toBeUndefined();
+      if (failure === 'refused') await checkFailedPage();
+
+      phase = 'read';
+      await actionEntry.refresh();
+      const recovered = await readAction(true);
+      expect(recovered.workSummary).toMatchObject({ pullRequestsRead: true, mergedPrCount: 0 });
+      expect(outcomes(recovered)).toEqual([1]);
+    } finally { held.resolve(); stopAction(); stopPage(); account.dispose(); }
+  });
+
   it.each([
     { first: 'read', second: 'read', state: 'partial', counts: undefined, links: 2, merged: 2 },
     { first: 'read', second: 'offline', state: 'partial', counts: { machine_unavailable: 1 }, links: 1 },

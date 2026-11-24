@@ -1864,7 +1864,7 @@ describe('Work and Coach widget bodies', () => {
       `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' })}`);
   });
 
-  it('shows prior linked Work rows with an unknown merged figure after a failed refresh', async () => {
+  it('shows prior linked Work rows with an unknown merged figure during and after a failed refresh', async () => {
     const witness = evidence('s1', 't1', 2493);
     const accounting = [{ query, status: 'available' as const, value: slice.accounting! }];
     const initial = resolveUsagePageAggregation({ queries: [query], accounting,
@@ -1887,7 +1887,9 @@ describe('Work and Coach widget bodies', () => {
     expect(mergedFigure()).toMatchObject({ value: 1, caption: t('usage.board.page.linkedByEvidence') });
     expect(mergedFunnelStep()?.value).toBe(1);
     await screen.update(renderWork(pending));
-    expect(mergedFigure()?.value).toBe(1);
+    expect(screen.getTextContent()).toContain(witness.pullRequest.title);
+    expect.soft(mergedFigure()).toMatchObject({ value: '—', caption: t('usage.board.page.notMeasuredYet') });
+    expect.soft(mergedFunnelStep()?.value).toBeNull();
     await screen.update(renderWork(failed));
     expect(screen.getTextContent()).toContain(witness.pullRequest.title);
     expect(failed.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', asOfMs: 900,

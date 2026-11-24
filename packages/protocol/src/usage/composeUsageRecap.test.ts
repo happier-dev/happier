@@ -268,22 +268,25 @@ describe('private recap composition', () => {
     expect(composeUsageRecap({ input, snapshot: pending.results[0]! })).toMatchObject({ kind: 'composed',
       unavailableFields: [], facts: { work: { linkedOutcomes: 1 }, highlights: [{ kind: 'linked_outcomes', count: 1 }] },
       coverage: { pending: true, sourceStatuses: expect.arrayContaining([{ status: 'pending' }]) } });
+    const readLinked = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'available', evidence: [witness], pullRequestReadSessions: ['private-session'] }] },
+      bundledUsageModelPriceCatalog);
+    const rereadingLinked = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }],
+      work: [{ query, status: 'pending' }], previous: readLinked }, bundledUsageModelPriceCatalog).results[0]!;
+    expect.soft(rereadingLinked.workSummary?.mergedPrCount).toBeUndefined();
+    expect(composeUsageRecap({ input, snapshot: rereadingLinked })).toMatchObject({ kind: 'composed',
+      unavailableFields: [], facts: { work: { linkedOutcomes: 1 }, highlights: [{ kind: 'linked_outcomes', count: 1 }] },
+      coverage: { pending: true, sourceStatuses: expect.arrayContaining([{ status: 'pending' }]) } });
     for (const status of ['pending', 'error'] as const) {
       const retainedEmpty = resolveUsagePageAggregation({ queries: [query],
         accounting: [{ query, value, status: 'available' }],
         work: [{ query, status, ...(status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) }],
         previous: available }, bundledUsageModelPriceCatalog).results[0]!;
       const recap = composeUsageRecap({ input, snapshot: retainedEmpty });
-      if (status === 'pending') {
-        expect(retainedEmpty.workSummary?.mergedPrCount).toBe(0);
-        expect(recap).toMatchObject({ kind: 'composed', unavailableFields: [], facts: { work: {
-          linkedOutcomes: 0, allocatedContributions: 0, unallocatedContributions: 1 }, highlights: [] } });
-      } else {
-        expect(retainedEmpty.workSummary?.mergedPrCount).toBeUndefined();
-        expect(recap).toMatchObject({ kind: 'composed', unavailableFields: ['work'], facts: { highlights: [] },
-          coverage: { sourceStatuses: expect.arrayContaining([{ status: 'stale' }]) } });
-        expect(recap.kind === 'composed' && recap.facts.work).toBeUndefined();
-      }
+      expect.soft(retainedEmpty.workSummary?.mergedPrCount).toBeUndefined();
+      expect.soft(recap).toMatchObject({ kind: 'composed', unavailableFields: ['work'], facts: { highlights: [] },
+        coverage: { sourceStatuses: expect.arrayContaining([{ status: status === 'error' ? 'stale' : 'pending' }]) } });
+      expect.soft(recap.kind === 'composed' && recap.facts.work).toBeUndefined();
     }
     {
       const noWitness = resolveUsagePageAggregation({ queries: [query],

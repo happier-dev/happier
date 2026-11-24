@@ -742,16 +742,15 @@ function projectUsageQuotaFields(query: UsageQuery, quota: UsagePageAggregationI
   };
 }
 
-function retainPublicProfileEvidence(previous: NonNullable<UsageQueryResultSlice['publicProfileEvidence']>,
-  retainDetail: boolean, retainWork: boolean): NonNullable<UsageQueryResultSlice['publicProfileEvidence']> {
-  const keep = (key: string) => key === 'mergedPrs' ? retainWork : retainDetail;
-  const facts = (value: typeof previous.facts) => Object.fromEntries(Object.entries(value).filter(([key]) => keep(key))) as typeof previous.facts;
+function retainPublicProfileDetail(previous: NonNullable<UsageQueryResultSlice['publicProfileEvidence']>): NonNullable<UsageQueryResultSlice['publicProfileEvidence']> {
+  const { mergedPrs: _mergedPrs, ...facts } = previous.facts;
+  const { mergedPrs: _mergedPrCoverage, ...fieldCoverage } = previous.fieldCoverage;
   return {
-    facts: facts(previous.facts),
-    fieldCoverage: Object.fromEntries(Object.entries(previous.fieldCoverage).filter(([key]) => keep(key))),
-    ...(retainDetail && previous.accountingFacts ? { accountingFacts: previous.accountingFacts } : {}),
-    lenses: previous.lenses.map(lens => ({ execution: lens.execution, facts: facts(lens.facts),
-      ...(retainDetail && lens.accountingFacts ? { accountingFacts: lens.accountingFacts } : {}) })),
+    ...previous, facts, fieldCoverage,
+    lenses: previous.lenses.map(lens => {
+      const { mergedPrs: _mergedPrs, ...facts } = lens.facts;
+      return { ...lens, facts };
+    }),
   };
 }
 
@@ -903,7 +902,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // rereads it. Allocation always recomputes over the current contributions;
     // a terminal refusal below removes that previously admitted evidence.
     const retainedWork = retainWork ? prior?.work : undefined;
-    const readableWork = workSnapshot && ['available', 'partial', 'stale'].includes(workSnapshot.status);
+    const currentWork = workSnapshot?.status === 'available' || workSnapshot?.status === 'partial';
+    const readableWork = currentWork || workSnapshot?.status === 'stale';
     // An open query is projected only up to a witnessed source as-of. It is not
     // relabelled as a different bounded query or filled forward to this clock.
     const startMs = period.startMs ?? 0;
@@ -1036,12 +1036,11 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     const accountingValue = snapshot?.value;
     const workEvidence = readableWork ? workSnapshot.evidence : undefined;
     const branchEvidence = readableWork ? workSnapshot.branchEvidence : undefined;
-    const readSessions = workSnapshot?.pullRequestReadSessions;
+    // Retained links are witnesses, but only this read establishes PR coverage.
+    const readSessions = currentWork ? workSnapshot.pullRequestReadSessions : undefined;
     const workFacts = projectAdmittedUsageInputs(admitted?.work, {
       accounting: accountingValue, evidence: workEvidence, branchEvidence, readSessions,
-      readable: readableWork, retaining: retainWork, pending: pendingWork,
-      priorAccounting: retainWork ? prior?.accounting : undefined,
-      priorSummary: retainWork ? prior?.workSummary : undefined,
+      readable: readableWork, retaining: retainWork,
       retained: retainedWork === admitted?.work.value.work && admitted?.work.inputs.retaining ? admitted.work.inputs.retained : retainedWork,
     }, (): UsageWorkReadProjection => {
       const work = !query.includeWorkEvidence || accountingValue?.contributions === undefined ? undefined : allocateUsageOutcomes({
@@ -1050,21 +1049,11 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : branchEvidence ?? [],
       });
       const admittedTurns = readableWork && query.includeWorkEvidence ? readUsageWorkSessionTurns(accountingValue) : undefined;
-      const samePendingWorkPopulation = pendingWork && prior !== undefined
-        && (accountingValue === prior.accounting || hasSameUsageQueryWorkEvidenceMembership({
-          query, contributions: accountingValue?.contributions, previousContributions: prior.accounting?.contributions,
-          sessionMembership: readUsageAccountingSessionMembership(accountingValue),
-          previousSessionMembership: readUsageAccountingSessionMembership(prior.accounting),
-        }));
-      // A failed replacement can preserve linked rows and their as-of time. Its
-      // earlier coverage cannot establish the count for this completed read.
-      const pullRequestsRead = readableWork ? hasUsagePullRequestRead(admittedTurns, readSessions)
-        : samePendingWorkPopulation && prior?.workSummary?.pullRequestsRead === true;
+      const pullRequestsRead = hasUsagePullRequestRead(admittedTurns, readSessions);
       const summary = work && (readableWork || retainWork) ? projectUsageWorkSummary(work.outcomes, pullRequestsRead, work)
         : admittedTurns ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence: workEvidence ?? [] }).outcomes,
-          pullRequestsRead)
-        : samePendingWorkPopulation && pullRequestsRead ? prior?.workSummary : undefined;
-      const profileLenses = query.population === 'public_eligible_personal' && query.includeWorkEvidence && accountingValue && !retainWork
+          pullRequestsRead) : undefined;
+      const profileLenses = query.population === 'public_eligible_personal' && query.includeWorkEvidence && accountingValue
         && (workEvidence !== undefined || readSessions !== undefined)
         ? projectUsagePublicWorkLenses(accountingValue, workEvidence ?? [], readSessions) : [];
       return { work, summary, profileLenses };
@@ -1079,9 +1068,8 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead });
       return pullRequestsRead || evidence.linkedMergedCount > 0 ? evidence : undefined;
     });
-    const retainProfileWork = pendingWork && canRetainDetail;
-    const retainedProfile = prior?.publicProfileEvidence && (retainedDetail || retainProfileWork)
-      ? retainPublicProfileEvidence(prior.publicProfileEvidence, Boolean(retainedDetail), retainProfileWork) : undefined;
+    const retainedProfile = retainedDetail?.publicProfileEvidence
+      ? retainPublicProfileDetail(retainedDetail.publicProfileEvidence) : undefined;
     const publicProfileEvidence = profileLenses.length ? {
       ...retainedProfile, facts: { ...retainedProfile?.facts, ...(workSummary?.mergedPrCount === undefined ? {} : { mergedPrs: workSummary.mergedPrCount }) },
       fieldCoverage: retainedProfile?.fieldCoverage ?? {},

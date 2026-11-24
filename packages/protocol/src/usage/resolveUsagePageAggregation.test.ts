@@ -1747,7 +1747,7 @@ describe('resolveUsagePageAggregation', () => {
       const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
         contributions: [{ id: 'admitted-personal-request', observedAtMs: nowMs - 1_000, sessionId: 'session', turnId: 'turn',
           agentId: 'codex', modelId: null, machineId: null, projectKey: null, workspaceId: null, source: 'runtime',
-          tokens, cost: accounting.totals.cost }],
+          sourceContext: { path: 'runtime', execution: 'happier' }, tokens, cost: accounting.totals.cost }],
         coverage: { status: 'partial', reasons: ['incomplete_history'], missingDimensions: [], ranked: [], sources: [],
           range: { ...period, complete: false } },
       });
@@ -1783,6 +1783,14 @@ describe('resolveUsagePageAggregation', () => {
     expect(observedEmpty.results[0]?.mergedOutcomes).toMatchObject({ linkedMergedCount: 0 });
     expect(observedEmpty.results[0]?.workSummary?.mergedPrCount).toBe(0);
     expect(observedEmpty.results[0]?.publicProfileEvidence?.facts.mergedPrs).toBe(0);
+    expect(observedEmpty.results[0]?.publicProfileEvidence?.lenses).toContainEqual({ execution: 'happier', facts: { mergedPrs: 0 } });
+    const pendingReplacement = UsageQueryBatchResultSchema.parse(read(observedEmpty, nowMs + 60_000, 'pending')).results[0]!;
+    expect.soft(pendingReplacement.sources).toContainEqual({ source: 'work', status: 'pending' });
+    expect.soft(pendingReplacement.workSummary?.pullRequestsRead).toBeUndefined();
+    expect.soft(pendingReplacement.workSummary?.mergedPrCount).toBeUndefined();
+    expect.soft(pendingReplacement.mergedOutcomes).toBeUndefined();
+    expect.soft(pendingReplacement.publicProfileEvidence?.facts.mergedPrs).toBeUndefined();
+    expect.soft(pendingReplacement.publicProfileEvidence?.lenses.some(lens => lens.facts.mergedPrs !== undefined) ?? false).toBe(false);
     const failedReplacement = read(observedEmpty, nowMs + 60_000, 'error');
     expect(failedReplacement.results[0]?.sources).toContainEqual({ source: 'work', status: 'stale', errorCode: 'work_evidence_failed' });
     expect(failedReplacement.results[0]?.mergedOutcomes).toBeUndefined();
