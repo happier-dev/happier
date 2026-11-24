@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -103,6 +103,20 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
     const machine = await fixture.enrollDaemon(owner, { env: daemonEnv });
     const pluginInstallation = await installDatabaseWorkbenchPluginFixture({ daemonPort: machine.daemon.state.httpPort,
       controlToken: machine.daemon.state.controlToken });
+    const envPath = '.env.local';
+    const envBindings = {
+      DATABASE_URL: fixture.postgres.selectedDatabaseUrl,
+      NEIGHBOR_DATABASE_URL: fixture.postgres.neighborDatabaseUrl,
+      NO_EXTENSION_DATABASE_URL: fixture.postgres.noExtensionDatabaseUrl,
+    };
+    const projectSetupDir = join(machine.workspaceDir, '.happier');
+    await mkdir(projectSetupDir, { recursive: true });
+    await writeFile(join(projectSetupDir, 'project.json'), JSON.stringify({
+      version: 1,
+      environmentVariables: Object.keys(envBindings).map(name => ({ name, kind: 'config' })),
+    }));
+    await writeFile(join(machine.workspaceDir, envPath),
+      Object.entries(envBindings).map(([name, url]) => `${name}=${url}\n`).join(''), { mode: 0o600 });
     const opened = await owner.executeReviewed('projects.open', {
       serverId: fixture.serverId, machineId: machine.target.machineId,
       source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' },
@@ -152,14 +166,6 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
       if (descriptor.target.kind !== 'manual') throw new Error('DBW fixture Connect did not return its manual association');
       return { ...descriptor, target: descriptor.target };
     }
-    const envPath = '.env.local';
-    const envBindings = {
-      DATABASE_URL: fixture.postgres.selectedDatabaseUrl,
-      NEIGHBOR_DATABASE_URL: fixture.postgres.neighborDatabaseUrl,
-      NO_EXTENSION_DATABASE_URL: fixture.postgres.noExtensionDatabaseUrl,
-    };
-    await writeFile(join(machine.workspaceDir, envPath),
-      Object.entries(envBindings).map(([name, url]) => `${name}=${url}\n`).join(''), { mode: 0o600 });
     function envTarget(variable: keyof typeof envBindings) {
       return DatabaseWorktreeTargetV1Schema.parse({ kind: 'worktree', ...context,
         source: { kind: 'env_file', path: envPath, variable } });
