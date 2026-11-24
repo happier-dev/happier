@@ -85,34 +85,30 @@ describe("authentication token admission (integration)", () => {
         await harness.close();
     });
 
-    it("keeps Disable between credential verification and eligibility opaque", async () => {
+    it("refuses a warm Account token opaquely at the next request after Disable", async () => {
+        // Token verification reads Account lifecycle once per request and
+        // eligibility reuses that admitted fact, so Disable applies at the next
+        // request. Warm both caches first: neither may hide the transition, and
+        // the refusal must not reveal the lifecycle state.
+        harness.resetEnv({ AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: "60000" });
         const account = await db.account.create({ data: {} });
         const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
-        const accountDelegate = db.account;
-        const originalFindUnique = accountDelegate.findUnique;
-        const findUnique = originalFindUnique.bind(accountDelegate);
-        let transitioned = false;
-        // Schedule the real lifecycle transaction at the Prisma read boundary;
-        // token verification and eligibility both retain their real logic.
-        accountDelegate.findUnique = (async (args) => {
-            const result = await findUnique(args);
-            if (!transitioned && args.where.id === account.id && args.select?.tokenEpoch) {
-                transitioned = true;
-                await inTx((tx) => setAccountStatusInTx(tx, {
-                    actorAccountId: account.id, targetAccountId: account.id,
-                    status: "disabled", authority: "account_erasure",
-                }));
-            }
-            return result;
-        }) as typeof db.account.findUnique;
         const app = createApp();
         try {
-            const response = await app.inject({ method: "GET", url: "/ordinary", headers: { authorization: `Bearer ${token}` } });
-            expect(transitioned).toBe(true);
-            expect(response.statusCode).toBe(401);
-            expect(response.json()).toEqual({ error: "invalid_token" });
+            const request = () => app.inject({ method: "GET", url: "/ordinary", headers: { authorization: `Bearer ${token}` } });
+            const admitted = await request();
+            expect({ status: admitted.statusCode, body: admitted.json() })
+                .toEqual({ status: 200, body: { tokenKind: "account" } });
+
+            await inTx((tx) => setAccountStatusInTx(tx, {
+                actorAccountId: account.id, targetAccountId: account.id,
+                status: "disabled", authority: "account_erasure",
+            }));
+
+            const refused = await request();
+            expect({ status: refused.statusCode, body: refused.json() })
+                .toEqual({ status: 401, body: { error: "invalid_token" } });
         } finally {
-            accountDelegate.findUnique = originalFindUnique;
             await app.close();
         }
     });
