@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type {
     AutomationDefinitionListItem,
     AutomationDefinitionListResponse,
@@ -9,7 +10,8 @@ import type {
 } from '@happier-dev/protocol';
 
 import { createRunDirs } from '../../src/testkit/runDir';
-import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
+import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
+import { resolveTestDbProvider, startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
@@ -23,7 +25,55 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 import { enableEnhancedSessionWizard } from '../../src/testkit/uiE2e/enableEnhancedSessionWizard';
 
+import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
+import { readCliAccessKey } from '../../src/testkit/cliAccessKey';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { prepareAutomationsEverywhereDeployment } from '../../src/testkit/automationsEverywhereDeployment';
+import { createOwnServerDockerBoundary } from '../../../../apps/cli/src/deployments/targets/ownServer/ownServerDeployment.testkit';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+import { WorkflowDefinitionGetResultV1Schema, WorkflowDefinitionListResultV1Schema, WorkflowRunListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
+import { ApprovalQueueListResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
+import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+
 const run = createRunDirs({ runLabel: 'ui-e2e' });
+
+/** Setup and arrival-point reads use the paired person's ordinary CLI Action entry. */
+async function invokeP04Action(
+    context: Readonly<{ testDir: string; cliHomeDir: string; serverUrl: string; uiBaseUrl: string }>,
+    label: string,
+    actionId: ActionId | QualifiedPluginActionId,
+    input: unknown,
+    target?: Readonly<{ machineId: string; projectDirectory?: string }>,
+) {
+    return runCliJson({ testDir: context.testDir, cliHomeDir: context.cliHomeDir,
+        serverUrl: context.serverUrl, webappUrl: context.uiBaseUrl, label,
+        env: { ...process.env, HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1' },
+        launchOptions: { preferSourceEntrypoint: true, skipSharedDepsBuild: true },
+        args: ['actions', 'invoke', actionId, '--input-json', JSON.stringify(input), '--yes', '--json',
+            ...(target ? ['--machine-id', target.machineId,
+                ...(target.projectDirectory ? ['--project-directory', target.projectDirectory] : [])] : [])],
+        acceptedExitCodes: [0, 1],
+    });
+}
+
+/** Discover opaque UI addresses from the mounted person-facing surface, then use ordinary reverse dispatch. */
+async function invokeP04MountedCommand(context: Parameters<typeof invokeP04Action>[0], label: string, title: RegExp) {
+    const read = await invokeP04Action(context, `${label}-read`, 'ui.current_context.read', {});
+    expect(read.ok, JSON.stringify(read)).toBe(true);
+    const commands = CurrentUiContextSnapshotV1Schema.parse(read.data).commands.filter(command => title.test(command.title));
+    expect(commands, `Expected one mounted ${title} command`).toHaveLength(1);
+    const invoked = await invokeP04Action(context, label, 'ui.current_context.command.invoke', { commandId: commands[0]!.id });
+    expect(invoked.ok, JSON.stringify(invoked)).toBe(true);
+}
 
 function getVisibleSessionComposer(page: Page) {
     return page.locator('[data-testid="session-composer-input"]:visible');
@@ -293,7 +343,7 @@ async function saveAutomationEditorViaSubmit(params: Readonly<{
 }
 
 test.describe('ui e2e: automations authoring', () => {
-    test.describe.configure({ mode: 'serial' });
+    test.describe.configure({ mode: 'default' });
 
     const suiteDir = run.testDir('automations-authoring-suite');
     const cliHomeDir = resolve(join(suiteDir, 'cli-home'));
@@ -303,15 +353,182 @@ test.describe('ui e2e: automations authoring', () => {
     let uiBaseUrl: string | null = null;
     let daemon: StartedDaemon | null = null;
 
+    const p04Daemons: StartedDaemon[] = [];
+
+    /** Real Account, source-loaded browser and daemon; each case keeps its own credentials. */
+    async function startP04AuthoringCase(page: Page, label: string, extraEnv: NodeJS.ProcessEnv = {}) {
+        if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+        const testDir = resolve(join(suiteDir, label));
+        const caseCliHomeDir = resolve(join(testDir, 'cli-home'));
+        await mkdir(caseCliHomeDir, { recursive: true });
+        await writeFile(resolve(join(caseCliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await gotoDomContentLoadedWithRetries(page, uiBaseUrl);
+        await ensureAccountReadyForConnect({ page, timeoutMs: 120_000 });
+        const caseDaemon = await authenticateAndStartDaemon({ page, testDir, cliHomeDir: caseCliHomeDir,
+            serverUrl: server.baseUrl, uiBaseUrl, createAccount: false, extraEnv: {
+                HOME: caseCliHomeDir, HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(),
+                HAPPIER_E2E_FAKE_CLAUDE_LOG: resolve(join(testDir, 'fake-claude.jsonl')),
+                ...extraEnv,
+            } });
+        p04Daemons.push(caseDaemon);
+        const accessKey = await readCliAccessKey(caseCliHomeDir);
+        if (!accessKey) throw new Error('missing paired fixture credentials');
+        const { token } = accessKey;
+        const machineId = await readMachineIdFromCliAuthLoginStdout(resolve(join(testDir, 'cli.auth.login.stdout.log')));
+        await enableAutomationsInSettings({ page, baseUrl: uiBaseUrl });
+        return { serverUrl: server.baseUrl, uiBaseUrl, token, machineId, cliHomeDir: caseCliHomeDir,
+            testDir, daemon: caseDaemon };
+    }
+
+    /** Saved deployment receipts supply real declared Event operands and repeated arrivals. */
+    async function startP04DeploymentEventsCase(page: Page, label: string) {
+        const toolsDir = resolve(join(suiteDir, `${label}-tools`));
+        const docker = await createOwnServerDockerBoundary(toolsDir);
+        const context = await startP04AuthoringCase(page, label, { PATH: `${toolsDir}${delimiter}${process.env.PATH ?? ''}` });
+        const features = FeaturesResponseSchema.parse(await getJson({
+            baseUrl: context.serverUrl, token: context.token, path: '/v1/features/authenticated',
+        }));
+        const serverId = features.capabilities.serverIdentity.serverIdentityId;
+        if (!serverId) throw new Error('Home identity is unavailable');
+        expect(features.homeConnectionDescriptor?.homeServerIdentityId, 'Fixture publishes its exact Home descriptor').toBe(serverId);
+        let invocationNumber = 0;
+        async function invoke(actionId: ActionId, input: unknown) {
+            const reply = await invokeP04Action(context, `${label}-${++invocationNumber}`, actionId, input);
+            if (!reply.ok) throw new Error(`${actionId}: ${JSON.stringify(reply.error)}`);
+            return reply.data;
+        }
+        const source = ProjectSourcesReadOutputV1Schema.parse(await invoke('projects.sources.create', {
+            serverId, name: `${label} receipt source`, requestKey: randomUUID(),
+        }));
+        if (!source.ok) throw new Error(source.error);
+        const deployment = await prepareAutomationsEverywhereDeployment({ serverId, projectSourceId: source.source.id,
+            machine: { homeDir: context.cliHomeDir, target: { machineId: context.machineId } }, docker, invoke });
+        const catalog = WorkflowEventsListOutputV1Schema.parse(await invoke('workflow.events.list', { machineId: context.machineId, serverId }));
+        const event = catalog.events.find(row => row.event.identity.pluginId === DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.pluginId
+            && row.event.identity.localId === DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed.localId);
+        if (!event?.observationBinding) throw new Error('Saved deployment receipt observer unavailable');
+        const configured = await invokeP04Action(context, `${label}-configure-source`, 'action.invoke', {
+            action: event.setupAction.identity, expectedContributorOccurrenceId: event.setupAction.occurrenceId,
+            input: { v: 1, ...deployment },
+        }, { machineId: context.machineId, projectDirectory: context.cliHomeDir });
+        expect(configured.ok, JSON.stringify(configured)).toBe(true);
+        const enrollment = PluginEventAutomationSetupResultV1Schema.parse(configured.data);
+        const selection = WorkflowTriggerWriteResultV1Schema.parse(await invoke('workflow.trigger.add', {
+            observationOnly: { kind: 'observationOnly' },
+            trigger: { kind: 'pluginEvent', enabled: true, eventRef: event.event.identity,
+                sourceInstanceId: enrollment.sourceInstanceId, sourceContractVersion: enrollment.sourceContractVersion,
+                sourceConfig: enrollment.sourceConfig, displayLabel: enrollment.displayLabel,
+                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: event.observationBinding.materializationRef },
+                subject: { kind: 'environment', serverId, environmentId: deployment.environmentId },
+                filter: null, maximumObservationAgeMs: null } }));
+        await docker.setActivationCommandFailure(true);
+        return { context, serverId, event,
+            arrive: async () => {
+                const startingAt = Date.now();
+                const result = await invokeP04Action(context, `${label}-arrival-${++invocationNumber}`,
+                    DEPLOYMENT_DEPLOY_ACTION_ID_V1, deployment);
+                expect(result.ok, 'Native Deploy is expected to fail in this fixture').toBe(false);
+                await expect.poll(async () => {
+                    const status = WorkflowTriggerListResultV1Schema.parse(await invoke('workflow.trigger.list', {
+                        automationId: selection.set.automationId,
+                    })).sets[0]?.triggers.find(trigger => trigger.id === selection.triggerId);
+                    return status?.kind === 'pluginEvent' ? status.sourceStatus?.lastObservedAt ?? 0 : 0;
+                }, { message: 'The saved exact Environment watcher observed the native Deployment failure', timeout: 180_000 })
+                    .toBeGreaterThanOrEqual(startingAt);
+            } };
+    }
+
+    async function selectP04DeploymentFailure(page: Page, sourceName: string, { discardDraft = false } = {}) {
+        const rows = page.locator('[data-testid^="workflows-column:events:row:"]');
+        await rows.getByText(sourceName, { exact: true }).first().click();
+        if (discardDraft) {
+            await page.getByRole('dialog', { name: 'Discard changes', exact: true })
+                .getByRole('button', { name: 'Discard', exact: true }).click();
+        }
+        await expect(page.getByTestId('workflow-events:detail:carries:result')).toContainText('Failed');
+        await expect(page.getByTestId('workflow-events:detail:open')).toBeVisible();
+    }
+
+    async function openP04DeploymentFailure(page: Page, sourceName: string, arrive: () => Promise<void>) {
+        await expect(page.getByTestId('workflows-column:events:listening:live')).toBeVisible();
+        await arrive();
+        await selectP04DeploymentFailure(page, sourceName);
+    }
+
+    async function configureP04DeploymentTrigger(page: Page, machineId: string, surface: 'workflow-editor' | 'workflow-builder') {
+        await page.getByTestId(`${surface}-sentence-machine`).click();
+        await page.getByTestId(`${surface}-sentence-machine-option:${machineId}`).click();
+        await page.locator(`[data-testid^="${surface}-sentence-trigger:new:"][data-testid$="-detail"]`).click();
+        await page.locator(`[data-testid^="${surface}-trigger:new:"][data-testid$="-configure-event"]`)
+            .and(page.getByRole('button', { name: 'Source: Set up', exact: true })).click();
+        await page.getByTestId('automation-event-configure-source').click();
+        const submitSetup = page.getByTestId('plugin-contributed-action-form-submit').filter({ visible: true });
+        const done = page.getByTestId('automation-plugin-event-done');
+        const ready = page.locator('[data-testid="automation-plugin-event-done"]:not([aria-disabled="true"]):not([disabled]):visible');
+        await expect(submitSetup.or(ready).first()).toBeVisible();
+        if (await submitSetup.isVisible()) await submitSetup.click();
+        await done.click();
+        // The Configure Event surface closes on Done. Leave the sentence builder
+        // open so its next interaction still edits the same draft.
+    }
+
+    async function addP04Action(page: Page, surface: 'workflow-editor' | 'workflow-builder', actionId: ActionId) {
+        await page.getByTestId(`${surface}-sentence-add-step`).click();
+        await page.getByRole('combobox', { name: 'Search', exact: true }).fill(actionId);
+        await page.locator(`[data-testid$=":option:${surface}-sentence-add-step-menu-action:${actionId}"]`).click();
+    }
+
+    async function readP04Runs(context: Parameters<typeof invokeP04Action>[0], label: string, automationId: string) {
+        const response = await invokeP04Action(context, label, 'workflow.run.list', { automationId });
+        expect(response.ok).toBe(true);
+        return WorkflowRunListResultV1Schema.parse(response.data).runs;
+    }
+
+    async function waitForP04Run(
+        page: Page, context: Parameters<typeof invokeP04Action>[0], serverId: string, label: string, automationId: string,
+    ) {
+        const readRuns = () => readP04Runs(context, label, automationId);
+        let run: Awaited<ReturnType<typeof readRuns>>[number] | undefined;
+        let approvalId: string | undefined;
+        await expect.poll(async () => {
+            const runs = await readRuns();
+            expect(runs.length).toBeLessThanOrEqual(1);
+            run = runs[0];
+            if (!run) return false;
+            if (isTerminalAutomationRunStateV3(run.state)) return true;
+            if (!run.invocationAttentionRequired) return false;
+            const reply = await invokeP04Action(context, `${label}-approval`, 'approval.request.list', {
+                workflowRunId: run.id, status: 'open',
+            });
+            expect(reply.ok).toBe(true);
+            const approvals = ApprovalQueueListResultV1Schema.parse(reply.data).items;
+            expect(approvals.length).toBeLessThanOrEqual(1);
+            approvalId = approvals[0]?.artifactId;
+            return approvalId !== undefined;
+        }, { message: 'The later receipt starts a Run that settles or exposes its open approval', timeout: 180_000 }).toBe(true);
+        if (!run) throw new Error('No Run started for the later receipt');
+        if (!approvalId) return [run];
+
+        await gotoDomContentLoadedWithRetries(page,
+            `${context.uiBaseUrl}/inbox/approvals/${encodeURIComponent(approvalId)}?serverId=${encodeURIComponent(serverId)}`);
+        await page.getByTestId('approvals.approve').click();
+        await expect.poll(async () => (await readRuns()).map(row => row.state), { timeout: 180_000 }).toEqual(['succeeded']);
+        return readRuns();
+    }
+
     test.beforeAll(async () => {
         test.setTimeout(900_000);
         await mkdir(cliHomeDir, { recursive: true });
         await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
+        const port = await reserveAvailablePort();
         server = await startServerLight({
             testDir: suiteDir,
-            dbProvider: 'sqlite',
+            dbProvider: resolveTestDbProvider(process.env, { fallbackProvider: 'sqlite' }),
+            port,
             extraEnv: {
+                HAPPIER_PUBLIC_SERVER_URL: `http://127.0.0.1:${port}`,
                 HAPPIER_BUILD_FEATURES_DENY: 'sharing.contentKeys',
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
             },
@@ -342,9 +559,164 @@ test.describe('ui e2e: automations authoring', () => {
 
     test.afterAll(async () => {
         test.setTimeout(120_000);
+        for (const caseDaemon of p04Daemons.splice(0).reverse()) await caseDaemon.stop().catch(() => {});
         await daemon?.stop().catch(() => {});
         await ui?.stop().catch(() => {});
         await server?.stop().catch(() => {});
+    });
+
+    test('P04.F1 Events detail to saved automation', async ({ page }) => {
+        test.setTimeout(900_000);
+        const { context, serverId, event, arrive } = await startP04DeploymentEventsCase(page, 'p04-f1');
+        const sourceName = event.event.title;
+        await gotoDomContentLoadedWithRetries(page, `${context.uiBaseUrl}/workflows`);
+        await page.getByRole('tab', { name: 'Events', exact: true }).click();
+        await expect(page).toHaveURL(/\/workflows\/events(?:\?|$)/);
+        // Opening Events must not treat the reserved route segment as a definition id.
+        await expect(page.getByText('Workflow not found', { exact: true })).toHaveCount(0);
+        await openP04DeploymentFailure(page, sourceName, arrive);
+        await invokeP04MountedCommand(context, 'f1-add-to-workflow', /^Add to a workflow$/);
+        await page.getByTestId('automation-plugin-event-cancel').click();
+        await expect(page.getByTestId('workflow-event-add-to-workflow')).toBeVisible();
+        await page.getByTestId('workflow-event-add-to-cancel').click();
+
+        await invokeP04MountedCommand(context, 'f1-make-workflow', /^Make a workflow from this$/);
+        await expect(page.getByTestId('workflow-editor-name')).toHaveValue(sourceName);
+        await expect(page.locator('[data-testid^="workflow-editor-sentence-trigger:new:"][data-testid$="-detail"]')).toBeVisible();
+
+        await selectP04DeploymentFailure(page, sourceName, { discardDraft: true });
+        await expect(page.getByRole('button', { name: 'Automate this…', exact: true })).toBeVisible();
+        await invokeP04MountedCommand(context, 'f1-automate', /^Automate this…$/);
+        await expect(page.getByTestId('workflow-builder')).toBeVisible();
+        await invokeP04MountedCommand(context, 'f1-continue-in-editor', /^Open.*editor$/i);
+        await configureP04DeploymentTrigger(page, context.machineId, 'workflow-editor');
+        const workflowName = 'P04 F1 saved from occurrence';
+        await page.getByTestId('workflow-editor-name').fill(workflowName);
+        await addP04Action(page, 'workflow-editor', 'machines.command.run');
+        const command = page.locator('[data-testid^="workflow-editor-action-"][data-testid$="-field-command"]');
+        await command.getByRole('button', { name: 'Set Command', exact: true }).click();
+        await command.getByRole('textbox').fill('echo P04-F1-effect');
+        await page.getByTestId('workflow-editor-save').click();
+        const definitions = await invokeP04Action(context, 'f1-saved-definition', 'workflow.definition.list', {});
+        expect(definitions.ok).toBe(true);
+        const saved = WorkflowDefinitionListResultV1Schema.parse(definitions.data).definitions
+            .find(row => row.metadata?.title === workflowName);
+        expect(saved).toMatchObject({ contentStatus: 'available', stepCount: 1 });
+        if (!saved) throw new Error('Events authoring did not save its ordinary Workflow');
+        const links = await invokeP04Action(context, 'f1-saved-trigger', 'workflow.trigger.list', { workflow: saved.definitionId });
+        expect(links.ok).toBe(true);
+        const savedSets = WorkflowTriggerListResultV1Schema.parse(links.data).sets;
+        expect(savedSets).toHaveLength(1);
+        expect(savedSets[0].triggers).toHaveLength(1);
+        const savedId = savedSets[0].automationId;
+        // A later occurrence, rather than Save itself, starts the newly authored automation.
+        expect(await readP04Runs(context, 'f1-before-repeat', savedId)).toEqual([]);
+        await arrive();
+        expect(await waitForP04Run(page, context, serverId, 'f1-arriving-run', savedId)).toMatchObject([{
+            state: 'succeeded', sourceArtifactId: saved.definitionId,
+            origin: { kind: 'automation', automationId: savedId, cause: {
+                kind: 'trigger', triggerKind: 'pluginEvent', triggerId: savedSets[0].triggers[0].id,
+                evidence: { eventRef: event.event.identity },
+            } },
+        }]);
+    });
+
+    test('P04.F3 sentence verbs create ordinary Workflows', async ({ page }) => {
+        // Four sequential browser Saves and daemon effects use the long UI journey budget.
+        test.setTimeout(20 * 60_000);
+        const { context, serverId, event, arrive } = await startP04DeploymentEventsCase(page, 'p04-f3');
+        const sourceName = event.event.title;
+        const sessionTarget = {
+            executionTarget: { serverId, machineId: context.machineId },
+            directory: { kind: 'path', path: context.cliHomeDir },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } as const;
+        const spawn = await invokeP04Action(context, 'f3-recipient-session', SESSION_SPAWN_NEW_ACTION_ID_V1, {
+            ...sessionTarget,
+            terminal: { mode: 'plain' },
+        });
+        expect(spawn.ok, 'Recipient Session spawn Action succeeded').toBe(true);
+        const recipient = SessionSpawnNewActionResultV1Schema.parse(spawn.data);
+        expect(recipient.type).toBe('success');
+        if (recipient.type !== 'success') throw new Error('Recipient Session did not start');
+        const verbs = [
+            { name: 'command', actionId: 'machines.command.run', insertField: 'stdin', fields: { command: 'echo sentence-effect', stdin: '' } },
+            { name: 'message', actionId: 'session.message.send', insertField: 'message', fields: { sessionId: recipient.sessionId, message: 'Sentence message effect: ' } },
+            { name: 'Session', actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, insertField: 'title', fields: {
+                ...sessionTarget, title: 'Sentence Session: ' } },
+            { name: 'another Action', actionId: 'machines.processes.list', insertField: 'query', fields: {
+                serverId, machineId: context.machineId, query: 'Deployment state: ' } },
+        ] as const;
+        for (const verb of verbs) {
+            await gotoDomContentLoadedWithRetries(page, `${context.uiBaseUrl}/workflows/events`);
+            await openP04DeploymentFailure(page, sourceName, arrive);
+            await page.getByRole('button', { name: 'Automate this…', exact: true }).click();
+            await expect(page.getByTestId('workflow-builder')).toBeVisible();
+            await configureP04DeploymentTrigger(page, context.machineId, 'workflow-builder');
+            const name = `Sentence ${verb.name} ${run.runId}`;
+            await page.getByTestId('workflow-builder-name').fill(name);
+            await addP04Action(page, 'workflow-builder', verb.actionId);
+            for (const [field, value] of Object.entries(verb.fields)) {
+                const fieldRow = page.locator(`[data-testid^="workflow-builder-action-"][data-testid$="-field-${field}"]`);
+                if (!(await fieldRow.isVisible())) {
+                    await page.locator('[data-testid^="workflow-builder-action-"][data-testid$="-more-settings"]').click();
+                }
+                const setField = page.locator(`[data-testid^="workflow-builder-action-"][data-testid$="-field-${field}-set"]`);
+                if (await setField.isVisible()) await setField.click();
+                if (field === 'executionTarget') {
+                    for (const [key, operand] of Object.entries(sessionTarget.executionTarget)) {
+                        await fieldRow.locator(`[data-testid$="-literal:executionTarget.${key}"]`).fill(operand);
+                    }
+                } else if (value !== '') {
+                    await fieldRow.getByRole('textbox').fill(typeof value === 'string' ? value : JSON.stringify(value));
+                }
+            }
+            const fieldSelector = `[data-testid^="workflow-builder-action-"][data-testid$="-field-${verb.insertField}"]`;
+            const input = page.locator(fieldSelector);
+            const picker = verb.name === 'command' ? 'input-0-value' : 'insert-list';
+            const openPicker = verb.name === 'command' ? 'input-0-value-trigger' : 'insert';
+            await input.locator(`[data-testid$="-field-${verb.insertField}-${openPicker}"]`).click();
+            await page.locator(`[data-testid*="-field-${verb.insertField}-${picker}-option-"]`)
+                .and(page.getByRole('button', { name: 'State', exact: true })).click();
+            await page.getByTestId('workflow-builder-save').click();
+            const listed = await invokeP04Action(context, `f3-list-${verb.name}`, 'workflow.definition.list', {});
+            expect(listed.ok).toBe(true);
+            const matches = WorkflowDefinitionListResultV1Schema.parse(listed.data).definitions.filter(row => row.metadata?.title === name);
+            expect(matches).toHaveLength(1);
+            const definitionId = matches[0]!.definitionId;
+            const [opened, attached] = await Promise.all([
+                invokeP04Action(context, `f3-get-${verb.name}`, 'workflow.definition.get', { definitionId }),
+                invokeP04Action(context, `f3-triggers-${verb.name}`, 'workflow.trigger.list', { workflow: definitionId }),
+            ]);
+            const saved = WorkflowDefinitionGetResultV1Schema.parse(opened.data);
+            const expectedInput = Object.fromEntries(Object.entries(verb.fields)
+                .filter(([key]) => key !== verb.insertField)
+                .map(([key, value]) => [key, { kind: 'literal', value }]));
+            expect(saved.definition.blocks).toMatchObject([{ kind: 'action', actionId: verb.actionId, input: expectedInput }]);
+            const action = saved.definition.blocks[0];
+            expect(action?.kind).toBe('action');
+            if (action?.kind !== 'action') throw new Error('The sentence did not save its Action');
+            const insertedBinding = action.input[verb.insertField];
+            const reference = { kind: 'trigger_event', event: event.event.identity, path: ['state'] };
+            expect(insertedBinding).toMatchObject(verb.name === 'command' ? reference : {
+                kind: 'text', document: { references: [expect.any(Object)] }, input: [reference],
+            });
+            const sets = WorkflowTriggerListResultV1Schema.parse(attached.data).sets;
+            expect(sets.flatMap(set => set.triggers)).toHaveLength(1);
+            const automationId = sets[0]!.automationId;
+            const runLabel = `f3-runs-${verb.name}`;
+            const [beforeArrival] = await Promise.all([
+                readP04Runs(context, `${runLabel}-before-arrival`, automationId),
+                gotoDomContentLoadedWithRetries(page, `${context.uiBaseUrl}/workflows/${definitionId}`),
+            ]);
+            expect(beforeArrival).toEqual([]);
+            const reopened = await invokeP04Action(context, `f3-reopened-${verb.name}`, 'workflow.definition.get', { definitionId });
+            expect(WorkflowDefinitionGetResultV1Schema.parse(reopened.data).definition).toEqual(saved.definition);
+            await arrive();
+            const runs = await waitForP04Run(page, context, serverId, runLabel, automationId);
+            expect(runs.map(({ state, errorCode }) => ({ state, errorCode: errorCode ?? null })), verb.name)
+                .toEqual([{ state: 'succeeded', errorCode: null }]);
+        }
     });
 
     test('authors plural V3 Automations and completes one exact-turn lifecycle journey', async ({ page }) => {
