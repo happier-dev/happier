@@ -61,6 +61,7 @@
 | `.` | `DefinedPluginContributes` | type | any |
 | `.` | `DefinedPluginManifest` | type | any |
 | `.` | `DeploymentDatabaseConnectionV1` | type | any |
+| `.` | `DeploymentDatabaseEndpointV1` | type | any |
 | `.` | `DeploymentDatabaseResolutionV1` | type | any |
 | `.` | `DeploymentDatabasesServiceV1` | type | daemon |
 | `.` | `DeploymentDomainDnsRecordInputV1` | type | any |

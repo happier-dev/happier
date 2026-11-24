@@ -15,11 +15,14 @@ import { compileUniversalPluginUiCommonJs } from '../../../../../../packages/plu
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { PLUGIN_UI_COMMON_JS_HOST_MODULES } from './hostModules';
 import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { log } from '@/log';
 
 import {
     PluginUiCommonJsEvaluationError,
+    compilePluginUiCommonJsBundle,
     evaluatePluginUiCommonJsBundle,
     instantiatePluginUiCommonJsBundle,
+    instantiatePluginUiCommonJsProgram,
 } from './commonJsEvaluator';
 
 const identity = Object.freeze({
@@ -62,18 +65,20 @@ describe('evaluatePluginUiCommonJsBundle', () => {
         }
     });
     it.each([
-        ['triage-account-runtime', 'src/accountRuntime.ts', 'activate'],
-        ['triage-latest-widget-native', 'src/ui/widget/latestWidget.tsx', 'renderSurface'],
-        ['triage-list-page-native', 'src/ui/surface.tsx', 'renderSurface'],
-        ['triage-scm-pull-request-native', 'src/ui/scmPullRequestCard.tsx', 'renderSurface'],
-        ['triage-session-pull-request-native', 'src/ui/sessionPullRequestWidget.tsx', 'renderSurface'],
-        ['triage-session-entries-native', 'src/sessions/cockpit/sessionLinkedEntriesSurface.tsx', 'renderSurface'],
-    ])('evaluates %s without duplicating host schema modules', async (artifactId, entryPath, requestedExport) => {
+        ['triage-account-runtime', 'triage', 'src/accountRuntime.ts', ['activate']],
+        ['triage-latest-widget-native', 'triage', 'src/ui/widget/latestWidget.tsx', ['renderSurface']],
+        ['triage-list-page-native', 'triage', 'src/ui/surface.tsx', ['renderSurface']],
+        ['triage-scm-pull-request-native', 'triage', 'src/ui/scmPullRequestCard.tsx', ['renderSurface']],
+        ['triage-session-pull-request-native', 'triage', 'src/ui/sessionPullRequestWidget.tsx', ['renderSurface']],
+        ['triage-session-entries-native', 'triage', 'src/sessions/cockpit/sessionLinkedEntriesSurface.tsx', ['renderSurface']],
+        ['health-setup', 'machine-services', 'src/ui/healthSetup.ts', ['renderSurface', 'activate']],
+    ])('evaluates %s without duplicating host schema modules', async (artifactId, plugin, entryPath, requestedExports) => {
+        const requestedExport = requestedExports[0]!;
         const repoRoot = resolve(import.meta.dirname, '../../../../../..');
         const packages = await readWorkspacePackages(repoRoot);
         const result = await compileUniversalPluginUiCommonJs({
-            projectRoot: join(repoRoot, 'packages/plugins/triage'), entryPath, artifactId,
-            requestedExports: [requestedExport], exportConditions: ['happier-source'],
+            projectRoot: join(repoRoot, 'packages/plugins', plugin), entryPath, artifactId,
+            requestedExports, exportConditions: ['happier-source'],
             resolveSourceImport: (specifier) => packages.has(packageNameOfSpecifier(specifier))
                 ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
         });
@@ -97,9 +102,10 @@ describe('evaluatePluginUiCommonJsBundle', () => {
             }
             const hostResolutionMs = performance.now() - hostStarted;
             const started = performance.now();
-            const instance = instantiatePluginUiCommonJsBundle({ bytes: result.bytes, identity: { ...identity, artifactId }, requestedExport });
+            const program = compilePluginUiCommonJsBundle({ bytes: result.bytes, identity: { ...identity, artifactId }, requestedExport });
+            const instance = instantiatePluginUiCommonJsProgram(program, { requestedExport, hostModules: PLUGIN_UI_COMMON_JS_HOST_MODULES });
             const evaluationMs = performance.now() - started;
-            expect(instance.readExport(requestedExport)).toBeTypeOf('function');
+            for (const exportName of requestedExports) expect(instance.readExport(exportName)).toBeTypeOf('function');
             console.info('PLUGIN_UI_HOST_EVALUATION_MEASUREMENT', JSON.stringify({ artifactId,
                 bytes: result.bytes.byteLength, duplicates: duplicates.length, hostModulePreparationMs, hostResolutionMs, evaluationMs, externalSpecifiers: result.externalSpecifiers,
             }));
@@ -253,7 +259,7 @@ describe('evaluatePluginUiCommonJsBundle', () => {
         })).toThrowError(expect.objectContaining({ code: 'unknown_host_module' }));
     });
 
-    it('fatally rejects malformed UTF-8 before executing any prefix', () => {
+    it('reports the decode phase for malformed UTF-8 before executing any prefix', () => {
         const touched = { value: false };
         expect(() => evaluatePluginUiCommonJsBundle({
             bytes: new Uint8Array([
@@ -264,8 +270,28 @@ describe('evaluatePluginUiCommonJsBundle', () => {
             identity,
             requestedExport: 'renderSurface',
             hostModules: Object.freeze({ touch: { run: () => { touched.value = true; } } }),
-        })).toThrowError(expect.objectContaining({ code: 'module_instantiation_failed' }));
+        })).toThrowError(expect.objectContaining({ code: 'module_instantiation_failed', phase: 'decode' }));
         expect(touched.value).toBe(false);
+    });
+
+    it('reports the compile phase for invalid CommonJS syntax', () => {
+        expect(() => evaluatePluginUiCommonJsBundle({
+            bytes: encoder.encode('exports.renderSurface = ;'),
+            identity,
+            requestedExport: 'renderSurface',
+        })).toThrowError(expect.objectContaining({ code: 'module_instantiation_failed', phase: 'compile' }));
+    });
+
+    it('reports the evaluate phase and records the thrown error in the plugin log', () => {
+        const start = log.getCount();
+        expect(() => evaluatePluginUiCommonJsBundle({
+            bytes: encoder.encode('throw new TypeError("fixture schema is undefined");'),
+            identity,
+            requestedExport: 'renderSurface',
+        })).toThrowError(expect.objectContaining({ code: 'module_instantiation_failed', phase: 'evaluate' }));
+        expect(log.getLogs().slice(start)).toEqual([
+            expect.stringContaining('"error":{"name":"TypeError","message":"fixture schema is undefined"}'),
+        ]);
     });
 
     it('reports a missing or non-callable requested export without caching namespace state', () => {

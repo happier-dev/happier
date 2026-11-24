@@ -1,3 +1,4 @@
+import { logPluginSurfaceDiagnostic, readPluginSurfaceDiagnosticError } from '../shared/pluginSurfaceDiagnosticLog';
 import { PLUGIN_UI_COMMON_JS_HOST_MODULES } from './hostModules';
 
 export type PluginUiCommonJsHostModules = Readonly<Record<string, unknown>>;
@@ -13,10 +14,13 @@ export type PluginUiCommonJsEvaluationErrorCode =
     | 'unknown_host_module'
     | 'invalid_executable_export';
 
+type PluginUiCommonJsInstantiationPhase = 'decode' | 'compile' | 'evaluate';
+
 export class PluginUiCommonJsEvaluationError extends Error {
     readonly code: PluginUiCommonJsEvaluationErrorCode;
     readonly identity: PluginUiCommonJsArtifactIdentity;
     readonly requestedExport: string;
+    readonly phase?: PluginUiCommonJsInstantiationPhase;
     /** The module an `unknown_host_module` artifact required that this host does not provide. */
     readonly specifier?: string;
 
@@ -24,6 +28,7 @@ export class PluginUiCommonJsEvaluationError extends Error {
         code: PluginUiCommonJsEvaluationErrorCode;
         identity: PluginUiCommonJsArtifactIdentity;
         requestedExport: string;
+        phase?: PluginUiCommonJsInstantiationPhase;
         specifier?: string;
     }>) {
         super(`${input.code}:${input.identity.pluginId}:${input.identity.artifactId}${input.specifier ? `:${input.specifier}` : ''}`);
@@ -31,12 +36,30 @@ export class PluginUiCommonJsEvaluationError extends Error {
         this.code = input.code;
         this.identity = input.identity;
         this.requestedExport = input.requestedExport;
+        if (input.phase) this.phase = input.phase;
         if (input.specifier) this.specifier = input.specifier;
     }
 }
 
 function fail(input: ConstructorParameters<typeof PluginUiCommonJsEvaluationError>[0]): never {
     throw new PluginUiCommonJsEvaluationError(input);
+}
+
+function failInstantiation(
+    identity: PluginUiCommonJsArtifactIdentity,
+    requestedExport: string,
+    phase: PluginUiCommonJsInstantiationPhase,
+    error: unknown,
+): never {
+    const code = 'module_instantiation_failed';
+    logPluginSurfaceDiagnostic({ pluginId: identity.pluginId, contributionId: null, surfaceId: null }, {
+        code,
+        phase,
+        artifactId: identity.artifactId,
+        requestedExport,
+        error: readPluginSurfaceDiagnosticError(error),
+    });
+    fail({ code, identity, requestedExport, phase });
 }
 
 function boundedSourceUrl(identity: PluginUiCommonJsArtifactIdentity): string {
@@ -81,8 +104,8 @@ export function compilePluginUiCommonJsBundle(
     let source: string;
     try {
         source = new TextDecoder('utf-8', { fatal: true }).decode(input.bytes);
-    } catch {
-        fail({ code: 'module_instantiation_failed', identity, requestedExport });
+    } catch (error) {
+        failInstantiation(identity, requestedExport, 'decode', error);
     }
     try {
         const moduleFunction = new Function(
@@ -92,8 +115,8 @@ export function compilePluginUiCommonJsBundle(
             `"use strict";\n${source}${boundedSourceUrl(identity)}`,
         ) as PluginUiCommonJsModuleFunction;
         return Object.freeze({ identity, moduleFunction });
-    } catch {
-        fail({ code: 'module_instantiation_failed', identity, requestedExport });
+    } catch (error) {
+        failInstantiation(identity, requestedExport, 'compile', error);
     }
 }
 
@@ -119,7 +142,7 @@ export function instantiatePluginUiCommonJsProgram(
         program.moduleFunction(module, exports, requireHostModule);
     } catch (error) {
         if (error instanceof PluginUiCommonJsEvaluationError) throw error;
-        fail({ code: 'module_instantiation_failed', identity, requestedExport });
+        failInstantiation(identity, requestedExport, 'evaluate', error);
     }
 
     const namespace = module.exports;
