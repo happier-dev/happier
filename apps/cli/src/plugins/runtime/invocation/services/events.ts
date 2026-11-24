@@ -67,6 +67,7 @@ type HostBrokerSubscription = {
         scope:
             | Readonly<{ kind: 'session'; sessionId: string }>
             | Readonly<{ kind: 'event-session' }>
+            | Readonly<{ kind: 'machine' }>
             | Readonly<{ kind: 'account' }>;
     }>;
     readonly listener: (event: HostEventEnvelopeV1) => void | Promise<void>;
@@ -448,18 +449,10 @@ export function createStablePluginEventsBroker(params?: Readonly<{
                             scope: Object.freeze({ kind: 'event-session' as const }),
                         })
                         : null
-                : parsed.data.scope.kind === 'account'
-                    ? Object.freeze({
-                        eventId: parsed.data.eventId,
-                        scope: Object.freeze({ kind: 'account' as const }),
-                    })
-                    : Object.freeze({
+                : Object.freeze({
                     eventId: parsed.data.eventId,
-                    scope: Object.freeze({
-                        kind: 'session' as const,
-                        sessionId: parsed.data.scope.sessionId,
-                    }),
-                    });
+                    scope: Object.freeze({ ...parsed.data.scope }),
+                });
             if (!target) {
                 throw eventError('plugin_host_events_current_session_unavailable', 'A current-session Host Event target requires a bound session');
             }

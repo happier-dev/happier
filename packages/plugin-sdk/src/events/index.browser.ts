@@ -35,6 +35,7 @@ export type { HostEvents } from '../events.js';
 export { MACHINE_OUTCOME_SUMMARY_PREFIX } from './machineServices.js';
 export { MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from './machineServices.js';
 export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from './machineServices.js';
+export { MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1 } from './machineServices.js';
 export { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from './accountFacts.js';
 export { MachinePressureEventV1ProtocolSchema } from './machineServices.js';
 export type { MachineResourceOutcomeV1 } from './machineServices.js';

@@ -1,4 +1,5 @@
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MachineServiceObservationV1Schema, type MachineServiceObservationV1 } from './machineServiceObservationV1.js';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, MachineServiceObservationV1Schema,
+  MachineWorktreeRemovedHostEventV1Schema, type MachineServiceObservationV1, type MachineWorktreeRemovedHostEventV1 } from './machineServiceObservationV1.js';
 import {
   AgentSessionRuntimeEventSchema,
   type AgentSessionRuntimeEvent,
@@ -29,6 +30,7 @@ import {
   isHostEventIdV1,
   isRuntimeHostEventIdV1,
   type AutomationHostEventScopeV1,
+  type MachineHostEventScopeV1,
   type AutomationEventSourcesInvalidatedHostEventV1,
   type AutomationRunStateChangedHostEventV1,
   type HostEventCatalogEntryV1,
@@ -83,6 +85,7 @@ type RuntimeHostEventPayloadByIdV1 = {
 
 export type HostEventPayloadByIdV1 = RuntimeHostEventPayloadByIdV1 & Readonly<{
   [MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1]: MachineServiceObservationV1;
+  [MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1]: MachineWorktreeRemovedHostEventV1;
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AccountEntitiesInvalidatedHostEventV1;
   [HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1]: DeploymentReceiptInvalidatedHostEventV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: HealthCheckHeartbeatReceivedHostEventV1;
@@ -95,6 +98,7 @@ export type HostEventScopeByIdV1 = {
   readonly [Id in RuntimeHostEventIdV1]: HostEventScopeV1;
 } & Readonly<{
   [MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1]: AutomationHostEventScopeV1;
+  [MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1]: MachineHostEventScopeV1;
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
@@ -107,6 +111,7 @@ type HostEventDeliveryScopeByIdV1 = {
   readonly [Id in RuntimeHostEventIdV1]: Readonly<{ kind: 'session'; sessionId: string }>;
 } & Readonly<{
   [MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1]: AutomationHostEventScopeV1;
+  [MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1]: MachineHostEventScopeV1;
   [HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
   [HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1]: AutomationHostEventScopeV1;
@@ -152,6 +157,9 @@ export function parseHostEventPayloadV1<Id extends HostEventIdV1>(
 ): HostEventPayloadByIdV1[Id] {
   if (eventId === MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1) {
     return MachineServiceObservationV1Schema.parse(payload) as HostEventPayloadByIdV1[Id];
+  }
+  if (eventId === MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1) {
+    return MachineWorktreeRemovedHostEventV1Schema.parse(payload) as HostEventPayloadByIdV1[Id];
   }
   if (eventId === HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1) {
     return AccountEntitiesInvalidatedHostEventV1Schema.parse(payload) as HostEventPayloadByIdV1[Id];

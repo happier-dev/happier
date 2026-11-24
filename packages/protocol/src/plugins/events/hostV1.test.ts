@@ -1,4 +1,5 @@
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1Schema, MachinePressureEventV1Schema } from './machineServiceObservationV1.js';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1,
+  BackupOutcomeEventV1Schema, MachinePressureEventV1Schema } from './machineServiceObservationV1.js';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
@@ -19,6 +20,14 @@ import {
 } from './hostV1.js';
 
 describe('Host Events V1 catalog', () => {
+  it('confines the physical-root removal fact to Machine scope and rejects Account metadata', () => {
+    const eventId = MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1;
+    const payload = { physicalRoot: '/physical/checkout' };
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'machine' } }).success).toBe(true);
+    expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(false);
+    expect(parseHostEventPayloadV1(eventId, payload)).toEqual(payload);
+    expect(() => parseHostEventPayloadV1(eventId, { ...payload, workspaceId: 'requester-workspace' })).toThrow();
+  });
   it('carries closed backup outcomes and existing pressure episodes only in Account scope', () => {
     const eventId = MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1;
     const backup = BackupOutcomeEventV1Schema.parse({ kind: 'backup', serverId: 'home', machineId: 'machine',
@@ -91,6 +100,7 @@ describe('Host Events V1 catalog', () => {
     );
 
     expect(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).toEqual([
+      MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1,
       MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1,
       ...expected,
       HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
@@ -100,8 +110,8 @@ describe('Host Events V1 catalog', () => {
       '@happier/deployment/receipt-invalidated',
       '@happier/account/entities-invalidated',
     ]);
-    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 7);
-    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 7);
+    expect(new Set(HOST_EVENT_CATALOG_V1.map((entry) => entry.id)).size).toBe(expected.length + 8);
+    expect(HOST_EVENT_CATALOG_V1).toHaveLength(AGENT_SESSION_RUNTIME_EVENT_KINDS_V1.length + 8);
     const runtimeEntries = HOST_EVENT_CATALOG_V1.filter((entry) => entry.id.startsWith('@happier/runtime/'));
     expect(runtimeEntries.every((entry) => (
       entry.canonicalProducer === 'centralized-host-session-runtime'

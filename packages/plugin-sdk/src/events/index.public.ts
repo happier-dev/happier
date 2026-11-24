@@ -59,3 +59,4 @@ export { SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1, PRO
 export { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1, DEPLOYMENT_PROMOTE_ACTION_ID_V1 } from './deploymentReceipts.js';
 export { MACHINE_OUTCOME_SUMMARY_PREFIX, machineOutcomeSummaryAddress, MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from './machineServices.js';
 export type { MachineResourceOutcomeV1 } from './machineServices.js';
+export { MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1 } from './machineServices.js';

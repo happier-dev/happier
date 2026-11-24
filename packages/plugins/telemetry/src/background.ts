@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { BackgroundServiceRunner } from '@happier-dev/plugin-sdk/background-services';
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type HostEvents } from '@happier-dev/plugin-sdk/events';
+import { MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, type HostEvents } from '@happier-dev/plugin-sdk/events';
 import type { DaemonDatabase, DaemonDatabaseService, DaemonDatabaseRetentionChange, PluginAccountStorageScope } from '@happier-dev/plugin-sdk/storage';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
 import { bindLocalCapture } from './launch.js';
@@ -71,9 +71,8 @@ export function createCaptureBackgroundOwner() {
    signal: context.signal, accountStorage: context.services.storage.account, leases: new Map(), pending: new Set(),
   };
   running = state;
-  const removal = context.services.events.host.subscribe({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } }, async ({ payload }) => {
-   if (payload.kind === 'worktreeRemoved') await state.runtime.removeWorktree(payload.removal.worktreePath);
-  });
+  const removal = context.services.events.host.subscribe({ eventId: MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, scope: { kind: 'machine' } },
+   ({ payload }) => state.runtime.removeWorktree(payload.physicalRoot));
   try {
    await new Promise<void>(resolve => {
     if (context.signal.aborted) resolve();

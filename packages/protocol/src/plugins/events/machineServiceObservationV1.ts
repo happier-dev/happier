@@ -12,6 +12,11 @@ import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConne
 import { ConnectedServiceCredentialRefreshFailureKindV1Schema } from '../../connect/connectedServiceSchemas.js';
 
 export const MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 = '@happier/machine/service-observed' as const;
+export const MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1 = '@happier/machine/worktree-removed' as const;
+export const MachineWorktreeRemovedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
+  physicalRoot: WorkspaceAddressV1Schema.shape.rootPath,
+}));
+export type MachineWorktreeRemovedHostEventV1 = z.infer<typeof MachineWorktreeRemovedHostEventV1Schema>;
 const id = () => z.string().check(z.minLength(1));
 const timestamp = () => z.number().check(z.int(), z.nonnegative());
 /** Closed producer facts; native output and credentials never enter this bridge. */

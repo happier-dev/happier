@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HostEventEnvelope, HostEvents } from '@happier-dev/plugin-sdk/events';
+import { MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, type HostEventEnvelope, type HostEvents } from '@happier-dev/plugin-sdk/events';
 import { createCaptureBackgroundOwner } from './background.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureStore } from './store/capture.js';
@@ -31,7 +31,8 @@ describe('settled worktree removal identity', () => {
    if (statement.includes('FROM captureWorktrees')) removalReads.push(params);
    return f.db.query<T>(statement, params);
   } };
-  let receive: ((event: HostEventEnvelope<'@happier/machine/service-observed'>) => void | Promise<void>) | undefined;
+  type RemovalEvent = HostEventEnvelope<typeof MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1>;
+  let receive: ((event: RemovalEvent) => void | Promise<void>) | undefined;
   // Authenticated host-event delivery is the boundary; the background owner and SQLite remain real.
   const host = { subscribe(_target: unknown, listener: typeof receive) { receive = listener; return { dispose() { receive = undefined; } }; } } as HostEvents;
   const first = createCaptureBackgroundOwner(), restarted = createCaptureBackgroundOwner();
@@ -53,9 +54,8 @@ describe('settled worktree removal identity', () => {
    expect(receive).toBeUndefined();
    second = restarted.run({ signal: secondLifetime.signal, services });
    await vi.waitFor(() => expect(receive).toBeTypeOf('function'));
-   const event: HostEventEnvelope<'@happier/machine/service-observed'> = { eventId: '@happier/machine/service-observed', scope: { kind: 'account' }, payload: {
-    kind: 'worktreeRemoved', serverId: 'server', occurredAt: 1, removal: { workspace: null, project: null, machineId: 'machine', operationId: 'remove', worktreePath: '/physical/project', outcome: 'removed', removalKind: 'retired' },
-   } };
+   const event: RemovalEvent = { eventId: MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1,
+    scope: { kind: 'machine' }, payload: { physicalRoot: '/physical/project' } };
    await receive!(event);
    expect(removalReads).toHaveLength(1);
    expect(removalReads[0]).toContain('/physical/project');

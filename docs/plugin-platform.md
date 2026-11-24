@@ -6567,6 +6567,12 @@ cursor and does not recover observations missed while the watcher was stopped.
 The closed Host Event addition requires matching development Protocol, SDK,
 daemon and Machine services plugin readers; it changes no server wire format.
 
+On checkout removal or retirement, the same daemon's checkout removal owner emits
+`@happier/machine/worktree-removed` with the canonical physical root. Telemetry
+uses this Machine-scoped Host Event to discard captures for that root. The event
+carries no Account, Project, Workspace or operation identifiers. The Account
+observation retains its existing requester audience and delivery path.
+
 The Account change-feed producer marks credential/settings-only Host Event wakes
 with `definitionsChanged: false`. The observer retains its existing adopted
 catalog for those wakes and provider eligibility cycles; it confirms definitions

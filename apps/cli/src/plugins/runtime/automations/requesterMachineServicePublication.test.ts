@@ -35,7 +35,7 @@ import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { prepareProjectCheckoutRemoval } from '@/workspaces/projectSetup/projectCheckoutRemoval';
 import { SCM_WORKTREE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { getHostWorktreePortsOwner, resolvePhysicalWorktreeRootIdentity } from '@/workspaces/execution/worktreePorts';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { createApiMachineSocketFixture } from '@/testkit/apiMachineTransport';
@@ -227,8 +227,8 @@ it.each(['backup', 'backup receiver', 'Project setup', 'Project removal', 'Proje
                 const workspace = { id: 'workspace', serverId: 'home', machineId: 'machine', rootPath: '/project',
                     label: null, createdAtMs: 1, lastOpenedAtMs: null };
                 if (projectRemoval) {
-                    const worktreePath = join(isolated.home, 'requester-removal');
-                    const siblingPath = join(isolated.home, 'requester-retained-sibling');
+                    const worktreePath = join(isolated.home, `${rootActionId}-removal`);
+                    const siblingPath = join(isolated.home, `${rootActionId}-retained-sibling`);
                     await Promise.all([mkdir(worktreePath), mkdir(siblingPath)]);
                     const ports = getHostWorktreePortsOwner();
                     const capturedRoot = await resolvePhysicalWorktreeRootIdentity(worktreePath);
@@ -238,6 +238,11 @@ it.each(['backup', 'backup receiver', 'Project setup', 'Project removal', 'Proje
                     const portsStatePath = join(configuration.happyHomeDir, 'worktree-ports.json');
                     const before = JSON.parse(await readFile(portsStatePath, 'utf8'));
                     const custodianFacts: unknown[] = [];
+                    const localRemovals: unknown[] = [];
+                    const localSubscription = fixture.registry.stableEventsBroker!.subscribeHost({
+                        target: { eventId: MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, scope: { kind: 'machine' } },
+                        isCurrent: () => true, listener(event) { localRemovals.push(event.payload); },
+                    });
                     const subscription = fixture.registry.stableEventsBroker!.subscribeHost({
                         target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
                         isCurrent: () => true, listener(event) { custodianFacts.push(event.payload); },
@@ -254,12 +259,14 @@ it.each(['backup', 'backup receiver', 'Project setup', 'Project removal', 'Proje
                     expect(result).toMatchObject({ ok: true });
                     await vi.waitFor(() => expect(published).toHaveLength(1));
                     expect(custodianFacts).toEqual([]);
+                    await vi.waitFor(() => expect(localRemovals).toEqual([{ physicalRoot: capturedRoot }]));
                     await vi.waitFor(async () => {
                         const after = JSON.parse(await readFile(portsStatePath, 'utf8'));
                         expect(after.assignments[capturedRoot]).toBeUndefined();
                         expect(after.assignments[siblingRoot]).toEqual(before.assignments[siblingRoot]);
                     });
                     await subscription.dispose();
+                    await localSubscription.dispose();
                 } else {
                 expect(runtime.publishSetupSettlement).toBeTypeOf('function');
                 const settle = (operationId: string) => runtime.publishSetupSettlement!({ workspace,

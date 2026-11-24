@@ -1,4 +1,4 @@
-export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema,
+export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema,
     MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema, WorktreeCreatedEventV1ProtocolSchema,
     GuardStoppedEventV1ProtocolSchema, ConnectedServiceQuotaEventV1ProtocolSchema, ConnectedServiceCredentialHealthEventV1ProtocolSchema, ProjectSetupSettledEventV1ProtocolSchema } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 export type { MachineServiceObservationV1, WorktreeRemovedEventV1, WorktreeCreatedEventV1, GuardStoppedEventV1, ConnectedServiceQuotaEventV1, ConnectedServiceCredentialHealthEventV1, ProjectSetupSettledEventV1 }

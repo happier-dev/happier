@@ -1,4 +1,4 @@
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from './machineServiceObservationV1.js';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1 } from './machineServiceObservationV1.js';
 import { PluginDomainDataKvChangeHintSchema } from '../../changes/pluginDomainDataKv.js';
 import { AccountKvChangeHintV1Schema } from '../../changes/accountKv.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -108,6 +108,7 @@ export type RuntimeHostEventIdV1 =
   `${typeof HAPPIER_RUNTIME_HOST_EVENT_PREFIX_V1}${HostSemanticEventKindV1}`;
 export type HostEventIdV1 = RuntimeHostEventIdV1
   | typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1
+  | typeof MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1
   | typeof HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1
   | typeof HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1
   | typeof HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1
@@ -121,6 +122,7 @@ export type HostEventScopeV1 =
   | Readonly<{ kind: 'session'; sessionId: string }>;
 
 export type AutomationHostEventScopeV1 = Readonly<{ kind: 'account' }>;
+export type MachineHostEventScopeV1 = Readonly<{ kind: 'machine' }>;
 
 /** Lossy wake only: definitions and credentials remain behind their authorized readers. */
 export const AutomationEventSourcesInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
@@ -220,6 +222,7 @@ export const RUNTIME_HOST_EVENT_IDS_V1 = Object.freeze(ALL_HOST_SEMANTIC_EVENT_K
 export const HOST_EVENT_IDS_V1 = Object.freeze([
   ...RUNTIME_HOST_EVENT_IDS_V1,
   MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1,
+  MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1,
   HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1,
   HAPPIER_AUTOMATION_EVENT_SOURCES_INVALIDATED_HOST_EVENT_ID_V1,
   HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1,
@@ -273,6 +276,7 @@ export const AutomationHostEventTargetV1Schema = lazyZodSchema(() => z.strictObj
 export const HostEventTargetV1Schema = lazyZodSchema(() => z.union([
   RuntimeHostEventTargetV1Schema,
   z.strictObject({ eventId: z.literal(MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1), scope: AutomationHostEventScopeV1Schema }),
+  z.strictObject({ eventId: z.literal(MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1), scope: z.strictObject({ kind: z.literal('machine') }) }),
   AutomationHostEventTargetV1Schema,
   z.strictObject({ eventId: z.literal(HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1), scope: AutomationHostEventScopeV1Schema }),
   z.strictObject({ eventId: z.literal(HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1),
@@ -311,6 +315,10 @@ export type AutomationRunStateChangedHostEventCatalogEntryV1 = Readonly<{
 }>;
 
 export type HostEventCatalogEntryV1 =
+  | Readonly<{ id: typeof MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1;
+    canonicalProducer: 'project-checkout-removal'; sourceProducers: readonly ['project-checkout-removal'];
+    payloadType: 'MachineWorktreeRemovedHostEventV1'; privacy: 'machine';
+    allowedScopes: readonly ['machine']; realm: 'daemon'; disposition: 'public'; }>
   | Readonly<{ id: typeof MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1;
     canonicalProducer: 'machine-service-transition'; sourceProducers: readonly ['backup-run-settlement', 'machine-vitals-transition'];
     payloadType: 'MachineServiceObservationV1'; privacy: 'account';
@@ -355,6 +363,10 @@ export type HostEventCatalogEntryV1 =
   }>;
 
 export const HOST_EVENT_CATALOG_V1: readonly HostEventCatalogEntryV1[] = Object.freeze([
+  Object.freeze({ id: MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1, canonicalProducer: 'project-checkout-removal',
+    sourceProducers: Object.freeze(['project-checkout-removal'] as const),
+    payloadType: 'MachineWorktreeRemovedHostEventV1', privacy: 'machine',
+    allowedScopes: Object.freeze(['machine'] as const), realm: 'daemon', disposition: 'public' }),
   Object.freeze({ id: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, canonicalProducer: 'machine-service-transition',
     sourceProducers: Object.freeze(['backup-run-settlement', 'machine-vitals-transition'] as const),
     payloadType: 'MachineServiceObservationV1', privacy: 'account',

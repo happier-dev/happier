@@ -3,7 +3,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1,
+    type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
 import { logger } from '@/ui/logger';
@@ -115,6 +116,10 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
                     code: typeof code === 'string' ? code : 'project_worktree_ports_unavailable',
                 });
             });
+            // Machine-local capture custody follows the filesystem effect. The
+            // Account observation below keeps its original requester audience.
+            publishDaemonHostEvent({ eventId: MACHINE_WORKTREE_REMOVED_HOST_EVENT_V1,
+                scope: { kind: 'machine' }, payload: { physicalRoot } }, () => false);
             const observation = {
                 kind: 'worktreeRemoved', serverId: runtime.serverId, occurredAt: Date.now(), removal: {
                     workspace: association ? workspaceAddressFromRefV1(association.workspace) : null,
