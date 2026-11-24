@@ -2212,7 +2212,7 @@ describe('UI Workflow Action front door', () => {
                 ]);
                 expect(outcomes).toMatchObject([
                     { ok: false, errorCode: 'content_unavailable' },
-                    { ok: false, errorCode: 'content_unavailable' },
+                    { ok: false, errorCode: 'action_disabled', details: { featureDecision: { state: 'disabled' } } },
                 ]);
                 expect(h.transport).not.toHaveBeenCalled();
                 expect(h.operations).toEqual([]);
