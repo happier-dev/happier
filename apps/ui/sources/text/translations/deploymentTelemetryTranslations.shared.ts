@@ -71,6 +71,7 @@ export type Copy = Readonly<{
     metricsDescription: string;
     sampling: string;
     samplingUnset: string;
+    samplingAuthored: string;
     samplingSet: (p: Readonly<{ percent: string }>) => string;
     samplingVariables: string;
     samplingLower: string;
@@ -170,7 +171,8 @@ const en: Copy = {
       'Heap, garbage collection, request duration and requests in flight.',
     sampling: 'Trace sampling',
     samplingUnset: 'Sampler variable not set (SDK default 100%).',
-    samplingSet: ({ percent }) => `Environment sampler: ${percent}.`,
+    samplingAuthored: 'Set by your app for services with their own sampler.',
+    samplingSet: ({ percent }) => `Environment sampler: ${percent} (applies on deploy).`,
     samplingVariables: 'Set in this Environment’s Variables.',
     samplingLower: 'Lower…',
     samplingPrompt: 'Enter the percentage of traces to keep (0 to 100). This applies at the next deploy.',

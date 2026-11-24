@@ -40,6 +40,7 @@ export type DeploymentTelemetrySheetInput = Readonly<{
   detail: DeploymentEnvironmentDetailV1;
   lifetime: ServerAccountScopeLifetime;
   environmentName: string;
+  appAuthoredSampling?: boolean;
   /** The Environment's `setTelemetry` Action callback (deploymentActions), at the revision this sheet read. */
   setTelemetry: (input: DeploymentUiTelemetryInput) => Promise<DeploymentUiTelemetryResult>;
   setBindings: (input: DeploymentUiBindingsInput) => Promise<DeploymentBindingsSetResultV1>;
@@ -185,6 +186,10 @@ export function DeploymentTelemetrySheet(
       : t('deploymentTelemetry.sheet.samplingSet', {
           percent: new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 2 }).format(ratio),
         });
+  const appliedSampling = props.appAuthoredSampling ? t('deploymentTelemetry.sheet.samplingAuthored') : null;
+  const samplingSubtitle = appliedSampling && (samplingInVariables || ratio !== null)
+    ? `${appliedSampling}\n${samplingDetail}`
+    : appliedSampling ?? samplingDetail;
   const editSampling = () => submit(async () => {
     const entered = await Modal.prompt(t('deploymentTelemetry.sheet.sampling'), t('deploymentTelemetry.sheet.samplingPrompt'), {
       inputType: 'numeric', defaultValue: ratio === null ? undefined : String(ratio * 100),
@@ -362,7 +367,8 @@ export function DeploymentTelemetrySheet(
             <Item
               testID="project-deployments.telemetry.sampling"
               title={t('deploymentTelemetry.sheet.sampling')}
-              subtitle={samplingDetail}
+              subtitle={samplingSubtitle}
+              subtitleLines={appliedSampling ? 0 : undefined}
               detail={canManage && !samplingInVariables ? ratio === null ? t('deploymentTelemetry.sheet.samplingLower') : t('common.edit') : undefined}
               disabled={saving || !canManage || samplingInVariables}
               onPress={canManage && !samplingInVariables ? () => { void editSampling(); } : undefined}

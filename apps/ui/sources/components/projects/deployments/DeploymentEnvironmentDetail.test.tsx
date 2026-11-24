@@ -551,6 +551,39 @@ it('waits for the serving receipt to confirm delivery of managed telemetry befor
   } finally { await screen.unmount(); controller.retire(); }
 });
 
+it.each([true, false])('shows app-controlled sampling only for a serving member (serving: %s)', async current => {
+  const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
+  const { ModalProvider } = await import('@/modal');
+  const { t } = await import('@/text');
+  const detail = environmentDetailForHome({ environment: environmentHeaderForHome({ telemetryMachineId: 'collector' }) });
+  const servingId = detail.targetLinks.find(row => row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink.activeDeploymentId;
+  if (!servingId) throw new Error('Expected a serving receipt in the fixture');
+  const fixture = createDeploymentReceiptDetailV1();
+  const serving = createDeploymentReceiptDetailV1({ deployment: { ...fixture.deployment, id: servingId },
+    content: { ...fixture.content, machineResults: fixture.content.machineResults.map(member => ({ ...member,
+      currentDeploymentId: current ? servingId : 'previous-deployment',
+      telemetrySampling: [{ service: 'app', provenance: 'authored' }],
+    })) } });
+  const { controller } = controllerFor({ detail, receipt: serving });
+  const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  const screen = await renderScreen(<AppPresentationPlatformProvider><ModalProvider>
+    <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+      accountId={scope.accountId} serverId={scope.serverId} phone={false} deploy={null} review={noReview}
+      onOpenReceipt={() => {}} lifetime={lifetime} />
+    </ModalProvider></AppPresentationPlatformProvider>);
+  try {
+    await waitForContent(screen, 'project-deployments.environment.services');
+    await selectEnvironmentTab(screen, 'telemetry');
+    await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
+    await waitForContent(screen, 'project-deployments.telemetry.menu.settings');
+    await screen.pressByTestIdAsync('project-deployments.telemetry.menu.settings');
+    await waitForContent(screen, 'project-deployments.telemetry.sampling');
+    if (current) expect(screen.getTextContent()).toContain(t('deploymentTelemetry.sheet.samplingAuthored'));
+    else expect(screen.getTextContent()).not.toContain(t('deploymentTelemetry.sheet.samplingAuthored'));
+    expect(screen.getTextContent().includes(t('deploymentTelemetry.sheet.samplingUnset'))).toBe(!current);
+  } finally { await screen.unmount(); controller.retire(); }
+});
+
 // ENV-REINSTALL-1123 (owner 11-23): a reinstalled Machine keeps its Environment. The read's `runtimeReinstall` is the
 // trigger; the Overview offers one "Reinstall on this Machine", or says why it can't when someone else controls it.
 it.each([true, false])('offers Reinstall on this Machine from the read, with what stays and which secrets re-seal (available: %s)', async available => {

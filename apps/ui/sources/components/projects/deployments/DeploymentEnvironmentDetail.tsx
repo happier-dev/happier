@@ -516,6 +516,14 @@ export const DeploymentEnvironmentDetail = React.memo(
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const activeValue = active.snapshot.value;
     const activeReceipt = activeValue?.content ? activeValue : null;
+    const appAuthoredSampling = tab === 'telemetry' && activeReceipt?.deployment.id === activeId
+      && activeReceipt.content.machineResults.some(member => {
+        if (member.currentDeploymentId !== activeId
+            || !member.telemetrySampling?.some(sample => sample.provenance === 'authored')) return false;
+        const version = detail.memberVersions[member.machineId];
+        return version?.state === 'active' && !version.uncertain
+          && version.installationId === member.installationId && version.deploymentId === activeId;
+      });
     const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
     // What serves is live at its address; a first deploy that serves ends there (P60 §1 step 5): its address
     // leads the page and Open is the one primary until the Environment has deployed again.
@@ -1465,6 +1473,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             />
           ) : tab === 'telemetry' ? (
             <DeploymentTelemetryPanel detail={detail} lifetime={props.lifetime ?? null}
+              appAuthoredSampling={appAuthoredSampling}
               active={props.demand.mounted && props.demand.visible && props.demand.focused}
               telemetryApplied={runtime?.source.kind === 'plugin' ? undefined : activeId === null ? false
                 : activeReceipt?.deployment.id === activeId ? activeReceipt.content.machineResults.some(member =>

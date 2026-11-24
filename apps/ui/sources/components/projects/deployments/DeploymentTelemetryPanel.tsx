@@ -71,6 +71,7 @@ export function DeploymentTelemetryPanel(
     active?: boolean;
     /** Whether the serving native deployment delivered this collector's bindings, when observed. */
     telemetryApplied?: boolean;
+    appAuthoredSampling?: boolean;
     /** Re-read the Environment after a save, so the next save carries its new revision. */
     onChanged: () => void;
   }>,
@@ -85,11 +86,12 @@ export function DeploymentTelemetryPanel(
       detail,
       lifetime,
       environmentName: props.environmentName,
+      appAuthoredSampling: props.appAuthoredSampling,
       setTelemetry: input => createDeploymentActions(lifetime, environment.projectSourceId).setTelemetry(environment, input),
       setBindings: input => createDeploymentActions(lifetime, environment.projectSourceId).setBindings(input),
       onSaved: props.onChanged,
     });
-  }, [detail, environment, lifetime, props.environmentName, props.onChanged]);
+  }, [detail, environment, lifetime, props.appAuthoredSampling, props.environmentName, props.onChanged]);
   if (!collectorId) {
     return (
       <EmptyState
