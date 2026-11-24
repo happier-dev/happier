@@ -197,27 +197,42 @@ export async function clearBrowserRecords(): Promise<void> {
     });
 }
 
+function browserRecordPrefixRange(prefix: string): IDBKeyRange {
+    // IndexedDB orders strings by UTF-16 code units. Advance the last unit
+    // that has a successor, then drop the suffix to exclude the next prefix.
+    for (let index = prefix.length - 1; index >= 0; index--) {
+        const unit = prefix.charCodeAt(index);
+        if (unit < 0xffff) {
+            const next = prefix.slice(0, index) + String.fromCharCode(unit + 1);
+            return IDBKeyRange.bound(prefix, next, false, true);
+        }
+    }
+    // The first binary key sorts immediately after the string key space.
+    return IDBKeyRange.bound(prefix, new ArrayBuffer(0), false, true);
+}
+
 export async function listBrowserRecords(prefix: string): Promise<Map<string, string>> {
     if (isEmbedWindowContext()) return new Map(Array.from(memoryRecords).filter(([key]) => key.startsWith(prefix)));
     const database = await openBrowserRecordDatabase();
+    const range = browserRecordPrefixRange(prefix);
     return new Promise((resolve, reject) => {
         const transaction = database.transaction(STORE, 'readonly');
-        const request = transaction.objectStore(STORE).openCursor();
-        const records = new Map<string, string>();
-        request.onsuccess = () => {
-            const cursor = request.result;
-            if (!cursor) return;
-            if (typeof cursor.key === 'string' && cursor.key.startsWith(prefix)) {
-                if (typeof cursor.value !== 'string') {
-                    transaction.abort();
+        const store = transaction.objectStore(STORE);
+        // Both bulk reads share the same transaction and key order, so their results pair by index.
+        const keys = store.getAllKeys(range);
+        const values: IDBRequest<unknown[]> = store.getAll(range);
+        transaction.oncomplete = () => {
+            const records = new Map<string, string>();
+            for (const [index, key] of keys.result.entries()) {
+                const value = values.result[index];
+                if (typeof key !== 'string' || typeof value !== 'string') {
                     reject(new Error('Invalid browser record; stored data was preserved.'));
                     return;
                 }
-                records.set(cursor.key, cursor.value);
+                records.set(key, value);
             }
-            cursor.continue();
+            resolve(records);
         };
-        transaction.oncomplete = () => resolve(records);
         transaction.onabort = () => reject(transaction.error ?? new Error('Browser record listing aborted.'));
         transaction.onerror = () => reject(transaction.error);
     });

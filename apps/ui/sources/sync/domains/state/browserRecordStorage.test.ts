@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 import { forceCloseDatabase, IDBFactory } from 'fake-indexeddb';
-import { clearBrowserRecords, deleteBrowserRecord, listBrowserRecords, readBrowserRecord, updateBrowserRecord, writeBrowserRecord } from './browserRecordStorage';
+import { clearBrowserRecords, deleteBrowserRecord, listBrowserRecords, readBrowserRecord, updateBrowserRecord, updateBrowserRecords, writeBrowserRecord } from './browserRecordStorage';
 
 describe('browser large-record transactions', () => {
     it('indexes existing version-one pictures by kind without replacing their bytes or keys', async () => {
@@ -67,6 +67,31 @@ describe('browser large-record transactions', () => {
         await deleteBrowserRecord('large:scope');
         expect(await readBrowserRecord('large:scope')).toBeUndefined();
         expect(await readBrowserRecord('other:scope')).toBe('keep');
+    });
+
+    it('lists a record namespace without waiting for one browser cursor round trip per record', async () => {
+        const drafts = new Map([
+            ['cursor-cost:drafts:', 'predecessor scope'],
+            ['cursor-cost:drafts:session', 'session draft'],
+            ['cursor-cost:drafts:\uffffmore', 'draft at the upper edge'],
+        ]);
+        const records = new Map([
+            ...drafts,
+            ...Array.from({ length: 370 }, (_, index) => [`cursor-cost:other:${index}`, 'unrelated record'] as const),
+            ['cursor-cost:drafts;', 'neighbor namespace'],
+        ]);
+        await updateBrowserRecords([...records.keys()], () => ({ values: records, result: undefined }));
+        const advance = vi.spyOn(IDBCursor.prototype, 'continue');
+        try {
+            expect(await listBrowserRecords('cursor-cost:drafts:')).toEqual(drafts);
+            expect(advance).toHaveBeenCalledTimes(0);
+        } finally {
+            advance.mockRestore();
+            await updateBrowserRecords([...records.keys()], () => ({
+                values: new Map([...records.keys()].map(key => [key, undefined])),
+                result: undefined,
+            }));
+        }
     });
 
     it('serializes concurrent read-modify-write callers without losing records', async () => {
