@@ -162,6 +162,7 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
     | 'getConnectedServiceStateSharingDescriptor'
     | 'getConnectedServiceSharedStateFileMerge'
     | 'getConnectedServiceRuntimeAuthAdapter'
+    | 'sanitizeRetainedConnectedServiceMaterializedHome'
     | 'verifyResumeReachable'
 > {
     const requestAuthUses = params.connectedAccountLaunch.requestAuthUses;
@@ -183,6 +184,7 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
         : declaredSwitchContinuity;
     const stateSharingDescriptor = params.connectedAccountLaunch.stateSharingDescriptor;
     const continuity = params.connectedAccountLaunch.continuity;
+    const sanitizeRetainedMaterializedHome = continuity?.sanitizeRetainedMaterializedHome;
     const nativeAuthCodec = continuity?.nativeAuthCodec;
     const nativeHomeEnvironmentKey = stateSharingDescriptor?.nativeHome?.environmentKey;
     if (
@@ -421,6 +423,13 @@ export function projectAgentConnectedAccountLaunchCatalogEntry(params: Readonly<
         ...(runtimeAuthAdapter === null
             ? {}
             : { getConnectedServiceRuntimeAuthAdapter: async () => runtimeAuthAdapter }),
+        ...(sanitizeRetainedMaterializedHome === undefined
+            ? {}
+            : {
+                sanitizeRetainedConnectedServiceMaterializedHome: async (identityRoot: string) => {
+                    if (params.isCurrent()) await sanitizeRetainedMaterializedHome(identityRoot);
+                },
+            }),
         ...(continuity?.verifyResumeReachable === undefined
             ? {}
             : {

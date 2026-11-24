@@ -345,4 +345,6 @@ export type AgentConnectedAccountContinuityV1 = Readonly<{
   verifyResumeReachable?: (
     input: AgentConnectedAccountResumeReachabilityInputV1,
   ) => Promise<AgentConnectedAccountResumeReachabilityResultV1>;
+  /** Evict reconstructible data from this Agent's stopped native home under the host-owned materialization identity root. */
+  sanitizeRetainedMaterializedHome?: (identityRoot: string) => Promise<void>;
 }>;

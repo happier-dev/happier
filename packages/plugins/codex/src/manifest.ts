@@ -7,6 +7,7 @@ import { CODEX_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabel
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 
 import { AGENT_DEFINITION, AGENT_STATE_SHARING_DESCRIPTOR } from './agent/definition.js';
+import { sanitizeCodexRetainedMaterializedHome } from './agent/auth/services/state/sharing/sanitizeRetainedMaterializedHome.js';
 import { CODEX_ACP_MANAGED_DEPENDENCY } from './agent/installables/definition.js';
 import { CODEX_SUPPORTED_RUNTIME_RELEASE_TAG } from './agent/cli/supportedRuntime.js';
 import {
@@ -404,6 +405,7 @@ export const CODEX_PLUGIN = definePlugin({
           nativeAuthCodec: createCodexConnectedAccountNativeAuthCodec(),
           mergeSharedStateFile: reconcileCodexSharedJsonlState,
           runtimeAuthAdapter: createCodexConnectedServiceRuntimeAuthAdapter(),
+          sanitizeRetainedMaterializedHome: sanitizeCodexRetainedMaterializedHome,
           verifyResumeReachable: verifyResumeReachableCodex,
         },
       },
