@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol/machines/machineStoredContent";
 
 import { validateExistingSessionAutomationTargetTx } from "./automationExistingSessionValidation";
 
@@ -15,6 +16,9 @@ function layoutOneSessionFixture(params: Readonly<{
 }>) {
     return {
         id: "session-1",
+        accountId: "owner",
+        originKind: null,
+        originRunId: null,
         encryptionMode: params.encryptionMode ?? "plain",
         metadata: JSON.stringify({
             v: 1,
@@ -22,6 +26,36 @@ function layoutOneSessionFixture(params: Readonly<{
         }),
         metadataLayoutVersion: 1,
         ownerMetadata: params.ownerMetadata,
+    };
+}
+
+function ownerMachineAccessBoundary(mode: "plain" | "e2ee" = "plain", revokedAt: Date | null = null) {
+    const machine = {
+        id: "machine-1",
+        accountId: "owner",
+        kind: "persistent",
+        installationId: "installation-1",
+        revokedAt,
+        replacedByMachineId: null,
+        account: { encryptionMode: mode, status: "active" },
+        grants: [],
+        metadata: mode === "plain" ? encodePlainMachineStoredContent({
+            host: "host",
+            platform: "linux",
+            happyCliVersion: "test",
+            homeDir: "/home/test",
+            happyHomeDir: "/home/test/.happier",
+        }) : "encrypted-machine-metadata",
+        daemonState: null,
+        dataEncryptionKey: mode === "plain" ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64") : null,
+    };
+    return {
+        accessKey: { findMany: vi.fn(async () => [{
+            machineId: machine.id,
+            machine: { revokedAt, replacedByMachineId: null },
+            session: { accountId: "owner" },
+        }]) },
+        machine: { findUnique: vi.fn(async () => machine) },
     };
 }
 
@@ -64,10 +98,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
     });
 
     it("accepts a plain-account layout-one target proven by current machine access correspondence", async () => {
-        const accessKeyFindFirst = vi.fn(async () => ({
-            machine: { revokedAt: null, replacedByMachineId: null },
-            session: { accountId: "owner" },
-        }));
+        const machineAccess = ownerMachineAccessBoundary();
         const sessionFindFirst = vi.fn(async () => layoutOneSessionFixture({
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
         }));
@@ -75,7 +106,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
         const tx = {
             session: { findFirst: sessionFindFirst },
             account: { findUnique: accountFindUnique },
-            accessKey: { findFirst: accessKeyFindFirst },
+            ...machineAccess,
         };
 
         await expect(validateExistingSessionAutomationTargetTx({
@@ -98,11 +129,12 @@ describe("validateExistingSessionAutomationTargetTx", () => {
                 id: true,
                 encryptionMode: true,
                 metadata: true,
+                metadataBytes: true,
                 metadataLayoutVersion: true,
                 ownerMetadata: true,
             },
         });
-        expect(accessKeyFindFirst).toHaveBeenCalledWith({
+        expect(machineAccess.accessKey.findMany).toHaveBeenCalledWith({
             where: {
                 accountId: "owner",
                 sessionId: "session-1",
@@ -112,6 +144,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
                 session: { accountId: "owner" },
             },
             select: {
+                machineId: true,
                 machine: { select: { revokedAt: true, replacedByMachineId: true } },
                 session: { select: { accountId: true } },
             },
@@ -119,10 +152,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
     });
 
     it("accepts an e2ee layout-one target through the same correspondence without opening owner content", async () => {
-        const accessKeyFindFirst = vi.fn(async () => ({
-            machine: { revokedAt: null, replacedByMachineId: null },
-            session: { accountId: "owner" },
-        }));
+        const machineAccess = ownerMachineAccessBoundary("e2ee");
         const sessionFindFirst = vi.fn(async () => layoutOneSessionFixture({
             encryptionMode: "e2ee",
             ownerMetadata: JSON.stringify({
@@ -134,7 +164,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
         const tx = {
             session: { findFirst: sessionFindFirst },
             account: { findUnique: accountFindUnique },
-            accessKey: { findFirst: accessKeyFindFirst },
+            ...machineAccess,
         };
 
         await expect(validateExistingSessionAutomationTargetTx({
@@ -145,14 +175,10 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             strictExistingSessionId: "session-1",
         })).resolves.toBeUndefined();
 
-        expect(accessKeyFindFirst).toHaveBeenCalled();
+        expect(machineAccess.accessKey.findMany).toHaveBeenCalled();
     });
 
     it("validates layout-one Session owner bytes against persisted source mode during a target-mode transition", async () => {
-        const accessKeyFindFirst = vi.fn(async () => ({
-            machine: { revokedAt: null, replacedByMachineId: null },
-            session: { accountId: "owner" },
-        }));
         const sessionFindFirst = vi.fn(async () => layoutOneSessionFixture({
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
         }));
@@ -164,7 +190,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
                 // the persisted Account and Session owner bytes are still the
                 // plain source state until the transition owner applies them.
                 account: { findUnique: vi.fn(async () => ({ encryptionMode: "plain" })) },
-                accessKey: { findFirst: accessKeyFindFirst },
+                ...ownerMachineAccessBoundary(),
             } as any,
             accountId: "owner",
             targetType: "existing_session",
@@ -174,7 +200,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
     });
 
     it("fails typed when no available Account machine currently holds the layout-one target", async () => {
-        const accessKeyFindFirst = vi.fn(async () => null);
+        const accessKeyFindMany = vi.fn(async () => []);
         const sessionFindFirst = vi.fn(async () => layoutOneSessionFixture({
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
         }));
@@ -184,7 +210,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             tx: {
                 session: { findFirst: sessionFindFirst },
                 account: { findUnique: accountFindUnique },
-                accessKey: { findFirst: accessKeyFindFirst },
+                accessKey: { findMany: accessKeyFindMany },
             } as any,
             accountId: "owner",
             targetType: "existing_session",
@@ -192,7 +218,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             strictExistingSessionId: "session-1",
         })).rejects.toThrow("existing session target is unavailable for automation execution");
 
-        expect(accessKeyFindFirst).toHaveBeenCalledWith(
+        expect(accessKeyFindMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({
                     accountId: "owner",
@@ -205,10 +231,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
     });
 
     it("fails typed when the only correspondence candidate is a revoked machine", async () => {
-        const accessKeyFindFirst = vi.fn(async () => ({
-            machine: { revokedAt: new Date(), replacedByMachineId: null },
-            session: { accountId: "owner" },
-        }));
+        const machineAccess = ownerMachineAccessBoundary("plain", new Date());
         const sessionFindFirst = vi.fn(async () => layoutOneSessionFixture({
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
         }));
@@ -217,7 +240,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             tx: {
                 session: { findFirst: sessionFindFirst },
                 account: { findUnique: vi.fn(async () => ({ settings: null, encryptionMode: "plain" })) },
-                accessKey: { findFirst: accessKeyFindFirst },
+                ...machineAccess,
             } as any,
             accountId: "owner",
             targetType: "existing_session",
@@ -226,7 +249,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
         })).rejects.toThrow("existing session target is unavailable for automation execution");
 
         // The same-owner re-check stays in place behind the query predicate.
-        expect(accessKeyFindFirst).toHaveBeenCalledWith(
+        expect(machineAccess.accessKey.findMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({
                     machine: { revokedAt: null, replacedByMachineId: null },
@@ -237,7 +260,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
     });
 
     it("rejects a plain-account encrypted template targeting a plain layout-one Session", async () => {
-        const accessKeyFindFirst = vi.fn();
+        const accessKeyFindMany = vi.fn();
         const sessionFindFirst = vi.fn(async () => layoutOneSessionFixture({
             encryptionMode: "plain",
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
@@ -247,7 +270,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             tx: {
                 session: { findFirst: sessionFindFirst },
                 account: { findUnique: vi.fn(async () => ({ settings: null, encryptionMode: "plain" })) },
-                accessKey: { findFirst: accessKeyFindFirst },
+                accessKey: { findMany: accessKeyFindMany },
             } as any,
             accountId: "owner",
             targetType: "existing_session",
@@ -260,7 +283,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
             }),
         })).rejects.toThrow("encrypted templates in a plain account require an e2ee existing session");
 
-        expect(accessKeyFindFirst).not.toHaveBeenCalled();
+        expect(accessKeyFindMany).not.toHaveBeenCalled();
     });
 
     it("fails typed when layout one stores a non-canonical split owner envelope", async () => {
@@ -271,7 +294,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
         const tx = {
             session: { findFirst: sessionFindFirst },
             account: { findUnique: accountFindUnique },
-            accessKey: { findFirst: vi.fn() },
+            accessKey: { findMany: vi.fn() },
         };
 
         await expect(validateExistingSessionAutomationTargetTx({
@@ -293,6 +316,7 @@ describe("validateExistingSessionAutomationTargetTx", () => {
                 id: true,
                 encryptionMode: true,
                 metadata: true,
+                metadataBytes: true,
                 metadataLayoutVersion: true,
                 ownerMetadata: true,
             },

@@ -34,15 +34,17 @@ async function createManagedTargetBackfillBoundary(app: FastifyInstance) {
     const automations: Parameters<typeof backfillAutomationManagedTargetsV1>[0]['automations'] = {
         listDetails: async input => {
             const query = AutomationDefinitionDetailsRequestSchema.parse({ ...input, details: true });
-            const previous = lists.at(-1);
             // This is a request-cost contract: each pass consumes the previous
             // server-issued continuation once, including after a row conflict.
             const response = await app.inject({ method: 'POST', url: '/v3/automations/query', headers, payload: query });
             expect(response.statusCode, response.body).toBe(200);
             const page = AutomationDefinitionDetailsResponseSchema.parse(response.json());
-            lists.push({ ...(query.cursor ? { cursor: query.cursor } : {}), nextCursor: page.nextCursor,
-                ids: page.automations.map(row => row.id) });
-            if (previous && previous.nextCursor !== null) expect(query.cursor).toBe(previous.nextCursor);
+            if (query.managedTargetUnindexed) {
+                const previous = lists.at(-1);
+                if (previous && previous.nextCursor !== null) expect(query.cursor).toBe(previous.nextCursor);
+                lists.push({ ...(query.cursor ? { cursor: query.cursor } : {}), nextCursor: page.nextCursor,
+                    ids: page.automations.map(row => row.id) });
+            }
             return page;
         },
         patch: async (id, input, beforeWrite) => {
