@@ -61,7 +61,7 @@ export const WORKFLOW_EFFECT_ACTION_SPECS_V1 = [
     safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'account_automation',
     executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'webhooks_call', rpcMethod: 'webhooks.call' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: WorkflowWebhookInputV1Schema, outputSchema: WorkflowWebhookOutputV1Schema,
     inputHints: { fields: [
       { path: 'url', title: 'Webhook URL', widget: 'text', required: true },
@@ -74,7 +74,7 @@ export const WORKFLOW_EFFECT_ACTION_SPECS_V1 = [
     safety: 'danger', sideEffectClass: 'danger', requiredAuthority: 'account_automation',
     executionPlacement: 'machine', placements: [],
     bindings: { mcpToolName: 'machines_command_run', rpcMethod: 'machines.command.run' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     inputSchema: WorkflowMachineCommandInputV1Schema, outputSchema: WorkflowMachineCommandOutputV1Schema,
     inputHints: { fields: [
       { path: 'command', title: 'Command', widget: 'textarea', required: true },

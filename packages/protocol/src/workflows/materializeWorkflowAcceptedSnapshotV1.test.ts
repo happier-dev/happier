@@ -4,8 +4,10 @@ import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessi
 import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
 import type { ActionCaller, ActionExecutorContext } from '../actions/executor/types.js';
 import { resolveActionCurrentSessionScopeFailure } from '../actions/executor/sessionListAccess.js';
-import { actionSpecToActionDefinitionV1, readCompleteActionSpecV1 } from '../actions/actionCatalog.js';
-import { getActionSpec } from '../actions/actionSpecs.js';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readCompleteActionSpecV1 } from '../actions/actionCatalog.js';
+import { ActionIdSchema } from '../actions/actionIds.js';
+import { getActionSpec, listActionSpecsForSurface } from '../actions/actionSpecs.js';
+import { resolveActionSurfaceAvailability } from '../actions/actionSurfaceAvailability.js';
 import { createActionExecutor } from '../actions/actionExecutor.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
@@ -69,6 +71,42 @@ async function finiteContract(actionId: 'projects.script.run' | 'projects.comput
 function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = {}) {
   return materializeWorkflowAcceptedSnapshotV1({ definition, context, admission: { kind: 'user' }, effects: { resolveTargetAvailability: available }, ...overrides });
 }
+
+it.each(Object.entries({
+  'webhooks.call': { url: 'https://workflow.example.test/', body: { ready: true } },
+  'machines.command.run': { command: 'echo ready' },
+}))('materializes saved %s steps and excludes them from direct UI dispatch', async (id, input) => {
+  const actionId = ActionIdSchema.parse(id);
+  const saved = {
+    version: 1, defaults: {}, blocks: [{
+      kind: 'action', id: 'effect', actionId,
+      input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal', value }])),
+    }],
+  };
+  const validation = validateWorkflowDefinition(saved);
+  expect(validation).toMatchObject({ valid: true });
+  const executor = createActionExecutor({});
+  expect(await materialize({ definition: saved, definitionValidation: validation, effects: {
+    resolveTargetAvailability: available,
+    readActionContract: async requestedId => freezeWorkflowActionContractV1(await readCompleteActionSpecV1({
+      actionId: requestedId,
+      read: async request => {
+        const result = await executor.execute('action.spec.get', request, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        });
+        if (!result.ok) throw new Error(result.errorCode);
+        return result.result;
+      },
+    })),
+  } })).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{
+    blockId: 'effect', actionId, actionInput: input,
+  }] } });
+  expect(listActionSpecsForSurface('ui').map(spec => spec.id)).not.toContain(actionId);
+  expect(resolveActionSurfaceAvailability({ actionId, surface: 'ui' })).toMatchObject({
+    available: false, reason: 'unsupported_surface',
+  });
+});
+
 it('refuses an effective detached step in a managed in-place Session Run', async () => {
   const mixedDefinition = { ...definition, blocks: [...definition.blocks,
     { ...definition.blocks[0], id: 'background', execution: { executionTarget: { kind: 'detached_run' } } }] };

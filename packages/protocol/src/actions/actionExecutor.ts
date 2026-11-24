@@ -8,7 +8,7 @@ import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { createActionAutomationInvocationV1 } from './executor/actionSettlement.js';
 import { readActionOperandExecutionMachineV1 } from './executor/actionOperandExecutionMachine.js';
 import { actionAutomationAdmissionUnavailableV1 } from './executor/actionAutomationAdmission.js';
-import { isActionEffectHookableV1 } from './actionSpecs.js';
+import { isActionEffectHookableV1, isWorkflowStepActionSpecV1 } from './actionSpecs.js';
 import { prepareTeamGroupCreateActionInput, prepareTeamGroupUpdateActionInput, type TeamGroupCreateActionInputV1, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
 import { TEAM_GROUP_CREATE_ACTION_ID_V1, TEAM_GROUP_UPDATE_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
 import {
@@ -6450,7 +6450,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (requestedSpec) {
             const credentialFailure = credentialScopeFailure(requestedId, ctx, undefined, true);
             if (credentialFailure) return credentialFailure;
-            const requestedAvailability = resolveAvailabilityForContext(requestedSpec, ctx);
+            // Workflow preparation reads the same published contract through the
+            // app relay, including for steps with no direct app dispatch.
+            const workflowStepRead = ctx.surface === 'ui' && isWorkflowStepActionSpecV1(requestedSpec);
+            const requestedAvailability = resolveAvailabilityForContext(requestedSpec, ctx, workflowStepRead);
             if (requestedAvailability ? !requestedAvailability.available : !isActionEnabled(requestedSpec, ctx)) {
               return actionDisabled(requestedAvailability);
             }

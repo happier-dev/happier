@@ -6,6 +6,7 @@ import { act, Children, isValidElement, useState, type ComponentProps, type Reac
 import type { WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '@happier-dev/protocol/workflows';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
     DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -127,7 +128,15 @@ describe('useWorkflowActionCatalog', () => {
             await waitForHomeGovernance(() => {
                 const { phase, specs } = hook.getCurrent();
                 expect(phase, `Projection sections: ${[...sectionsRead].join(', ')}`).toBe('ready');
-                expect(specs.some(spec => spec.plugin?.id === 'acme.deploy')).toBe(true);
+                expect(specs).toEqual(expect.arrayContaining([
+                    ...WORKFLOW_EFFECT_ACTION_IDS_V1.map(id => expect.objectContaining({
+                        id, automation: expect.objectContaining({ workflowStep: true }),
+                    })),
+                    expect.objectContaining({
+                        title: 'Ship it', plugin: expect.objectContaining({ id: 'acme.deploy' }),
+                        automation: expect.objectContaining({ workflowStep: true }),
+                    }),
+                ]));
             });
             expect([...sectionsRead].sort()).toEqual([...demandedDaemonProjectionSections(deferred.manifest, PLUGIN_UI_SECTIONS)].sort());
             expect(sectionsRead.has('agentsById')).toBe(false);
