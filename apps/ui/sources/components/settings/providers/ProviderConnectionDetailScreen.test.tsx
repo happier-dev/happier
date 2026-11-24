@@ -12,6 +12,8 @@ import { ProviderConnectionV1Schema } from '@happier-dev/protocol/providers/conn
 import { serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import {
     DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
     PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
@@ -35,6 +37,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -813,7 +816,7 @@ describe('ProviderConnectionDetailScreen', () => {
         }
     });
 
-    it('enables the selected Machine from the header without changing the gateway hub', async () => {
+    it.each(['acquiring', 'enrolled guest'] as const)('enables from the gateway header after Home can address the %s Machine', async availability => {
         installBundledProviderDeclarationsRpcBoundary(providerHarness);
         const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway',
             source: { kind: 'contribution', contributionKey: 'happier.provider.cliproxyapi/cliproxyapi' },
@@ -821,10 +824,18 @@ describe('ProviderConnectionDetailScreen', () => {
             deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'machine', machineId: 'machine-b' },
             revision: 3, createdAt: 1, updatedAt: 1 });
         const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [saved] });
-        await account.restore({ accountId: 'account-gateway-half-on', catalog, machines,
-            waivedActions: ['providers.connections.update'] });
+        const accountId = 'account-gateway-half-on';
+        const serverIdentityId = 'srv_provider_detail';
+        const guest = availability === 'enrolled guest';
+        const initialMachines = machines.map(machine => machine.id !== 'machine-a' ? machine
+            : guest ? { ...machine, installationId: 'guest-installation', managedMachineRef: { homeId: serverIdentityId, managedId: 'managed-guest' },
+                metadata: { ...machine.metadata!, adminAccess: { version: 1, mode: 'none' } } }
+                : { ...machine, presenceProtocolVersion: 1 as const, active: false, activeAt: 1 });
+        await account.restore({ accountId, catalog, machines: initialMachines, serverIdentityId, currentAccount: true,
+            waivedActions: ['providers.connections.enabled.set'] });
         await account.home.selectHomes([account.serverId]);
         await account.selectMachine(account.serverId, 'machine-a');
+        if (guest) recordMachineRequestFailed({ serverId: account.serverId, accountId, machineId: 'machine-a' });
         // Admitted for the Account, but enabled on no machine: it runs nowhere yet.
         state.connection = createProviderConnectionViewFixture({ connectionId: saved.id,
             contributionKey: saved.source.kind === 'contribution' ? saved.source.contributionKey : null,
@@ -840,10 +851,38 @@ describe('ProviderConnectionDetailScreen', () => {
                 gateway: { status: 'idle', reachability: 'not_checked' } },
         });
         installDetailCatalog({ saved });
+        const actionId = 'providers.connections.enabled.set';
+        const actionPath = `/v1/actions/${actionId}`;
+        if (guest) {
+            account.home.answer(account.serverId, `${actionPath}/execution-authorization`, { select: body => {
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'guest-grant-root', binding: {
+                    accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId,
+                    machineId: 'machine-a', installationId: 'guest-installation', custodianAccountId: accountId,
+                    accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId,
+                    target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                } }) };
+            } });
+            account.home.answer(account.serverId, actionPath, { select: body => {
+                const { envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                return { body: { v: 1, actionId, requestId: envelope.requestId, execution: { ok: true,
+                    result: { status: 'success', action: 'setEnabled', connection: state.connection } } } };
+            } });
+        }
         const screen = await renderReadyProviderDetail(<DetailNavigationBoundary>
             <ProviderConnectionDetailScreen connectionId={saved.id} />
         </DetailNavigationBoundary>);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')?.props.accessibilityLabel)
+            .toBe('settingsProvidersCollection.onMachine(machine=Mac)'));
+        if (!guest) {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')?.props).toMatchObject({
+                value: false, disabled: true,
+            }));
+            expect(findComposite(screen, 'provider-connection-enabled', 'busy')?.props.busy).toBe(true);
+            expect(run).not.toHaveBeenCalled();
+            await act(async () => { await account.publishMachines(account.serverId, machines); });
+        }
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-enabled')?.props.disabled).toBe(false));
         // Not running anywhere reads as off, in the header, beside the one switch.
         expect(screen.findByTestId('provider-connection-enabled')?.props.value).toBe(false);
         const meta = findComposite(screen, 'provider-connection-header', 'meta')?.props.meta as Array<{ key: string; text: string }>;
@@ -852,9 +891,16 @@ describe('ProviderConnectionDetailScreen', () => {
         expect(screen.findByTestId('provider-connection-test')?.props.disabled).toBe(true);
         // The saved hub is machine-b. The header grants only the selected machine-a.
         await act(async () => { await screen.findByTestId('provider-connection-enabled')?.props.onValueChange(true); });
-        await waitForHomeGovernance(() => expect(run).toHaveBeenCalledWith(
-            expect.objectContaining({ action: 'setEnabled', scope: 'machine', machineId: 'machine-a', enabled: true }),
-            'machine:machine-a'));
+        const enable = { action: 'setEnabled', scope: 'machine', machineId: 'machine-a', enabled: true };
+        if (guest) {
+            await waitForHomeGovernance(() => expect(account.home.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1));
+            await waitForHomeGovernance(() => expect(account.home.requestsFor(actionPath)).toEqual([expect.objectContaining({
+                input: expect.objectContaining({ envelope: expect.objectContaining({ input: expect.objectContaining(enable) }) }),
+            })]));
+            expect(run).not.toHaveBeenCalled();
+        } else {
+            await waitForHomeGovernance(() => expect(run).toHaveBeenCalledWith(expect.objectContaining(enable), 'machine:machine-a'));
+        }
     });
 
     it.each(['machine-a', null] as const)('turns a gateway off with the displayed scope (%s)', async selectedMachineId => {

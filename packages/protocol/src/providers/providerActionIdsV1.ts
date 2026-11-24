@@ -21,6 +21,15 @@ export const PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 = 'providers.connections.de
 export function isProviderActionIdV1(value: string): value is ProviderActionIdV1 {
   return (PROVIDER_ACTION_IDS_V1 as readonly string[]).includes(value);
 }
+
+/** Signed Machine roots that the receiver can run with the requester's Account catalog. */
+export function readRequesterProviderMachineActionRoleV1(actionId: string | undefined): 'use' | 'manage' | undefined {
+  switch (actionId) {
+    case 'providers.connections.describe': return 'use';
+    case 'providers.connections.enabled.set': return 'manage';
+    default: return undefined;
+  }
+}
 type ProviderAccountActionIdV1 = 'providers.defaults.set' | 'providers.models.source_visibility.set' | 'providers.gateways.choose';
 type ProviderActionRpcRouteV1 = Readonly<{ method: string; mutation: boolean }>;
 export function resolveProviderActionRpcRouteV1(actionId: Exclude<ProviderActionIdV1, ProviderAccountActionIdV1>): ProviderActionRpcRouteV1;

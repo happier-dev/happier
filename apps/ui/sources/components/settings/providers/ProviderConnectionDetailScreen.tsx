@@ -220,6 +220,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
     const {
         machineId,
         machineRows,
+        machineGrantTargetReady,
         resolveCurrentTarget,
         selectedTargetServerMatchesActiveAccount,
         accountServerId: serverId,
@@ -231,16 +232,14 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         scopeKind: 'spawn',
         serverId,
     });
-    // Only machines the canonical presence owner classifies online can return
-    // daemon facts; a read to any other candidate cannot be serviced.
-    const readableMachineRows = React.useMemo(
-        () => machineRows.filter((row) => row.online),
-        [machineRows],
-    );
     // Row presses reach the same Machine Administration selection owner the
     // shared selector writes, so no Provider route keeps a second preference.
     const targetSelection = providerTarget.selection;
     const selectedMachineId = targetSelection.selectedTarget?.machineId ?? null;
+    const readableMachineRows = React.useMemo(
+        () => machineRows.filter((row) => row.online || (row.target.machineId === selectedMachineId && machineGrantTargetReady)),
+        [machineGrantTargetReady, machineRows, selectedMachineId],
+    );
     const selectTargetMachine = React.useCallback((target: MachineAdministrationTargetV1) => {
         targetSelection.selectTarget(target);
     }, [targetSelection]);
@@ -401,9 +400,9 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
         }), `machine:${targetMachineId}`);
     }, [invalidateProbe, mutation, props.connectionId]);
     const enableSelectedMachine = React.useCallback(async () => {
-        if (!machineId) return;
-        await setMachineEnabled(machineId, true);
-    }, [machineId, setMachineEnabled]);
+        if (!selectedMachineId) return;
+        await setMachineEnabled(selectedMachineId, true);
+    }, [selectedMachineId, setMachineEnabled]);
 
     React.useEffect(() => {
         invalidateProbe();
@@ -1389,7 +1388,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                 : gatewayHeader ? t('settings.account') : t('settingsProvidersCollection.enabled')}
                             accessibilityHint={gatewayHeader || headerMachineId ? undefined : t('settingsProvidersCollection.enabledDescription')}
                             value={headerEnabled}
-                            busy={headerMachineId ? mutation.isPending(`machine:${headerMachineId}`)
+                            busy={headerMachineId ? (!headerEnabled && !machineGrantTargetReady) || mutation.isPending(`machine:${headerMachineId}`)
                                 : mutation.isPending('enable:connection') || mutation.isPending('enable:account')}
                             onValueChange={(next) => {
                                 void (headerMachineId ? setMachineEnabled(headerMachineId, next) : setConnectionEnabled(next));
@@ -1768,7 +1767,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                             {readableMachineRows.map((row) => {
                                 const rowKey = providerSettingsMachineRowKey(row.target);
                                 const rowMachineId = row.target.machineId;
-                                const selected = rowMachineId === machineId;
+                                const selected = rowMachineId === selectedMachineId;
                                 const machineViewState = machineViews.byTargetKey[rowKey];
                                 const machineView = machineViewState?.connection ?? null;
                                 const granted = machineViewState?.status === 'success'
@@ -1790,6 +1789,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
                                                         ? t('settingsProviders.detail.currentMachine')
                                                         : t('settingsProviders.detail.selectMachineToManage'))}
                                             rightElement={!selected ? undefined : mutation.isPending(`machine:${rowMachineId}`)
+                                                || (!granted && !machineGrantTargetReady)
                                                 || machineViewState?.status === 'loading'
                                                 ? <ActivitySpinner size="small" />
                                                 : <Switch

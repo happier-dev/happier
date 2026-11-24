@@ -850,7 +850,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   savedSecretOperationContext?: Parameters<typeof createCliActionDeps>[0]['savedSecretOperationContext'];
   providerPreparedSavedSecret?: Parameters<typeof createCliActionDeps>[0]['providerPreparedSavedSecret'];
   projectModelsForAccount?: Parameters<typeof createCliActionDeps>[0]['projectModelsForAccount'];
-  readProviderForAccount?: Parameters<typeof createCliActionDeps>[0]['readProviderForAccount'];
+  executeProviderForAccount?: Parameters<typeof createCliActionDeps>[0]['executeProviderForAccount'];
   sessionMessageReplyPublisher?: Parameters<typeof createCliActionDeps>[0]['sessionMessageReplyPublisher'];
   postAgentDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postAgentDiscussionMessage'];
   postWorkflowDiscussionMessage?: Parameters<typeof createCliActionDeps>[0]['postWorkflowDiscussionMessage'];
@@ -1283,7 +1283,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(savedSecretOperationContext ? { savedSecretOperationContext } : {}),
       ...(params.providerPreparedSavedSecret ? { providerPreparedSavedSecret: params.providerPreparedSavedSecret } : {}),
       ...(params.projectModelsForAccount ? { projectModelsForAccount: params.projectModelsForAccount } : {}),
-      ...(params.readProviderForAccount ? { readProviderForAccount: params.readProviderForAccount } : {}),
+      ...(params.executeProviderForAccount ? { executeProviderForAccount: params.executeProviderForAccount } : {}),
       resolveServerFeaturesSnapshot,
       ...(params.resolvePluginNotifications ? { resolvePluginNotifications: params.resolvePluginNotifications } : {}),
       ...(params.readPluginVoiceProviders ? { readPluginVoiceProviders: params.readPluginVoiceProviders } : {}),

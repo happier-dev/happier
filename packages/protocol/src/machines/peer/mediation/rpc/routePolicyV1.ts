@@ -25,7 +25,7 @@ import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_
 import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '../../../../connect/configurationActionIdsV1.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../../../bots/templates/botTemplateActionIdsV1.js';
-import { isProviderActionIdV1, resolveProviderActionRpcEffectV1 } from '../../../../providers/providerActionIdsV1.js';
+import { isProviderActionIdV1, readRequesterProviderMachineActionRoleV1, resolveProviderActionRpcEffectV1 } from '../../../../providers/providerActionIdsV1.js';
 import { PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '../../../../actions/specs/projectWorkersActionIdsV1.js';
 
 const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionIdV1;
@@ -1186,6 +1186,8 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
   reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
   if (binding && isProviderActionIdV1(binding.actionId)) {
+    // These foreign roots run at the requester-catalog receiver, never as a custodian RPC.
+    if (binding.accountId !== binding.custodianAccountId && readRequesterProviderMachineActionRoleV1(binding.actionId)) return null;
     // Preparation uses the same admitted Provider root, on its selected installation.
     return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)

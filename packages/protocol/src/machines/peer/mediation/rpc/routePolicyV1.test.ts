@@ -40,6 +40,10 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(resolve(describe, binding)).toBe(binding.actionId);
     // Standalone reads keep their own purpose.
     expect(resolve(describe, { ...binding, actionId: 'providers.connections.describe' })).toBe('providers.connections.describe');
+    const foreign = { ...binding, accountId: 'requester' };
+    expect(resolve(describe, { ...foreign, actionId: 'providers.connections.describe' })).toBeNull();
+    expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE,
+      { ...foreign, actionId: 'providers.connections.enabled.set' })).toBeNull();
     expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, binding)).toBe(binding.actionId);
     expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_PROBE, binding)).toBeNull();
     expect(resolve(describe, binding, { machineId: 'machine', installationId: 'other' })).toBeNull();

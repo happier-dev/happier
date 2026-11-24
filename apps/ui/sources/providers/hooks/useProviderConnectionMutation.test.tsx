@@ -321,12 +321,22 @@ describe('useProviderConnectionMutation', () => {
         expect(account.catalogMutations).toHaveLength(0);
     });
 
-    it('refuses Machine enable when the selected machine is no longer reachable', async () => {
+    it('retries Machine enable after the selected target finishes becoming reachable', async () => {
         const refresh = vi.fn(async () => undefined);
-        const hook = await renderMutation({ resolveTarget: () => null, serverId, refresh });
+        let target: ReturnType<typeof resolveTarget> | null = null;
+        const hook = await renderMutation({ resolveTarget: () => target, serverId, refresh });
         await act(async () => { await hook.getCurrent().run(machineEnable()); });
         expect(providerHarness.state.requests).toEqual([]);
-        expect(hook.getCurrent().error?.code).toBe('provider_authorization_changed');
+        expect(hook.getCurrent().error?.code).toBe('provider_machine_unavailable');
+        const retry = hook.getCurrent().retry;
+        expect(retry).toBeTypeOf('function');
+        target = resolveTarget();
+        providerHarness.enqueueResponse(RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, {
+            status: 'success', action: 'setEnabled', connection: createProviderConnectionViewFixture({ connectionId: 'pc_a' }),
+        });
+        await act(async () => { await retry?.(); });
+        expect(providerHarness.state.requests).toEqual([expect.objectContaining({ method: RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, machineId: 'machine-a' })]);
+        expect(hook.getCurrent().error).toBeNull();
     });
 
     it('coalesces canonically equal Account requests but not material differences', async () => {

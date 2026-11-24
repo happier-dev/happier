@@ -2929,10 +2929,10 @@ export async function startDaemon(
         if (!producer) throw new Error('provider_source_projection_unavailable');
         return await producer.machineServices.projectModelsForAccount(request, context);
       },
-      readProviderForAccount: async (request, context) => {
+      executeProviderForAccount: async (request, context) => {
         const producer = providerOperationsProducer;
         if (!producer) throw new Error('provider_source_projection_unavailable');
-        return await producer.readForAccount(request, context);
+        return await producer.executeForAccount(request, context);
       },
       activateSessionPurposeBindings:
         connectedAccountPurposeBindingRuntime.activateSessionPurposeBindings,

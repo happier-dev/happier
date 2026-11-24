@@ -1,6 +1,8 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { readRequesterProviderMachineActionRoleV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { applyProviderDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { createAccountProviderActionExecuteV1 } from '@happier-dev/protocol/providers/connections/accountProviderActionV1';
 import { PROVIDER_DECLARATION_CONTEXT_SECTIONS, providerDeclarationContext, readAccountProviderDeclarations, readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
@@ -13,7 +15,6 @@ import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverSc
 import { createMachineRpcReadAdmission } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcReadAdmission';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
 import { createRpcCallError } from '@happier-dev/protocol/rpcErrors';
-import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { readUiOwnedSessionForAction } from './botTemplateActionDeps';
 
@@ -31,10 +32,9 @@ export function createUiProviderActionExecuteV1(account: LazyActionAccountContex
       }
     },
     rpc: ({ machineId, method, request, context, operationTimeoutMs }) => withActionAccountRequestSignal(account, context.signal, async signal => {
-      // Personal discovery on a granted worker needs the requester's Account
-      // custody. Own workers and Team compatibility retain their raw RPC path.
+      // Provider reads and grants on a shared worker use the requester's Account custody.
       if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh'
-        || request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list')
+        || request.actionId === 'providers.models.list' || readRequesterProviderMachineActionRoleV1(request.actionId))
         && (!('teamCredentialResources' in request.input) || request.input.teamCredentialResources === undefined) && !context.externalActionCredential
         && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization) {
         if (!context.actionRequestId) throw createRpcCallError({ error: 'admission_unavailable', errorCode: 'admission_unavailable' });
@@ -44,11 +44,7 @@ export function createUiProviderActionExecuteV1(account: LazyActionAccountContex
           onTransportIssued: () => { context.signal?.throwIfAborted(); account.assertCurrent(); options?.onRpcDispatched?.(); },
         });
         if (execution) {
-          if (!execution.ok) {
-            const error = ProviderErrorV1Schema.safeParse(execution.details);
-            if (error.success && error.data.code === execution.errorCode) throw error.data;
-            throw createRpcCallError({ error: execution.error, errorCode: execution.errorCode });
-          }
+          if (!execution.ok) throw createActionExecuteFailureError(execution);
           return execution.result;
         }
       }

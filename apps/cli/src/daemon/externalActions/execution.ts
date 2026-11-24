@@ -165,7 +165,7 @@ machineId: string;
 readDoctorResourceVitals?: () => Readonly<{ sample: MachineVitalsSampleV1 | null }>;
 projectProviderModels?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModels'];
 projectProviderModelsForAccount?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModelsForAccount'];
-readProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountRead;
+executeProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountAction;
 prepareTeamCredentialNativeSource?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
 serverId: string;
 serverBaseUrl: string;
@@ -1283,10 +1283,10 @@ resolveServerFeaturesSnapshot?: () =>
             }),
           } : {}),
         ...(foreignProjectionAccount ? {
-            ...(params.readProviderForAccount ? {
-              readProviderForAccount: async (request, actionContext) => {
+            ...(params.executeProviderForAccount ? {
+              executeProviderForAccount: async (request, actionContext) => {
                 const account = await createProviderReadContext(actionContext);
-                return account ? await params.readProviderForAccount!(request, account)
+                return account ? await params.executeProviderForAccount!(request, account)
                   : { status: 'error', error: createForegroundProviderError('provider_authorization_changed') };
               },
             } : {}),

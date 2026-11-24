@@ -7,6 +7,7 @@ import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runti
 import { ACTION_INVOKE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
+import { readRequesterProviderMachineActionRoleV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
@@ -640,7 +641,8 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (homeRead?.notFound) return { ...failure('access_denied' satisfies MachineAccessRefusalCodeV1), effectAttempted: false };
     if (!custody && !telemetryRead) return { ...failure('admission_unavailable'), effectAttempted: false };
     const foreignCustody = custody !== null && custody.custodian.accountId !== account.accountId;
-    const needsCustody = Boolean(telemetryRead || workflowPlacement) || foreignCustody || finite || runtimeDemand && custody?.managed
+    const needsCustody = Boolean(telemetryRead || workflowPlacement) || foreignCustody || finite
+        || custody?.managed && (runtimeDemand || readRequesterProviderMachineActionRoleV1(params.actionId))
         || reviewedInvocation || retainedResource;
     // Ordinary own targets retain their incumbent transport. Managed runtime
     // demand and finite placement need Home custody even for an own guest.

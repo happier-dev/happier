@@ -145,18 +145,22 @@ describe('runtime Provider connection composition', () => {
         registry, featureGate: { isEnabled: () => true }, resolveAddresses: async () => ['1.1.1.1'] });
       const execute = createCliProviderActionExecuteV1({ credentials: requester, operationContext,
         serverId: 'requester-home', serverHttpBaseUrl: 'https://requester-home.test',
-        readProviderForAccount: async request => {
+        executeProviderForAccount: async request => {
           if (request.actionId === 'providers.models.list') return runtime.models(request.input, undefined, {
             getAccountSettingsSnapshot: operationContext.readSnapshot, savedSecretOperationContext: operationContext,
             isAccountCurrent: () => operationContext.isCurrent(),
           });
-          return createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials: requester, operationContext,
+          const connections = createRuntimeProviderConnectionServices({ machineId: 'machine-a', credentials: requester, operationContext,
             happyHomeDir: configuration.happyHomeDir, featureGate: { isEnabled: id => id === 'providers' },
             runtimeSummary: input => runtime.summary(input, {
               getAccountSettingsSnapshot: operationContext.readSnapshot, savedSecretOperationContext: operationContext,
               isAccountCurrent: () => operationContext.isCurrent(),
             }), resolveRegistry: async () => registry, resolveAddresses: async () => ['1.1.1.1'],
-          }).describeConnections({ ...request.input, machineId: request.input.machineId ?? 'machine-a' });
+          });
+          if (request.actionId === 'providers.connections.enabled.set') {
+            return connections.mutateConnection({ ...request.input, machineId: 'machine-a' });
+          }
+          return connections.describeConnections({ ...request.input, machineId: request.input.machineId ?? 'machine-a' });
         },
         // The raw worker RPC refuses private custodian catalog reads. The
         // admitted requester carrier must reach the real local Provider owner.

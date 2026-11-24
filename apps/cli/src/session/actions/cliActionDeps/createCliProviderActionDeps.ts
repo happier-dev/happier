@@ -1,7 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
-import { resolveProviderActionRpcEffectV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
+import { readRequesterProviderMachineActionRoleV1, resolveProviderActionRpcEffectV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { CliActionDepsParams } from './types';
 import type { StoredCredentials } from '@/persistence';
@@ -12,7 +12,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { setDefaultProviderModelSelection } from '@/providers/connections/service/settings';
 import { createCliAccountProviderActionExecuteV1 } from '@/providers/connections/accountActions';
 import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
-import type { RuntimeProviderAccountReadRequest, RuntimeProviderAccountRead } from '@/providers/runtimeServices';
+import type { RuntimeProviderAccountActionRequest, RuntimeProviderAccountAction } from '@/providers/runtimeServices';
 import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -28,7 +28,7 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
   isCredentialCurrent?(): boolean | Promise<boolean>;
   /** Bound by the receiving host to admitted foreign requester Account custody. */
   projectModelsForAccount?(request: DaemonProviderModelProjectionRequestV1, context: ActionExecutorContext): Promise<DaemonProviderModelProjectionResponseV1>;
-  readProviderForAccount?(request: RuntimeProviderAccountReadRequest, context: ActionExecutorContext): ReturnType<RuntimeProviderAccountRead>;
+  executeProviderForAccount?(request: RuntimeProviderAccountActionRequest, context: ActionExecutorContext): ReturnType<RuntimeProviderAccountAction>;
   callMachineAction(input: Readonly<{
     machineId: string; serverId?: string; method: string; request: unknown; signal?: AbortSignal;
     authority?: ActionExecutorContext['authority']; authorization?: ActionExecutorContext['rpcSessionAuthorization'];
@@ -54,19 +54,27 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
       const requesterProjection = params.projectModelsForAccount
         && (request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh')
         && !('connectionId' in request.input) && request.input.teamCredentialResources === undefined;
-      const requesterRead = params.readProviderForAccount
-        && (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list'
+      const proof = context.externalActionExecutionAuthorization?.binding;
+      const requesterActionRole = readRequesterProviderMachineActionRoleV1(request.actionId);
+      const foreignRoot = proof && proof.accountId !== proof.custodianAccountId;
+      if (foreignRoot && requesterActionRole
+        && (proof.actionId !== request.actionId || !params.operationContext || !params.executeProviderForAccount)) {
+        return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId }) };
+      }
+      const requesterAction = params.executeProviderForAccount
+        && (requesterActionRole || request.actionId === 'providers.models.list'
           || request.actionId === 'providers.models.refresh' && 'connectionId' in request.input);
-      if (params.operationContext && (requesterProjection || requesterRead)) {
+      if (params.operationContext && (requesterProjection || requesterAction)) {
         const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: scopeKey,
           operationContext: params.operationContext, signal: context.signal });
         if (catalog.status !== 'ready') return { status: 'error', error: createProviderErrorV1('provider_catalog_unavailable', { machineId }) };
         // The dispatch owner routes here only with the operand's exact Machine.
-        if (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.models.list') {
-          return params.readProviderForAccount!(request, context);
+        if (request.actionId === 'providers.connections.describe' || request.actionId === 'providers.connections.enabled.set'
+          || request.actionId === 'providers.models.list') {
+          return params.executeProviderForAccount!(request, context);
         }
         if (request.actionId === 'providers.models.refresh' && 'connectionId' in request.input) {
-          return params.readProviderForAccount!({ actionId: request.actionId, input: request.input }, context);
+          return params.executeProviderForAccount!({ actionId: request.actionId, input: request.input }, context);
         }
         if ((request.actionId === 'providers.models.projection' || request.actionId === 'providers.models.refresh') && !('connectionId' in request.input)) {
           return params.projectModelsForAccount!({ ...request.input, machineId }, context);

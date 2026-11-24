@@ -1266,13 +1266,17 @@ describe('Machine current access (real SQLite)', () => {
         const requester = await account();
         await grant(f.owner.id, f.machine.id, requester.id);
         const actor = { actorAccountId: requester.id, machineId: f.machine.id };
-        for (const actionId of ['providers.models.projection', 'providers.models.refresh']) {
+        for (const actionId of ['providers.models.projection', 'providers.models.refresh', 'providers.connections.describe']) {
             expect(await access.resolveMachineAdmission({ ...actor, actionId }), actionId).toMatchObject({
                 kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use',
             });
         }
-        for (const actionId of ['providers.connections.describe', 'providers.connections.start_local', 'providers.connections.secrets.bind']) {
+        for (const actionId of ['providers.connections.start_local', 'providers.connections.secrets.bind']) {
             expect(await access.resolveMachineAdmission({ ...actor, actionId }), actionId)
+                .toEqual({ kind: 'denied', code: 'custodian_only' });
+        }
+        for (const rpcMethod of [RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE]) {
+            expect(await access.resolveMachineAdmission({ ...actor, rpcMethod }), rpcMethod)
                 .toEqual({ kind: 'denied', code: 'custodian_only' });
         }
         await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,

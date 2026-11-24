@@ -1,7 +1,7 @@
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '../actions/actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, type ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
 import { RPC_METHODS } from '../rpc/methods.js';
-import { createRpcCallError } from '../rpc/errors.js';
+import { createRpcCallError, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
 import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, resolveProviderActionOwnerV1, type ProviderActionRequestV1 } from './providerActionsV1.js';
@@ -168,7 +168,9 @@ export function createProviderActionExecuteV1(host: Readonly<{
       if (caught && typeof caught === 'object' && 'code' in caught &&
         ['action_account_scope_changed', 'scope-retired', 'server_scope_mismatch', 'not_authenticated'].includes(String(caught.code))) throw caught;
       const typed = ProviderErrorV1Schema.safeParse(caught);
-      const error = typed.success ? typed.data : mutation
+      const refusal = parseActionExecuteFailure(caught);
+      if (refusal && !isActionOutcomeUnknownErrorCodeV1(refusal.errorCode) && refusal.errorCode !== 'invalid_action_output') return refusal;
+      const error = typed.success ? typed.data : mutation && readRpcErrorCode(caught) !== RPC_ERROR_CODES.FORBIDDEN
         ? createProviderErrorV1('provider_rpc_mutation_outcome_unknown', errorContext)
         : providerErrorFromRpcFailure(caught, errorContext);
       return { ok: false, errorCode: error.code, error: error.code, details: error };

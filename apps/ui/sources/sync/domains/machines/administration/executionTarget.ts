@@ -5,6 +5,7 @@ import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolve
 import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { readLiveMachineInventoryRows, resolvePortableMachineAdministrationTarget, type PortableMachineAdministrationTargetResolution } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isMachineReplaced } from '@/sync/domains/machines/identity/machineIdentityTypes';
+import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
 import { isMachineSelectableForFleet } from './fleetUnion';
 import type { FreshMachineAdministrationExecutionTargetV1, MachineAdministrationExecutionTargetOptions } from './useTargetSelection';
 
@@ -67,6 +68,11 @@ export function resolveFreshMachineAdministrationExecutionTarget(
         || (typeof resolution.machine.revokedAt === 'number' && resolution.machine.revokedAt > 0)
         || isMachineReplaced(resolution.machine)) return null;
     if (options.intent === 'retry') return resolution;
+    // Home can dispatch Provider grants to an enrolled guest with current presence
+    // even when the client's previous direct Machine request failed.
+    if (options.intent === 'provider-grant' && resolution.machine.managedMachineRef) {
+        return resolveMachinePresence(resolution.machine) === 'online' ? resolution : null;
+    }
     // Presence (clock) and request reachability are read on every check.
     return isMachineSelectableForFleet(accountScope, resolution.machine) ? resolution : null;
 }

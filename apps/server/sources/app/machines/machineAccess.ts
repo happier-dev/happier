@@ -23,8 +23,7 @@ import { isBrowserRuntimeActionId } from '@happier-dev/protocol/actions/executor
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { requiredMachineRoleForBrowserAction } from '@happier-dev/protocol/actions';
 import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
-import { isProviderActionIdV1 } from '@happier-dev/protocol/providers/providerActionsV1';
-import { resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { isProviderActionIdV1, readRequesterProviderMachineActionRoleV1, resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { inTx, type Tx } from '@/storage/inTx';
 import { withManagedWakeAvailabilityInTx } from './managed/managedWakeAvailability';
 import type { MachineSerializationRow } from './machineSerialization';
@@ -638,12 +637,14 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     const browserAction = runtimeAction.success && isBrowserRuntimeActionId(runtimeAction.data);
     if (input.actionId && requiredMachineRoleForBrowserAction(input.actionId) === 'manage') requiredRole = 'manage';
     let method = input.rpcMethod;
+    const requesterProviderRole = method ? undefined : readRequesterProviderMachineActionRoleV1(input.actionId);
+    if (requesterProviderRole === 'manage') requiredRole = 'manage';
     const requesterSessionLifecycle = operationActionId === 'session.spawn_new' || operationActionId === 'session.open';
     // Requester Project Actions, worker status and copy review use signed Account admission
     // and native requester custody. Their raw RPCs stay custodian-only.
     // A signed message uses this Machine only as a carrier; the Session message
     // owner authorizes its effect without exposing a private custodian RPC.
-    const requesterActionIngress = requesterSessionLifecycle || requesterCopyPreview
+    const requesterActionIngress = requesterSessionLifecycle || requesterCopyPreview || requesterProviderRole !== undefined
         || isRequesterProjectDefinitionActionIdV1(input.actionId)
         || input.actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1
         || input.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;

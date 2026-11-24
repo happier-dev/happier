@@ -20,6 +20,8 @@ import {
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
 
+export type ProviderTargetIntent = 'provider-grant';
+
 /**
  * One machine a Provider route may address, carrying the full Administration
  * identity rather than a bare machine id. Two server profiles can expose the
@@ -63,7 +65,9 @@ export type ProviderSettingsTargetV1 = Readonly<{
      * identity are both reused by the next Account on the same server, so only
      * that lifetime can refuse an Account-A callback resolved after the switch.
      */
-    resolveCurrentTarget: () => Readonly<{ machineId: string; serverId: string }> | null;
+    resolveCurrentTarget: (intent?: ProviderTargetIntent) => Readonly<{ machineId: string; serverId: string }> | null;
+    /** The selected Machine is addressable for a grant through Home. */
+    machineGrantTargetReady: boolean;
 }>;
 
 const NO_MACHINE_ROWS: readonly ProviderSettingsMachineRowV1[] = Object.freeze([]);
@@ -122,7 +126,7 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
     // Identity, not object identity: the candidate projection rebuilds on every
     // machine heartbeat, and a resolver that churned with it would restart the
     // mutation scope — discarding the result of a write already in flight.
-    const expectedMachineId = executionTarget?.machine.id ?? null;
+    const expectedMachineId = selection.selectedTarget?.machineId ?? null;
     const resolveExecutionTarget = selection.resolveExecutionTarget;
     // The sole active-Account lifetime, not a Provider-owned epoch. It is
     // stable while one Account is mounted, so binding the resolver to it does
@@ -134,9 +138,9 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
         ? accountProfile.kind === 'resolved' ? accountProfile.profile.id : null
         : accountLifetime?.isCurrent() ? accountLifetime.scope.serverId : null;
     const accountAddressAvailable = accountServerId !== null;
-    const resolveCurrentTarget = React.useCallback(() => {
+    const resolveCurrentTarget = React.useCallback((intent?: ProviderTargetIntent) => {
         if (accountLifetime && !accountLifetime.isCurrent()) return null;
-        const resolvedTarget = resolveExecutionTarget();
+        const resolvedTarget = resolveExecutionTarget(intent ? { intent } : undefined);
         if (
             !selectedServerIdentityId
             || !expectedMachineId
@@ -163,5 +167,6 @@ export function useProviderSettingsTarget(): ProviderSettingsTargetV1 {
             : selection.selectedTargetServerMatchesActiveAccount,
         machineRows,
         resolveCurrentTarget,
+        machineGrantTargetReady: resolveCurrentTarget('provider-grant') !== null,
     }), [accountAddressAvailable, accountLifetime, accountServerId, executionTarget, machineRows, resolveCurrentTarget, selection]);
 }

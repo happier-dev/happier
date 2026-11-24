@@ -132,7 +132,7 @@ describe('Provider Account source visibility Action', () => {
         expect(rowWrites).toBe(0);
         expect(account.home.requestsFor('/v1/account/saved-secrets/resources/materials')).toHaveLength(1);
     });
-    it.each(['providers.connections.describe', 'providers.models.list'] as const)('describes the requester Account Provider on a shared worker without reading the custodian catalog (%s)', async actionId => {
+    it.each(['providers.connections.describe', 'providers.models.list', 'providers.connections.enabled.set'] as const)('uses the requester Account Provider catalog on a shared worker (%s)', async actionId => {
         const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const machine = createMachineFixture({ id: 'foreign-worker', activeAt: Date.now(),
             installationId: 'foreign-installation', installationPublicKey: encodeBase64(installation.publicKey),
@@ -141,37 +141,68 @@ describe('Provider Account source visibility Action', () => {
         });
         const serverIdentityId = 'srv_requester_describe';
         const { serverId, accountId } = await account.restore({ catalog: catalogFixture(), machines: [machine],
-            currentAccount: true, serverIdentityId });
+            currentAccount: true, serverIdentityId, waivedActions: ['providers.connections.enabled.set'] });
         const home = account.home.findByServerUrl('https://provider-settings-account.test');
         if (!home?.token) throw new Error('Expected requester Home credentials');
-        const described = actionId === 'providers.models.list' ? createProviderModelsFixture() : createProviderConnectionsDescribeFixture({ connections: [
-            createProviderConnectionViewFixture({ connectionId: 'pc_a', displayName: 'Requester Provider' }),
-        ] });
-        const rpcMethod = actionId === 'providers.models.list' ? RPC_METHODS.DAEMON_PROVIDERS_MODELS : RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE;
+        const enabling = actionId === 'providers.connections.enabled.set';
+        let enabled = false;
+        let canManage = true;
+        const describeConnection = () => createProviderConnectionViewFixture({ connectionId: 'pc_a', displayName: 'Main',
+            grants: { enabledMachineIds: enabled ? [machine.id] : [], machineState: enabled ? 'valid' : 'absent' } });
+        const rpcMethod = actionId === 'providers.models.list' ? RPC_METHODS.DAEMON_PROVIDERS_MODELS
+            : enabling ? RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE : RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE;
         // HTTP/Socket are real system boundaries. A shared grant cannot read the custodian's private catalog.
         providerHarness.intercept(rpcMethod, () => ({ error: 'Forbidden', errorCode: 'RPC_FORBIDDEN' }));
-        account.home.answer(serverId, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
-            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-root', binding: {
-                accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId,
-                machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'worker-custodian',
-                accountEncryptionMode: 'plain', actionId, requestId: request.envelope.requestId,
-                target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
-            } }) };
-        } });
-        account.home.answer(serverId, `/v1/actions/${actionId}`, { select: body => {
-            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
-                purpose: { kind: 'external_action' }, machineId: machine.id, installationId: 'foreign-installation',
-                serverIdentityId, installationPrivateKey: installation.secretKey })).toEqual({ token: home.token });
-            expect(JSON.stringify(request)).not.toContain(home.token);
-            return { body: { v: 1, actionId, requestId: request.envelope.requestId,
-                execution: { ok: true, result: described } } };
-        } });
+        for (const id of new Set([actionId, 'providers.connections.describe' as const])) {
+            account.home.answer(serverId, `/v1/actions/${id}/execution-authorization`, { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                if (id === 'providers.connections.enabled.set' && !canManage) return { status: 403,
+                    body: { error: 'credential_scope_denied', requestId: request.envelope.requestId,
+                        failureCause: { phase: 'execution_authorization', errorClass: 'Error',
+                            httpStatus: null, errorCode: 'machine_manage_required' } } };
+                return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-root', binding: {
+                    accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId,
+                    machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'worker-custodian',
+                    accountEncryptionMode: 'plain', actionId: id, requestId: request.envelope.requestId,
+                    target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+                } }) };
+            } });
+            account.home.answer(serverId, `/v1/actions/${id}`, { select: body => {
+                const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+                expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
+                    purpose: { kind: 'external_action' }, machineId: machine.id, installationId: 'foreign-installation',
+                    serverIdentityId, installationPrivateKey: installation.secretKey })).toEqual({ token: home.token });
+                expect(JSON.stringify(request)).not.toContain(home.token);
+                if (id === 'providers.connections.enabled.set') {
+                    expect(request.envelope).toMatchObject({ target: { kind: 'machine', machineId: machine.id },
+                        input: { action: 'setEnabled', scope: 'machine', enabled: true, machineId: machine.id, connectionId: 'pc_a' } });
+                    enabled = true;
+                }
+                const result = id === 'providers.models.list' ? createProviderModelsFixture()
+                    : id === 'providers.connections.enabled.set' ? { status: 'success', action: 'setEnabled', connection: describeConnection() }
+                      : createProviderConnectionsDescribeFixture({ connections: [describeConnection()] });
+                return { body: { v: 1, actionId: id, requestId: request.envelope.requestId,
+                    execution: { ok: true, result } } };
+            } });
+        }
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        await expect(createDefaultActionExecutor().execute(actionId, { machineId: machine.id, connectionId: 'pc_a' },
-            { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, expectedAccountId: accountId }))
-            .resolves.toEqual({ ok: true, result: described });
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, expectedAccountId: accountId } as const;
+        const target = { machineId: machine.id, connectionId: 'pc_a' };
+        const describe = () => executor.execute('providers.connections.describe', target, context);
+        if (enabling) {
+            const enable = () => executor.execute(actionId, { ...target, action: 'setEnabled', scope: 'machine', enabled: true }, context);
+            await expect(describe()).resolves.toMatchObject({ ok: true, result: { connections: [{ grants: { enabledMachineIds: [] } }] } });
+            await expect(enable()).resolves.toMatchObject({ ok: true, result: { status: 'success', action: 'setEnabled' } });
+            await expect(describe()).resolves.toMatchObject({ ok: true, result: { connections: [{ grants: { enabledMachineIds: [machine.id] } }] } });
+            canManage = false;
+            await expect(enable()).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false,
+                failureCause: { errorCode: 'machine_manage_required' } });
+        } else {
+            await expect(executor.execute(actionId, target, context)).resolves.toEqual({ ok: true,
+                result: actionId === 'providers.models.list' ? createProviderModelsFixture()
+                    : createProviderConnectionsDescribeFixture({ connections: [describeConnection()] }) });
+        }
         expect(providerHarness.state.requests.filter(request => request.method === rpcMethod)).toHaveLength(0);
     });
     it.each(['success', 'refused'] as const)('carries requester Account custody and settles a forwarded refresh approval with %s without raw catalog reads', async outcome => {

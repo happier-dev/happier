@@ -576,16 +576,21 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it.each(['account', 'machine'] as const)(
+    it.each(['account', 'machine', 'shared machine'] as const)(
         'originates a Provider describe %s input variant through the real Account proof route', async placement => {
             const selected = await fixture(true);
+            const requester = placement === 'shared machine' ? await fixture(false) : selected;
+            if (requester !== selected) await inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+                actorAccountId: selected.account.id, machineId: selected.controller.machineId,
+                principal: { kind: 'account', accountId: requester.account.id }, level: 'admin',
+            }));
             const actionId = 'providers.connections.describe';
             const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
             const envelope = { v: 1 as const, requestId: selected.requestId, target,
-                input: placement === 'machine' ? { machineId: selected.controller.machineId } : {} };
+                input: placement === 'account' ? {} : { machineId: selected.controller.machineId } };
             const instance = await app(async request => {
                 const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
-                expect(admitted.principal).toMatchObject({ accountId: selected.account.id,
+                expect(admitted.principal).toMatchObject({ accountId: requester.account.id,
                     authentication: { kind: 'account' } });
                 expect(admitted.executionAuthorization).toBeDefined();
                 expect(admitted.executionAuthorization?.binding).toMatchObject({ actionId, target,
@@ -596,7 +601,7 @@ describe('ordinary Account managed Action origination', () => {
                 })) };
             });
             try {
-                const headers = { authorization: `Bearer ${selected.token}` };
+                const headers = { authorization: `Bearer ${requester.token}` };
                 const minted = await instance.inject({ method: 'POST',
                     url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId), headers,
                     payload: { v: 1, machineId: selected.controller.machineId, envelope } });
@@ -609,6 +614,39 @@ describe('ordinary Account managed Action origination', () => {
             } finally { await instance.close(); }
         },
     );
+
+    it('admits a Main gateway enable on another Account’s Machine only with Manage', async () => {
+        const selected = await fixture(true);
+        const requester = await fixture(false);
+        const actionId = 'providers.connections.enabled.set';
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const mint = (instance: AppFastify) => {
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target,
+                input: { action: 'setEnabled', connectionId: 'pc_main', enabled: true, scope: 'machine',
+                    machineId: target.machineId } };
+            return instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${requester.token}` },
+                payload: { v: 1, machineId: target.machineId, envelope } });
+        };
+        const grant = (level: 'view' | 'admin') => inTx(tx => setEligibleMachineAccessGrantInTx(tx, {
+            actorAccountId: selected.account.id, machineId: target.machineId,
+            principal: { kind: 'account', accountId: requester.account.id }, level,
+        }));
+        const instance = await app(async () => { throw new Error('Minting cannot run the effect'); });
+        try {
+            await grant('admin');
+            const accepted = await mint(instance);
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(accepted.json()).binding).toMatchObject({
+                actionId, target, machineId: target.machineId, accountId: requester.account.id,
+                custodianAccountId: selected.account.id,
+            });
+            await grant('view');
+            const refused = await mint(instance);
+            expect(refused.statusCode).toBe(403);
+            expect(refused.json()).toMatchObject({ failureCause: { errorCode: 'machine_manage_required' } });
+        } finally { await instance.close(); }
+    });
 
     it.each(['terminal', 'account'] as const)(
         'admits the original %s session fork root without inventing Session requester provenance', async kind => {

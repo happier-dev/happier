@@ -53,7 +53,7 @@ import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readMachineAdministrationTarg
 export { resolveFreshMachineAdministrationExecutionTarget } from './executionTarget';
 
 export type MachineAdministrationExecutionTargetOptions = Readonly<{
-    intent?: 'retry';
+    intent?: 'retry' | 'provider-grant';
     accountScope?: MachineReachabilityScope | null;
 }>;
 

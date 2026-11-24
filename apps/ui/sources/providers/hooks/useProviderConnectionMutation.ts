@@ -14,11 +14,12 @@ import type { ProviderConnectionRefreshScope } from './useProviderConnections';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { ProviderTargetIntent } from './targetMachine';
 
 type ProviderConnectionMutationResult = Awaited<ReturnType<typeof MutateProviderConnection>> | null;
 type ProviderConnectionExecutionTarget = Readonly<{ machineId: string; serverId: string }>;
 type ProviderConnectionMutationScope = {
-    resolveTarget: () => ProviderConnectionExecutionTarget | null;
+    resolveTarget: (intent?: ProviderTargetIntent) => ProviderConnectionExecutionTarget | null;
     machineRevision: number;
     refresh: (scope?: ProviderConnectionRefreshScope) => Promise<void>;
     readonly serverId: string | null;
@@ -43,7 +44,7 @@ function isDeclinedApproval(caught: unknown): boolean {
  * machine authorization.
  */
 export function useProviderConnectionMutation(input: Readonly<{
-    resolveTarget: () => ProviderConnectionExecutionTarget | null;
+    resolveTarget: (intent?: ProviderTargetIntent) => ProviderConnectionExecutionTarget | null;
     serverId?: string | null;
     initiatingLifetime?: ServerAccountScopeLifetime | null;
     refresh: (scope?: ProviderConnectionRefreshScope) => Promise<void>;
@@ -195,14 +196,22 @@ export function useProviderConnectionMutation(input: Readonly<{
                 // Re-resolve the canonical target immediately before the write.
                 // A rendered snapshot, or a request a modal delayed, may name a
                 // machine the user has since moved away from.
-                const target = requiresMachine ? boundResolveTarget() : null;
+                const target = requiresMachine ? boundResolveTarget(parsedRequest.action === 'setEnabled' ? 'provider-grant' : undefined) : null;
                 if (!(scope.accountLifetime?.isCurrent() ?? true)
-                    || requiresMachine && (scope.machineRevision !== boundMachineRevision || !target || target.machineId !== parsedRequest.machineId)) {
+                    || requiresMachine && (activeScope.current !== scope || scope.machineRevision !== boundMachineRevision
+                        || target && target.machineId !== parsedRequest.machineId)) {
                     // The user asked for this write, so the refusal is reported
                     // even when the selection has already moved on: a silently
                     // dropped destructive action is indistinguishable from one
                     // that succeeded.
                     setFailure({ key, error: createProviderErrorV1('provider_authorization_changed', errorContext) });
+                    return null;
+                }
+                if (requiresMachine && !target) {
+                    const error = createProviderErrorV1('provider_machine_unavailable', errorContext);
+                    setFailure({ ...failureScope, key, error, ...providerRetryRecoveryForError(error, async () => {
+                        await run(parsedRequest, key, options);
+                    }) });
                     return null;
                 }
                 let result: Awaited<ReturnType<typeof mutateProviderConnection>>;

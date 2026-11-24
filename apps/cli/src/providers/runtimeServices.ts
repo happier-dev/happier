@@ -27,14 +27,15 @@ import type { RuntimeProviderAccountModelProjectionContext } from '@/providers/m
 import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, parseProviderActionRequestV1, type ProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
 import { verifySavedProviderConnectionV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
 
-export type RuntimeProviderAccountReadRequest = Extract<ProviderActionRequestV1,
-  { actionId: 'providers.connections.describe' | 'providers.models.list' }>
+export type RuntimeProviderAccountActionRequest = Extract<ProviderActionRequestV1,
+  { actionId: 'providers.connections.describe' | 'providers.connections.enabled.set' | 'providers.models.list' }>
   | Readonly<{ actionId: 'providers.models.refresh'; input: Extract<
     Extract<ProviderActionRequestV1, { actionId: 'providers.models.refresh' }>['input'], { connectionId: string }> }>;
-/** Host-private reads retain the receiving Action's admitted requester Account. */
-export type RuntimeProviderAccountRead = (request: RuntimeProviderAccountReadRequest,
+/** Host-private Provider Actions retain the receiving Action's admitted requester Account. */
+export type RuntimeProviderAccountAction = (request: RuntimeProviderAccountActionRequest,
   context: RuntimeProviderAccountModelProjectionContext) => Promise<
     import('@happier-dev/protocol/rpc/providers').DaemonProviderConnectionsDescribeResponseV1
+    | import('@happier-dev/protocol/rpc/providers').DaemonProviderConnectionMutationResponseV1
     | Awaited<ReturnType<RuntimeProviderModelManagementServices['models']>>>;
 
 type RuntimeProviderOperationsMachineServices = MachineProviderRpcServices & Pick<
@@ -49,7 +50,7 @@ export type RuntimeProviderOperationsBinding = Readonly<{
 
 export type RuntimeProviderOperationsProducer = Readonly<{
   machineServices: RuntimeProviderOperationsMachineServices;
-  readForAccount: RuntimeProviderAccountRead;
+  executeForAccount: RuntimeProviderAccountAction;
   bind(binding: RuntimeProviderOperationsBinding): ProvidersService;
 }>;
 
@@ -275,11 +276,11 @@ export function createRuntimeProviderOperationsProducer(input: Readonly<{
   machineId: string;
   machineServices: RuntimeProviderOperationsMachineServices;
   featureGate: RuntimeProviderOperationsFeatureGate;
-  readForAccount?: RuntimeProviderAccountRead;
+  executeForAccount?: RuntimeProviderAccountAction;
 }>): RuntimeProviderOperationsProducer {
   return Object.freeze({
     machineServices: input.machineServices,
-    readForAccount: input.readForAccount ?? (async () => ({ status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') })),
+    executeForAccount: input.executeForAccount ?? (async () => ({ status: 'error', error: createProviderErrorV1('provider_catalog_unavailable') })),
     bind(binding: RuntimeProviderOperationsBinding): ProvidersService {
       return Object.freeze({
         usage: Object.freeze({

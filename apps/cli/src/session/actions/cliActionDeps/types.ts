@@ -245,7 +245,7 @@ export type CliActionDepsParams = Readonly<{
   /** Memory-only prompted Provider credential, promoted only by the admitted connection owner. */
   providerPreparedSavedSecret?: Parameters<typeof createCliProviderActionExecuteV1>[0]['preparedSavedSecret'];
   projectModelsForAccount?: Parameters<typeof createCliProviderActionExecuteV1>[0]['projectModelsForAccount'];
-  readProviderForAccount?: Parameters<typeof createCliProviderActionExecuteV1>[0]['readProviderForAccount'];
+  executeProviderForAccount?: Parameters<typeof createCliProviderActionExecuteV1>[0]['executeProviderForAccount'];
   /** Installed exact-target Project producer; absent hosts retain Trust-only behavior. */
   projectAction?: ActionExecutorDeps['projectAction'];
   /** Receiving daemon's storage carrier and admitted target executor. */

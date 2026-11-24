@@ -209,6 +209,9 @@ export function providerErrorFromRpcFailure(
   if (transportCode === 'provider_catalog_conflict') {
     return createProviderErrorV1('provider_connection_changed', errorContext);
   }
+  if (transportCode === 'machine_manage_required') {
+    return createProviderErrorV1('provider_machine_grant_stale', errorContext);
+  }
 
   if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
     return createProviderErrorV1('agent_unavailable', errorContext);

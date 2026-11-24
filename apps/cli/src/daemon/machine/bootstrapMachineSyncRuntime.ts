@@ -1151,7 +1151,7 @@ export async function bootstrapMachineSyncRuntime(
             ? { resolveSharedGateway: accountContext.managedRuntimeAccount.resolveSharedGateway } : {} : { resolveSharedGateway }),
           runtimeSummary: (input) => providerRuntimeServices.summary(input,
             accountContext ? createProviderAccountOperationScope(accountContext) : undefined),
-          refreshOnEnable: (input) => providerRuntimeServices.probe(input),
+          ...(!accountContext ? { refreshOnEnable: (input) => providerRuntimeServices.probe(input) } : {}),
           ...(accountContext ? { resolveManagedPurposeBindingIntent: accountContext.resolveManagedPurposeBindingIntent } : params.resolveManagedPurposeBindingIntent
             ? {
                 resolveManagedPurposeBindingIntent:
@@ -1262,15 +1262,18 @@ export async function bootstrapMachineSyncRuntime(
     providerOperationsProducer = createRuntimeProviderOperationsProducer({
       machineId: params.machineId,
       featureGate: providerFeatureGate,
-      readForAccount: async (request, context) => {
+      executeForAccount: async (request, context) => {
         if (request.actionId === 'providers.models.list' || request.actionId === 'providers.models.refresh') {
           return await providerRuntimeServices.models({ ...request.input, machineId: params.machineId }, context.signal,
             { ...createProviderAccountOperationScope(context), ...(request.actionId === 'providers.models.refresh' ? { forceRefresh: true } : {}) });
         }
         const services = createConnectionRuntimeServices(context);
         // Account-scoped operands may omit machineId; this daemon answers for its own Machine, as models does above.
-        return services ? await services.describeConnections({ ...request.input, machineId: request.input.machineId ?? params.machineId }, context.signal)
-          : { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: params.machineId }) };
+        if (!services) return { status: 'error', error: createProviderErrorV1('provider_authorization_changed', { machineId: params.machineId }) };
+        if (request.actionId === 'providers.connections.enabled.set') {
+          return await services.mutateConnection({ ...request.input, machineId: request.input.machineId ?? params.machineId }, context.signal);
+        }
+        return await services.describeConnections({ ...request.input, machineId: request.input.machineId ?? params.machineId }, context.signal);
       },
       machineServices: {
         ...providerRuntimeServices,

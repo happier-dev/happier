@@ -7,7 +7,7 @@ import { createCliRemoteHostActionExecuteV1 } from './createCliRemoteHostActionD
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 export function createCliConnectionsActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'personalSavedSecretActionExecute' | 'projectModelsForAccount' | 'readProviderForAccount' | 'providerPreparedSavedSecret' | 'resolveServerFeaturesSnapshot' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'personalSavedSecretActionExecute' | 'projectModelsForAccount' | 'executeProviderForAccount' | 'providerPreparedSavedSecret' | 'resolveServerFeaturesSnapshot' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
   { callMachineAction, connectedServiceAction, projectHomeId, registryActionExecute, resolveAuthorizationHeaders }: Readonly<{
     callMachineAction: CliMachineActionCall;
     connectedServiceAction: ActionExecutorDeps['connectedServiceAction'];
@@ -40,7 +40,7 @@ export function createCliConnectionsActionDeps(
       ...(params.savedSecretOperationContext ? { operationContext: params.savedSecretOperationContext } : {}),
       ...(params.providerPreparedSavedSecret ? { preparedSavedSecret: params.providerPreparedSavedSecret } : {}),
       ...(params.projectModelsForAccount ? { projectModelsForAccount: params.projectModelsForAccount } : {}),
-      ...(params.readProviderForAccount ? { readProviderForAccount: params.readProviderForAccount } : {}),
+      ...(params.executeProviderForAccount ? { executeProviderForAccount: params.executeProviderForAccount } : {}),
       ...(params.isCredentialCurrent ? { isCredentialCurrent: params.isCredentialCurrent } : {}),
       callMachineAction,
     }) : undefined,

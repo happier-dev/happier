@@ -1160,7 +1160,7 @@ export async function startDaemonSessionControlRuntime(
     openAccountConnectionManagedConsumerSource?: import('@/agent/runtime/bridges/executionRun/runtime/managedProvider').ExecutionRunManagedProviderSourceOpener;
     projectProviderModels?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModels'];
     projectProviderModelsForAccount?: import('@/providers/modelManagement/runtimeServices').RuntimeProviderModelManagementServices['projectModelsForAccount'];
-    readProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountRead;
+    executeProviderForAccount?: import('@/providers/runtimeServices').RuntimeProviderAccountAction;
     /** Profile identity paired with `serverBaseUrl` for this daemon lifecycle. */
     serverId: string;
     /** C52's single composed inventory; requester recovery must include sessionless native work. */
