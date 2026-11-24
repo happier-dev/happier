@@ -699,9 +699,10 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   try {
     return await operation();
   } catch (error) {
+    const failure = parseActionExecuteFailure(error);
+    if (failure) return failure;
     if (error instanceof HappyError && error.code) {
-      return parseActionExecuteFailure(error.cause)
-        ?? { ok: false as const, errorCode: error.code, error: error.message };
+      return { ok: false as const, errorCode: error.code, error: error.message };
     }
     // Not reaching the Home is its own typed outcome. Left untyped it would settle as a generic
     // failure, which the form copy could not tell apart from a refusal of the person's credentials.

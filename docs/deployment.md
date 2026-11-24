@@ -29,9 +29,10 @@ reference. The HTTP 409 response `account_erasure_deployment_cleanup_required`
 carries a typed blocker and an owned deployment, Environment, target, Source or
 Artifact reference when available. The public Action result carries the blocker
 and its typed `nextAction` for clients including the CLI. Settings names the
-Environment when its header is readable. For a still-managed target or an
-unfinished teardown, **Detach and keep running** opens the existing review
-for that target, where the person can confirm Detach before retrying erasure.
+Environment, target and hosting platform from the Account’s readable deployment
+records. For a still-managed target or an unfinished teardown, **Detach and
+keep running** opens the existing Unlink review with the keep-running choice
+selected. The person confirms there before retrying erasure.
 
 Settled Receipts belong to their Environment's history. Erasing the requester
 clears their attribution. Erasing the Account that owns a settled Receipt's

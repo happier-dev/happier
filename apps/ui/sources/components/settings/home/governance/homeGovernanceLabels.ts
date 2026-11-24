@@ -160,7 +160,7 @@ export function homeActionUnavailableReasonLabel(reason: HomeAccountActionUnavai
  */
 export function homeGovernanceFailureNotice(
     failure: HomeDomainFailure,
-    context?: Readonly<{ effect: 'read' | 'write'; environmentName?: string }>,
+    context?: Readonly<{ effect: 'read' | 'write' }>,
 ): Readonly<{ title: string; body: string }> {
     const effect = context?.effect ?? 'write';
     if (failure.code === 'username-changed') {
@@ -177,7 +177,7 @@ export function homeGovernanceFailureNotice(
     }
     return Object.freeze({
         title: effect === 'read' ? t('homeGovernance.unavailableTitle') : t('homeGovernance.changeFailedTitle'),
-        body: homeGovernanceFailureBody(failure, effect, context?.environmentName),
+        body: homeGovernanceFailureBody(failure, effect),
     });
 }
 
@@ -194,16 +194,24 @@ function readErasureDeploymentBlocker(details: unknown) {
     return parsed.success ? parsed.data : null;
 }
 
-/** Both erasure surfaces use the Home's typed verdict. An unreadable erasure result remains unconfirmed. */
-export function accountErasureFailureNotice(error: unknown, environmentName?: string): Readonly<{ title: string; body: string }> {
+type ErasureDeploymentNames = Readonly<{ name?: string; targetName?: string; platform?: string }>;
+
+/** Self-erasure uses the Home's typed verdict and labels read in that same Account scope. */
+export function accountErasureFailureNotice(error: unknown, deployment?: ErasureDeploymentNames): Readonly<{ title: string; body: string }> {
     if (error instanceof HappyError && error.code === ACCOUNT_ERASURE_REVIEW_UNAVAILABLE_CODE) {
         return { title: t('homeGovernance.erasureReviewUnavailableTitle'), body: t('homeGovernance.erasureReviewUnavailable') };
     }
+    if (error instanceof HappyError && error.code === 'account_erasure_deployment_cleanup_required') {
+        const blocker = readErasureDeploymentBlocker(error.details);
+        return {
+            title: t('homeGovernance.changeFailedTitle'),
+            body: blocker ? erasureDeploymentBlockerBody(blocker, { self: true, deployment })
+                : t('homeGovernance.erasureDeploymentBlockerUnavailable'),
+        };
+    }
     if (error instanceof HappyError && (error.code === 'account_erasure_transition_cleanup_pending'
-        || error.code === 'account_erasure_upload_pending'
-        || error.code === 'account_erasure_deployment_cleanup_required')) {
-        return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code, details: error.details },
-            { effect: 'write', environmentName });
+        || error.code === 'account_erasure_upload_pending')) {
+        return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code, details: error.details });
     }
     if (error instanceof HappyError
         && (error.code === 'home_owner_transfer_required' || error.code === 'team_owner_transfer_required')) {
@@ -224,7 +232,22 @@ export function accountErasureFailureNotice(error: unknown, environmentName?: st
     });
 }
 
-function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write', environmentName?: string): string {
+function erasureDeploymentBlockerBody(blocker: NonNullable<ReturnType<typeof readErasureDeploymentBlocker>>,
+    context?: Readonly<{ self: true; deployment?: ErasureDeploymentNames }>): string {
+    const { reason } = blocker;
+    const self = context?.self && (reason === 'source_sharing' || reason === 'environment_dependencies' || reason === 'graph_dependencies');
+    const message = self ? t(`homeGovernance.selfErasureDeploymentBlocker.${reason}`)
+        : t(`homeGovernance.erasureDeploymentBlocker.${reason}`);
+    const { name, targetName, platform } = context?.deployment ?? {};
+    const target = targetName && platform ? t('homeGovernance.erasureDeploymentTarget', { name: targetName, platform }) : targetName;
+    if (name || target) return [name, target, message].filter(Boolean).join('\n\n');
+    const reference = blocker.targetLinkId
+        ? [platform ?? blocker.targetKind, blocker.targetLinkId].filter(Boolean).join(' ')
+        : blocker.deploymentId ?? blocker.environmentId ?? blocker.projectSourceId ?? blocker.artifactId;
+    return reference ? `${message} (${reference})` : message;
+}
+
+function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write'): string {
     switch (failure.code) {
         case 'home_governance_forbidden':
             return t('homeGovernance.errorForbidden');
@@ -244,13 +267,7 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.errorErasureUploadPending');
         case 'account_erasure_deployment_cleanup_required': {
             const blocker = readErasureDeploymentBlocker(failure.details);
-            if (!blocker) return t('homeGovernance.errorErasureDeploymentCleanupRequired');
-            const message = t(`homeGovernance.erasureDeploymentBlocker.${blocker.reason}`);
-            if (environmentName) return t('homeGovernance.erasureDeploymentEnvironment', { name: environmentName, message });
-            const reference = blocker.targetLinkId
-                ? [blocker.targetKind, blocker.targetLinkId].filter(Boolean).join(' ')
-                : blocker.deploymentId ?? blocker.environmentId ?? blocker.projectSourceId ?? blocker.artifactId;
-            return reference ? `${message} (${reference})` : message;
+            return blocker ? erasureDeploymentBlockerBody(blocker) : t('homeGovernance.errorErasureDeploymentCleanupRequired');
         }
         case 'home_policy_widening_unconfirmed':
             return t('homeGovernance.signInPolicy.errorWideningUnconfirmed');

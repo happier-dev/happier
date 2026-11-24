@@ -196,7 +196,13 @@ export const en = {
         `${name} will be deleted. ${memberCount} other ${memberCount === 1 ? 'member will' : 'members will'} lose access.`,
     erasureReviewUnavailableTitle: 'Could not check what will be deleted',
     erasureReviewUnavailable: 'Could not check which shared Environments would be deleted. Try again.',
-    erasureDeploymentEnvironment: ({ name, message }: { name: string; message: string }) => `${name}\n\n${message}`,
+    erasureDeploymentTarget: ({ name, platform }: { name: string; platform: string }) => `${name} runs on ${platform}.`,
+    erasureDeploymentBlockerUnavailable: 'Could not identify which deployment is blocking deletion. Check Deployments, then try again.',
+    selfErasureDeploymentBlocker: {
+        source_sharing: 'In Deployments, resolve the deployment Source’s shared ownership before deleting the account.',
+        environment_dependencies: 'Open the Environment in Deployments and resolve its remaining dependency before deleting the account.',
+        graph_dependencies: 'In Deployments, resolve the deployment references before deleting the account.',
+    },
     erasureDetachTarget: 'Detach and keep running',
     erasureViewDeployment: 'View deployment',
     erasureDeploymentBlocker: {

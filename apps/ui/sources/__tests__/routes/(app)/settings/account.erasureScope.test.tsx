@@ -5,7 +5,8 @@ import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import type { AccountErasureDeploymentBlockerV1 } from '@happier-dev/protocol/home/governance';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { AccountErasureDeploymentBlockerV1Schema, type AccountErasureDeploymentBlockerV1 } from '@happier-dev/protocol/home/governance';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
@@ -132,16 +133,17 @@ describe('Account erasure original confirmation target', () => {
 });
 
 const cleanupRequired = 'account_erasure_deployment_cleanup_required';
-// #205 worker-managed-erase.jsonl contains the signed refusal body. The browser's
-// worker-refusal-writes.json is empty and worker-erase-writes.json is request metadata only.
+// #209's account-managed.log identifies the 409 and reason. The exact IDs are
+// in erasure-peer/worker-{env,link-confirm}.json; the route adds the target kind.
 const workerBlocker = {
     reason: 'provider_resource',
-    environmentId: 'cmws9z7k9011wramcga6sgqih',
-    targetLinkId: 'cmwsa510f01ixramco2o0v5ai',
+    environmentId: 'cmwu92tyb0297yjmcs3grroci',
+    targetLinkId: 'cmwu942xi02a4yjmc1af2y42l',
     targetKind: 'cloudflare-workers',
 } as const;
-const projectSourceId = 'cmws9z04w011cramck2gnrr67';
-const environmentName = 'QA 204 Worker Upload';
+const projectSourceId = 'cmwu92l6r028yyjmcojzgak61';
+const environmentName = 'QA 209 Worker Upload';
+const workerName = 'qa-sweep-209-172-erase-worker';
 const sharedEnvironments = [
     { environmentId: 'shared-staging', contentArtifactId: 'staging-content', contentHeaderVersion: 1, contentBodyVersion: 1,
         name: 'Shared Staging', memberCount: 1 },
@@ -162,11 +164,21 @@ async function mountErasureRefusal(blocker: AccountErasureDeploymentBlockerV1 | 
     const environment = createDeploymentEnvironmentHeaderV1({
         id: workerBlocker.environmentId, serverId: homeId, projectSourceId, runtimeTargetLinkId: workerBlocker.targetLinkId,
     });
+    const targetLink = createDeploymentTargetLinkHeaderV1({ id: workerBlocker.targetLinkId, environmentId: environment.id,
+        targetKind: workerBlocker.targetKind, machines: [], members: [],
+        source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.cloudflare', localId: 'workers' } },
+    });
     const artifacts = homeHttp.artifacts(homeId);
     artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
         id: environment.contentArtifactId, isDecrypted: true, title: environmentName,
         header: { kind: 'deployment-environment.v1', title: environmentName }, body: '',
         headerVersion: environment.contentHeaderVersion, bodyVersion: environment.contentBodyVersion, seq: 1, createdAt: 1, updatedAt: 1,
+    }, accountId));
+    artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
+        id: targetLink.contentArtifactId, isDecrypted: true, title: 'Linked runtime',
+        header: { kind: 'deployment-target-link.v1', title: 'Linked runtime' },
+        body: JSON.stringify({ preparedNative: { projectName: workerName } }),
+        headerVersion: targetLink.contentHeaderVersion, bodyVersion: targetLink.contentBodyVersion, seq: 2, createdAt: 1, updatedAt: 1,
     }, accountId));
     for (const row of shared ? sharedEnvironments : []) {
         artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
@@ -182,7 +194,7 @@ async function mountErasureRefusal(blocker: AccountErasureDeploymentBlockerV1 | 
         body: blocker ? { error: cleanupRequired, blocker } : { error: cleanupRequired },
     });
     homeHttp.answer(homeId, `/v1/deployments/environments/${environment.id}`, {
-        body: { ok: true, environment, targetLinks: [] },
+        body: { ok: true, environment, targetLinks: [targetLink] },
     });
     homeHttp.answer(homeId, 'GET /v1/deployments/environments', { select: (_raw, request) => {
         const ids = new URL(request.url).searchParams.getAll('environmentIds');
@@ -193,6 +205,14 @@ async function mountErasureRefusal(blocker: AccountErasureDeploymentBlockerV1 | 
     await connection.switchConnectionToActiveServer();
     const { storage } = await import('@/sync/domains/state/storage');
     storage.getState().activateProfileScope({ serverId: profiles.resolveServerProfileScopeIdForIdentifier(homeId), accountId });
+    const installed = blocker?.reason === 'provider_resource' ? await (async () => {
+        const { manifest, activateAccount } = await import('../../../../../../../packages/plugins/deploy-cloudflare/src/index');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        if (!accountLifetime) throw new Error('Expected the Plain Account plugin scope');
+        return installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount, accountLifetime, publishProjection: true });
+    })() : undefined;
     const { router } = await import('expo-router');
     const push = vi.spyOn(router, 'push').mockClear();
     const { AuthProvider } = await import('@/auth/context/AuthContext');
@@ -200,7 +220,7 @@ async function mountErasureRefusal(blocker: AccountErasureDeploymentBlockerV1 | 
     const screen = await renderScreen(<AuthProvider initialCredentials={credentials}>
         <ModalProvider><AccountScreen /></ModalProvider>
     </AuthProvider>);
-    return { screen, homeId, push, erasures: () => homeHttp.requestsFor('/v1/auth/account/delete'),
+    return { screen, homeId, push, installed, erasures: () => homeHttp.requestsFor('/v1/auth/account/delete'),
         preflights: () => homeHttp.requestsFor('/v1/auth/account/delete/preview') };
 }
 
@@ -263,21 +283,27 @@ describe('Delete account deployment recovery dialog', () => {
         } finally { await screen.unmount(); }
     });
 
-    const cases = [
-        { blocker: workerBlocker, message: 'Happier still manages this target', route: /deploymentDetachTarget=cmwsa510f01ixramco2o0v5ai/ },
-        { blocker: { ...workerBlocker, reason: 'teardown_incomplete' }, message: 'teardown did not finish', route: /deploymentDetachTarget=cmwsa510f01ixramco2o0v5ai/ },
-        { blocker: { reason: 'running_work', environmentId: workerBlocker.environmentId, deploymentId: 'running-receipt' },
-            message: 'Wait for the deployment work to finish', route: /deployment=running-receipt/ },
-        { blocker: { reason: 'source_sharing', projectSourceId }, message: 'resolve the deployment Source’s shared ownership' },
-        { blocker: { reason: 'environment_dependencies', environmentId: workerBlocker.environmentId }, message: 'identify the Environment dependency' },
-        { blocker: { reason: 'content_sharing', artifactId: 'shared-artifact' }, message: 'Withdraw sharing on the deployment Artifact' },
-        { blocker: { reason: 'graph_dependencies', environmentId: workerBlocker.environmentId }, message: 'resolve the deployment references' },
-        { blocker: { reason: 'foreign_automation', environmentId: workerBlocker.environmentId }, message: 'Ask the Automation’s owner to delete the Automation' },
-        { blocker: null, message: 'Ask a Home administrator to identify the deployment blocker' },
-    ] as const;
+    const detachRoute = `deploymentDetachTarget=${workerBlocker.targetLinkId}`;
+    const casesByReason: Record<AccountErasureDeploymentBlockerV1['reason'], {
+        references: Omit<AccountErasureDeploymentBlockerV1, 'reason'>; message: string; route?: string;
+    }> = {
+        provider_resource: { references: workerBlocker, message: 'Happier still manages this target', route: detachRoute },
+        teardown_incomplete: { references: workerBlocker, message: 'teardown did not finish', route: detachRoute },
+        running_work: { references: { environmentId: workerBlocker.environmentId, deploymentId: 'running-receipt' },
+            message: 'Wait for the deployment work to finish', route: 'deployment=running-receipt' },
+        source_sharing: { references: { projectSourceId }, message: 'resolve the deployment Source’s shared ownership' },
+        environment_dependencies: { references: { environmentId: workerBlocker.environmentId }, message: 'resolve its remaining dependency' },
+        content_sharing: { references: { artifactId: 'shared-artifact' }, message: 'Withdraw sharing on the deployment Artifact' },
+        graph_dependencies: { references: { environmentId: workerBlocker.environmentId }, message: 'resolve the deployment references' },
+        foreign_automation: { references: { environmentId: workerBlocker.environmentId }, message: 'Ask the Automation’s owner to delete the Automation' },
+    };
+    const cases = [...AccountErasureDeploymentBlockerV1Schema.shape.reason.options.map(reason => {
+        const { references, ...expected } = casesByReason[reason];
+        return { ...expected, blocker: { ...references, reason } };
+    }), { blocker: null, message: 'Could not identify which deployment is blocking deletion' }];
 
     it.each(cases)('renders the Home’s refusal and recovery (%j)', async ({ blocker, message, ...testCase }) => {
-        const { screen, homeId, push, erasures } = await mountErasureRefusal(blocker);
+        const { screen, homeId, push, installed, erasures } = await mountErasureRefusal(blocker);
         try {
             await act(async () => { screen.pressByTestId('settings-account-delete'); });
             await vi.waitFor(() => expect(screen.findByTestId(confirmationInput), screen.getTextContent()).not.toBeNull());
@@ -285,15 +311,21 @@ describe('Delete account deployment recovery dialog', () => {
             await act(async () => { screen.pressByTestId('actions.confirmation-review.decision-approve'); });
             await vi.waitFor(() => expect(erasures()).toMatchObject([{ method: 'POST', input: { confirmation: 'DELETE' } }]));
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(message));
-            if (blocker && 'environmentId' in blocker) expect(screen.getTextContent()).toContain(environmentName);
-            if (blocker) expect(screen.getTextContent()).not.toContain('identify the deployment blocker');
-            if ('route' in testCase) {
+            if (blocker?.environmentId) expect(screen.getTextContent()).toContain(environmentName);
+            if (blocker?.reason === 'provider_resource') {
+                expect(screen.getTextContent()).toContain(`${workerName} runs on Cloudflare Workers`);
+            }
+            expect(screen.getTextContent()).not.toContain('Ask a Home administrator');
+            if ('route' in testCase && testCase.route) {
                 expect(screen.getTextContent()).toContain(blocker?.reason === 'running_work' ? 'View deployment' : 'Detach and keep running');
                 await screen.pressByTestIdAsync('web-modal-button-0');
                 await vi.waitFor(() => expect(push).toHaveBeenCalledWith(expect.stringContaining(`/deployments/${projectSourceId}?serverId=${homeId}`)));
-                expect(push).toHaveBeenCalledWith(expect.stringMatching(testCase.route));
+                expect(push).toHaveBeenCalledWith(expect.stringContaining(testCase.route));
             }
             expect(erasures()).toHaveLength(1);
-        } finally { await screen.unmount(); }
+        } finally {
+            await screen.unmount();
+            await installed?.dispose();
+        }
     });
 });

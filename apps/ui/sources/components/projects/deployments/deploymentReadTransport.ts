@@ -37,6 +37,9 @@ import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deploym
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { hasDeploymentManagedDataLink } from './deploymentRestore';
+import { readPlatformResourceName } from './platformTargetLink';
+import { createDeploymentTargetCatalogV1, listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1 } from '@happier-dev/deployments';
+import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
     return { ok: false, failure: { code, retryable } };
@@ -71,12 +74,30 @@ type EnvironmentPage = Extract<ReturnType<typeof DeploymentEnvironmentListResult
 export type DeploymentEnvironmentNamePage = Readonly<Pick<EnvironmentPage, 'nextCursor' | 'coverage'> & {
     items: readonly (EnvironmentPage['items'][number] & Readonly<{ name: string }>)[];
 }>;
+function readEnvironmentName(environment: EnvironmentPage['items'][number],
+    result: Awaited<ReturnType<LazyActionAccountContext['readArtifactHeaders']>>[number] | undefined) {
+    const artifact = result?.status === 'fulfilled' ? result.value : null;
+    return readDeploymentEnvironmentArtifactHeaderV1(environment,
+        artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined ? {
+            artifactId: artifact.id, header: artifact.rawHeader,
+            revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
+        } : null);
+}
+
+type DeploymentTargetIdentity = Readonly<{
+    projectSourceId: string;
+    name?: string;
+    targetName?: string;
+    platform?: string;
+}>;
 type UiDeploymentReadTransport = Omit<DeploymentReadTransportV1, 'readEnvironment'> & Readonly<{
     /** Menu pages and saved identities share private, header-only presentation. */
     readEnvironmentNames: (scope: DeploymentReadScopeV1, query: Readonly<{ cursor?: string; environmentId?: string }>,
         options: DeploymentReadOptionsV1) => Promise<DeploymentReadResultV1<DeploymentEnvironmentNamePage>>;
     readEnvironment: (scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1)
         => Promise<DeploymentReadResultV1<DeploymentEnvironmentDetailV1>>;
+    readEnvironmentTargetIdentity: (scope: DeploymentReadScopeV1, environmentId: string, targetLinkId: string,
+        options: DeploymentReadOptionsV1) => Promise<DeploymentReadResultV1<DeploymentTargetIdentity>>;
     readTargetLinks: (scope: DeploymentReadScopeV1,
         targetLinks: readonly DeploymentTargetLinkChoiceV1['targetLink'][], options: DeploymentReadOptionsV1)
         => Promise<DeploymentReadResultV1<readonly DeploymentTargetLinkChoiceV1[]>>;
@@ -587,6 +608,33 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         readReceipt,
     } satisfies DeploymentReadTransportV1;
     return { ...transport,
+        readEnvironmentTargetIdentity: (scope, environmentId, targetLinkId, options) => scoped(scope, options, async account => {
+            const metadata = await readEnvironmentMetadata(scope, environmentId, options);
+            if (!metadata.ok) return metadata;
+            const { environment, targetLinks } = metadata.value;
+            const link = targetLinks.find(candidate => candidate.id === targetLinkId);
+            const source = link?.source;
+            const declarations = readPluginAccountAvailability(account.accountLifetime.scope);
+            const [[header], [artifact], manifest] = await Promise.all([
+                account.readArtifactHeaders([environment.contentArtifactId], { signal: options.signal }),
+                link ? account.readArtifactContents([link.contentArtifactId], { signal: options.signal }) : [],
+                source?.kind === 'plugin' ? declarations.ensureAccountTargetDeclarations(source.contribution.pluginId)
+                    .then(() => declarations.readCurrentAccountExecutionDeclarations()
+                        .find(entry => entry.manifest.id === source.contribution.pluginId), () => undefined) : undefined,
+            ]);
+            const label = readEnvironmentName(environment, header);
+            const platform = source && manifest
+                ? createDeploymentTargetCatalogV1(listDeploymentTargetsFromManifestsV1([manifest])).read(source) : null;
+            const openedLink = link && readDeploymentTargetLinkArtifactV1(link,
+                artifact?.status === 'fulfilled' ? artifact.value : null);
+            return { ok: true, value: {
+                projectSourceId: environment.projectSourceId,
+                ...(label.ok ? { name: label.title } : {}),
+                ...(openedLink?.ok ? { targetName: readPlatformResourceName(openedLink.content)
+                    ?? openedLink.content.nativeOrigin?.projectName ?? openedLink.title } : {}),
+                ...(link ? { platform: platform ? readDeploymentTargetDisplayNameV1(platform) : link.targetKind } : {}),
+            } };
+        }),
         readEnvironmentNames: (scope, query, options) => scoped(scope, options, async account => {
             // A saved identity is named from the list the person can read: an Environment they only view (a Team member's)
             // refuses its detail read but still lists with its name.
@@ -596,19 +644,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const page = metadata.value;
             const headers = await readArtifactsByRow(page.items.map(row => row.contentArtifactId),
                 ids => account.readArtifactHeaders(ids, { signal: options.signal }));
-            const sourceNames = new Map('projectSources' in page ? page.projectSources?.map(source => [source.id, source.name]) : undefined);
             const items: DeploymentEnvironmentNamePage['items'][number][] = [];
             let coverage = page.coverage;
             for (const [index, environment] of page.items.entries()) {
-                const result = headers[index];
-                const artifact = result?.status === 'fulfilled' ? result.value : null;
-                const presentation = readEnvironmentPresentation(environment,
-                    artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined ? {
-                        artifactId: artifact.id, header: artifact.rawHeader, body: null,
-                        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
-                    } : null, sourceNames);
-                if (!presentation.label.ok) { coverage = 'partial'; continue; }
-                items.push({ ...environment, name: presentation.label.title });
+                const label = readEnvironmentName(environment, headers[index]);
+                if (!label.ok) { coverage = 'partial'; continue; }
+                items.push({ ...environment, name: label.title });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, coverage } };
         }),

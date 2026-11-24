@@ -39,11 +39,14 @@ describe('homeDisplayName', () => {
 });
 
 describe('accountErasureFailureNotice', () => {
-    it('explains deployment cleanup for both self and Home erasure refusals', () => {
+    it('gives self erasure its own recovery when the deployment conflict lacks a typed blocker', () => {
         const code = 'account_erasure_deployment_cleanup_required';
         const notice = homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code });
         expect(notice.body).toBe('homeGovernance.errorErasureDeploymentCleanupRequired');
-        expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code }))).toEqual(notice);
+        expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code }))).toEqual({
+            title: notice.title,
+            body: 'homeGovernance.erasureDeploymentBlockerUnavailable',
+        });
     });
     it.each([
         [{ reason: 'provider_resource', targetLinkId: 'target-id', targetKind: 'vercel' }, 'vercel target-id'],

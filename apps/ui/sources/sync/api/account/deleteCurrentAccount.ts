@@ -55,16 +55,17 @@ export async function deleteCurrentAccount(credentials: Pick<AuthCredentials, 't
             && payload && typeof payload === 'object' && Reflect.get(payload, 'error') === 'account_erasure_deployment_cleanup_required';
         const code = parsed.success ? parsed.data.error : deploymentConflict
             ? 'account_erasure_deployment_cleanup_required' : transient?.code ?? 'account_delete_failed';
-        const deploymentFailure = parsed.success && parsed.data.error === 'account_erasure_deployment_cleanup_required' && 'blocker' in parsed.data
-            ? createActionExecuteFailureError({ ok: false, error: code, errorCode: code, effectAttempted: false,
-                details: projectAccountErasureDeploymentActionDetailsV1(parsed.data.blocker) })
-            : undefined;
+        if (parsed.success && parsed.data.error === 'account_erasure_deployment_cleanup_required' && 'blocker' in parsed.data) {
+            throw Object.assign(createActionExecuteFailureError({
+                ok: false, error: code, errorCode: code, effectAttempted: false,
+                details: projectAccountErasureDeploymentActionDetailsV1(parsed.data.blocker),
+            }), { status: response.status });
+        }
         throw new HappyError(code, true, {
             status: response.status,
             kind: response.status === 403 ? 'auth' : 'server',
             code,
             ...(parsed.success ? { details: parsed.data } : {}),
-            ...(deploymentFailure ? { cause: deploymentFailure } : {}),
         });
     }
     const parsed = AccountErasureResponseV1Schema.safeParse(payload);

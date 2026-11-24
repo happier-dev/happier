@@ -178,13 +178,20 @@ export const WorkspaceRouteBody = React.memo(() => {
             const deploymentRecovery = accountErasureDeploymentRecovery(error);
             const binding = accountExecution.binding;
             const environmentId = deploymentRecovery?.blocker.environmentId;
+            const targetLinkId = deploymentRecovery?.blocker.targetLinkId;
             const signal = accountExecution.getSignal();
-            let environment: { name: string; projectSourceId: string } | undefined;
+            let environment: { projectSourceId: string; name?: string; targetName?: string; platform?: string } | undefined;
             if (environmentId && binding) {
                 const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
-                const result = await createDeploymentReadTransport(binding).readEnvironmentNames(binding.scope, { environmentId }, { signal });
+                const transport = createDeploymentReadTransport(binding);
+                if (targetLinkId) {
+                    const result = await transport.readEnvironmentTargetIdentity(binding.scope, environmentId, targetLinkId, { signal });
+                    if (result.ok) environment = result.value;
+                } else {
+                    const result = await transport.readEnvironmentNames(binding.scope, { environmentId }, { signal });
+                    if (result.ok) [environment] = result.value.items;
+                }
                 if (!accountExecution.isCurrent()) return;
-                if (result.ok) [environment] = result.value.items;
             }
             let recovery: { label: string; onPress: () => void } | undefined;
             if (environment && environmentId && binding && deploymentRecovery) {
@@ -202,7 +209,7 @@ export const WorkspaceRouteBody = React.memo(() => {
                     };
                 }
             }
-            const notice = accountErasureFailureNotice(error, environment?.name);
+            const notice = accountErasureFailureNotice(error, environment);
             alertActionFailure({ title: notice.title, reason: notice.body, code: outcome.errorCode,
                 requestId: outcome.requestId, context: readSafeFailureDetails(outcome.details), recovery });
             return;
