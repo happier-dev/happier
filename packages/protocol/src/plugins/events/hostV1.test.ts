@@ -54,7 +54,7 @@ describe('Host Events V1 catalog', () => {
   });
   it('carries only receipt identity in an Account deployment invalidation', () => {
     const eventId = '@happier/deployment/receipt-invalidated';
-    const payload = { environmentId: 'environment', deploymentId: 'receipt' };
+    const payload = { serverId: 'home', environmentId: 'environment', deploymentId: 'receipt' };
     expect(HostEventTargetV1Schema.safeParse({ eventId, scope: { kind: 'account' } }).success).toBe(true);
     expect(parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], payload)).toEqual(payload);
     expect(() => parseHostEventPayloadV1(eventId as Parameters<typeof parseHostEventPayloadV1>[0], { ...payload, logs: 'private' })).toThrow();

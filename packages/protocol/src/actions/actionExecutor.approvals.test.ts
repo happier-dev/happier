@@ -36,6 +36,7 @@ import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymen
 import { mapApprovalCreatedBySurface } from './executor/approvalPreparation.js';
 
 import { createActionAutomationHttpPortV1, createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import { createEmptyActionAutomationPortV1 } from './executor/actionAutomationAdmission.testkit.js';
 
 const defaultActionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
 
@@ -413,6 +414,7 @@ function createApprovalRequest(
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}, options?: Parameters<typeof createActionExecutor>[1]) {
   const executor = createActionExecutor({
+    actionAutomations: createEmptyActionAutomationPortV1(),
     executionRunStart: async () => ({}),
     executionRunList: async () => ({}),
     executionRunGet: async () => ({}),
@@ -2404,7 +2406,11 @@ describe('createActionExecutor (approvals)', () => {
     expect(JSON.stringify(request)).not.toContain(passwordInput.currentPassword);
     expect(JSON.stringify(request)).not.toContain(passwordInput.newPassword);
     if (admission.kind !== 'waiting' || !request) return;
-    request = { ...ApprovalRequestSchema.parse(request), status: 'approved', decision: { kind: 'approve', decidedAtMs: Date.now() } };
+    const pendingRequest = ApprovalRequestV2Schema.parse(request);
+    const decision = { kind: 'approve' as const, decidedAtMs: Date.now() };
+    // A stored approval with settled checks still cannot authenticate the caller.
+    request = ApprovalRequestV2Schema.parse({ ...pendingRequest, status: 'approved', decision,
+      automaticChecks: { ...pendingRequest.automaticChecks, phase: 'passed', humanDecision: decision } });
     expect(await executor.replayApprovedApprovalRequest({ artifactId: 'password-request', callerAuthority: 'account_automation' }))
       .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     expect(performed).toBeNull();

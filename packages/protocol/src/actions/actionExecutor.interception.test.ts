@@ -7,12 +7,14 @@ import * as authority from './decisionAuthority.js';
 import * as credentials from '../auth/apiTokenGrant.js';
 import * as callerContext from './executor/callerContext.js';
 import { createActionAutomationPortV1 } from './executor/actionAutomationAdmission.js';
+import { createEmptyActionAutomationPortV1 } from './executor/actionAutomationAdmission.testkit.js';
 import { createActionAutomationInvocationV1, type ActionSettlementV1 } from './executor/actionSettlement.js';
 import { automationSubjectKeyV1 } from '../automations/automationSubjectV1.js';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
+    actionAutomations: createEmptyActionAutomationPortV1(),
     executionRunStart: async () => ({}),
     executionRunList: async () => ({}),
     executionRunGet: async () => ({}),
