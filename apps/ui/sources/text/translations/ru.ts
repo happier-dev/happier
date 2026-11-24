@@ -9339,7 +9339,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     },
     accessWithdrawn: "Доступ отозван",
     accessWithdrawnBody: ({ machine }: { machine: string }) => `Доступ к ${machine} отозван.`,
-    accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `Ваш доступ к ${machine} отозван. Владелец может предоставить его снова.`,
+    accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `Эта сессия остановилась, когда ваш доступ к ${machine} был отозван.`,
     accessWithdrawnContinue: 'Продолжить в новой сессии',
     inactiveResumable: "Неактивна (можно возобновить)",
     inactiveArchived: "В архиве",
