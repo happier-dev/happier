@@ -336,6 +336,8 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
   if (!reviewedChild || !rootActionId || !authorization || !http) return;
   const rootOperation = deploymentOperationForRootActionV1(rootActionId, authorization.binding.deploymentPreparationAdmission);
   const spendsRootOperation = rootOperation !== undefined && reviewedChild.actionId === `deployments.${rootOperation}`;
+  const readsUnderBindingsChild = reviewedChild.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
+    && reviewedChild.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1;
   const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
   Object.defineProperties(proof, {
     originalAuthorization: { value: originalAuthorization },
@@ -358,7 +360,9 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
         // A child that is the root's own receipt operation (a Create or Template
         // spending its deploy intent) keeps its effect: Home binds the root's
         // candidate publication to that operation and its reviewed role, never to the root.
-        if (!proof.envelope && !spendsRootOperation && request.effectActionId === proof.qualifiedActionId && request.method.toUpperCase() === 'GET'
+        // The telemetry bindings child reads the private runtime Link it is changing.
+        if (!proof.envelope && !spendsRootOperation && !readsUnderBindingsChild && request.effectActionId === proof.qualifiedActionId
+          && request.method.toUpperCase() === 'GET'
           && (await import('../actionSpecs.js')).getActionSpec(proof.qualifiedActionId as ActionId).sideEffectClass === 'write')
           return http.createRequestHeaders({ ...parentRequest, effectActionId: rootActionId });
         const credentialPurpose = request.effectActionId === rootActionId

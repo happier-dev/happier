@@ -6900,6 +6900,85 @@ describe('deployment children retain their controller Action authority', () => {
         await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
+    it.each([['plain', 'vercel'], ['e2ee', 'vercel'], ['plain', 'workers'], ['e2ee', 'workers']] as const)(
+        'routes hosted telemetry enable and off through the reviewed bindings child on %s %s', async (contentMode, platformTarget) => {
+            const f = await fixture('account', 'account', { contentMode, readableEnvironment: true, platformTarget });
+            const initialLinkContent = await f.content('deployment-target-link.v1', {});
+            await db.deploymentTargetLink.update({ where: { id: f.link.id },
+                data: { ...initialLinkContent, targetKind: platformTarget === 'workers' ? 'cloudflare-workers' : 'vercel' } });
+            const actionId = 'deployments.environments.telemetry.set';
+            const bindingAction = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+            const role = 'telemetry.bindings';
+            const target = { kind: 'machine' as const, machineId: f.controller.id };
+            const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+            await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+                let environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+                let link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
+                for (const telemetryMachineId of [f.controller.id, null]) {
+                    const input = { serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                        ...(telemetryMachineId === null
+                            ? { collector: null, confirmDelete: true as const }
+                            : { collector: { machineId: telemetryMachineId } }) };
+                    const requestId = crypto.randomUUID();
+                    const scope = { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target };
+                    const envelope = contentMode === 'e2ee'
+                        ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                            binding: scope, input, material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes })
+                        : { v: 1 as const, requestId, target, input };
+                    const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+                    const minted = await auth.mintExternalActionExecutionAuthorization({ ...scope, machineId: f.controller.id,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                        { input: contentMode === 'e2ee' ? native : input, deploymentNativeAdmission: native });
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: minted,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+                        installationId: f.controller.installationId, privateKey: f.controller.keys.secretKey, rootAdmitted: true });
+                    if (!authorization?.requesterHttpProjection) throw new Error('Expected admitted root HTTP projection');
+                    const path = `/v1/artifacts/${link.contentArtifactId}`;
+                    const rootHeaders = await authorization.requesterHttpProjection.createRequestHeaders({ effectActionId: actionId, method: 'GET', path });
+                    if (!rootHeaders) throw new Error('Expected signed root request');
+                    const rootRead = await app.inject({ method: 'GET', url: path,
+                        headers: { ...currentAccountStoredContentCompatibilityHeaders, ...rootHeaders } });
+                    expect(rootRead.statusCode).toBe(401);
+                    const childInput = { serverId, environmentId: environment.id, expectedRevision: environment.revision,
+                        set: [], remove: [], telemetryMachineId };
+                    await invokeHostReviewedChildV1({ parent: { actionId, input },
+                        context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                            externalActionExecutionAuthorization: authorization, surface: 'cli' },
+                        child: { action: bindingAction, role, input: childInput },
+                        admittedReview: { action: bindingAction, role, surface: 'cli' },
+                        execute: async (_input, context) => {
+                            const projection = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+                            if (!projection) throw new Error('Missing reviewed bindings child HTTP projection');
+                            const childHeaders = await projection.createRequestHeaders({ effectActionId: bindingAction, method: 'GET', path });
+                            if (!childHeaders) throw new Error('Expected signed bindings child request');
+                            const childRead = await app.inject({ method: 'GET', url: path,
+                                headers: { ...currentAccountStoredContentCompatibilityHeaders, ...childHeaders } });
+                            expect(childRead.statusCode).toBe(200);
+                            const content = await f.content('deployment-environment.v1', createDeploymentEnvironmentDetailV1().content,
+                                createDeploymentEnvironmentContentArtifactIdV1({ ...minted.binding, actionId: bindingAction,
+                                    environmentId: environment.id }));
+                            const linkContent = await f.content('deployment-target-link.v1', {},
+                                createDeploymentLinkContentArtifactIdV1({ ...minted.binding, actionId: bindingAction,
+                                    deploymentLinkAdmission: { environmentId: environment.id } }));
+                            const savePath = `/v1/deployments/environments/${environment.id}/bindings`;
+                            const body = DeploymentBindingsSetStorageInputV1Schema.parse({ serverId, environmentId: environment.id,
+                                expectedRevision: environment.revision, ...content, referencedSavedSecretRevisions: [], grants: [], telemetryMachineId,
+                                targetLinkContent: { targetLinkId: link.id, expectedTargetLinkRevision: link.revision, ...linkContent } });
+                            const saveHeaders = await projection.createRequestHeaders({ effectActionId: bindingAction,
+                                method: 'POST', path: savePath, body });
+                            if (!saveHeaders) throw new Error('Expected signed bindings write');
+                            const saved = await app.inject({ method: 'POST', url: savePath, payload: body,
+                                headers: { ...currentAccountStoredContentCompatibilityHeaders, ...saveHeaders } });
+                            expect(saved.statusCode, saved.body).toBe(200);
+                        } });
+                    environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } });
+                    link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: link.id } });
+                    expect(environment.telemetryMachineId).toBe(telemetryMachineId);
+                    expect(environment.runtimeTargetLinkId).toBe(link.id);
+                }
+            }, { authentication: 'real' });
+        });
+
     it.each(['plain', 'e2ee'] as const)('publishes and stores only the %s runtime Link candidate of the telemetry bindings child', async mode => {
         // A platform runtime Link carries the provider-owned variables, so its bindings write
         // publishes a Link candidate and CASes that Link (prepareDeploymentBindingsForHost).
