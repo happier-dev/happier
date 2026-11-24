@@ -63,7 +63,7 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     await page.goto(`${ui.baseUrl}/projects/${encodeURIComponent(scope.workspace.workspaceId)}/services?happier_hmr=0`,
       { waitUntil: 'domcontentloaded' });
     await page.getByText('Phone native database', { exact: true }).click();
-    await page.getByText('sentinel', { exact: true }).click();
+    await page.getByLabel('sentinel', { exact: true }).click();
     await expect(page.getByText('dbw_selected', { exact: true })).toBeVisible();
 
     // G1: complete an admitted phone edit before any error or refusal assertions.
@@ -71,21 +71,28 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     await page.getByRole('textbox', { name: 'target', exact: true }).fill('phone-committed');
     await page.getByRole('textbox', { name: 'target', exact: true }).press('Enter');
     await page.getByRole('button', { name: 'Review', exact: true }).click();
-    await expect(page.getByText(/dbw_selected → phone-committed/)).toBeVisible();
+    const expectReview = async () => {
+      await expect(page.getByRole('heading', { name: 'Review 1 change', exact: true })).toBeVisible();
+      await expect(page.getByText('dbw_selected', { exact: true }).filter({ visible: true }).last()).toBeVisible();
+      await expect(page.getByText('phone-committed', { exact: true }).filter({ visible: true }).last()).toBeVisible();
+    };
+    await expectReview();
     await page.setViewportSize({ width: 1100, height: 844 });
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByText(/dbw_selected → phone-committed/)).toBeVisible();
-    await page.getByRole('button', { name: 'Apply', exact: true }).click();
+    await expectReview();
+    await page.getByRole('button', { name: 'Apply 1 change', exact: true }).click();
     await expect.poll(() => pairedFixture.postgres.sql('dbw_selected', 'SELECT target FROM sentinel WHERE id = 1'))
       .toBe('phone-committed');
 
     // Resizing keeps the mounted workbench and its selected relation usable.
     await page.setViewportSize({ width: 1100, height: 844 });
     await page.getByRole('button', { name: 'Console', exact: true }).click();
-    const editor = page.locator('[contenteditable="true"]').first();
+    const editor = page.locator('textarea:visible, [contenteditable="true"]:visible').first();
     await editor.fill('SELECT target FROM public.sentinel WHERE id = 1');
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(editor).toContainText('SELECT target FROM public.sentinel WHERE id = 1');
+    await expect.poll(() => editor.evaluate((element) =>
+      element instanceof HTMLTextAreaElement ? element.value : element.textContent))
+      .toContain('SELECT target FROM public.sentinel WHERE id = 1');
     await expect(editor).toBeFocused();
     await page.getByRole('button', { name: 'Run', exact: true }).click();
     await expect(page.getByText('phone-committed', { exact: true })).toBeVisible();
@@ -95,12 +102,13 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     // the next valid run uses the same surface and proves visible recovery.
     await editor.fill('SELECT FROM');
     await page.getByRole('button', { name: 'Run', exact: true }).click();
+    await page.getByRole('button', { name: 'Details', exact: true }).click();
     await expect(page.getByText('42601', { exact: true })).toBeVisible();
     await editor.fill('SELECT target FROM public.sentinel WHERE id = 1');
     await page.getByRole('button', { name: 'Run', exact: true }).click();
     await expect(page.getByText('phone-committed', { exact: true })).toBeVisible();
     await page.setViewportSize({ width: 1100, height: 844 });
-    await page.getByText('sentinel', { exact: true }).click();
+    await page.getByLabel('sentinel', { exact: true }).click();
     await page.getByRole('radio', { name: 'Structure', exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByText('target', { exact: true }).first()).toBeVisible();
@@ -112,16 +120,16 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     // The producer's partial cell cannot become an editable truncated value.
     // Returning to the complete relation must leave ordinary editing usable.
     await page.setViewportSize({ width: 1100, height: 844 });
-    await page.getByText('large_value', { exact: true }).click();
+    await page.getByLabel('large_value', { exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByText('large-sentinel', { exact: true }).click();
+    await page.getByText(/^large-sentinel · /).click();
     await expect(page.getByText(/^x+…$/).first()).toBeVisible();
     await expect(page.getByRole('textbox', { name: 'payload', exact: true })).toHaveCount(0);
     expect(await fixture.postgres.sql('dbw_selected', 'SELECT octet_length(payload) FROM large_value WHERE id = 1'))
       .toBe(String(fullValueBytes));
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await page.setViewportSize({ width: 1100, height: 844 });
-    await page.getByText('sentinel', { exact: true }).click();
+    await page.getByLabel('sentinel', { exact: true }).click();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.getByText('phone-committed', { exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'target', exact: true })).toHaveValue('phone-committed');
