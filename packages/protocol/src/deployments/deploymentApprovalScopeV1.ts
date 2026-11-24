@@ -130,6 +130,10 @@ export function createDeploymentApprovalScopeResolverV1(
   };
 }
 
+function isWorktreeCaptureClear(actionId: string, input: unknown): boolean {
+  return actionId === DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 && readRecord(readRecord(input).source).kind === 'worktree';
+}
+
 type DatabaseTargetV1 = z.infer<typeof DatabaseTargetV1Schema>;
 export type DatabaseMachineLocalTargetV1 = Extract<DatabaseTargetV1, Readonly<{ kind: 'worktree' | 'manual' }>>;
 
@@ -150,6 +154,7 @@ export function withMachineLocalDatabaseAgentLevelV1(
 ): NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']> {
   return async args => {
     if (!isDatabaseActionIdV1(args.actionId)) return await resolveEnvironment(args);
+    if (isWorktreeCaptureClear(args.actionId, args.input)) return { scope: null };
     const target = readMachineLocalDatabaseTarget(args.input);
     if (!target) return await resolveEnvironment(args);
     if (databaseActionOperationClass(args.actionId, args.input) === 'read') return { scope: null };
@@ -162,7 +167,7 @@ export function withMachineLocalDatabaseAgentLevelV1(
 
 async function resolveCollectorClearApprovalScope(read: NonNullable<ActionExecutorDeps['deploymentAction']>,
   input: unknown, context: ActionExecutorContext): Promise<ActionEnvironmentApprovalScopeAdmissionV1 | ActionExecuteFailure> {
-  if (readRecord(readRecord(input).source).kind === 'worktree') return { scope: null };
+  if (isWorktreeCaptureClear(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, input)) return { scope: null };
   const source = readDeploymentTelemetryEnvironmentSourceV1(input);
   if (!source.success) return failure('invalid_parameters');
   const { serverId, environmentId } = source.data;

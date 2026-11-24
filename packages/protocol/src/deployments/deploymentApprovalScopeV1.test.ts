@@ -204,6 +204,16 @@ describe('Machine-local database agent level at the approval scope (F10, D13)', 
   const agent = { surface: 'agent' as const, authority: 'account_automation' as const };
   const allow = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'action.invoke': ['agent'] } });
 
+  it('keeps Worktree capture Clear available without a deployment host', async () => {
+    const resolve = withMachineLocalDatabaseAgentLevelV1(
+      async () => ({ ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' }),
+      async () => { throw new Error('Worktree capture has no selected database'); },
+    );
+    expect(await resolve({ actionId: DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
+      input: { source: { kind: 'worktree', serverId: 'home', machineId: 'machine', projectId: 'project', workspaceId: 'workspace' } },
+      context: agent, phase: 'prepare' })).toEqual({ scope: null });
+  });
+
   it('carries the stored worktree level to the applier without an Environment read, so asks-first is a floor', async () => {
     const levels: unknown[] = [];
     let hostReads = 0;
