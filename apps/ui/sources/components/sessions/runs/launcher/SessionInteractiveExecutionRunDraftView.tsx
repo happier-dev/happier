@@ -1,3 +1,4 @@
+import { reviewScopeForInput } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ExecutionRunAgentModelPicker } from './ExecutionRunAgentModelPicker';
 import { ExecutionRunEngineRunnerPicker } from './ExecutionRunEngineRunnerPicker';
 import { PersonalSessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
@@ -368,6 +369,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     });
     const { identity, setIdentity, actionInput, setActionInput: setNormalizedActionInput, setUserActionInput: setActionInput } = launcherDraft;
     const reviewInventory = useReviewEngineInventory({
+        scope: reviewScopeForInput(actionInput),
         enabled: intent === 'review',
         sessionId: props.sessionId,
         machineId: machineId ?? undefined,

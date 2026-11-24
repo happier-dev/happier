@@ -1,3 +1,4 @@
+import { readRecord, hasOwn } from '../inputs/inputRecords.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitives.js';
@@ -14,6 +15,13 @@ export type ReviewEngineCapabilities = z.infer<typeof ReviewEngineCapabilitiesSc
 
 export const ReviewEngineScopeSchema = lazyZodSchema(() => z.enum(['worktree', 'paths', 'repository']));
 export type ReviewEngineScope = z.infer<typeof ReviewEngineScopeSchema>;
+export const REVIEW_ENGINE_SCOPE_UNSUPPORTED = 'review_scope_unsupported' as const;
+
+export function reviewScopeForInput(input: unknown): ReviewEngineScope {
+  const record = readRecord(input);
+  if (record.scope === 'repository') return 'repository';
+  return hasOwn(record, 'selectedPaths') || hasOwn(record, 'selectedFiles') ? 'paths' : 'worktree';
+}
 
 /** Daemon Review inventory; the optional launch model is a read-only projection. */
 export const ReviewEngineListItemSchema = lazyZodSchema(() => z.strictObject({

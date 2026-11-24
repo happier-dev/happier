@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ReviewEngineInventory } from '@happier-dev/protocol/reviews/reviewEngines';
+import type { ReviewEngineInventory, ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 
 import { listReviewEngines } from '@/sync/ops/reviews/reviewWalkthrough';
 import { t } from '@/text';
@@ -13,14 +13,15 @@ type InventoryState =
 /** Subscribe only while editing a Review draft; a changed target retires the previous read. */
 export function useReviewEngineInventory(params: Readonly<{
     enabled: boolean;
+    scope?: ReviewEngineScope;
     sessionId: string | null;
     machineId?: string;
     serverId: string | null;
     accountBinding: ServerCredentialAccountScopeBinding | null;
 }>) {
-    const { enabled, sessionId, machineId, serverId, accountBinding } = params;
+    const { enabled, scope, sessionId, machineId, serverId, accountBinding } = params;
     const targetKey = enabled && machineId && accountBinding
-        ? JSON.stringify([serverId, machineId, sessionId, accountBinding.accountId, accountBinding.revision]) : null;
+        ? JSON.stringify([serverId, machineId, sessionId, scope, accountBinding.accountId, accountBinding.revision]) : null;
     const [state, setState] = React.useState<Readonly<{ targetKey: string; result: InventoryState }> | null>(null);
     const [revision, refresh] = React.useReducer(value => value + 1, 0);
     React.useEffect(() => {
@@ -31,7 +32,7 @@ export function useReviewEngineInventory(params: Readonly<{
             setState(null);
         });
         setState({ targetKey, result: { status: 'loading' } });
-        void listReviewEngines({ sessionId, machineId, serverId, expectedAccountId: accountBinding.accountId, signal: controller.signal }).then(result => {
+        void listReviewEngines({ scope, includeDisabled: true, sessionId, machineId, serverId, expectedAccountId: accountBinding.accountId, signal: controller.signal }).then(result => {
             if (controller.signal.aborted) return;
             setState({ targetKey, result: result.ok ? { status: 'ready', inventory: result.inventory }
                 : { status: 'error', error: result.error } });
@@ -42,7 +43,7 @@ export function useReviewEngineInventory(params: Readonly<{
             retirement?.dispose();
             controller.abort();
         };
-    }, [accountBinding, machineId, revision, serverId, sessionId, targetKey]);
+    }, [accountBinding, machineId, revision, scope, serverId, sessionId, targetKey]);
     const result: InventoryState = state && state.targetKey === targetKey ? state.result
         : { status: enabled ? 'loading' : 'idle' };
     return { ...result, refresh };

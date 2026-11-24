@@ -1,6 +1,6 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { AccountSettings } from '@happier-dev/protocol';
-import { ReviewEngineListItemSchema, ReviewEngineScopeSchema, type ReviewEngineListItem, type ReviewEngineProfileSelection, type ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
+import { ReviewEngineListItemSchema, ReviewEngineScopeSchema, REVIEW_ENGINE_SCOPE_UNSUPPORTED, type ReviewEngineListItem, type ReviewEngineProfileSelection, type ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -136,7 +136,7 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
   const includeDisabled = params.includeDisabled === true;
   const limit = normalizeLimit(params.limit);
   const registry = params.registrySnapshot ?? readAgentCatalogSnapshot();
-  const reviewAgents = selectReviewEngineAgents(registry, params.scope, params.profileCatalog);
+  const reviewAgents = selectReviewEngineAgents(registry, includeDisabled ? undefined : params.scope, params.profileCatalog);
   // Match the shared Agent catalog's display/default order; installed Agents retain their registry order.
   const orderedReviewAgentIds = [
     ...AGENT_IDS.filter((agentId) => reviewAgents.has(agentId)),
@@ -187,8 +187,8 @@ export async function buildReviewEngineInventoryItems(params: Readonly<{
     const backendTarget = item.engineId === item.backendId ? { kind: 'backend' as const, backendId: item.backendId } : item.value;
     const selection = resolveExecutionRunAgentDefaultSelection({ backendTarget, accountSettings });
     const launchModelId = selection && !isNativeAutomaticModelSelectionInputV1(selection) ? selection.modelId : undefined;
-    const unavailableCode = !item.enabled ? 'account_disabled'
-      : isAgentStartReadinessBlockingV1(state) ? state : undefined;
+    const unavailableCode = params.scope && !item.reviewScopes?.includes(params.scope) ? REVIEW_ENGINE_SCOPE_UNSUPPORTED
+      : !item.enabled ? 'account_disabled' : isAgentStartReadinessBlockingV1(state) ? state : undefined;
     let model: AgentModelDescriptor | undefined;
     if (!unavailableCode) {
       try {
@@ -224,14 +224,17 @@ export async function buildReviewEngineInventory(
   // An authored profile can support a scope that this Agent's default profile does not.
   // Read Machine facts once for the roster, then project each selection's own scope.
   const roster = await buildReviewEngineInventoryItems({ ...params, scope: undefined });
-  const items = roster.filter(item => !params.scope || item.reviewScopes?.includes(params.scope));
+  const forScope = (item: ActionReviewEngineInventoryItem): ActionReviewEngineInventoryItem[] => {
+    if (!params.scope || item.reviewScopes?.includes(params.scope)) return [item];
+    return params.includeDisabled ? [{ ...item, enabled: false, available: false, unavailableCode: REVIEW_ENGINE_SCOPE_UNSUPPORTED }] : [];
+  };
+  const items = roster.flatMap(forScope);
   const selectionItems = params.profileSelections.flatMap(selection => {
     const item = roster.find(row => row.engineId === selection.engineId || row.value === selection.engineId);
     if (!item) return [];
     const { sessionTranscript, ...facts } = resolveReviewProfileFacts(item.backendId, params.profileCatalog, selection);
-    if (params.scope && !facts.reviewScopes.includes(params.scope)) return [];
     const { costConsent: _defaultCostConsent, ...selectionItem } = item;
-    return [{ ...selectionItem, ...facts, capabilities: { ...item.capabilities, sessionTranscript } }];
+    return forScope({ ...selectionItem, ...facts, capabilities: { ...item.capabilities, sessionTranscript } });
   });
   return { items, selectionItems };
 }

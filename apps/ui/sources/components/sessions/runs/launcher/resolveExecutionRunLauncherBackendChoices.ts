@@ -4,8 +4,9 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { isMachineAgentExecutionStateBlockingV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { t } from '@/text';
 import { formatMachineAgentExecutionState } from '@/components/machines/agents/machineAgentCopy';
-import type { ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
+import { REVIEW_ENGINE_SCOPE_UNSUPPORTED, type ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
 
 /** Declared runner targets consume the same Agent rows and readiness as ordinary reviewers. */
 export function reviewEngineRunnerChoices(runners: NonNullable<ReviewEngineListItem['runnerAgents']>,
@@ -160,7 +161,7 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
                 ? resolveBundledAgentIdFromContributionIdentity(canonicalTarget.identity) ?? buildQualifiedPluginContributionKey(canonicalTarget.identity)
                 : params.mergedBackendProjectionById?.[backendId]?.agentId ?? backendId;
             // Setup supplies the shared picker action. The daemon Review inventory owns availability.
-            const setup = item.enabled ? undefined : resolveMachineAgentSetupRow(
+            const setup = item.enabled || item.unavailableCode === REVIEW_ENGINE_SCOPE_UNSUPPORTED ? undefined : resolveMachineAgentSetupRow(
                 findMachineAgentForBackendTargetKey(params.machineAgents ?? [], targetKey),
             );
             return {
@@ -178,8 +179,10 @@ export function resolveExecutionRunLauncherBackendChoices(params: ResolveBackend
                 }),
                 title: item.label,
                 disabled: !item.enabled,
-                ...(!item.enabled && item.readiness && isMachineAgentExecutionStateBlockingV1(item.readiness)
-                    ? { unavailableReason: formatMachineAgentExecutionState(item.readiness) } : {}),
+                ...(item.unavailableCode === REVIEW_ENGINE_SCOPE_UNSUPPORTED
+                    ? { unavailableReason: t('reviewWalkthrough.start.scopeUnsupported') }
+                    : !item.enabled && item.readiness && isMachineAgentExecutionStateBlockingV1(item.readiness)
+                        ? { unavailableReason: formatMachineAgentExecutionState(item.readiness) } : {}),
                 ...(setup ? { setup } : {}),
             };
         });

@@ -1,4 +1,4 @@
-import type { ReviewEngineInventory, ReviewEngineProfileSelection } from '@happier-dev/protocol/reviews/reviewEngines';
+import type { ReviewEngineInventory, ReviewEngineProfileSelection, ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewWalkthroughResponseSchema, type ReviewFindingIdentity } from '@happier-dev/protocol/reviews/reviewNarration';
 import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -57,12 +57,14 @@ export async function listReviewEngines(params: Readonly<{
     serverId: string | null;
     expectedAccountId?: string;
     includeDisabled?: boolean;
+    scope?: ReviewEngineScope;
     profileSelections?: readonly ReviewEngineProfileSelection[];
     signal?: AbortSignal;
 }>): Promise<Readonly<{ ok: true; inventory: ReviewEngineInventory }> | Failure> {
     const result = await executorFor(params.serverId).execute(
         'review.engines.list',
         { sessionId: params.sessionId, ...(!params.sessionId && params.machineId ? { machineId: params.machineId } : {}),
+            ...(params.scope ? { scope: params.scope } : {}),
             ...(params.includeDisabled !== undefined ? { includeDisabled: params.includeDisabled } : {}),
             ...(params.profileSelections?.length ? { profileSelections: params.profileSelections } : {}) },
         { ...(params.sessionId ? { defaultSessionId: params.sessionId } : {}), ...(params.serverId ? { serverId: params.serverId } : {}),

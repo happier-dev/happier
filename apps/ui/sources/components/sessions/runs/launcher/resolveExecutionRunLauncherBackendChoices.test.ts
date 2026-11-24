@@ -189,6 +189,15 @@ describe('resolveExecutionRunLauncherBackendChoices', () => {
         }));
     });
 
+    it('keeps a scope-refused engine visible with the inventory reason and no setup action', () => {
+        const choices = resolveExecutionRunLauncherBackendChoices({ enabledAgentIds: [], intent: 'review', executionRunsBackends: {},
+            reviewEngines: [{ engineId: 'clawpatch', label: 'clawpatch', enabled: false, available: false,
+                readiness: 'ready', unavailableCode: 'review_scope_unsupported', reviewScopes: ['repository'],
+                capabilities: { structuredNarration: false } }] });
+        expect(choices[0]).toMatchObject({ disabled: true, unavailableReason: expect.any(String) });
+        expect(choices[0]?.setup).toBeUndefined();
+    });
+
     describe('Machine facts', () => {
         const machineAgent = (overrides: Partial<MachineAgent>): MachineAgent => ({
             agentId: 'claude', title: 'Claude', state: 'ready', installed: true, version: '1.0.0', latestVersion: null, update: null,

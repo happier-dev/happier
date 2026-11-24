@@ -17,7 +17,7 @@ import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } fr
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
 import { tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions } from '../../../inputs/inputOptions.js';
-import { ReviewEngineInventorySchema, refreshReviewNewRoundCostConsentV1, resolveReviewNarratorPolicy, type ReviewEngineScope } from '../../../reviews/reviewEngines.js';
+import { ReviewEngineInventorySchema, refreshReviewNewRoundCostConsentV1, resolveReviewNarratorPolicy, reviewScopeForInput } from '../../../reviews/reviewEngines.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 import { REVIEW_SETTLE_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
@@ -36,11 +36,7 @@ import { SessionStatusResultSchema } from '../../../sessions/control/contract.js
 import { AgentsBackendsListOutputSchema } from '../../agentBackendInventory.js';
 import { buildQualifiedPluginContributionKey } from '../../../plugins/contributionIdentity.js';
 
-export function reviewScopeForInput(input: unknown): ReviewEngineScope {
-  const record = readRecord(input);
-  if (record.scope === 'repository') return 'repository';
-  return hasOwn(record, 'selectedPaths') || hasOwn(record, 'selectedFiles') ? 'paths' : 'worktree';
-}
+export { reviewScopeForInput } from '../../../reviews/reviewEngines.js';
 
 async function readReviewTranscriptInput(sourceSession: NonNullable<ReviewStartInput['sourceSession']>,
   execute: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>,

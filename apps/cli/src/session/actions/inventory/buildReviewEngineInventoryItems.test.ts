@@ -171,14 +171,19 @@ describe('buildReviewEngineInventoryItems', () => {
       metadata: { reviewScopes: ['repository'] },
       defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'requestResponse' },
     } }], { resolveAgentIdentity: id => agents.find(agent => agent.id === id)?.identity ?? null });
-    const list = (scope?: 'repository' | 'paths') => buildReviewEngineInventory({
-      acpCatalogSnapshot: emptyCatalog, registrySnapshot, profileCatalog, ...(scope ? { scope } : {}),
+    const list = (scope?: 'repository' | 'paths', includeDisabled = false) => buildReviewEngineInventory({
+      acpCatalogSnapshot: emptyCatalog, registrySnapshot, profileCatalog, includeDisabled, ...(scope ? { scope } : {}),
     });
     const all = await list();
     expect(all.items.map(item => item.engineId)).toEqual(agents.map(agent => agent.id));
     expect(all.items.find(item => item.engineId === agents[1]!.id)?.reviewScopes).toEqual(['repository']);
     expect((await list('repository')).items.map(item => item.engineId)).toEqual(agents.map(agent => agent.id));
     expect((await list('paths')).items.map(item => item.engineId)).toEqual([agents[0]!.id]);
+    const unavailable = await buildReviewEngineInventory({ acpCatalogSnapshot: emptyCatalog, registrySnapshot, profileCatalog,
+      scope: 'paths', includeDisabled: true });
+    expect(unavailable.items.find(item => item.engineId === agents[1]!.id)).toMatchObject({
+      enabled: false, available: false, unavailableCode: 'review_scope_unsupported', reviewScopes: ['repository'],
+    });
   });
 
   beforeEach(() => {

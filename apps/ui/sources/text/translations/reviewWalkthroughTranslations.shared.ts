@@ -70,6 +70,7 @@ export type ReviewWalkthroughTranslations = {
         findingsOnlyChoice: string;
     };
     start: {
+        scopeUnsupported: string;
         whoReviews: string;
         step: (params: Readonly<{ n: number; title: string }>) => string;
         kindReview: string;
@@ -367,6 +368,7 @@ export const en: ReviewWalkthroughTranslations = {
         findingsOnlyChoice: 'Findings only',
     },
     start: {
+        scopeUnsupported: 'This engine can’t review this subject.',
         whoReviews: 'Who reviews',
         step: ({ n, title }) => `Step ${n} · ${title}`,
         kindReview: 'Review the changes',
