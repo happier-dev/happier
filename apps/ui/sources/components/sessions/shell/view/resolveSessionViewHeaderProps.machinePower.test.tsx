@@ -47,6 +47,7 @@ function resolveHeader(
 }
 
 // Lab lane12-final b-wake-S #1 / b-wake-A: the header names the created machine and its power word.
+// The word is its own part so a narrow header cuts the folder or machine name, never the state.
 describe('resolveSessionViewHeaderProps machine power', () => {
   it('names an asleep machine and its word after the folder', () => {
     const header = resolveHeader({
@@ -54,7 +55,8 @@ describe('resolveSessionViewHeaderProps machine power', () => {
       workspaceSubtitle: '~/happier',
       machinePower: { machineName: 'do-bot-1', word: 'Asleep' },
     });
-    expect(header.subtitle).toBe('~/happier · do-bot-1 · Asleep');
+    expect(header.subtitle).toBe('~/happier · do-bot-1');
+    expect(header.subtitleState).toBe('Asleep');
   });
 
   it('keeps the machine and word when the folder repeats the title', () => {
@@ -65,7 +67,8 @@ describe('resolveSessionViewHeaderProps machine power', () => {
       workspaceSubtitle: title,
       machinePower: { machineName: 'do-bot-1', word: 'Starting' },
     });
-    expect(header.subtitle).toBe('do-bot-1 · Starting');
+    expect(header.subtitle).toBe('do-bot-1');
+    expect(header.subtitleState).toBe('Starting');
   });
 
   it('does not repeat a machine its word already names', () => {
@@ -74,7 +77,8 @@ describe('resolveSessionViewHeaderProps machine power', () => {
       workspaceSubtitle: '~/happier',
       machinePower: { machineName: 'do-bot-1', word: 'Starting do-bot-1…' },
     });
-    expect(header.subtitle).toBe('~/happier · Starting do-bot-1…');
+    expect(header.subtitle).toBe('~/happier');
+    expect(header.subtitleState).toBe('Starting do-bot-1…');
   });
 
   it('says nothing more for a machine without a native power word', () => {
@@ -84,5 +88,6 @@ describe('resolveSessionViewHeaderProps machine power', () => {
       machinePower: null,
     });
     expect(header.subtitle).toBe('~/happier');
+    expect(header.subtitleState).toBeUndefined();
   });
 });

@@ -60,6 +60,8 @@ export type SessionViewHeaderProps = Readonly<{
     titleAccessory?: React.ReactNode;
     subtitle?: string;
     subtitleEllipsizeMode?: 'head' | 'tail';
+    /** The created machine's power word ("Asleep"); kept whole after the subtitle when it truncates. */
+    subtitleState?: string;
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     avatarId?: string;
@@ -258,15 +260,16 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const placeSubtitle = locationSubtitle === title ? undefined : locationSubtitle;
     // A created machine that is asleep, starting or stopping is named with its word after the folder
     // (lab b-wake-S / b-wake-A); a no-folder Session's place already is that machine.
-    // The word may already name the machine ("Starting do-bot-1…"); it then stands alone.
+    // The word may already name the machine ("Starting do-bot-1…"); it then stands alone. The word is its own
+    // part so a narrow header cuts the folder or machine name, never the state.
     const machinePower = voiceConversation ? null : input.machinePower ?? null;
     const machineName = machinePower?.machineName;
     const subtitleParts = [
         placeSubtitle,
         machineName && machineName !== placeSubtitle && !machinePower.word.includes(machineName) ? machineName : undefined,
-        machinePower?.word,
     ].filter((part): part is string => typeof part === 'string' && part.length > 0);
     const subtitle = subtitleParts.length > 0 ? subtitleParts.join(' · ') : undefined;
+    const subtitleState = machinePower?.word || undefined;
     const subtitleEllipsizeMode = subtitle
         ? voiceConversation ? 'tail' as const : input.workspaceSubtitleEllipsizeMode ?? 'head' as const
         : undefined;
@@ -289,6 +292,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             title: resolveLockedSessionTitle(title),
             subtitle,
             subtitleEllipsizeMode,
+            subtitleState,
             avatarId,
             botFace,
             botActivity,
@@ -386,6 +390,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         /> : undefined,
         subtitle,
         subtitleEllipsizeMode,
+        subtitleState,
         avatarId,
         botFace,
         botActivity,

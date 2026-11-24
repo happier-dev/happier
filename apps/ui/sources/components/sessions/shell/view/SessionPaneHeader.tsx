@@ -39,6 +39,8 @@ export type SessionPaneHeaderProps = Readonly<{
     subtitle?: string;
     /** `head` keeps a path's end (the folder that tells sessions apart) when it truncates. */
     subtitleEllipsizeMode?: 'head' | 'tail';
+    /** The created machine's power word ("Asleep"); stays whole after the subtitle, which truncates first. */
+    subtitleState?: string;
     badges?: ReadonlyArray<string>;
     avatarId?: string;
     /** A Bot's face; drawn in the avatar slot in place of the generic avatar. */
@@ -153,10 +155,12 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                 </PullTarget>
             ) : undefined}
             titleControl={titleControl}
-            metaLeading={props.badges?.length || props.subtitle || props.lineage || props.sandbox ? (
+            metaLeading={props.badges?.length || props.subtitle || props.subtitleState || props.lineage || props.sandbox ? (
                 <SessionScreenTestIdView dataSet={themeSurfaceDataSet('chat-header', 'facts', 'default')}
                     style={[styles.metadataRow, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'facts' } : undefined)]} sessionScreenTestId="session-header-metadata">
-                    {props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : null}
+                    {props.subtitle || props.subtitleState ? (
+                        <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} state={props.subtitleState} />
+                    ) : null}
                     {props.sandbox}
                     {props.lineage}
                     {props.badges?.map((badge, index) => (
@@ -268,13 +272,23 @@ function SessionHeaderTitle(props: Readonly<{
  * the web, which has no head ellipsis, sets the line right to left while the text itself stays left to
  * right, so overflow is cut at the start without reordering the path.
  */
-function SessionHeaderSubtitle(props: Readonly<{ text: string; mode: 'head' | 'tail' }>) {
+function SessionHeaderSubtitle(props: Readonly<{ text?: string; mode: 'head' | 'tail'; state?: string }>) {
     const webHead = props.mode === 'head' && Platform.OS === 'web';
-    return (
+    const place = props.text ? (
         <Text testID="session-header-subtitle" numberOfLines={1} ellipsizeMode={webHead ? undefined : props.mode}
             style={[styles.subtitle, webHead ? styles.subtitleHeadWeb : null]}>
             {webHead ? <Text style={styles.subtitleHeadTextWeb}>{props.text}</Text> : props.text}
         </Text>
+    ) : null;
+    if (!props.state) return place;
+    // The machine's state word is what the line is for when it is said; the place gives way to it.
+    return (
+        <View style={styles.subtitleWithState}>
+            {place}
+            <Text testID="session-header-subtitle-state" numberOfLines={1} style={[styles.subtitle, styles.subtitleState]}>
+                {props.text ? `\u00A0·\u00A0${props.state}` : props.state}
+            </Text>
+        </View>
     );
 }
 
@@ -424,6 +438,15 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
         color: theme.colors.text.secondary,
+    },
+    subtitleWithState: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    subtitleState: {
+        flexShrink: 0,
     },
     subtitleHeadWeb: {
         writingDirection: 'rtl',
