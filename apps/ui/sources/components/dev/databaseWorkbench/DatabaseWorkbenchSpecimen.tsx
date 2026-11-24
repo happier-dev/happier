@@ -7,7 +7,16 @@ import type {
   SurfaceContext,
 } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiActionControlPresentationV1 } from '@happier-dev/protocol/plugins/ui';
-import type { DatabaseDescriptorV1, DatabaseFilterV1, DatabaseNamedCellV1 } from '@happier-dev/plugin-sdk/database';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
+import {
+  DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
+  type DatabaseDescriptorV1,
+  type DatabaseFilterV1,
+  type DatabaseManagedDeploymentTargetV1,
+  type DatabaseNamedCellV1,
+} from '@happier-dev/plugin-sdk/database';
+import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { renderSurface as renderPanel } from '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-panel-native';
 import { renderSurface as renderPage } from '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-workbench-native';
 import { renderSurface as renderRail } from '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-rail-native';
@@ -80,7 +89,7 @@ export type DatabaseWorkbenchSpecimenState = Readonly<{
   console?: 'error' | 'cancelled';
   /** `?stats=off`: statement statistics are off and this server can't turn them on (the Insights setup state). */
   stats?: 'off';
-  review?: 'unverified';
+  review?: 'unverified' | 'read-setup';
 }>;
 
 const UNVERIFIED_BILLING: DatabaseDescriptorV1 = {
@@ -91,10 +100,32 @@ const UNVERIFIED_BILLING: DatabaseDescriptorV1 = {
   endpointTrust: 'encrypted_unverified',
 };
 
+const RAILWAY_BILLING_TARGET: DatabaseManagedDeploymentTargetV1 = {
+  kind: 'managed_deployment',
+  environment: { serverId: 'meridian', environmentId: 'billing-staging', projectSourceId: 'billing-service' },
+  targetLinkId: 'billing-postgres',
+  contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
+  platformProjectId: 'meridian-billing',
+  branchId: 'staging',
+  database: 'billing_staging',
+};
+const RAILWAY_BILLING_PATH = 'target/' + encodeBase64(
+  new TextEncoder().encode(JSON.stringify(RAILWAY_BILLING_TARGET)), 'base64url',
+);
+const CREATE_READ_ACCESS = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
+
 const NEVER = new Promise<never>(() => {});
 
 async function answer(state: DatabaseWorkbenchSpecimenState, descriptor: DatabaseDescriptorV1, actionId: string, raw: unknown): Promise<unknown> {
   const input = raw as Record<string, unknown>;
+  if (state.review === 'read-setup' && actionId === CREATE_READ_ACCESS && input.mode === 'preview') {
+    return { ok: true, status: 'review', role: 'billing_reader', endpointTrust: 'encrypted_unverified', statements: [
+      'CREATE ROLE billing_reader LOGIN',
+      'GRANT CONNECT ON DATABASE billing_staging TO billing_reader',
+      'GRANT USAGE ON SCHEMA public TO billing_reader',
+      'GRANT SELECT ON ALL TABLES IN SCHEMA public TO billing_reader',
+    ] };
+  }
   const operation =
     typeof input.operation === 'string' ? input.operation : actionId;
   if (actionId.endsWith('targets.list') || actionId.endsWith('targets/list'))
@@ -305,7 +336,8 @@ export function DatabaseWorkbenchSpecimen(
     state: DatabaseWorkbenchSpecimenState;
   }>,
 ) {
-  const { rows: rowsState, console: consoleState, stats: statsState } = props.state;
+  const { rows: rowsState, console: consoleState, stats: statsState, review } = props.state;
+  const subPath = review === 'read-setup' ? RAILWAY_BILLING_PATH : props.subPath;
   const descriptor = props.state.review === 'unverified' ? UNVERIFIED_BILLING : BILLING_DEV;
   const environment = usePluginSurfaceEnvironment(
     resolveLocalServicePreviewPlatform(),
@@ -357,8 +389,9 @@ export function DatabaseWorkbenchSpecimen(
       ...(rowsState ? { rows: rowsState } : {}),
       ...(consoleState ? { console: consoleState } : {}),
       ...(statsState ? { stats: statsState } : {}),
+      ...(review ? { review } : {}),
     }, descriptor, actionId, input),
-    [consoleState, descriptor, rowsState, statsState],
+    [consoleState, descriptor, rowsState, statsState, review],
   );
   const actionControls = React.useMemo(() => createSpecimenActionControls(execute), [execute]);
   const presentation = React.useMemo(() => ({ actionControls: actionControls.controls }), [actionControls]);
@@ -372,10 +405,10 @@ export function DatabaseWorkbenchSpecimen(
       ...base,
       readResource: (async () =>
         connectionContent(descriptor)) as unknown as PluginUiHostApi['readResource'],
-      watchResource: (async () => ({
-        subscriptionId: 'dev-database-workbench',
-        dispose() {},
-      })) as unknown as PluginUiHostApi['watchResource'],
+      watchResource: (async () => {
+        if (review === 'read-setup') throw new PluginError({ code: 'read_role_setup_required' });
+        return { subscriptionId: 'dev-database-workbench', dispose() {} };
+      }) as unknown as PluginUiHostApi['watchResource'],
       replacePageLocation: (async () =>
         undefined) as unknown as PluginUiHostApi['replacePageLocation'],
       setUnsavedChanges: async () => undefined,
@@ -394,7 +427,7 @@ export function DatabaseWorkbenchSpecimen(
       version: () => ({ ...base.version(), methods: [...base.version().methods, 'actionControl'] }),
       actionControl: actionControls.actionControl,
     };
-  }, [actionControls, context, descriptor, execute]);
+  }, [actionControls, context, descriptor, execute, review]);
   const module = React.useMemo(
     () => ({
       renderSurface:
@@ -432,7 +465,7 @@ export function DatabaseWorkbenchSpecimen(
           hostApi={hostApi}
           launchInput={launchInput as never}
           presentation={presentation}
-          {...(props.subPath ? { subPath: props.subPath } : {})}
+          {...(subPath ? { subPath } : {})}
         />
         </HappierColumnEdgeContext.Provider>
       </View>

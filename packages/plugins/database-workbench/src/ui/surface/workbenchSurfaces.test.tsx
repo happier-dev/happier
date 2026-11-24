@@ -498,22 +498,42 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('reviews the exact read-only login SQL after a typed setup refusal and opens the database once configured', async () => {
+  it('reviews the signed Railway preview and applies its exact SQL before opening the database', async () => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
-        targetLinkId: 'link', contribution: { pluginId: 'fixture.database', contributionId: 'postgres' },
+        targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
         platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
     const connected = { ...descriptor, target };
     const content = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
     const digest = `sha256:${computeSha256HexDigest(content)}`;
     const statements = ['CREATE ROLE happier_read LOGIN', 'GRANT CONNECT ON DATABASE billing_dev TO happier_read'];
     const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
-    type Control = Parameters<NonNullable<PluginUiTestkitHostHandlers['actionControl']>>[0];
-    let apply: Control | undefined;
     let configured = false;
     const daemon = daemonAnswers([connected]);
+    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async ({ input }) => {
+      if (input && typeof input === 'object' && 'mode' in input && input.mode === 'preview') {
+        return { ok: true, result: { ok: true, status: 'review', role: 'happier_read', statements,
+          endpointTrust: 'encrypted_unverified' } };
+      }
+      expect(input).toEqual({ target, mode: 'apply', role: 'happier_read', statements });
+      configured = true;
+      return { ok: true, result: { ok: true, status: 'configured' } };
+    });
+    const control = createPluginUiActionControlTestHost(execute);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'managed-read-setup', mountNonce: 'managed-read-setup' },
-      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={{
+          renderCodeBlock: ({ code }) => <span>{code}</span>,
+          renderIcon: () => null,
+          renderMarkdown: () => null,
+          renderPopover: () => null,
+          renderActionControl: ({ control: bound, presentation }) =>
+            <Button title={presentation.title} disabled={!bound || presentation.disabled}
+              onPress={() => control.press(presentation.title)} />,
+        }}>
+        {renderPage(context)}
+      </PluginUiHostPresentationScope>,
       subPath: encodeWorkbenchRootSubPath(target),
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
@@ -525,19 +545,8 @@ describe('Database workbench surfaces', () => {
           return { digest };
         },
         async readResource() { return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(content) }; },
-        async executeAction(request) {
-          if (request.action !== create) return daemon(request);
-          expect(request.input).toEqual({ target, mode: 'preview' });
-          return { ok: true, status: 'review', role: 'happier_read', statements };
-        },
-        actionControl(control) {
-          const { request } = control;
-          if (request.kind === 'bind' && request.action === create) apply = control;
-          if (request.kind !== 'prepared' || request.requestId !== 'create-login') return;
-          expect(request.preparation?.input).toEqual({ target, mode: 'apply', role: 'happier_read', statements });
-          configured = true;
-          return { ok: true, result: { ok: true, status: 'configured' } };
-        },
+        executeAction: daemon,
+        actionControl: control.handler,
       },
     });
     try {
@@ -547,11 +556,13 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Back to setup options' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
+      expect(execute.mock.calls.map(([{ action, input }]) => ({ action, input })))
+        .toEqual([{ action: create, input: { target, mode: 'preview' } }]);
+      expect(daemon.mock.calls.map(([request]) => request.action)).not.toContain(create);
       for (const sql of statements) expect(document.body.textContent).toContain(sql);
-      expect(document.body.textContent).not.toContain('can’t prove this is your database server');
+      expect(await fixture.getByText('The connection is encrypted, but the provider can’t prove this is your database server.')).toBeTruthy();
       expect(configured).toBe(false);
-      if (!apply) throw new Error('The reviewed SQL did not offer an Action Control');
-      await act(async () => { apply?.publish({ kind: 'prepare', requestId: 'create-login' }); });
+      await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
       expect(configured).toBe(true);
       expect(await fixture.findByRole('button', { name: 'invoices' })).toBeTruthy();
@@ -560,15 +571,31 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('says the connection is encrypted but unverified when the reviewed endpoint declares it', async () => {
+  it('shows a signed Preview refusal and leaves read access unapplied', async () => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
-        targetLinkId: 'link', contribution: { pluginId: 'fixture.database', contributionId: 'postgres' },
+        targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
         platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
     const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
     const daemon = daemonAnswers([{ ...descriptor, target }]);
+    const reason = 'Save a write login for billing_dev before creating a read-only login.';
+    const execute = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () =>
+      ({ ok: false, errorCode: 'write_connection_setup_required', error: reason }));
+    const control = createPluginUiActionControlTestHost(execute);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'managed-read-unverified', mountNonce: 'managed-read-unverified' },
-      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: context => <PluginUiHostPresentationScope
+        environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={{
+          renderCodeBlock: () => null,
+          renderIcon: () => null,
+          renderMarkdown: () => null,
+          renderPopover: () => null,
+          renderActionControl: ({ control: bound, presentation }) =>
+            <Button title={presentation.title} disabled={!bound || presentation.disabled}
+              onPress={() => control.press(presentation.title)} />,
+        }}>
+        {renderPage(context)}
+      </PluginUiHostPresentationScope>,
       subPath: encodeWorkbenchRootSubPath(target),
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
@@ -576,18 +603,19 @@ describe('Database workbench surfaces', () => {
       handlers: {
         ...connectionResourceHandlers(),
         async watchResource() { throw new PluginError({ code: 'read_role_setup_required' }); },
-        async executeAction(request) {
-          if (request.action !== create) return daemon(request);
-          return { ok: true, status: 'review', role: 'happier_read', statements: ['CREATE ROLE happier_read LOGIN'],
-            endpointTrust: 'encrypted_unverified' };
-        },
+        executeAction: daemon,
+        actionControl: control.handler,
       },
     });
     try {
       await settle(20);
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));
       await settle(20);
-      expect(await fixture.getByText('The connection is encrypted, but the provider can’t prove this is your database server.')).toBeTruthy();
+      expect(execute.mock.calls.map(([{ action, input }]) => ({ action, input })))
+        .toEqual([{ action: create, input: { target, mode: 'preview' } }]);
+      expect(await fixture.getByText(reason)).toBeTruthy();
+      expect(document.body.textContent).not.toContain('Review the read-only login');
+      expect(await fixture.getByRole('button', { name: 'Use existing read-only login' })).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
 

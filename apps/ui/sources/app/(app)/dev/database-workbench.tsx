@@ -11,7 +11,8 @@ import {
  * `?surface=page|panel|rail`, `?sub=overview|data/public/invoices|structure/public/active_subscriptions|console`,
  * `?width=` the content column the surface gets (default: the whole screen), `?state=loading|empty|failed` the rows'
  * answer, `?console=error|cancelled` what Run answers, `?stats=off` statement statistics off (Insights setup),
- * `?review=unverified` a writable database with the trust notice in its staged changes review.
+ * `?review=unverified` a writable database with the trust notice in its staged changes review,
+ * `?review=read-setup` a Railway database that needs a read-only login.
  */
 export default function DatabaseWorkbenchDevScreen() {
   const params = useLocalSearchParams<{
@@ -37,7 +38,7 @@ export default function DatabaseWorkbenchDevScreen() {
         ...(params.state === 'loading' || params.state === 'empty' || params.state === 'failed' ? { rows: params.state } : {}),
         ...(params.console === 'error' || params.console === 'cancelled' ? { console: params.console } : {}),
         ...(params.stats === 'off' ? { stats: 'off' as const } : {}),
-        ...(params.review === 'unverified' ? { review: 'unverified' as const } : {}),
+        ...(params.review === 'unverified' || params.review === 'read-setup' ? { review: params.review } : {}),
       }}
     />
   );

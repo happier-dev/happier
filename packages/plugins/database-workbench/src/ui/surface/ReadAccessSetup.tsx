@@ -4,13 +4,14 @@ import {
   DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1,
   DatabaseReadAccessSetupResultV1Schema,
   type DatabaseManagedDeploymentTargetV1,
+  type DatabaseReadAccessSetupResultV1,
 } from '@happier-dev/plugin-sdk/database';
 import { databaseActionLocalIdV1, isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
-import { Action, Button, CodeBlock, ErrorState, PageHeader, ScrollArea, Stack, SurfaceState, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Action, Button, CodeBlock, ErrorState, PageHeader, Row, ScrollArea, Stack, SurfaceState, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier-dev/plugin-ui/components';
-import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
@@ -21,7 +22,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   onConfigured(): void;
 }>) {
   const t = usePluginTranslation();
-  const preview = useExecutePluginAction(createAction);
+  const [review, setReview] = React.useState<Extract<DatabaseReadAccessSetupResultV1, { status: 'review' }> | null>(null);
   const [attaching, setAttaching] = React.useState(false);
   const [secret, setSecret] = React.useState<SavedSecretChoiceSelection | null>(null);
   const [notice, setNotice] = React.useState<Readonly<{ kind: 'pending' | 'error'; text: string }> | null>(null);
@@ -29,11 +30,9 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   const attachTitle = t('plugins.database.readSetup.attach', 'Use existing read-only login');
   const createTitle = t('plugins.database.readSetup.create', 'Create read-only login');
   const unexpected = t('plugins.database.readSetup.unknown', 'Could not verify the setup result.');
-  const parsedPreview = preview.execution.status === 'success'
-    ? DatabaseReadAccessSetupResultV1Schema.safeParse(preview.execution.result) : undefined;
-  const review = parsedPreview?.success && parsedPreview.data.status === 'review' ? parsedPreview.data : null;
+  const unavailable = t('plugins.database.readSetup.actionUnavailable', 'This host can’t confirm the read-only login.');
 
-  function settled(execution: PluginUiActionControlExecution) {
+  function settled(execution: PluginUiActionControlExecution, expected: 'review' | 'configured') {
     const result = projectPluginActionControlExecutionV1(execution, t);
     if (result.status === 'success') {
       if (isPluginActionApprovalRequestCreated(result.result)) {
@@ -41,8 +40,9 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
         return;
       }
       const parsed = DatabaseReadAccessSetupResultV1Schema.safeParse(result.result);
-      if (parsed.success && parsed.data.status === 'configured') {
-        onConfigured();
+      if (parsed.success && parsed.data.status === expected) {
+        if (parsed.data.status === 'review') setReview(parsed.data);
+        else onConfigured();
         return;
       }
       setNotice({ kind: 'error', text: unexpected });
@@ -54,14 +54,20 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   }
 
   if (!attaching && !review) {
-    const outcome = preview.execution;
-    const error = outcome.status === 'error' || outcome.status === 'outcomeUnknown'
-      ? outcome.message : outcome.status === 'success' ? unexpected : null;
     return <SurfaceState kind="unavailable" size="page" title={title}
       description={t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
-      action={{ label: attachTitle, disabled: outcome.status === 'pending', onPress: () => { preview.reset(); setAttaching(true); } }}
-      secondaryAction={{ label: createTitle, onPress: () => preview.execute(projectNativeJsonValueForTransport({ target, mode: 'preview' })) }}
-      body={error ? <ErrorState layout="line" title={error} /> : undefined} />;
+      body={notice?.kind === 'error' ? <ErrorState layout="line" title={notice.text} /> : undefined}
+      live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
+      alternative={<Row gap="small" wrap justify="center">
+        <Button title={attachTitle} variant="secondary" size="small" disabled={notice?.kind === 'pending'}
+          onPress={() => { setNotice(null); setAttaching(true); }} />
+        <Action.Control action={createAction} title={createTitle} variant="plain" disabled={notice?.kind === 'pending'}
+          controller={{
+            prepare: () => { setNotice(null); return { input: projectNativeJsonValueForTransport({ target, mode: 'preview' }) }; },
+            onSettled: execution => settled(execution, 'review'),
+          }}
+          fallback={<Text tone="secondary" value={unavailable} />} />
+      </Row>} />;
   }
 
   const input = attaching
@@ -88,10 +94,10 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
         variant="primary"
         disabled={notice?.kind === 'pending'}
         reviewedInput={input}
-        controller={{ prepare: () => { setNotice(null); return { input }; }, onSettled: settled }}
-        fallback={<Text tone="secondary" value={t('plugins.database.readSetup.actionUnavailable', 'This host can’t confirm the read-only login.')}/>} />}
+        controller={{ prepare: () => { setNotice(null); return { input }; }, onSettled: execution => settled(execution, 'configured') }}
+        fallback={<Text tone="secondary" value={unavailable}/>} />}
       <Button title={t('plugins.database.readSetup.back', 'Back to setup options')} variant="plain"
-        onPress={() => { setNotice(null); preview.reset(); setAttaching(false); }} />
+        onPress={() => { setNotice(null); setReview(null); setAttaching(false); }} />
     </Stack>
   </Stack>;
 }

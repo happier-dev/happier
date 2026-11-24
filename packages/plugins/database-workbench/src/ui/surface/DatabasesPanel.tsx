@@ -199,7 +199,7 @@ function DatabasesPanel(context: RenderContext) {
       testID="database.panel.connect"
       title={translate('plugins.database.connect.open', 'Connect a database')}
       variant="plain"
-      icon={<Icon name="plus" tone="secondary" />}
+      icon={<Icon name="add" tone="secondary" />}
       onPress={() => setConnecting(true)}
     />
   ) : undefined;
