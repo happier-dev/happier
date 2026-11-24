@@ -91,7 +91,7 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
         readAgentExecutionContext?: AccountSettingsSnapshotResolver['readAgentExecutionContext'];
     }>): AccountSettingsSnapshotResolver => {
         const read: AccountSettingsSnapshotResolver = async demand => runWithServerHttpBaseUrl(source.serverHttpBaseUrl, async () => {
-            await source.readAgentExecutionContext?.(demand?.signal);
+            if (demand?.mcpServerCatalog) await source.readAgentExecutionContext?.(demand.signal);
             if (!await source.isCurrent(demand?.signal)) throw authorizationChanged('requester_not_current');
             if (!await source.refreshAccountSettings(demand?.signal)) throw authorizationChanged('requester_settings_refresh_rejected');
             const captured = source.savedSecretOperationContext;

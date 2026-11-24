@@ -3,6 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { FeaturesResponseSchema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { materializeMcpServerConfigRecord, listSelectedMcpSharedSecretReferences } from '@/mcp/servers/materializeMcpServerConfigRecord';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
@@ -112,6 +115,41 @@ describe('Machine Execution Run owner account snapshot', () => {
                 failureCause: { phase: 'account_snapshot.requester_not_current' } });
             expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
         } finally { await resolver.dispose(); }
+    });
+    it('reads an admitted detached Run’s Account settings when its MCP transport is unavailable', async () => {
+        const f = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: 'https://session-home.test',
+            homeServerIdentityId: 'srv_session_home', accountSettings: { preferredLanguage: 'fr' } });
+        const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'requester',
+            custodianAccountId: 'requester', machineId: 'machine', installationId: f.installation.installationId,
+            role: 'manage', encryptionMode: 'plain' });
+        const requester = await admitRequesterAccountActionContext({
+            authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'detached-run-root', binding: {
+                accountId: machineAdmission.actorAccountId, custodianAccountId: machineAdmission.custodianAccountId,
+                authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+                serverIdentityId: 'srv_session_home', machineId: machineAdmission.machineId,
+                installationId: machineAdmission.installationId, actionId: 'execution.run.start',
+                requestId: 'detached-run', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+            } }),
+            credentials: f.bootstrap.credentials, serverId: 'session-home', serverIdentityId: 'srv_session_home',
+            serverHttpBaseUrl: 'https://session-home.test', isCurrent: async () => f.isHomeCurrent(),
+        });
+        if (!requester) throw new Error('Account requester admission failed');
+        const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'machine',
+            serverHttpBaseUrl: 'https://session-home.test', readCredentials: async () => null,
+            isOwnerCurrent: () => true, readHostAgentExecutionContext: async () => null, onSettings() {} });
+        try {
+            const read = resolver.forInvocation({ signal: f.signal, callerInputAuthorization: requester.authorization, machineAdmission });
+            await expect(read()).resolves.toMatchObject({ settings: { preferredLanguage: 'fr' },
+                scopeKey: resolveAccountSettingsScopeKey(f.bootstrap.credentials) });
+            await expect(read({ mcpServerCatalog: true })).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
+                details: { reason: 'requester_authority_unavailable' } });
+            f.retire();
+            await expect(read()).rejects.toMatchObject({ code: 'provider_authorization_changed',
+                failureCause: { phase: 'account_snapshot.requester_not_current' } });
+        } finally {
+            await resolver.dispose();
+            await requester.dispose();
+        }
     });
     it('refuses a Run read after its owner retires even while the original credentials remain available', async () => {
         captureHomeReads();
