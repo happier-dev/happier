@@ -1785,6 +1785,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     resolution: Readonly<{
       engineRegistry?: ResolvedCliEngineRegistry;
       release?: () => Promise<void>;
+      releaseAccountSnapshot?: () => Promise<void>;
       providerLaunch?: ExecutionRunProviderLaunchServices;
     }>,
     createRuntime: (opts: ExecutionRunRuntimeCreateOptions) => ExecutionRunHostRuntime = (
@@ -1794,26 +1795,32 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     createRuntime: (opts: ExecutionRunRuntimeCreateOptions) => ExecutionRunHostRuntime;
     releaseOwner: () => Promise<void>;
   }> {
-    if (!resolution.engineRegistry) {
+    const { engineRegistry, releaseAccountSnapshot } = resolution;
+    // A live-catalog borrow cannot construct a replacement, even when this
+    // Start owns an admitted requester snapshot.
+    const createBoundRuntime = !engineRegistry && this.resolveExecutionRunProfileCatalogOption
+      ? () => { throw executionRunContributionSnapshotUnavailable(); }
+      : createRuntime;
+    if (!engineRegistry && !releaseAccountSnapshot) {
       return {
-        // A live-catalog borrow is not a grant to construct a replacement if
-        // the incumbent retires before the ensure/send owner consumes it.
-        createRuntime: this.resolveExecutionRunProfileCatalogOption
-          ? () => { throw executionRunContributionSnapshotUnavailable(); }
-          : createRuntime,
+        createRuntime: createBoundRuntime,
         releaseOwner: async () => {},
       };
     }
 
-    const snapshotLease = createExecutionRunSnapshotLease(resolution.release);
+    const releaseCatalog = engineRegistry ? resolution.release : undefined;
+    const snapshotLease = createExecutionRunSnapshotLease(releaseAccountSnapshot ? async () => {
+      try { await releaseAccountSnapshot(); }
+      finally { await releaseCatalog?.(); }
+    } : releaseCatalog);
     return {
       createRuntime: (opts) => {
         const releaseRuntime = snapshotLease.retain();
         try {
-          const runtime = createRuntime({
+          const runtime = createBoundRuntime({
             ...opts,
-            engineRegistry: resolution.engineRegistry,
-            ...(resolution.providerLaunch ? { providerLaunch: resolution.providerLaunch } : {}),
+            ...(engineRegistry ? { engineRegistry,
+              ...(resolution.providerLaunch ? { providerLaunch: resolution.providerLaunch } : {}) } : {}),
           });
           return withExecutionRunHostRuntimeCleanup(runtime, releaseRuntime);
         } catch (error) {
@@ -2373,6 +2380,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const accountSnapshotResolver = capturedAccountSource
       ? capturedAccountSource.resolveAccountSettingsSnapshot
       : this.bindInvocationAccountSettingsSnapshot(params.projectLaunchContext?.ingress);
+    const captureAccount = !retained && params.sessionId === null ? accountSnapshotResolver?.captureForDetachedRun : undefined;
+    let admittedAccount: Awaited<ReturnType<NonNullable<typeof captureAccount>>> | undefined;
     if (retained) await this.recoverRetainedRuns();
     this.ensurePermissionResponseTargetHandlerRegistered();
     const resolution = await this.resolveExecutionRunProfileCatalog(params.backendTarget, retained?.runId).catch((error: unknown) => {
@@ -2392,9 +2401,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         });
       },
       releaseOwner: async () => { await resolution.release?.(); },
-    } : this.bindExecutionRunRuntimeSnapshot(resolution, options => this.createExecutionRunRuntime({ ...options,
+    } : this.bindExecutionRunRuntimeSnapshot(captureAccount ? {
+      ...resolution,
+      releaseAccountSnapshot: async () => { await admittedAccount?.release(); },
+    } : resolution, options => this.createExecutionRunRuntime({ ...options,
       nativeSandbox,
-      resolveAccountSettingsSnapshot: accountSnapshotResolver,
+      resolveAccountSettingsSnapshot: admittedAccount?.read ?? accountSnapshotResolver,
       ...(params.projectSetupOperation ? { projectSetupOperation: params.projectSetupOperation } : {}),
       ...(params.projectLaunchContext ? { projectLaunchContext: params.projectLaunchContext } : {}) }));
     try {
@@ -2557,7 +2569,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           return { ...current, ...patch };
         } : undefined;
       const started = await startExecutionRun({
-        admitStart: this.admitStart,
+        admitStart: captureAccount ? async () => {
+          await this.admitStart?.();
+          // Start awaits its admission callbacks in sequence. The second
+          // consultation reuses the custody acquired by the first.
+          admittedAccount ??= await captureAccount(preparedParams.signal);
+        } : this.admitStart,
         recoverRetainedRuns: retained ? undefined : this.recoverRetainedRuns.bind(this),
         params: preparedParams,
         ...(finalizeStartParamsForRuntime ? { finalizeStartParamsForRuntime } : {}),

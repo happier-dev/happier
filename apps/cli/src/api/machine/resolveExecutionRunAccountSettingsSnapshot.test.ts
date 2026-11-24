@@ -1,11 +1,15 @@
 import axios from 'axios';
+import { randomBytes } from 'node:crypto';
+import { decodeBase64 } from '@/api/encryption';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { FeaturesResponseSchema, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
-import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { admitRequesterAccountActionContext, prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { materializeMcpServerConfigRecord, listSelectedMcpSharedSecretReferences } from '@/mcp/servers/materializeMcpServerConfigRecord';
 import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
@@ -13,10 +17,22 @@ import { resolveSessionCapabilitiesForDirectory } from '@/mcp/servers/resolveSes
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot, type AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createExecutionRunAccountSettingsSnapshotResolver } from './resolveExecutionRunAccountSettingsSnapshot';
 import { ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
+import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
+import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
+import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+
+// Load the publication policy before replacing its filesystem boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () =>
+    import('@/plugins/projection/registry/builtIn/locators.testkit'));
+vi.mock('node:fs', async original =>
+    createBundledPluginPublicationFsFixture(await original<typeof import('node:fs')>()));
+
+import { prepareExecutionRunRuntimeProviderLaunch } from '@/agent/runtime/bridges/executionRun/runtime/providerPreparation';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetInMemoryAccountSettingsContextForTests(); });
 
@@ -116,41 +132,320 @@ describe('Machine Execution Run owner account snapshot', () => {
             expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
         } finally { await resolver.dispose(); }
     });
-    it('reads an admitted detached Run’s Account settings when its MCP transport is unavailable', async () => {
+    it('reads an admitted detached Machine Action Run’s requester settings and refuses after ingress retires', async () => {
         const f = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: 'https://session-home.test',
-            homeServerIdentityId: 'srv_session_home', accountSettings: { preferredLanguage: 'fr' } });
+            homeServerIdentityId: 'srv_session_home', accountSettings: { preferredLanguage: 'fr' },
+            machineAccess: { custodianAccountId: 'custodian', role: 'use' } });
+        const ingressLifetime = new AbortController();
         const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'requester',
-            custodianAccountId: 'requester', machineId: 'machine', installationId: f.installation.installationId,
-            role: 'manage', encryptionMode: 'plain' });
+            custodianAccountId: 'custodian', machineId: 'machine', installationId: f.installation.installationId,
+            role: 'use', encryptionMode: 'plain' });
         const requester = await admitRequesterAccountActionContext({
             authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'detached-run-root', binding: {
                 accountId: machineAdmission.actorAccountId, custodianAccountId: machineAdmission.custodianAccountId,
                 authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
                 serverIdentityId: 'srv_session_home', machineId: machineAdmission.machineId,
-                installationId: machineAdmission.installationId, actionId: 'execution.run.start',
+                installationId: machineAdmission.installationId, actionId: 'execution.run.start', admittedMachineRole: 'use',
                 requestId: 'detached-run', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
             } }),
             credentials: f.bootstrap.credentials, serverId: 'session-home', serverIdentityId: 'srv_session_home',
             serverHttpBaseUrl: 'https://session-home.test', isCurrent: async () => f.isHomeCurrent(),
+            isRetainedCustodyCurrent: async () => f.isHomeCurrent(), signal: ingressLifetime.signal,
         });
         if (!requester) throw new Error('Account requester admission failed');
         const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'machine',
             serverHttpBaseUrl: 'https://session-home.test', readCredentials: async () => null,
             isOwnerCurrent: () => true, readHostAgentExecutionContext: async () => null, onSettings() {} });
+        const release = requester.retain();
+        const custody = requester.retainCustody?.();
         try {
-            const read = resolver.forInvocation({ signal: f.signal, callerInputAuthorization: requester.authorization, machineAdmission });
+            const read = resolver.forInvocation({ signal: ingressLifetime.signal, callerInputAuthorization: requester.authorization, machineAdmission });
             await expect(read()).resolves.toMatchObject({ settings: { preferredLanguage: 'fr' },
                 scopeKey: resolveAccountSettingsScopeKey(f.bootstrap.credentials) });
             await expect(read({ mcpServerCatalog: true })).rejects.toMatchObject({ code: 'agent_isolation_unavailable',
                 details: { reason: 'requester_authority_unavailable' } });
-            f.retire();
-            await expect(read()).rejects.toMatchObject({ code: 'provider_authorization_changed',
+            const prepare = () => prepareExecutionRunRuntimeProviderLaunch({ scope: 'detached',
+                runId: 'detached-run', agentId: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                selection: { modelId: 'fixture-native-model', agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null },
+                connectedServices: { v: 2, bindingsByServiceId: {} }, happyHomeDir: f.directory,
+                resolveAccountSettingsSnapshot: read });
+            await expect(prepare()).resolves.toMatchObject({ environment: {} });
+            await requester.dispose();
+            await expect(prepare()).resolves.toMatchObject({ environment: {} });
+            ingressLifetime.abort();
+            await expect(custody?.isCurrent()).resolves.toBe(true);
+            await expect(prepare()).rejects.toMatchObject({ code: 'provider_authorization_changed',
                 failureCause: { phase: 'account_snapshot.requester_not_current' } });
         } finally {
+            await custody?.release();
+            await release();
             await resolver.dispose();
             await requester.dispose();
         }
     });
+    it('prepares a detached Machine Action Run with the admitted settings after the Action settles', async () => {
+        let settingsReads = 0;
+        const f = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: 'https://session-home.test',
+            homeServerIdentityId: 'srv_session_home', accountSettings: { preferredLanguage: 'fr' },
+            machineAccess: { custodianAccountId: 'custodian', role: 'use' },
+            readAdditionalHttpResponse: async url => {
+                if (new URL(url).pathname === '/v2/account/settings') settingsReads++;
+                return undefined;
+            } });
+        const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'requester',
+            custodianAccountId: 'custodian', machineId: 'machine', installationId: f.installation.installationId,
+            role: 'use', encryptionMode: 'plain' });
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'detached-operation-root', binding: {
+            accountId: machineAdmission.actorAccountId, custodianAccountId: machineAdmission.custodianAccountId,
+            authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+            serverIdentityId: 'srv_session_home', machineId: machineAdmission.machineId,
+            installationId: machineAdmission.installationId, actionId: 'execution.run.start', admittedMachineRole: 'use',
+            requestId: 'detached-operation', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+        } });
+        const purpose = { kind: 'external_action' } as const;
+        const sealed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
+            credentials: { token: f.bootstrap.credentials.token, encryption: null, secret: null },
+            installationPublicKey: decodeBase64(f.installation.publicKey, 'base64url'), randomBytes });
+        // Home's exact authorization verification and the installed daemon's
+        // lifetime are the system boundaries. Keep private custody and Action cleanup real.
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { ok: true } });
+        const checking = Promise.withResolvers<void>();
+        const continueCheck = Promise.withResolvers<void>();
+        let checksBeforeRelease: number | undefined;
+        let installedCurrent = true;
+        const prepared = await prepareRequesterAccountActionContext({ authorization: sealed, purpose,
+            machineId: 'machine', installationId: f.installation.installationId,
+            installationPrivateKey: decodeBase64(f.installation.privateKey, 'base64url'),
+            serverId: 'session-home', serverIdentityId: 'srv_session_home', serverHttpBaseUrl: 'https://session-home.test',
+            isCurrent: async () => true, isCustodyCurrent: async () => true, signal: f.signal,
+            isRetainedCustodyCurrent: async () => {
+                if (checksBeforeRelease !== undefined && --checksBeforeRelease === 0) {
+                    checking.resolve();
+                    await continueCheck.promise;
+                }
+                return installedCurrent;
+            },
+            createExecutor: () => ({ execute: async () => ({ ok: true, result: null }) }),
+        });
+        if (!prepared) throw new Error('Account requester preparation failed');
+        const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'requester',
+            custodyBinding: { serverId: 'session-home', installationId: f.installation.installationId } });
+        const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'machine',
+            serverHttpBaseUrl: 'https://session-home.test', readCredentials: async () => null,
+            isOwnerCurrent: () => true, readHostAgentExecutionContext: async () => null, onSettings() {} });
+        let provision: Promise<unknown> | undefined;
+        let liveReader: AccountSettingsSnapshotResolver | undefined;
+        let prepareProvider: (() => Promise<unknown>) | undefined;
+        let capture: Awaited<ReturnType<NonNullable<AccountSettingsSnapshotResolver['captureForDetachedRun']>>> | undefined;
+        let settingsReadsAtAdmission = 0;
+        try {
+            const started = await operations.runActionOperation({ actionId: 'execution.run.start', input: {},
+                context: { surface: 'cli', signal: f.signal, actionRequestId: root.binding.requestId,
+                    externalActionExecutionAuthorization: prepared.authorization, machineAdmission },
+                execute: async context => {
+                    const read = resolver.forInvocation({ signal: context.signal!, machineAdmission,
+                        callerInputAuthorization: context.externalActionExecutionAuthorization });
+                    expect(await read()).toMatchObject({ settings: { preferredLanguage: 'fr' },
+                        scopeKey: resolveAccountSettingsScopeKey(f.bootstrap.credentials) });
+                    if (!read.captureForDetachedRun) throw new Error('Missing detached Run custody');
+                    installedCurrent = false;
+                    await expect(read.captureForDetachedRun(context.signal)).rejects.toMatchObject({
+                        code: 'provider_authorization_changed', failureCause: { phase: 'account_snapshot.requester_not_current' },
+                    });
+                    installedCurrent = true;
+                    settingsReadsAtAdmission = settingsReads;
+                    capture = await read.captureForDetachedRun(context.signal);
+                    liveReader = read;
+                    prepareProvider = () => prepareExecutionRunRuntimeProviderLaunch({ scope: 'detached',
+                        runId: 'detached-operation', agentId: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                        selection: { modelId: 'fixture-native-model', agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null },
+                        connectedServices: { v: 2, bindingsByServiceId: {} }, happyHomeDir: f.directory,
+                        resolveAccountSettingsSnapshot: capture?.read });
+                    checksBeforeRelease = 2;
+                    provision = prepareProvider().catch((error: unknown) => error);
+                    await Promise.race([checking.promise, provision]);
+                    return { ok: true, result: { runId: 'detached-operation' } };
+                },
+            });
+            expect(started).toMatchObject({ ok: true, result: { runId: 'detached-operation' } });
+            checksBeforeRelease = undefined;
+            continueCheck.resolve();
+            const outcome = await provision;
+            if (outcome && typeof outcome === 'object' && 'code' in outcome) throw outcome;
+            expect(outcome).toMatchObject({ environment: {} });
+            await expect(liveReader?.()).rejects.toMatchObject({
+                code: 'provider_authorization_changed', failureCause: { phase: 'account_snapshot.requester_not_current' },
+            });
+            await expect(prepareProvider?.()).resolves.toMatchObject({ environment: {} });
+            expect(settingsReads).toBe(settingsReadsAtAdmission);
+            const admitted = capture!.read;
+            installedCurrent = false;
+            await expect(admitted()).resolves.toMatchObject({ settings: { preferredLanguage: 'fr' },
+                scopeKey: resolveAccountSettingsScopeKey(f.bootstrap.credentials) });
+            await expect(admitted({ savedSecretReferences: [{ ref: 'retired-ref' }] })).rejects.toMatchObject({
+                code: 'provider_authorization_changed', failureCause: { phase: 'account_snapshot.requester_not_current' },
+            });
+            const stopped = new AbortController();
+            stopped.abort();
+            await expect(admitted({ signal: stopped.signal })).rejects.toMatchObject({ name: 'AbortError' });
+            await capture?.release();
+            await expect(admitted()).rejects.toMatchObject({
+                code: 'provider_authorization_changed', failureCause: { phase: 'account_snapshot.requester_snapshot_unavailable' },
+            });
+        } finally {
+            continueCheck.resolve();
+            await provision;
+            await capture?.release();
+            await resolver.dispose();
+            await prepared.dispose();
+        }
+    });
+    it.each(['completed Run', 'cancelled Run', 'failed Start'] as const)(
+        'retires requester custody exactly once after a detached Machine Action %s', async outcome => {
+            const serverHttpBaseUrl = `https://${outcome.toLowerCase().replaceAll(' ', '-')}.session-home.test`;
+            const f = await createProjectSessionRuntimeFixture({ serverId: 'session-home', serverUrl: serverHttpBaseUrl,
+                homeServerIdentityId: 'srv_session_home', accountSettings: { preferredLanguage: 'fr' },
+                machineAccess: { custodianAccountId: 'custodian', role: 'use' } });
+            const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'requester',
+                custodianAccountId: 'custodian', machineId: 'machine', installationId: f.installation.installationId,
+                role: 'use', encryptionMode: 'plain' });
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'test-action-root', binding: {
+                accountId: machineAdmission.actorAccountId, custodianAccountId: machineAdmission.custodianAccountId,
+                authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+                serverIdentityId: 'srv_session_home', machineId: machineAdmission.machineId,
+                installationId: machineAdmission.installationId, actionId: 'execution.run.start', admittedMachineRole: 'use',
+                requestId: 'requester-custody-start', requestEnvelopeDigest: 'a'.repeat(43),
+                target: { kind: 'machine', machineId: machineAdmission.machineId },
+            } });
+            const retired = vi.fn(async () => {});
+            const requester = await admitRequesterAccountActionContext({ authorization: root,
+                credentials: f.bootstrap.credentials, serverId: 'session-home', serverIdentityId: 'srv_session_home',
+                serverHttpBaseUrl, isCurrent: async () => true, isCustodyCurrent: async () => true,
+                isRetainedCustodyCurrent: async () => f.isHomeCurrent(), onRetire: retired, signal: f.signal });
+            if (!requester) throw new Error('Requester admission failed');
+
+            const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: machineAdmission.machineId,
+                serverHttpBaseUrl, readCredentials: async () => null, isOwnerCurrent: () => true,
+                readHostAgentExecutionContext: async () => null, onSettings() {} });
+            const operations = createHostActionOperationRuntime({ machineId: machineAdmission.machineId,
+                resolveAccountId: async () => machineAdmission.actorAccountId,
+                custodyBinding: { serverId: 'session-home', installationId: f.installation.installationId } });
+            const agent = await createAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory,
+                runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+            const registry = await resolveCliEngineRegistry({ runtimeRegistry: agent.registry });
+            const inputDelivered = Promise.withResolvers<void>();
+            const completeTurn = Promise.withResolvers<void>();
+            const native = createTestExecutionRunHostRuntime({
+                onSendPrompt: async () => {
+                    native.emitMessage({ type: 'model-output', fullText: 'Inspected.' });
+                    inputDelivered.resolve();
+                },
+                onWaitForTurnCompletion: () => completeTurn.promise,
+                onCancel: async () => { completeTurn.resolve(); },
+                onDispose: async () => { completeTurn.resolve(); },
+            });
+            // Replace the external Agent runtime only. Engine selection, provider preparation,
+            // Start admission and the Run's cleanup still use their real owners.
+            const createNative = vi.fn(() => native);
+            const withNativeBoundary = (engine: Awaited<ReturnType<typeof registry.resolveForBackendId>>) =>
+                engine && { ...engine, engineAdapter: { ...engine.engineAdapter, runtimeCore: {
+                    ...engine.engineAdapter.runtimeCore!, createExecutionRunBackend: createNative,
+                } } };
+            const engineRegistry = { ...registry,
+                resolveForBackendId: async (id: string) => withNativeBoundary(await registry.resolveForBackendId(id)),
+                resolveForAgentTarget: async (target: Parameters<typeof registry.resolveForAgentTarget>[0]) =>
+                    withNativeBoundary(await registry.resolveForAgentTarget(target)),
+            };
+            const capturedReleases: Array<() => Promise<void>> = [];
+            const observedResolver: AccountSettingsSnapshotResolver = Object.assign(resolver.bind(null), {
+                forInvocation: (ingress: Parameters<typeof resolver.forInvocation>[0]) => {
+                    const read = resolver.forInvocation(ingress);
+                    const capture = read.captureForDetachedRun;
+                    if (!capture) throw new Error('The Machine Action must supply requester custody');
+                    // Each successful real capture acquires one requester reference.
+                    return Object.assign(read, { captureForDetachedRun: async (signal?: AbortSignal) => {
+                        const captured = await capture(signal);
+                        capturedReleases.push(captured.release);
+                        return captured;
+                    } });
+                },
+            });
+            let consultations = 0;
+            let clockFailed = false;
+            const bridge = new ExecutionRunHostBridge({ parentProvider: 'codex', cwd: f.directory, happyHomeDir: f.directory,
+                machineId: machineAdmission.machineId, sendAcp: async () => {},
+                resolveExecutionRunProfileCatalog: outcome === 'failed Start' ? undefined : async () => ({
+                    profileCatalog: await registry.resolveExecutionRunProfileCatalog(), engineRegistry,
+                }),
+                resolveAccountSettingsSnapshot: observedResolver,
+                admitStart: async () => { consultations++; },
+                getNowMs: () => {
+                    // Startup persistence reads the clock after both consultations and
+                    // before provider provisioning. The public Start acknowledges a known failed Run.
+                    if (outcome === 'failed Start' && consultations >= 2 && !clockFailed) {
+                        clockFailed = true;
+                        throw new Error('Test startup clock unavailable');
+                    }
+                    return Date.now();
+                },
+            });
+            try {
+                expect(await requester.refreshAccountSettings()).toBe(true);
+                let runId = '';
+                const started = await operations.runActionOperation({ actionId: 'execution.run.start', input: {},
+                    context: { surface: 'cli', signal: f.signal, actionRequestId: root.binding.requestId,
+                        externalActionExecutionAuthorization: requester.authorization, machineAdmission },
+                    execute: async context => {
+                        const run = await bridge.start({ sessionId: null, intent: 'agent', signal: context.signal,
+                            backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, instructions: 'Inspect.',
+                            permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded',
+                            ioMode: 'request_response', modelSelection: null, connectedServices: null,
+                            projectLaunchContext: { isCurrent: () => f.isHomeCurrent(), resolveRuntime: async () => null,
+                                ingress: { signal: context.signal!, machineAdmission,
+                                    callerInputAuthorization: context.externalActionExecutionAuthorization } },
+                        });
+                        runId = run.runId;
+                        return { ok: true, result: { runId } };
+                    },
+                });
+                expect(started).toMatchObject({ ok: true });
+                expect(runId).toBeTruthy();
+                await requester.dispose();
+
+                if (outcome === 'failed Start') {
+                    expect(bridge.get(runId)).toMatchObject({ status: 'failed' });
+                    expect(clockFailed).toBe(true);
+                    expect(createNative).not.toHaveBeenCalled();
+                } else {
+                    await Promise.race([inputDelivered.promise, bridge.waitForTerminal(runId).then(() => {
+                        throw new Error(`Run settled before Agent input: ${bridge.get(runId)?.error?.code}`);
+                    })]);
+                    expect(retired).toHaveBeenCalledTimes(0);
+                    if (outcome === 'cancelled Run') {
+                        expect(await bridge.stop(runId)).toMatchObject({ ok: true });
+                    } else {
+                        completeTurn.resolve();
+                    }
+                    await bridge.waitForTerminal(runId);
+                    expect(bridge.get(runId)).toMatchObject({ status: outcome === 'cancelled Run' ? 'cancelled' : 'succeeded' });
+                }
+                // Observe retirement before disposing the bridge, which could mask a leak.
+                expect(consultations).toBeGreaterThan(1);
+                await expect.poll(async () => ({ retains: capturedReleases.length, retirements: retired.mock.calls.length,
+                    publicationCurrent: await requester.refreshAccountSettings() }))
+                    .toEqual({ retains: 1, retirements: 1, publicationCurrent: false });
+                expect(requester.savedSecretOperationContext.readSnapshot()).toBeNull();
+            } finally {
+                completeTurn.resolve();
+                await bridge.dispose();
+                // Clean up even a deliberately leaked reference after the assertions.
+                for (const release of capturedReleases) await release();
+                await resolver.dispose();
+                await requester.dispose();
+                await agent.dispose();
+            }
+        });
+
     it('refuses a Run read after its owner retires even while the original credentials remain available', async () => {
         captureHomeReads();
         const resolver = createExecutionRunAccountSettingsSnapshotResolver({ machineId: 'run-machine',

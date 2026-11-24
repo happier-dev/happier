@@ -49,7 +49,7 @@ export async function prepareExecutionRunRuntimeProviderLaunch(
         resolveAccountSettingsSnapshot, ...preparation } = input;
     const trace = <T>(phase: Parameters<typeof traceRunPreparationPhase>[1], work: () => T | Promise<T>) =>
         traceRunPreparationPhase(input.runId, phase, input.signal, work);
-    const accountSettingsSnapshot = await trace('account_snapshot', () => resolveAccountSettingsSnapshot?.()) ?? null;
+    const accountSettingsSnapshot = await trace('account_snapshot', () => resolveAccountSettingsSnapshot?.({ signal: input.signal })) ?? null;
     const selection = input.selection;
     const nativeTeam = input.teamCredentialModel?.deliveryMode === 'vendor-native' ? input.teamCredentialModel : undefined;
     // A brokered or direct Team model is opened only by the Run Team preparer,

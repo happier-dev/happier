@@ -69,6 +69,11 @@ export type AccountSettingsSnapshotResolver = ((input?: Readonly<{
   /** Machine-owned Run composition binds its admitted invocation's original
    * private Account holder. Session readers already capture that owner. */
   forInvocation?: (ingress?: import('@/api/rpc/types').RpcHandlerContext) => AccountSettingsSnapshotResolver;
+  /** Transfer an admitted Machine Action's private Settings into a detached Run. */
+  captureForDetachedRun?: (signal?: AbortSignal) => Promise<Readonly<{
+    read: AccountSettingsSnapshotResolver;
+    release(): Promise<void>;
+  }>>;
   readOperationContext?: () => import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationContextV1 | null;
   /** Original Session-owned execution custody, never persisted Settings or
    * person authority. Child Runs inherit this same reader and its lifetime. */

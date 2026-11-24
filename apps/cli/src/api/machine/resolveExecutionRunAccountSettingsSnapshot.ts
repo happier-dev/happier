@@ -6,7 +6,7 @@ import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperatio
 import { refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
 import { projectMcpServerCatalogRefreshFailure } from '@/settings/mcp/hydrateMcpServerCatalog';
-import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import type { AccountSettingsSnapshotResolver, ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -89,8 +89,19 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
         refreshAccountSettings(signal?: AbortSignal): Promise<boolean>;
         isCurrent(signal?: AbortSignal): Promise<boolean>;
         readAgentExecutionContext?: AccountSettingsSnapshotResolver['readAgentExecutionContext'];
+        readAdmittedSnapshot?: () => ActiveAccountSettingsSnapshot | null;
     }>): AccountSettingsSnapshotResolver => {
-        const read: AccountSettingsSnapshotResolver = async demand => runWithServerHttpBaseUrl(source.serverHttpBaseUrl, async () => {
+        const read: AccountSettingsSnapshotResolver = async demand => {
+            if (source.readAdmittedSnapshot && !demand?.mcpServerCatalog && !demand?.secretReferenceOverlay
+                && !demand?.savedSecretReferences?.length) {
+                demand?.signal?.throwIfAborted();
+                const snapshot = source.readAdmittedSnapshot();
+                if (!snapshot) throw authorizationChanged('requester_snapshot_unavailable');
+                return snapshot;
+            }
+            return await readLive(demand);
+        };
+        const readLive: AccountSettingsSnapshotResolver = async demand => runWithServerHttpBaseUrl(source.serverHttpBaseUrl, async () => {
             if (demand?.mcpServerCatalog) await source.readAgentExecutionContext?.(demand.signal);
             if (!await source.isCurrent(demand?.signal)) throw authorizationChanged('requester_not_current');
             if (!await source.refreshAccountSettings(demand?.signal)) throw authorizationChanged('requester_settings_refresh_rejected');
@@ -128,19 +139,20 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
         // for a historical or unbound invocation. The base reader has none.
         if (!requester || !ingress?.machineAdmission || !input.readHostAgentExecutionContext) return resolveSnapshot;
         const admission = ingress.machineAdmission;
-        const isCurrent = async (signal?: AbortSignal) => {
+        const withCurrentHost = async (isCustodyCurrent: () => Promise<boolean>, signal?: AbortSignal) => {
             signal?.throwIfAborted();
-            const current = !disposed && input.isOwnerCurrent()
-                && readRequesterAccountActionContext(authorization) === requester
-                && await (requester.isCustodyCurrent ?? requester.isCurrent)();
+            const current = !disposed && input.isOwnerCurrent() && await isCustodyCurrent();
             signal?.throwIfAborted();
             return current && !disposed && input.isOwnerCurrent();
         };
-        const readAgentExecutionContext: NonNullable<AccountSettingsSnapshotResolver['readAgentExecutionContext']> = async signal => {
+        const isCurrent = (signal?: AbortSignal) => withCurrentHost(async () =>
+            readRequesterAccountActionContext(authorization) === requester
+            && await (requester.isCustodyCurrent ?? requester.isCurrent)(), signal);
+        const readAgentExecutionContext = async (current: typeof isCurrent, signal?: AbortSignal) => {
             // MCP's SDK graph is needed only after host initialization, not while
             // installing the Account reader into the Machine transport itself.
             const { refuseMcpExecutionSource } = await import('@/mcp/runtime/mcpExecutionSource');
-            if (!await isCurrent(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
+            if (!await current(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
             const host = await input.readHostAgentExecutionContext!(signal);
             const physical = host?.requesterIdentity;
             const binding = requester.authorization.binding;
@@ -151,7 +163,7 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
                 || binding.custodianAccountId !== admission.custodianAccountId
                 || admission.machineId !== physical.requester.machineId
                 || admission.installationId !== physical.requester.installationId
-                || !await isCurrent(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
+                || !await current(signal)) return refuseMcpExecutionSource('requester_authority_unavailable');
             // The opened Account facet proves the caller, while the separately
             // qualified host proves custody. Only the identity owner compares them.
             const requesterIdentity = selectHostRequesterExecutionIdentity({
@@ -162,9 +174,30 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
             if (requesterIdentity.kind !== 'isolated') return refuseMcpExecutionSource('requester_authority_unavailable');
             return { requesterIdentity, isolationEnabled: host.isolationEnabled };
         };
-        return createRequesterSnapshotReader({ serverHttpBaseUrl: requester.serverHttpBaseUrl,
+        const read = createRequesterSnapshotReader({ serverHttpBaseUrl: requester.serverHttpBaseUrl,
             savedSecretOperationContext: requester.savedSecretOperationContext,
-            refreshAccountSettings: signal => requester.refreshAccountSettings(signal), isCurrent, readAgentExecutionContext });
+            refreshAccountSettings: signal => requester.refreshAccountSettings(signal), isCurrent,
+            readAgentExecutionContext: signal => readAgentExecutionContext(isCurrent, signal) });
+        const retainCustody = requester.retainCustody;
+        if (!retainCustody) return read;
+        const captureForDetachedRun: NonNullable<AccountSettingsSnapshotResolver['captureForDetachedRun']> = async signal => {
+            if (!await isCurrent(signal)) throw authorizationChanged('requester_not_current');
+            if (!requester.savedSecretOperationContext.readSnapshot()) throw authorizationChanged('requester_operation_not_current');
+            // Capture the already opened snapshot. Only a new catalog or secret
+            // demand needs the retained requester operation's live read ports.
+            const custody = retainCustody();
+            let snapshot = custody.savedSecretOperationContext.readSnapshot();
+            const current = (signal?: AbortSignal) => withCurrentHost(custody.isCurrent, signal);
+            return {
+                read: createRequesterSnapshotReader({ serverHttpBaseUrl: requester.serverHttpBaseUrl,
+                    savedSecretOperationContext: custody.savedSecretOperationContext,
+                    refreshAccountSettings: custody.refreshAccountSettings, isCurrent: current,
+                    readAdmittedSnapshot: () => snapshot,
+                    readAgentExecutionContext: signal => readAgentExecutionContext(current, signal) }),
+                release: async () => { snapshot = null; await custody.release(); },
+            };
+        };
+        return Object.assign(read, { captureForDetachedRun });
     };
     return Object.assign(resolveSnapshot, {
         forInvocation,
