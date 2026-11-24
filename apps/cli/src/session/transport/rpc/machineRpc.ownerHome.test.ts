@@ -11,7 +11,7 @@ import { callMachineRpc } from './machineRpc';
 import nacl from 'tweetnacl';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeSchema, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -146,7 +146,7 @@ describe('Machine RPC replacement Home custody', () => {
       sources: [{ kind: 'direct' as const, setup: {} }] });
     const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_setup_home', machineId: 'current',
       targets: [setup('current'), setup('peer')] });
-    const envelope = { v: 1 as const, requestId: 'setup-apply-peer', target, input };
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'setup-apply-peer', target, input });
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-setup-root', binding: {
       accountId: 'session-account', custodianAccountId: 'session-account', authentication: { kind: 'account', tokenEpoch: 0 },
       accountEncryptionMode: 'plain', serverIdentityId: input.homeId, machineId: 'current', installationId: 'installation',

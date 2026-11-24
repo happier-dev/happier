@@ -211,7 +211,7 @@ describe('managed controller invocation codec', () => {
     });
     try {
       const result = await executeExternalAction({ actionId: 'machines.setup.apply', envelope,
-        principal: { accountId: 'member', authority: 'present_user', authentication, workflowActionOrigin: { runId, requestId } },
+        principal: { accountId: 'member', authority: 'account_automation', authentication, workflowActionOrigin: { runId, requestId } },
         currentServerHttpBaseUrl: serverHttpBaseUrl, currentMachineId: target.machineId, currentAccountId: 'owner',
         currentServerId: 'profile', currentInstallationId: 'owner-installation', executionAuthorization: authorization,
         externalActionMachineRequestPrivateKey: keys.secretKey, verifyExecutionAuthorization: async () => true,
