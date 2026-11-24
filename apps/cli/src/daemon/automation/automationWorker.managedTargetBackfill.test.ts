@@ -31,7 +31,12 @@ async function harness(hold = false, withRecovery = false) {
             let body = '';
             request.on('data', chunk => { body += String(chunk); });
             request.on('end', () => {
-                if (JSON.parse(body).managedTargetUnindexed === true) selections++;
+                const selection = JSON.parse(body);
+                if (selection.legacySessionLifecycleSelections === true) {
+                    response.end(JSON.stringify({ automations: [], legacySessionLifecycleSelections: [], nextCursor: null }));
+                    return;
+                }
+                if (selection.managedTargetUnindexed === true) selections++;
                 selected = response;
                 if (!hold) response.end(JSON.stringify({ automations: [], nextCursor: null }));
             });
