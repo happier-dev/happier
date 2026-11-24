@@ -323,7 +323,7 @@ exec "$FIXTURE_FLOCK" "$@"
         assert [writers[name].returncode for name in names] == [0, 0, 1], output
         assert git("log", "--format=%s <%an>", f"{base}..HEAD").splitlines() == [
             "fix: newer <newer>", "fix: oldest <oldest>"], output
-        assert "grouped by" in git("reflog", "-1", "--format=%gs"), output
+        assert git("reflog", "-2", "--format=%H").splitlines() == [git("rev-parse", "HEAD").strip(), base], output
         assert "commit gate: lock held " not in output["newer"][1], output
         assert "syntax" in output["invalid"][1], output
         assert not list((repo / ".git/p03-commit-partial.lock.writers").iterdir()), output

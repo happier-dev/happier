@@ -135,8 +135,8 @@ node "$tooling/scripts/workspaces/commitGate.mjs" --candidate="$commit" --ref="$
 cat "$packetDir/verdict"
 case $rc in
   0) ;;
-  10) echo "candidate refused by the gate; no ref changed"; exit 1;;
-  *) echo "candidate gate incomplete or unavailable; no ref changed"; exit "$rc";;
+  10) echo "candidate refused by the gate"; exit 1;;
+  *) echo "candidate gate incomplete or unavailable"; exit "$rc";;
 esac
 [ -z "${DRY:-}" ] || exit 0
 read -r verdict commit _ head < "$packetDir/verdict"

@@ -732,10 +732,9 @@ are served first in arrival order. Once such a waiter is blocked at the head,
 the broker stops admitting smaller jobs until the head fits. Classes with no
 recorded duration use the existing head-reservation rules.
 The `gate-entry-loads` class has a two-core share for one entry load.
-Additional entry loads can use spare CPU and memory after the broker has
-offered capacity to eligible non-gate waiters. If an eligible producer or
-ordinary head is still waiting for capacity, only the gate share is available
-to new entry loads. Live grants retain their slots.
+Additional entry loads can use ordinary CPU and memory when their recorded
+run time fits the existing backfill window for a non-gate head. Waiting entry
+loads beyond the share cannot reserve capacity as head.
 The shared runtime producer (`source-bundle` running
 `apps/stack/scripts/build/build_source_runtime.mjs`) and the shared web export
 (`source-web-export` running `apps/stack/scripts/build/build_source_web_ui.mjs`)
@@ -744,34 +743,27 @@ are served before ordinary waiters. The rolling HEAD typecheck
 focused runs are served in arrival order and later focused runs cannot starve it
 (P03 ORCH, 2026-11-17). The commit gate admits affected runtime entry loads as
 `gate-entry-loads` before taking the commit lock. The broker learns memory by command and project selection.
-Before locking, the gate composes each eligible frozen packet against its
-expected parent, regenerates affected approvals DTOs and bundled-plugin
-declarations or manifests as needed, and checks the exact tree. It reuses a
-prepared projection only for the same immutable inputs. Under the lock, the
-gate verifies the parent and writer order and updates the ref. If the
-parent changes, the gate prepares against the new parent.
-Changed-source syntax, new eager import cycles, dependency imports and
-exports, plugin manifests, workspace and lockfile sanity, and affected
-runtime loads protect HEAD. An affected CLI or daemon entry must load even
-if the parent has the same failure. An unavailable check or failed
-compare-and-swap leaves the packet unpublished. Admitted writers take the
-commit lock in packet arrival order. A commit message with a
+At its turn the oldest writer takes the ready packets for the same ref and
+composes every patch that applies cleanly in arrival order. It regenerates
+affected approvals DTOs and bundled-plugin outputs once for the combined
+tree. The gate checks each packet's changed syntax, local imports and exports,
+eager import cycles, and dependency inputs. One entry-load check judges the
+combined tree. An affected CLI or daemon entry must load even if the parent
+has the same failure. A refusal splits the group in halves so passing packets
+can land and the gate can report the individual refusal.
+Each packet retains its own commit and post-commit report. The gate publishes
+the passing commit chain with one ref update. It verifies the expected parent
+and order under the lock. New younger arrivals wait for the next group.
+An unavailable check or failed compare-and-swap leaves the proposed chain unpublished.
+
+Admitted writers take turns in packet arrival order. A commit message with a
 `Restores-HEAD: <breaking-commit>` trailer takes the next turn when the gate
 verifies that the named ancestor introduced a missing local import that
 still breaks HEAD. The packet must close the outstanding imports using only
-their missing producers or edits to the affected import declarations. The gate
-checks against the current parent again if HEAD moves. Unverified or expired
-claims use ordinary arrival order. After publishing its own packet, the
-holder can publish consecutive waiting packets on the same ref while their
-exact rebased trees pass the same checks using previously verified inputs.
-The next writer takes over if it needs its own entry probe or projection
-generation, or if its packet cannot be replayed and checked in the group.
-When an admitted writer has one predecessor, it can use its own admission to
-load affected entries against the tree expected after that predecessor lands.
-The planned publisher reruns the fast checks before locking and reuses a passing entry verdict only when
-the rebased graph inputs, installed dependencies, and waiting writer's environment
-match its proof. Server route composition requires the identical Git tree.
-Each packet retains its own commit and post-commit report.
+their missing producers or edits to the affected import declarations. A packet
+also takes the next turn when its exact replay clears working dependency-input
+drift that blocks fleet reload preflight. The gate verifies that agreement again
+at publication. An expired repair uses ordinary arrival order.
 
 The synchronous local import check reads changed source files and their relative
 and `@/` producers from the replayed Git tree. It reports missing modules and

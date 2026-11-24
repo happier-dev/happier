@@ -1,38 +1,21 @@
-import { execFile } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { promisify } from 'node:util';
 import { createFileChangeObserver } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { resolveHeadReflogPath } from '../../build/source_revision.mjs';
 import { attributeBreakLane } from '../../perf/break-attribution.mjs';
 
-const runGit = promisify(execFile);
-const INPUTS = ['pnpm-lock.yaml', 'pnpm-workspace.yaml'];
+import { gitOut, readDependencyInputBlob, RELOAD_DEPENDENCY_INPUTS } from './reloadDependencyInputs.mjs';
 /** The boards lanes name their writes on, newest first. */
 export const RELOAD_ATTRIBUTION_BOARDS = ['.project/plans/2026-10-26-implementation/BOARD.md',
   '.project/reviews/2026-10-02-lane12-replan/HANDOFF-OTHER-PROGRAMS.md'];
 
-async function gitOut(repoDir, args, signal) {
-  return (await runGit('git', ['-C', repoDir, ...args], { maxBuffer: 1 << 20, signal })).stdout.trim();
-}
-
 async function readInputDrift({ repoDir, inputs, boards, signal }) {
   const head = await gitOut(repoDir, ['rev-parse', '--verify', 'HEAD'], signal);
   const differs = await Promise.all(inputs.map(async input => {
-    const file = join(repoDir, input);
     const [working, committed] = await Promise.all([
-      gitOut(repoDir, ['hash-object', '--', input], signal).catch(async error => {
-        if (await stat(file).then(() => true, failure => {
-          if (failure.code !== 'ENOENT') throw failure;
-          return false;
-        })) throw error;
-        return null;
-      }),
-      gitOut(repoDir, ['rev-parse', '--verify', '--quiet', `${head}:${input}`], signal).catch(error => {
-        if (error.code !== 1) throw error;
-        return null;
-      }),
+      readDependencyInputBlob(repoDir, input, undefined, signal),
+      readDependencyInputBlob(repoDir, input, head, signal),
     ]);
     return working !== committed;
   }));
@@ -72,7 +55,7 @@ function inputStamp(path) {
  * Reloads wait with their pending request. A one-shot QA probe reports drift. */
 export async function preflightWorkingDependencyInputs({ repoDir, overlay = [],
   boards = RELOAD_ATTRIBUTION_BOARDS.map(path => join(repoDir, path)), onWait, signal }) {
-  const inputs = INPUTS.filter(input => !overlay.includes(input));
+  const inputs = RELOAD_DEPENDENCY_INPUTS.filter(input => !overlay.includes(input));
   if (!inputs.length) return;
   const check = () => readInputDrift({ repoDir, inputs, boards, signal });
   if (!onWait) {
