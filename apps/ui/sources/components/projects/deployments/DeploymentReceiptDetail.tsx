@@ -68,6 +68,7 @@ import {
   deploymentWorkStatus,
   deploymentActorIsViewer,
   deploymentActorLabel,
+  keptForRollbackValue,
   readDeploymentRefusalRecovery,
 } from './deploymentPresentation';
 import { useDeploymentActorPresentations } from './useDeploymentActorPresentations';
@@ -407,6 +408,7 @@ export const DeploymentReceiptDetail = React.memo(
       serving,
       health: currentHealth,
       state: deployment.state,
+      retainPolicy: environmentValue?.content.retainPreviousDeployments,
     });
     // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.
     // Without one, Investigate leads and Deploy again stays quiet (K12-6).
@@ -484,6 +486,8 @@ export const DeploymentReceiptDetail = React.memo(
         linkPath={props.linkPath}
         environmentName={props.environmentName}
         onOpenEnvironment={onBack}
+        // A non-Production Environment promotes only to its Production: the item says so, as the sheet's title does.
+        promoteToProduction={environmentValue?.environment.protection === 'nonProduction'}
         onPromote={environmentValue && promotionTarget && promote
           ? () => showDeploymentPromotionSheet({ controller: props.controller, serverId: props.serverId,
               target: promotionTarget, initialDestination: promotionDestination.current,
@@ -499,30 +503,31 @@ export const DeploymentReceiptDetail = React.memo(
     );
     // A failed deploy's notice offers its recovery choices on this, its one page; when the failure card already leads
     // with the rollback they would repeat, the card's own button is that choice.
+    // A notice that offers its own rollback replaces the header's: one Roll back per page (R14-D5).
     const noticeRecovery = !pressAttention && deployment.state === 'failed' && !recoveryLeads
       ? <DeploymentNoticeRecoveryChoices scope={props.controller?.scope ?? null} environmentId={environmentId}
-          deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" onReview={review.request} /> : null;
+          deploymentId={deployment.id} testID="project-deployments.receipt.noticeRecovery" fallback={rollbackButton} onReview={review.request} /> : null;
+    const headerRecovery = noticeRecovery ?? rollbackButton;
     const headerActions = phone ? (
-      <View style={styles.headerActions}>{noticeRecovery}{rollbackButton}{menu}</View>
+      <View style={styles.headerActions}>{headerRecovery}{menu}</View>
     ) : (
       <View style={styles.headerActions}>
-        {noticeRecovery}
-        {rollbackButton}
+        {headerRecovery}
         {cancelButton}
         {bannerAgain ? null : againButton}
         {menu}
       </View>
     );
     // The canonical next action opens where the cause is fixed; it never retries anything.
-    const recoveryNext = recovery && props.onOpenRecoveryDestination ? {
+    // A failed step's logs are on this page, right under the card: opening them here would point at itself (R14-D5).
+    const recoveryNext = recovery && props.onOpenRecoveryDestination && recovery.nextAction.destination !== 'logs' ? {
       label: recovery.nextAction.label,
       testID: 'project-deployments.receipt.outcome.failed.recovery',
-      // The build Machine's setup, or this receipt itself for its failed step's logs.
+      // The build Machine's setup, or the one Machine the cause is fixed on.
       onPress: () => {
         const destination = recovery.nextAction.destination;
         const at = destination === 'buildMachineSetup' && content.buildMachineId ? { machineId: content.buildMachineId }
-          : destination === 'machines' && content.machines.length === 1 ? { machineId: content.machines[0]! }
-          : destination === 'logs' ? { deploymentId: deployment.id } : null;
+          : destination === 'machines' && content.machines.length === 1 ? { machineId: content.machines[0]! } : null;
         if (at) props.onOpenRecoveryDestination?.(destination, at);
         else props.onOpenRecoveryDestination?.(destination);
       },
@@ -604,7 +609,7 @@ export const DeploymentReceiptDetail = React.memo(
                   failureConsequence(facts, firstMachine), recovery?.remedy, rollbackUnavailable]
                   .filter((line, index, lines) => Boolean(line) && lines.indexOf(line) === index).join('\n')}
                 // The row's place is settled from first paint: the banner's own buttons are known then, beside the agent control.
-                actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || (recovery && props.onOpenRecoveryDestination) ? 'below' : undefined}
+                actionPlacement={rollbackTarget || retryRollbackTo || bannerAgain || recoveryNext ? 'below' : undefined}
                 action={rollbackTarget ? {
                   label: backupTarget ? t(migrationPolicy === 'ask' ? 'projects.deployments.chooseRecovery' : 'projects.deployments.restoreBackupAndCode')
                     : migrationRan ? t('projects.deployments.rollbackCodeOnly')
@@ -773,6 +778,7 @@ function ReceiptMenu(props: Readonly<{
   environmentName: string | null;
   onOpenEnvironment: () => void;
   onPromote?: () => void;
+  promoteToProduction?: boolean;
   onCancel?: () => void;
 }>) {
   const { theme } = useUnistyles();
@@ -784,7 +790,7 @@ function ReceiptMenu(props: Readonly<{
       icon: <Icon name="stop-circle" size={16} color={theme.colors.text.secondary} />,
     }] : []),
     ...(props.onPromote ? [{ id: 'promote', testID: 'project-deployments.receipt.promote',
-      title: t('projects.deployments.promotion.open'),
+      title: t(props.promoteToProduction ? 'projects.deployments.menuDeployProduction' : 'projects.deployments.promotion.open'),
       icon: <Icon name="arrow-up-right" size={16} color={theme.colors.text.secondary} />,
     }] : []),
     ...(linkPath ? [{
@@ -799,7 +805,7 @@ function ReceiptMenu(props: Readonly<{
       title: t('projects.deployments.menuOpenEnvironment', { name: environmentName }),
       icon: <Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />,
     }] : []),
-  ], [environmentName, linkPath, props.onPromote, props.onCancel, theme.colors.text.secondary]);
+  ], [environmentName, linkPath, props.onPromote, props.promoteToProduction, props.onCancel, theme.colors.text.secondary]);
   if (items.length === 0) return null;
   const copy = async (path: string) => {
     const copied = await writeClipboard(`${resolvePublicShareApplicationBaseUrl()}${path}`);
@@ -933,6 +939,8 @@ function receiptFacts(input: Readonly<{
   serving: boolean;
   health: Parameters<typeof deploymentHealthFact>[0];
   state: Parameters<typeof deploymentHealthFact>[1];
+  /** How many earlier releases the Environment keeps; unknown until its read answers. */
+  retainPolicy: number | undefined;
 }>): FactStripFact[] {
   const list: FactStripFact[] = [];
   if (input.serving) {
@@ -951,7 +959,7 @@ function receiptFacts(input: Readonly<{
   }
   if (input.facts.retainedPreviousCount !== null) {
     list.push({ key: 'kept', label: t('projects.deployments.keptForRollback'),
-      value: input.facts.retainedPreviousCount > 0 ? t('projects.deployments.keptCount', { count: input.facts.retainedPreviousCount }) : t('projects.deployments.keptNone') });
+      value: keptForRollbackValue(input.facts.retainedPreviousCount, input.retainPolicy) });
   }
   return list;
 }

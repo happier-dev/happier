@@ -21,7 +21,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { t } from '@/text';
-import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTime, formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark, type DeploymentPlatformIdentity } from './rows/DeploymentEnvironmentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -289,7 +289,8 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
       // its own edits (QA-WAVE-1115).
       // Lab envRow "ver · age": which version went live, then when (owner D4).
       lastDeploy: currentDeployment ? [currentDeployment.source ? deploymentRevisionLabel(currentDeployment.source) : null,
-        formatRelativeTime(deploymentReceiptAtMs(currentDeployment), nowMs)].filter(Boolean).join(' · ') : null,
+        // The compact age ("38m ago") keeps "ver · age" whole in its column (R14-D11).
+        formatRelativeTimeShort(deploymentReceiptAtMs(currentDeployment), nowMs)].filter(Boolean).join(' · ') : null,
     };
   });
   type Fact = typeof incoming[number];
@@ -328,7 +329,7 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   disabled: boolean;
   loadFailedTitle: string;
   emptyTitle: string;
-  emptyBody: string;
+  emptyBody?: string;
   /** Where an empty list leads to meet its prerequisite (Move: Store databases). */
   emptyAction?: SurfaceStateAction;
 }>) {
@@ -340,9 +341,10 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   const failure = collection.snapshot.failure;
   return (
     <ItemGroup title={props.title}>
-      {/* The chosen destination carries its check, so a lone option still reads as chosen or not (D23). */}
+      {/* The chosen destination carries its check, so a lone option still reads as chosen or not (D23); no selection fill,
+          which read as a disabled row (R14-D11). */}
       {rows.map(row => <Item key={row.environment.id} testID={`${props.testID}:${row.environment.id}`}
-        title={row.title} accessibilityRole="radio" selected={props.selectedId === row.environment.id} disabled={props.disabled}
+        title={row.title} accessibilityRole="radio" accessibilityChecked={props.selectedId === row.environment.id} disabled={props.disabled}
         showChevron={false} onPress={row.onPress}
         rightElement={props.selectedId === row.environment.id
           ? <Icon name="check" size={ICON_SIZE.md} color={theme.colors.text.primary} /> : undefined} />)}

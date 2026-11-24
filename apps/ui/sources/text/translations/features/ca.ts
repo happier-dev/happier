@@ -635,6 +635,9 @@ const deploymentSettingsTranslations = {
     setupOpenStore: 'Obre la Botiga',
     setupRoleRequired: "Secret desat obligatori",
     setupRoleOptional: 'Opcional · només si el teu emmagatzematge el fa servir',
+    setupNeedsSource: "Primer tria què vols copiar.",
+    setupNeedsDestination: "Primer indica on van les còpies.",
+    setupNeedsCredential: ({ credential }) => `${credential}: primer tria un secret desat.`,
     setupInitializeAndSave: "Inicialitza el repositori i desa",
     setupAnotherMachine: "Una altra màquina",
     setupReceiverMachine: "Màquina de destinació",
@@ -923,6 +926,7 @@ const deploymentPlatformLinkTranslations = {
     platformLater:
       'Tries el projecte de la plataforma just després de crear-lo.',
     deploysFrom: 'Desplega des de',
+    deploysFromBody: "Happier desplega a la plataforma des d’aquesta màquina.",
     onPlatformTitle: ({ platform }) => `A ${platform}`,
     onPlatformBody: 'Tria el compte i després el projecte.',
     platformBuilds: 'La plataforma construeix el repositori d’aquest projecte a la branca que triïs.',

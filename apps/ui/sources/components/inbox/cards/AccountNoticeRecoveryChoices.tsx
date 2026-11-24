@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { OfferedChoices } from '@happier-dev/plugin-ui/presentation';
+import { INBOX_NOTICE_DISMISS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/appShellActionIdsV1';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
@@ -44,7 +45,7 @@ export const AccountNoticeRecoveryChoices = React.memo(
           label: choice.label,
           available: true,
           // Keeping the release is the quiet way out; the rollbacks are the decisions.
-          refusal: choice.actionId === 'inbox.notice.dismiss',
+          refusal: choice.actionId === INBOX_NOTICE_DISMISS_ACTION_ID_V1,
         })),
       [choices],
     );
@@ -105,6 +106,11 @@ type DeploymentNoticeRecoveryProps = Readonly<{
   environmentId: string;
   deploymentId: string;
   testID: string;
+  /**
+   * The receipt's own way back, shown only while the notice offers no decision of its own: a notice that offers a
+   * rollback is that rollback, so the page never shows two (PAGE-ACCEPT-176 R14-D5).
+   */
+  fallback?: React.ReactNode;
   onReview: (artifactId: string) => void;
 }>;
 
@@ -120,5 +126,10 @@ function DeploymentNoticeRecoveryBody(props: DeploymentNoticeRecoveryProps) {
   const { items } = useDeploymentNoticeHeaders(props.scope, props.environmentId, true, props.deploymentId);
   const recovery = useAccountNoticeInvestigation();
   const entry = findInboxDeploymentNotice(items.filter(candidate => isOpenAccountNotice(candidate.header)), props.deploymentId);
-  return entry ? <AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID={props.testID} onReview={props.onReview} /> : null;
+  const decides = entry !== null && recovery.readRecoveryChoices(entry)
+    .some(choice => choice.actionId !== INBOX_NOTICE_DISMISS_ACTION_ID_V1);
+  return <>
+    {entry ? <AccountNoticeRecoveryChoices entry={entry} recovery={recovery} testID={props.testID} onReview={props.onReview} /> : null}
+    {decides ? null : props.fallback ?? null}
+  </>;
 }

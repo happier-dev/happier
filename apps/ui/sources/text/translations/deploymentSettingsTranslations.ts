@@ -297,6 +297,9 @@ export type DeploymentSettingsTranslations = Readonly<{
   setupOpenStore: string;
   setupRoleRequired: string;
   setupRoleOptional: string;
+  setupNeedsSource: string;
+  setupNeedsDestination: string;
+  setupNeedsCredential: (params: { credential: string }) => string;
   addCheck: string;
   addCheckUnavailable: string;
 }> & DeploymentOperationalTranslations;
@@ -449,6 +452,9 @@ export const deploymentSettingsTranslations = {
     setupOpenStore: 'Open Store',
     setupRoleRequired: "Required Saved Secret",
     setupRoleOptional: 'Optional · only if your storage uses it',
+    setupNeedsSource: "Choose what to back up first.",
+    setupNeedsDestination: "Fill in where backups go first.",
+    setupNeedsCredential: ({ credential }: { credential: string }) => `${credential}: choose a saved secret first.`,
     setupInitializeAndSave: "Initialize repository and save",
     setupAnotherMachine: "Another Machine",
     setupReceiverMachine: "Destination Machine",

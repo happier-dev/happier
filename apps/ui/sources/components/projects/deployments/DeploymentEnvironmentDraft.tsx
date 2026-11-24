@@ -560,8 +560,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
     const repositoryOnlyPlatforms = platformTargets.filter(target =>
       recommendation.corrections.some(correction => correction.targetId === target.key && correction.kind === 'prepare_repository'));
+    // Several platforms share one reason, said for all of them (R14-D11).
     const repositoryOnlyReason = repositoryOnlyPlatforms.length === 0 ? undefined
-      : deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION, definition);
+      : deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION, definition, repositoryOnlyPlatforms.length);
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
       if (next === RETRY_TILE) { platforms.retry(); return; }
@@ -831,7 +832,9 @@ export const DeploymentEnvironmentDraft = React.memo(
         machineId={machineId ?? chosen?.id ?? null}
         machineName={t('approvals.machineNotKnown')}
         title={t(onPlatform ? 'projects.deployments.platformLink.deploysFrom' : 'projects.deployments.machine')}
-        {...(soleTarget?.subtitle ? { subtitle: soleTarget.subtitle } : {})}
+        // On a platform, the Machine's part needs saying: it runs the platform's deploys for this Environment (R14-D11).
+        {...(onPlatform ? { subtitle: t('projects.deployments.platformLink.deploysFromBody') }
+          : soleTarget?.subtitle ? { subtitle: soleTarget.subtitle } : {})}
         awayMachinesChoosable={!stepped}
         onSelectMachine={(machine) => setMachineId(machine.id)}
       />

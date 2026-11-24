@@ -27,7 +27,8 @@ type ConfigureProps = Extract<React.ComponentProps<typeof DeploymentBackupSetupS
 const destination: React.ComponentProps<typeof DeploymentBackupSetupSheet>['destination'] = {
     id: 'com.acme.backups/archive', pluginId: 'com.acme.backups', pluginVersion: '1.0.0',
     definition: { id: 'archive', title: 'Archive', resticTransport: 's3', locality: 'offHost',
-        credentialRoles: [{ role: 'repositoryPassword' }], actions: {
+        // Optional here so the flows below reach Save; the required case has its own test.
+        credentialRoles: [{ role: 'repositoryPassword', optional: true }], actions: {
             test: { kind: 'hostAction', actionId: 'deployments.backups.test' },
             open: { pluginId: 'com.acme.backups', localId: 'open' } },
         configSchema: { type: 'object', required: ['layout'], properties: { layout: { type: 'string', enum: ['legacy', 'modern'] } }, additionalProperties: false },
@@ -177,6 +178,22 @@ describe('Backup destination setup fields', () => {
         await screen.pressByTestIdAsync('setup.test');
         await screen.pressByTestIdAsync('setup.initialize');
         expect(configure).toHaveBeenLastCalledWith(expect.objectContaining({ intent: 'initializeAndSave' }));
+    });
+
+    it('waits on Save until a required credential is chosen, and says which one (R14-D6)', async () => {
+        const required: typeof destination = { ...destination, definition: { ...destination.definition,
+            credentialRoles: [{ role: 'repositoryPassword' }] } };
+        const configure = vi.fn<ConfigureProps['configure']>();
+        const screen = await renderScreen(<DeploymentBackupSetupSheet detail={environmentDetail()} destination={required}
+            sourceChoices={[{ kind: 'dump', sourceId: 'database', service: 'database', consistency: 'logical' }]}
+            machine="Controller" review={{ pendingId: null, request() {}, open() {} }} configure={configure}
+            onChanged={() => {}} onClose={() => {}} testID="setup" />);
+        await act(async () => screen.findAllByType(HappierInputField).find(entry => entry.props.field.path === 'layout')!.props.onChange('modern'));
+        expect(screen.findAll(node => node.props.testID === 'setup.save' && node.props.disabled !== undefined)[0]?.props.disabled).toBe(true);
+        expect(screen.getTextContent()).toContain(t('projects.deployments.settingsSections.setupNeedsCredential',
+            { credential: t('projects.deployments.settingsSections.credentialRepositoryPassword') }));
+        await screen.pressByTestIdAsync('setup.save');
+        expect(configure).not.toHaveBeenCalled();
     });
 
     it('opens on the destination last used, else this Machine, never simply the first plugin', () => {

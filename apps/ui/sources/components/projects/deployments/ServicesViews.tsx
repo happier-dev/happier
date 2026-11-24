@@ -48,6 +48,14 @@ export const SERVICES_VIEWS = [
 ] as const;
 export type ServicesView = typeof SERVICES_VIEWS[number]['id'];
 /** A view's count line, from its own read's reported rows (the page's head draws it, MainScreenHeader `count`). */
+/** A view's needs-you count and its loudest tone: rose when one of them failed, amber otherwise. */
+export type ServicesViewNeedYou = Readonly<{ count: number; tone: 'danger' | 'warning' }>;
+
+/** The loudest tone a view's count line speaks in: what its tab's count uses. */
+export function servicesCountTone(parts: readonly HappierPageCountPart[]): 'danger' | 'warning' {
+  return parts.some((part) => typeof part === 'object' && part !== null && part.tone === 'danger') ? 'danger' : 'warning';
+}
+
 export type ServicesViewCount = Readonly<{ view: ServicesView; parts: readonly HappierPageCountPart[]; needYou?: number }>;
 
 /** The route's `view`, read once: anything else is the Apps view. */
@@ -61,15 +69,16 @@ export function ServicesViewTabs(
   props: Readonly<{
     active: ServicesView;
     onSelect: (view: ServicesView) => void;
-    /** How many rows need the person in each view, as its owner reported them: the tab's needs-you count. */
-    needYou?: Partial<Record<ServicesView, number>>;
+    /** How many rows need the person in each view, and in which tone, as its owner reported them: the tab's count. */
+    needYou?: Partial<Record<ServicesView, ServicesViewNeedYou>>;
   }>,
 ) {
   const overflow = React.useMemo(() => ({ label: t('common.more'), testID: 'services.view.more' }), []);
   const tabs = React.useMemo(
     () => SERVICES_VIEWS.map(({ id, labelKey }) => ({ id, label: t(labelKey) })).map((tab) => {
-      const count = props.needYou?.[tab.id] ?? 0;
-      return count > 0 ? { ...tab, count: String(count), countTone: 'danger' as const } : tab;
+      const needs = props.needYou?.[tab.id];
+      // Amber needs the person; rose only when one of them failed (R14-D11).
+      return needs && needs.count > 0 ? { ...tab, count: String(needs.count), countTone: needs.tone } : tab;
     }),
     [props.needYou],
   );

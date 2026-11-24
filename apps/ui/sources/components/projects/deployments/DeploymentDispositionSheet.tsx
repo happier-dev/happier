@@ -16,9 +16,6 @@ import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
-import { normalizeActionsSettings } from '@/components/settings/actions/normalizeActionsSettings';
-import { useSetting } from '@/sync/domains/state/storage';
-import { environmentAgentsAskFirst } from './environmentAgentApproval';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { Modal } from '@/modal';
@@ -76,9 +73,8 @@ export type DeploymentDispositionSheetInput = Readonly<{
   canRemove: boolean;
   /** The existing Domain read owner names retirement consequences in this confirmation. */
   domains?: Readonly<{ controller: DeploymentReadControllerV1; environmentId: string }>;
-  /** The Environment and the Actions these choices run; the footer says agents ask first only when the policy does. */
-  agentApproval?: Readonly<{ environment: Parameters<typeof environmentAgentsAskFirst>[0]['environment'];
-    actionIds: Parameters<typeof environmentAgentsAskFirst>[0]['actionIds'] }>;
+  /** Nothing was ever deployed: deleting stops nothing and keeps no history, so there is nothing to choose (R14-D9). */
+  neverDeployed?: boolean;
   /** Runs the plan-defined disposition through the page's DTEAR hook. */
   reviewVolumes?: (signal: AbortSignal) => Promise<DeploymentTeardownPreviewV1['volumes']>;
   run: (choice: Choice, volumes?: DeploymentTeardownVolumesV1) => Promise<DeploymentEnvironmentDeletionOutcome>;
@@ -196,11 +192,6 @@ function DeploymentDispositionSheet(
     }
     if (outcome.kind === 'refused') setRefused(outcome);
   };
-  const rawActionsSettings = useSetting('actionsSettingsV1');
-  const { agentApproval } = props;
-  const agentsAskFirst = React.useMemo(() => agentApproval ? environmentAgentsAskFirst({
-    settings: normalizeActionsSettings(rawActionsSettings), environment: agentApproval.environment,
-    actionIds: agentApproval.actionIds }) : false, [agentApproval, rawActionsSettings]);
   const footer = (
     <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.disposition.cancel', disabled: busy }}>
       <RoundButton
@@ -289,12 +280,15 @@ function DeploymentDispositionSheet(
             label: t('projects.deployments.factFrees'),
             value: t('projects.deployments.factFreesValue', { machine }),
           }] : []),
-          {
+          // A never-deployed Environment has no history or backups to keep.
+          ...(props.neverDeployed ? [] : [{
             key: 'keeps',
             label: t('projects.deployments.factKeeps'),
             value: t('projects.deployments.factKeepsValue'),
-          },
+          }]),
         ];
+  // A lone "Keeps" is one sentence of the lead, not a bordered box without a control (R14-D9).
+  const keepsOnly = facts.length === 1 && facts[0]!.key === 'keeps';
 
   const removeOption = props.canRemove ? [resource && platform && resourceName ? {
     id: 'remove' as const,
@@ -310,7 +304,8 @@ function DeploymentDispositionSheet(
     // Nothing recorded running: the removal stops nothing, so it reads as the removal itself (PAGE-ACCEPT-176 R10-D13).
     id: 'remove' as const,
     icon: 'trash' as const,
-    title: confirmTitle,
+    // The sheet's title and button already name it; the tile says the choice (R14-D9).
+    title: t('common.delete'),
     subtitle: t('projects.deployments.deleteIdleBody', { name: props.name }),
   }] : [];
   return (
@@ -336,10 +331,10 @@ function DeploymentDispositionSheet(
                 name: props.name,
                 machine,
               })
+            : props.neverDeployed ? t('projects.deployments.deleteLeadNeverDeployed')
             : t('projects.deployments.deleteLeadIdle', { name: props.name })}
-        {/* Who may do this without asking is one more sentence of the lead, not a stray caption (R11-D8, R13-D8). */}
-        {agentsAskFirst ? <Text testID="project-deployments.disposition.agentsAskFirst">
-          {` ${t('projects.deployments.agentsAskFirstNote')}.`}</Text> : null}
+        {keepsOnly ? <Text testID="project-deployments.disposition.fact.keeps">
+          {` ${t('projects.deployments.deleteKeepsSentence')}`}</Text> : null}
       </Text>
       {props.running || props.hasRetainedAssociations ? (
         <SelectionTiles<Choice>
@@ -410,7 +405,7 @@ function DeploymentDispositionSheet(
               onChangeText={text => setConfirmations(previous => ({ ...previous, [volume.name]: text }))} />} /> : null}
         </React.Fragment>)}
       </ItemGroup> : null}
-        <ItemGroup
+        {facts.length === 0 || keepsOnly ? null : <ItemGroup
           testID="project-deployments.disposition.facts"
           header="none"
         >
@@ -424,7 +419,7 @@ function DeploymentDispositionSheet(
               mode="info"
             />
           ))}
-        </ItemGroup>
+        </ItemGroup>}
       {domainInput ? <ItemGroup testID="project-deployments.disposition.domains" header="none">
         {domains.result.status === 'empty' ? null : <DeploymentTabState result={domains.result}
           testID="project-deployments.disposition.domains" errorTitle={t('projects.deployments.domainsErrorTitle')}

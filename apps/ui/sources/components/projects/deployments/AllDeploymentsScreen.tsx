@@ -34,7 +34,7 @@ import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/Plu
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useDeploymentInventory } from './useDeploymentProject';
-import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
+import { readServicesView, SERVICES_VIEWS, ServicesDatabasesView, ServicesDomainsView, ServicesPaging, servicesCountTone, ServicesViewTabs, type ServicesView, type ServicesViewCount, type ServicesViewNeedYou } from './ServicesViews';
 import { deploymentEnvironmentRowState, deploymentReadIssue } from './deploymentPresentation';
 import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
 import { useServiceCheckSelection } from './ServiceCheckList';
@@ -199,7 +199,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const viewDemand = props.demand!;
   const phone = useDeviceType() === 'phone';
   // Each view's needs-you count marks its tab (lab "Apps • 3"): Apps from its own read, the others as they report.
-  const [viewNeedYou, setViewNeedYou] = React.useState<Partial<Record<ServicesView, number>>>({});
+  const [viewNeedYou, setViewNeedYou] = React.useState<Partial<Record<ServicesView, ServicesViewNeedYou>>>({});
   const appsNeedYou = React.useMemo(() => countAppsNeedYou(items), [items]);
   const needYou = React.useMemo(() => ({ ...viewNeedYou, apps: appsNeedYou }), [appsNeedYou, viewNeedYou]);
   const viewTabs = props.controller && props.demand ? (
@@ -213,7 +213,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const [viewCount, setViewCountState] = React.useState<ServicesViewCount | null>(null);
   const setViewCount = React.useCallback((next: ServicesViewCount) => {
     setViewCountState(next);
-    setViewNeedYou((current) => current[next.view] === (next.needYou ?? 0) ? current : { ...current, [next.view]: next.needYou ?? 0 });
+    const count = next.needYou ?? 0;
+    const tone = servicesCountTone(next.parts);
+    setViewNeedYou((current) => current[next.view]?.count === count && current[next.view]?.tone === tone ? current
+      : { ...current, [next.view]: { count, tone } });
   }, []);
   const total = snapshot.value?.totalCount;
   // Opening Apps shares the column's first page. Once continuing, the page read can carry the exact total it displays.
@@ -453,19 +456,26 @@ export function AllDeploymentsGroups(
   );
 }
 
-/** The Apps rows that need the person: a failed or unconfirmed latest deploy (the readiness owner's tone). */
-function countAppsNeedYou(items: readonly EnvironmentItem[]): number {
-  return items.filter((item) => deploymentEnvironmentRowState(item)?.tone).length;
+/** The Apps rows that need the person (the readiness owner's tone), rose only when one of them failed. */
+function countAppsNeedYou(items: readonly EnvironmentItem[]): ServicesViewNeedYou {
+  let count = 0;
+  let tone: ServicesViewNeedYou['tone'] = 'warning';
+  for (const item of items) {
+    const state = deploymentEnvironmentRowState(item);
+    if (!state?.tone) continue;
+    count += 1;
+    if (state.tone === 'danger') tone = 'danger';
+  }
+  return { count, tone };
 }
 
 /** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
 function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, total: number | undefined): readonly HappierPageCountPart[] {
-  let needYou = 0;
+  const needYou = countAppsNeedYou(items);
   let deploying = 0;
   for (const item of items) {
     const state = deploymentEnvironmentRowState(item);
-    if (state?.tone) needYou += 1;
-    else if (state) deploying += 1;
+    if (state && !state.tone) deploying += 1;
   }
   const projects = new Set(items.map((item) => item.environment.projectSourceId)).size;
   // With more pages, the Account-wide total when its read has answered (its Projects are not known); until then the
@@ -477,8 +487,8 @@ function describeAppsCount(items: readonly EnvironmentItem[], paged: boolean, to
     accountTotal ? t('projects.deployments.services.countEnvironmentsTotal', { count: total })
       : items.length === 0 ? null
         : t(paged ? 'projects.deployments.services.countEnvironmentsAtLeast' : 'projects.deployments.services.countEnvironments', counted),
-    // The count that needs the person speaks in the tab badge's tone (lab svcApps "3 need you").
-    needYou > 0 ? { text: t('projects.deployments.services.needYou', { count: needYou }), tone: 'danger' as const } : null,
+    // The count that needs the person speaks in the tab badge's tone (lab svcApps "3 need you"): amber, rose on a failure.
+    needYou.count > 0 ? { text: t('projects.deployments.services.needYou', { count: needYou.count }), tone: needYou.tone } : null,
     deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,
   ];
 }

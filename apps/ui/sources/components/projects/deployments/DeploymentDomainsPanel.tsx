@@ -356,6 +356,7 @@ export function DeploymentDomainsPanel(
         testID="project-deployments.environment.domains"
         errorTitle={t('projects.deployments.domainsErrorTitle')}
         emptyTitle={t('projects.deployments.domainsEmpty')}
+        emptyReason={t('projects.deployments.domainsEmptyBody')}
       />}
       {domains.hasPreviousPage || domains.hasNextPage ? (
         <View style={styles.paging}>
@@ -487,6 +488,7 @@ function DomainAddForm(
   const [basicAuthUser, setBasicAuthUser] = useInlineAddDraftField(props.draftKey, 'basicAuthUser', '');
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
+  const declaredPorts = React.useMemo(() => [...new Set(props.routeExports.map(item => item.containerPort))], [props.routeExports]);
   // Port is either an entry for this Service or its one declared container port.
   const port = target.enteredPort?.service === service ? target.enteredPort.value
     : servicePorts.length === 1 ? String(servicePorts[0]) : '';
@@ -518,6 +520,8 @@ function DomainAddForm(
   // A disabled Add domain names the first field it still needs (zone and tunnel choices say so in their own rows).
   const missingField = assigned || props.busy || duplicate ? null : host.length === 0 ? t('projects.deployments.domainFieldHost')
     : provider ? null
+    // Until the tunnel's zone is chosen (or Cloudflare connected) that row is the blocker and says so itself (R14-D11).
+    : needsSelection && !ingress ? null
     : service.trim().length === 0 ? t('projects.deployments.domainFieldService')
     : !portValid ? t('projects.deployments.domainFieldPort')
     : !pathValid ? t('projects.deployments.domainFieldPath')
@@ -654,7 +658,8 @@ function DomainAddForm(
               monospace
               keyboardType="number-pad"
               accessibilityLabel={t('projects.deployments.domainFieldPort')}
-              placeholder="3000"
+              // A port this Environment declares, never an invented example (R14-D11).
+              placeholder={declaredPorts.length === 1 ? String(declaredPorts[0]) : undefined}
             />}
           </FieldItem>
         </View>

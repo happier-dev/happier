@@ -6,8 +6,6 @@ import { isDeploymentProductionPromotionPairV1, type DeploymentEnvironmentCollec
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -126,9 +124,8 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
   const ownServer = target.kind === 'ownServer';
   const exactImageUnavailable = ownServer && !production && artifact === 'image' && press.outcome?.kind === 'refused'
     && press.outcome.code === 'rollback_image_unavailable';
-  const effect = ownServer
-    ? { title: t('projects.deployments.promotion.image'), subtitle: t('projects.deployments.promotion.imageBody') }
-    : target.consequence ? { title: target.consequence } : null;
+  // What the promotion carries is one sentence of the lead, not a bordered row without a control (R13 leftover).
+  const effect = ownServer ? t('projects.deployments.promotion.imageBody') : target.consequence ?? null;
   const footer = (
     <ModalCardFooterActions cancel={{ onPress: cancel, testID: 'project-deployments.promote.cancel' }}>
       <RoundButton testID="project-deployments.promote.confirm" title={t('projects.deployments.promotion.review')}
@@ -141,7 +138,8 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
       <View testID="project-deployments.promote" style={deploymentSheetStyles.body}>
-        <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.promotion.lead', { name: props.name, version: props.version })}</Text>
+        <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.promotion.lead', { name: props.name, version: props.version })}
+          {effect ? <Text testID="project-deployments.promote.effect">{` ${effect}`}</Text> : null}</Text>
         {/* Promoting a build preview: its address and health first, from the Environment's own owners (U9). */}
         {production?.source.purpose === 'preview' ? <DeploymentReviewPreview
           controller={props.controller} environmentId={props.sourceEnvironmentId} demand={SHEET_DEMAND}
@@ -152,7 +150,8 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
           selectedId={destination} onSelect={selectDestination} disabled={busy}
           loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
           emptyTitle={t(production ? 'projects.deployments.promotion.emptyProduction' : 'projects.deployments.promotion.emptyTitle')}
-          emptyBody={t('projects.deployments.promotion.emptyBody')} emptyAction={createProduction} />
+          // Without Production, its create is the one way on: the line says only that, beside it (R13 leftover).
+          emptyBody={createProduction ? undefined : t('projects.deployments.promotion.emptyBody')} emptyAction={createProduction} />
         {chosen && gaps.result.status === 'ready' && gaps.result.gaps.length > 0 ? <AttentionBanner
           testID="project-deployments.promote.missingVariables" tone="warning"
           title={gaps.result.gaps.length === 1
@@ -169,11 +168,6 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
           diagnosticCode={gaps.result.reason}
           action={gaps.result.retryable ? { label: t('common.retry'), onPress: () => { void gaps.retry(); } } : undefined} />
           : null}
-        {effect ? (
-          <ItemGroup header="none">
-            <Item {...effect} showChevron={false} />
-          </ItemGroup>
-        ) : null}
         {exactImageUnavailable ? <SurfaceStateCard testID="project-deployments.promote.rebuild" size="line" kind="error"
           title={t('projects.deployments.receipt.rebuildTitle')} reason={t('projects.deployments.receipt.rebuildBody')}
           action={{ label: t('projects.deployments.receipt.rebuildAction'), testID: 'project-deployments.promote.rebuild.confirm',
@@ -190,6 +184,8 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
 }
 
 export function showDeploymentPromotionSheet(input: DeploymentPromotionSheetInput): void {
+  // Opened as "Deploy to Production", the sheet keeps the menu's words (R13 leftover).
   showDeploymentSheet({ component: DeploymentPromotionSheet, props: input,
-    title: t('projects.deployments.promotion.title'), testID: 'project-deployments.promote.modal', closeOnBackdrop: false });
+    title: t(input.production ? 'projects.deployments.menuDeployProduction' : 'projects.deployments.promotion.title'),
+    testID: 'project-deployments.promote.modal', closeOnBackdrop: false });
 }

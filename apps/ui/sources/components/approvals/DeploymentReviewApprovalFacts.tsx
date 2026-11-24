@@ -320,8 +320,12 @@ function describeReviewFields(
         ownServer.backupBeforeMigration && t('projects.deployments.review.backupFirst'),
         ownServer.migrationFailurePolicy && t(`projects.deployments.review.migrationFails.${ownServer.migrationFailurePolicy}`),
       ) }),
-      ...field('ifItFails', t('projects.deployments.review.ifItFails'), ownServer.autoRestorePreviousRelease
-        ? t('projects.deployments.review.restoresPrevious') : t('projects.deployments.review.staysDown')),
+      // A rollback's "previous release" would read as the version it goes back to: name the one that comes back (R14-D9).
+      ...field('ifItFails', t('projects.deployments.review.ifItFails'), !ownServer.autoRestorePreviousRelease
+        ? t('projects.deployments.review.staysDown')
+        : replaces && areDeploymentSourceLabelsEqualV1(replaces.revision, revision) !== true
+          ? t('projects.deployments.review.restoresVersion', { revision: revisionText(replaces.revision) })
+          : t('projects.deployments.review.restoresPrevious')),
     ] : []),
     // The rollout choice the person made before requesting; reviewed as captured, changed only by asking again.
     // What happens when one Machine of several fails: a fleet choice, said only where there is a fleet (R12-D4).

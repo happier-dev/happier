@@ -1,3 +1,4 @@
+import { readProjectSourceRepositoryIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { UnboundSessionHomeScopeCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
@@ -635,6 +636,8 @@ const ProjectDeploymentsPage = React.memo(
     // ways as one row.
     if (props.workspaceRef == null && !hasDetail) {
       const repository = sourceRead.source?.source.repository?.repository.nameWithOwner ?? null;
+      // The same identity the Prepare sheet needs before it can open a pull request.
+      const preparable = readProjectSourceRepositoryIdentityV1(sourceRead.source?.source.repository) !== null;
       const projectEnvironments = items.filter(item => item.environment.purpose !== 'preview');
       const projectPreviews = items.filter(item => item.environment.purpose === 'preview');
       return (
@@ -673,8 +676,9 @@ const ProjectDeploymentsPage = React.memo(
             {newWorkEnabled && sourceAvailable && props.lifetime ? (
               <ItemGroup>
                 <Item testID="project-deployments.project.agents" title={t('projects.deployments.preparation.askAgent')}
-                  subtitle={t('projects.deployments.preparation.askAgentBody')} subtitleLines={0}
-                  showChevron={false} accessoryLayout={phone ? 'stacked' : 'adaptive'}
+                  // An agent proposes its files as a pull request: without a repository, the row says what it needs (R14-D9).
+                  subtitle={t(preparable ? 'projects.deployments.preparation.askAgentBody' : 'projects.deployments.preparation.noRepository')}
+                  subtitleLines={0} showChevron={false} accessoryLayout={phone ? 'stacked' : 'adaptive'}
                   rightElement={<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
                     <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" emphasis="secondary" />
                     <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" emphasis="plain" />

@@ -1794,9 +1794,11 @@ describe('Project deployments page', () => {
         expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
       });
       if (neverDeployed) {
-        // Nothing deployed: no separate empty Data card beside Keeps, and no "stops its services" choice (PAGE-ACCEPT-176 R10-D13).
+        // Nothing deployed: no empty Data card, no "stops its services" choice (PAGE-ACCEPT-176 R10-D13), nothing to
+        // detach and no history to keep (R14-D9).
         expect(screen.findByTestId('project-deployments.disposition.volumes.empty')).toBeNull();
-        expect(screen.findByTestId('project-deployments.disposition.fact.keeps')).not.toBeNull();
+        expect(screen.findByTestId('project-deployments.disposition.fact.keeps')).toBeNull();
+        expect(screen.findByTestId('project-deployments.disposition.choice:detach')).toBeNull();
         expect(screen.getTextContent()).not.toContain('Stop and remove');
       }
       const previousTeardowns = homes.requestsFor('/v1/actions/deployments.teardown').length;
@@ -3140,7 +3142,7 @@ describe('Project deployments page', () => {
     } finally { controller.retire(); }
   });
 
-  it('keeps a failed receipt\'s "Read deployment logs" on that receipt, where its failed step\'s logs are', async () => {
+  it('offers no "Read deployment logs" on a failed receipt: its failed step\'s logs are right under the card', async () => {
     const base = createDeploymentReceiptDetailV1();
     const failure = { code: 'native_failed', phase: 'build' as const };
     const failed = createDeploymentReceiptDetailV1({
@@ -3152,13 +3154,8 @@ describe('Project deployments page', () => {
     try {
       const screen = await renderScreen(<ProjectDeploymentsView controller={controller} demand={shown}
         accountId="account-owner" serverId={scope.serverId} lifetime={null} sourceId="source-app" />);
-      await waitForContent(screen, 'project-deployments.receipt.outcome.failed.recovery');
-      routerMock.spies.setParams.mockClear();
-      await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
-      await act(async () => {});
-      // It never leaves the failed step for the Environment's Overview.
-      expect(routerMock.spies.setParams).not.toHaveBeenCalledWith(expect.objectContaining({ deploymentTab: 'overview' }));
-      expect(screen.findByTestId('project-deployments.receipt.outcome.failed')).not.toBeNull();
+      await waitForContent(screen, 'project-deployments.receipt.outcome.failed');
+      expect(screen.findByTestId('project-deployments.receipt.outcome.failed.recovery')).toBeNull();
     } finally { controller.retire(); }
   });
 

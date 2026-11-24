@@ -440,6 +440,10 @@ const CREDENTIAL_LABEL: Readonly<Record<string, 'credentialAccessKeyId' | 'crede
   accessKeyId: 'credentialAccessKeyId', secretAccessKey: 'credentialSecretAccessKey',
   repositoryPassword: 'credentialRepositoryPassword', sessionToken: 'credentialSessionToken', sshPrivateKey: 'credentialSshPrivateKey',
 };
+/** A credential role in words ("Repository password"), never its key. */
+function credentialLabel(role: string): string {
+  return t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`);
+}
 /** A search seed for the Store, not an identity: it only finds the plugins that add backup storage. */
 const STORE_BACKUP_QUERY = 'backup';
 const BACKUP_DESTINATION_SECTIONS = Object.freeze(['familiesById.backupDestinations']);
@@ -499,7 +503,8 @@ export function DeploymentBackupSetup(props: Readonly<{
             props.actions.addBackupSchedule({ environmentId: props.detail.environment.id,
               controllerMachineId: props.detail.environment.controllerMachineId, configuration, schedule }).then(() => {}),
           onChanged: props.onChanged, machine: props.machineName(props.detail.environment.controllerMachineId) },
-        title: t('projects.deployments.settingsSections.setupSheetTitle'), testID: `${id}.modal` });
+        // The sheet keeps its height while fields fill and rows below it change (R14-D6).
+        title: t('projects.deployments.settingsSections.setupSheetTitle'), testID: `${id}.modal`, scrollHost: 'body' });
       return { ok: true };
     });
   }, [change.press, destinations, id, projection.interactionEnabled, projection.pluginUiProjection, props]);
@@ -515,10 +520,11 @@ export function DeploymentBackupSetup(props: Readonly<{
     open();
   }, [route.deploymentEnvironment, route.deploymentSetup, props.detail.environment.id,
     projection.interactionEnabled, destinations.length, open]);
-  // "Nothing to back up here" is offered only where the definition declares no database (PAGE-ACCEPT-176 D14).
+  // Skipping is offered only where the definition declares no database (PAGE-ACCEPT-176 D14). It is the person's choice,
+  // not a claim: a Compose file's volumes are data the sheet can still back up (R14-D6).
   const declaresData = (props.detail.content.template?.data?.length ?? 0) > 0;
   const finish = (content: React.ReactNode) => <>{content}
-    {declaresData ? null : <Item title={t('projects.deployments.backupNotNeededTitle')} mode="info" rightElement={
+    {declaresData ? null : <Item title={t('projects.deployments.backupSkipOffer')} mode="info" rightElement={
       <SectionActionButton testID={`${id}.notNeeded`} title={t('projects.deployments.backupNotNeededAction')}
         disabled={change.running} onPress={() => change.press(async () => {
           const result = await props.actions.configureBackup(props.detail.environment, { intent: 'markNotNeeded' });
@@ -624,7 +630,17 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const configuration = anotherMachine ? destinationSetup && receiverProjection.interactionEnabled
     && receiverInputState.rows.length > 0 && receiverInputState.valid && candidate?.success ? candidate.data : null
     : prepared?.ok ? prepared.configuration : null;
-  const complete = configuration !== null && (!intent || (prepared?.ok && prepared.bindingState === 'bound'));
+  // A required credential that is neither chosen here nor already bound makes Save fail: say so before it is pressed.
+  const missingRole = anotherMachine ? undefined : destination.definition.credentialRoles.find(({ role, optional }) => !optional
+    && !bindings.some(binding => binding.role === role)
+    && (intent !== null || !props.detail.content.bindings.some(binding => binding.purpose === 'backupDestination' && binding.role === role)));
+  const complete = configuration !== null && missingRole === undefined && (!intent || (prepared?.ok && prepared.bindingState === 'bound'));
+  // Why Save waits, in the order the sheet asks: where, what, then the credential.
+  const incompleteReason = complete ? null
+    : !sources.length && props.sourceChoices.length ? t('projects.deployments.settingsSections.setupNeedsSource')
+    : configuration === null && !anotherMachine && !config ? t('projects.deployments.settingsSections.setupNeedsDestination')
+    : missingRole ? t('projects.deployments.settingsSections.setupNeedsCredential', { credential: credentialLabel(missingRole.role) })
+    : null;
   const busy = change.running || scheduleChange.running;
   const configured = result?.kind === 'configured';
   const locked = busy || configured;
@@ -686,7 +702,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
       source: { kind: 'secret', ref: selection.ref, resourceRevision: selection.resourceRevision } }]); setResult(null); }
   };
   const repositoryMissing = result?.kind === 'tested' && result.test.kind === 'failed' && result.test.reason === 'repository_missing';
-  const footer = React.useMemo(() => <ModalCardFooterActions cancel={{ onPress: onClose, testID: `${id}.cancel`, disabled: busy }}>
+  const footer = React.useMemo(() => <ModalCardFooterActions cancel={{ onPress: onClose, testID: `${id}.cancel`, disabled: busy }}
+    note={busy ? null : incompleteReason} noteTestID={`${id}.incomplete`}>
     {intent ? null : <SectionActionButton testID={`${id}.test`} title={t('projects.deployments.settingsSections.destinationTest')}
       disabled={!complete || locked} onPress={() => submit('test')} />}
     {/* Creating a repository is offered only once Test found none there, so a mistyped place is never initialized. */}
@@ -694,7 +711,7 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
       disabled={!complete || locked} onPress={() => submit('initializeAndSave')} />}
     <RoundButton testID={`${id}.save`} size="normal" title={t('projects.deployments.settingsSections.setupSave')}
       disabled={!complete || locked} loading={busy} onPress={intent ? saveIntent : () => submit('save')} />
-  </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent, repositoryMissing]);
+  </ModalCardFooterActions>, [onClose, id, busy, locked, complete, submit, intent, saveIntent, repositoryMissing, incompleteReason]);
   const chrome = React.useMemo(() => ({ kind: 'card' as const, footer }), [footer]);
   useModalCardChrome(setChrome, chrome);
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
@@ -751,7 +768,7 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
     <ItemGroup title={t('projects.deployments.settingsSections.keepTitle')} description={sourceWord(props.defaults?.sources.backupRetention)}>
       {retention?.kind === 'keepEverything' ? <Item title={t('projects.deployments.backupKeepEverything')} mode="info" /> : null}
       {KEEP_FIELDS.map(field => <FieldValueItem key={field} testID={`${id}.keep.${field}`} fieldTestID={`${id}.keep.${field}.input`}
-        title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)} kind="integer" allowEmpty value={keep[field]}
+        title={t(`projects.deployments.settingsSections.${KEEP_LABEL[field]}`)} kind="integer" allowEmpty placeholder="0" value={keep[field]}
         stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }} compactStepper disabled={locked}
         onDraftChange={text => setKeep(current => ({ ...current, [field]: text }))}
         onCommit={text => { setKeep(current => ({ ...current, [field]: text })); return text; }} />)}
@@ -762,7 +779,7 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
         : t('projects.deployments.settingsSections.scheduleOff')}
       subtitle={sourceWord(props.defaults.sources.backupSchedule)} /> : null}
     {anotherMachine ? null : <ItemGroup header="none">{destination.definition.credentialRoles.map(({ role, optional }) => <Item key={role}
-      testID={`${id}.role.${role}`} title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
+      testID={`${id}.role.${role}`} title={credentialLabel(role)}
       subtitle={bindings.some(binding => binding.role === role) || (!intent && props.detail.content.bindings.some(binding => binding.purpose === 'backupDestination' && binding.role === role))
         ? t('projects.deployments.settingsSections.credentialSet') : t(`projects.deployments.settingsSections.${optional ? 'setupRoleOptional' : 'setupRoleRequired'}`)}
       mode="info" rightElement={props.lifetime ? <SectionActionButton testID={`${id}.role.${role}.choose`}
@@ -788,7 +805,7 @@ export function DeploymentBackupConfigurationResult(props: Readonly<{
     {capacity ? <BackupPathCapacityReview capacity={capacity} machine={props.machine} testID={id} /> : null}
     {result?.kind === 'tested' ? <Item testID={`${id}.tested`} title={testOutcome(result.test).line} mode="info" /> : null}
     {result?.kind === 'needsBinding' ? <Item testID={`${id}.needsBinding`} title={t('projects.deployments.settingsSections.credentialMissing')}
-      subtitle={result.missingRoles.join(', ')} mode="info" /> : null}
+      subtitle={result.missingRoles.map(credentialLabel).join(', ')} mode="info" /> : null}
     {result?.kind === 'setupIncomplete' ? <SurfaceStateCard testID={`${id}.setupIncomplete`} kind="error" size="line"
       title={t('projects.deployments.settingsSections.setupIncomplete')} diagnosticCode={result.errorCode} /> : null}
   </>;
@@ -829,7 +846,7 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
         <Item
           key={role}
           testID={`${props.testID}.credential.${role}`}
-          title={t(`projects.deployments.settingsSections.${CREDENTIAL_LABEL[role] ?? 'credentialRepositoryPassword'}`)}
+          title={credentialLabel(role)}
           subtitle={bound(role)
             ? t('projects.deployments.settingsSections.credentialSet')
             : t('projects.deployments.settingsSections.credentialMissing')}

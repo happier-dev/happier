@@ -82,6 +82,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   onMachine: string;
   platformLater: string;
   deploysFrom: string;
+  deploysFromBody: string;
   onPlatformTitle: (params: { platform: string }) => string;
   onPlatformBody: string;
   platformBuilds: string;
@@ -180,9 +181,10 @@ export const deploymentPlatformLinkTranslations = {
     grant: 'Give access',
     refused: 'Couldn’t check this project',
     linkRefused: 'Couldn’t link this project',
-    onMachine: 'A machine',
+    onMachine: 'A Machine',
     platformLater: 'You choose the platform project right after you create it.',
     deploysFrom: 'Deploys from',
+    deploysFromBody: "Happier deploys to the platform from this Machine.",
     onPlatformTitle: ({ platform }) => `On ${platform}`,
     // The step's description already says that linking deploys nothing (one message per state, DESIGN-ACCEPT C2).
     onPlatformBody: 'Pick the account, then the project.',

@@ -427,7 +427,7 @@ export const newAppTranslations: Readonly<
       reviewTitle: ({ name, target }) => `Deploy ${name} to ${target}`,
       reviewTitleUnnamed: ({ target }) => `Deploy to ${target}`,
       reviewDescription: 'Check what Happier creates. Nothing changes until you create it.',
-      onMachine: 'A machine',
+      onMachine: 'A Machine',
       builtImageSource: 'A Docker image',
       builtComposeSource: 'A Compose file',
       builtFolderSource: 'A folder on a Machine',

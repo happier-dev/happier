@@ -100,6 +100,7 @@ import {
   deploymentAttentionLeaves,
   deploymentPreviewAvailability,
   deploymentReadIssue,
+  keptForRollbackValue,
   readDeploymentRefusalRecovery,
 } from './deploymentPresentation';
 import {
@@ -119,8 +120,6 @@ import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing }
 import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
 import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredDefinitionEditor';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
-import { DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1, DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1,
-  DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
 import { privateServiceExportReachLabel } from './DeploymentPrivateServiceExports';
 import { projectDeploymentConnections, type DeploymentConnection } from './deploymentConnections';
@@ -175,7 +174,7 @@ import { deploymentOverviewArrival } from './deploymentOverviewArrival';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
-import { machineServiceColumnFields, machineServiceStateField } from '@/components/machines/services/machineServiceColumns';
+import { MachineServiceStateWord, machineServiceColumnFields, machineServiceStateField } from '@/components/machines/services/machineServiceColumns';
 import { machineServiceIcon, machineServiceStateLabel } from '@/components/machines/services/machineServicesPresentation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -692,14 +691,14 @@ export const DeploymentEnvironmentDetail = React.memo(
         subject: targetLinkId ? { kind: 'target', targetLinkId } : { kind: 'environment' },
         initialChoice,
         // Stop and remove tears down first; then the target is unlinked or the Environment deleted.
-        agentApproval: { environment: detail.environment, actionIds: [DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
-          targetLinkId ? DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 : DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1] },
         name: detail.content.name,
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
         provider,
         running,
         services: services.map((service) => service.name),
-        hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0,
+        // An Environment never deployed left nothing on a Machine to detach (R14-D9); a linked target keeps its Detach.
+        hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0 && !neverDeployed,
+        neverDeployed: !targetLinkId && neverDeployed,
         canRemove: removal.choices.includes('delete'),
         ...(dispositionPlatformRef && provider ? { providerResource: {
           name: readPlatformResourceName(dispositionRow?.content, provider) ?? detail.content.name,
@@ -1808,7 +1807,7 @@ function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: numb
         : t('projects.deployments.rolloutFactRecreate') });
   }
   if (kept !== null) facts.push({ key: 'kept', label: t('projects.deployments.keptForRollback'),
-    value: kept > 0 ? t('projects.deployments.keptCount', { count: kept }) : t('projects.deployments.keptNone') });
+    value: keptForRollbackValue(kept, detail.content.retainPreviousDeployments) });
   return facts;
 }
 
@@ -2395,6 +2394,8 @@ function EnvironmentServiceRows(
     title: (item) => item.service.name,
     // What it is, then (on a phone, where the columns drop) where it is reached; volumes always stay on this line.
     byline: (item, layout) => <EnvironmentServiceByline item={item} columns={layout?.fieldColumns === true} />,
+    // A phone drops the State column, so the state leads the second line instead (R14-D10), from the same owner.
+    bylineLead: (item, layout) => item.row && layout?.fieldColumns !== true ? <MachineServiceStateWord row={item.row} /> : null,
     fields: [
       { key: 'reachedAt', title: t('projects.deployments.overviewStatus.columnReachedAt'), minWidth: 160, priority: 3, listColumn: true,
         render: (item) => item.serves.length > 0

@@ -26,6 +26,7 @@ await vi.hoisted(async () => {
 const { SavedSecretChoiceList } = await import('@happier-dev/plugin-ui/components');
 const { PluginUiPresentationHostProviderInternal } = await import('../../../../../../../packages/plugin-ui/src/presentationHost/context');
 const { createPluginUiPrivatePresentationHost } = await import('@/components/plugins/surfaces/pluginUiPrivatePresentationHost');
+const { SavedSecretReferenceChoice } = await import('./SavedSecretPickerModal');
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | undefined;
 
 beforeEach(async () => {
@@ -58,5 +59,22 @@ describe('plugin saved-secret choice', () => {
         await screen.pressByTestIdAsync(rowID);
         expect(onSelect).toHaveBeenCalledTimes(1);
         expect(onSelect.mock.calls[0]![0]).toEqual({ ref: entry.ref, resourceRevision: expect.any(Number) });
+    });
+
+    it('offers the create form where nothing is saved yet, and keeps it one tab away once something is (R14-D6)', async () => {
+        const screen = await renderScreen(<SavedSecretReferenceChoice scope={home!.scope} selectedRef={null}
+            onSelect={() => {}} testIDPrefix="picker" />);
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-create-name')).not.toBeNull());
+        expect(screen.findByTestId('picker:no-matches')).toBeNull();
+        await screen.unmount();
+
+        await home!.addOwnerResource();
+        await refreshSavedSecretCatalog(home!.scope);
+        const listed = await renderScreen(<SavedSecretReferenceChoice scope={home!.scope} selectedRef={null}
+            onSelect={() => {}} testIDPrefix="picker" />);
+        await vi.waitFor(() => expect(listed.findByTestId('picker:mode:new')).not.toBeNull());
+        expect(listed.findByTestId('saved-secret-create-name')).toBeNull();
+        await listed.pressByTestIdAsync('picker:mode:new');
+        expect(listed.findByTestId('saved-secret-create-name')).not.toBeNull();
     });
 });

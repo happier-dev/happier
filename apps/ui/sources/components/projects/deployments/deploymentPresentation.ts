@@ -35,7 +35,8 @@ export function deploymentReadIssue(code: string | null | undefined): 'homeUnrea
 }
 
 /** The Action's reason remains visible beside the next useful step; this never retries or re-authorizes. */
-export function deploymentActionRefusalRemedy(code: string, definition?: PublishTargetRecommendationInput['definition']): string {
+export function deploymentActionRefusalRemedy(code: string, definition?: PublishTargetRecommendationInput['definition'],
+  platformCount = 1): string {
   if (code === 'deployment_conflict' || code === 'host_retired' || code === 'action_account_scope_changed')
     return t('projects.deployments.copy.refresh');
   if (code === DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION) {
@@ -43,7 +44,8 @@ export function deploymentActionRefusalRemedy(code: string, definition?: Publish
       if (definition.from === 'catalogApp') return t('projects.deployments.recommendation.catalogRequiresRepository');
       if (definition.from === 'folder') return t('newApp.deploy.cantRunStored');
     }
-    return t('projects.deployments.recommendation.requiresRepository');
+    return t(platformCount > 1 ? 'projects.deployments.recommendation.requiresRepositoryMany'
+      : 'projects.deployments.recommendation.requiresRepository');
   }
   switch (readDeploymentRefusal(code).reason) {
     case 'permission': return t('projects.deployments.copy.permission');
@@ -553,4 +555,13 @@ function nameRecoveryMachine<T extends DeploymentFailureRecoveryPresentationV1>(
   // The refusal belongs to the Account in view; its Machine resolves in that Home's inventory.
   const name = getSettledMachineDisplayName(resolveServerScopedMachine(state, state.profileScope?.serverId ?? null, machineId));
   return name ? { ...recovery, remedy: recovery.remedy.split(machineId).join(name) } : recovery;
+}
+
+/**
+ * "Kept for rollback" in words: the count kept, "None yet" while a policy that keeps releases has none to keep, and
+ * "Off" only when the policy keeps none (R14-D9). An unknown policy says "None yet" rather than claim it is off.
+ */
+export function keptForRollbackValue(kept: number, policy: number | undefined): string {
+  if (kept > 0) return t('projects.deployments.keptCount', { count: kept });
+  return policy === 0 ? t('projects.deployments.keptNone') : t('projects.deployments.keptNoneYet');
 }

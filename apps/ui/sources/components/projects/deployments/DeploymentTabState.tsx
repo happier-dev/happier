@@ -18,6 +18,8 @@ export function DeploymentTabState(
     testID: string;
     errorTitle: string;
     emptyTitle: string;
+    /** What would be here and why it is worth having, beside the empty line's title. */
+    emptyReason?: string;
   }>,
 ) {
   const { result, testID } = props;
@@ -41,6 +43,7 @@ export function DeploymentTabState(
           size="line"
           kind="empty"
           title={props.emptyTitle}
+          reason={props.emptyReason}
         />
       );
     case 'denied':

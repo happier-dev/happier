@@ -633,6 +633,9 @@ const deploymentSettingsTranslations = {
     setupOpenStore: 'Abrir Tienda',
     setupRoleRequired: "Secreto guardado obligatorio",
     setupRoleOptional: 'Opcional · solo si tu almacenamiento lo usa',
+    setupNeedsSource: "Primero elige qué respaldar.",
+    setupNeedsDestination: "Primero indica adónde van las copias.",
+    setupNeedsCredential: ({ credential }) => `${credential}: primero elige un secreto guardado.`,
     setupInitializeAndSave: "Inicializar repositorio y guardar",
     setupAnotherMachine: "Otra máquina",
     setupReceiverMachine: "Máquina de destino",
@@ -921,6 +924,7 @@ const deploymentPlatformLinkTranslations = {
     platformLater:
       'Eliges el proyecto de la plataforma justo después de crearlo.',
     deploysFrom: 'Despliega desde',
+    deploysFromBody: "Happier despliega en la plataforma desde esta máquina.",
     onPlatformTitle: ({ platform }) => `En ${platform}`,
     onPlatformBody: 'Elige la cuenta y luego el proyecto.',
     platformBuilds: 'La plataforma construye el repositorio de este proyecto en la rama que elijas.',

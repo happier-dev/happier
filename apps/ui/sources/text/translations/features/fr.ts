@@ -636,6 +636,9 @@ const deploymentSettingsTranslations = {
     setupOpenStore: 'Ouvrir la Boutique',
     setupRoleRequired: "Secret enregistré requis",
     setupRoleOptional: 'Facultatif · seulement si votre stockage l’utilise',
+    setupNeedsSource: "Choisissez d’abord quoi sauvegarder.",
+    setupNeedsDestination: "Indiquez d’abord où vont les sauvegardes.",
+    setupNeedsCredential: ({ credential }) => `${credential} : choisissez d’abord un secret enregistré.`,
     setupInitializeAndSave: "Initialiser le dépôt et enregistrer",
     setupAnotherMachine: "Une autre machine",
     setupReceiverMachine: "Machine de destination",
@@ -923,6 +926,7 @@ const deploymentPlatformLinkTranslations = {
     platformLater:
       'Vous choisissez le projet de la plateforme juste après l’avoir créé.',
     deploysFrom: 'Déploie depuis',
+    deploysFromBody: "Happier déploie sur la plateforme depuis cette machine.",
     onPlatformTitle: ({ platform }) => `Sur ${platform}`,
     onPlatformBody: 'Choisissez le compte, puis le projet.',
     platformBuilds: 'La plateforme construit le dépôt de ce projet sur la branche choisie.',

@@ -16,9 +16,9 @@ export type PromotionCopy = Readonly<{
 export const deploymentPromotionTranslations = {
   en: {
     open: 'Promote to…', title: 'Promote deployment', lead: ({ name, version }) => `Choose where to deploy ${version} from ${name}.`,
-    destination: 'Destination', image: 'Built artifact', imageBody: 'Reuse the images recorded for this release.',
+    destination: 'Destination', image: 'Built artifact', imageBody: 'It reuses the images built for this release.',
     emptyTitle: 'Choose another environment', emptyProduction: 'No Production environment found',
-    createProduction: 'Create Production environment…',
+    createProduction: 'Create Production…',
     emptyBody: 'Create or link a destination environment, then try again.', loadFailed: 'Couldn’t load environments', refused: 'Couldn’t promote', review: 'Review promotion',
     missingOne: ({ destination, name }) => `${destination} doesn’t set ${name}`, missingMany: ({ destination, count }) => `${destination} doesn’t set ${count} variables`,
     missingBodyOne: ({ source, destination }) => `${source} sets it. Add it to ${destination} first if this version reads it.`,

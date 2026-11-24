@@ -294,16 +294,18 @@ describe('Receipt → failed', () => {
       expect(banner).not.toBeNull();
       if (!nativeActivation) expect(screen.findAllByType(AgentActionButton)).toHaveLength(1);
       expect(String(banner?.props.description)).toContain(readDeploymentFailureRecoveryV1(failure.code, failure).remedy);
-      // The canonical next action opens where the cause is fixed.
+      // The canonical next action opens where the cause is fixed; a failed step's logs are already on this page.
+      if (readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination === 'logs') {
+        expect(screen.findByTestId('project-deployments.receipt.outcome.failed.recovery')).toBeNull();
+        return;
+      }
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
       if (nativeActivation) {
         expect(String(banner?.props.description)).toMatch(/web.*78.*FIELD_NOTES_SECRET_KEY/);
         expect(String(banner?.props.description)).not.toMatch(/read (the )?deployment logs/i);
         expect(opened).toEqual([['variables']]);
       } else expect(opened).toEqual([code === 'stateful_service_multi_machine' ? ['settings']
-        : [readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination,
-          // A failed step's logs open on this receipt itself.
-          code === 'build_platform_unsupported' ? { machineId: 'builder-c' } : { deploymentId: receipt.deployment.id }]]);
+        : [readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination, { machineId: 'builder-c' }]]);
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
