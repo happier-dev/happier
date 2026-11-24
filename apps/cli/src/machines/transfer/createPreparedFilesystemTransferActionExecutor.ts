@@ -19,6 +19,7 @@ import { readFilesystemTransferErrorCode, type PreparedFilesystemReadFile, type 
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import type { createFilesystemEffectTransferAdapter } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { logger } from '@/ui/logger';
 
 type TransferActionId = 'daemon.filesystem.upload' | 'daemon.filesystem.download' | 'daemon.filesystem.transfer.cancel' | 'daemon.filesystem.copy';
 type TransferActionOutput = FilesystemUploadOutput | FilesystemDownloadOutput | FilesystemTransferCancelOutput | FilesystemCopyOutput;
@@ -75,10 +76,24 @@ export function createPreparedFilesystemTransferActionExecutor(params: Readonly<
       if (!acceptance) return { success: false, status: 'failed', error: 'Filesystem transfer operation owner is unavailable', errorCode: 'FILESYSTEM_OPERATION_OWNER_REQUIRED' };
       if (args.actionId === 'daemon.filesystem.upload' || args.actionId === 'daemon.filesystem.copy') {
         const copy = args.actionId === 'daemon.filesystem.copy' ? FilesystemPreparedCopyInputSchema.parse(args.input) : null;
+        const admittedTarget = args.context.externalActionTarget;
         if (copy && (!args.context.serverId || !await isServerProfileHomeIdentity(args.context.serverId, copy.destination.serverId)
-          || args.context.externalActionTarget?.kind !== 'machine'
-          || copy.destination.machineId !== args.context.externalActionTarget.machineId)) {
-          return failure('Prepared copy destination does not match the admitted target', 'target_unavailable');
+          || admittedTarget?.kind !== 'machine' || copy.destination.machineId !== admittedTarget.machineId)) {
+          const reason = 'prepared_copy_destination_binding_mismatch';
+          logger.debugLocalFile('[filesystem-copy] Prepared destination does not match the admitted target', {
+            reason,
+            requestId: args.context.actionRequestId,
+            admittedServerProfileId: args.context.serverId,
+            destinationServerId: copy.destination.serverId,
+            admittedMachineId: admittedTarget?.kind === 'machine' ? admittedTarget.machineId : undefined,
+            destinationMachineId: copy.destination.machineId,
+          });
+          const phase = 'daemon.filesystem.copy.destination';
+          return withActionFailureCauseDiagnostic(
+            failure('Prepared copy destination does not match the admitted target', 'target_unavailable'),
+            { failureCause: { phase, errorClass: 'Error', errorCode: 'target_unavailable', nativeErrorReason: reason, httpStatus: null } },
+            phase,
+          );
         }
         if (copy && !isFilesystemPathAbsolute(copy.source.rootPath)) return failure('Prepared copy source root must be absolute', 'invalid_input');
         const input = copy ? { rootPath: copy.destination.rootPath, path: copy.destination.path, overwrite: copy.overwrite,

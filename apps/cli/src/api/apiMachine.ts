@@ -30,7 +30,7 @@ import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { createDiscussionReplyReturnPublisher } from '@/discussions/discussionReplyReturnPublisher';
@@ -2829,6 +2829,26 @@ export class ApiMachineClient {
         };
     }
 
+    private filesystemActionTargetUnavailable(serverId: string, context: RpcActionExecutorContext,
+        heldHome = this.lifecycleDependencies.resolveCurrentServerIdentityId?.()): ActionExecuteFailure {
+        const reason = 'target_binding_mismatch';
+        const target = context.externalActionTarget;
+        logger.debugLocalFile('[filesystem-action] Admitted target does not match this Machine or Home', {
+            reason,
+            requestId: context.actionRequestId,
+            heldMachineId: this.machine.id,
+            admittedMachineId: target?.kind === 'machine' ? target.machineId : undefined,
+            selectedServerProfileId: serverId,
+            heldServerProfileId: this.externalActionIngressOwner?.currentServerId,
+            admittedServerProfileId: context.serverId,
+            heldHomeId: heldHome,
+            admittedHomeId: context.serverIdentityId,
+        });
+        return { ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable', effectAttempted: false,
+            failureCause: { phase: 'daemon.filesystem.target', errorClass: 'Error', errorCode: 'target_unavailable',
+                nativeErrorReason: reason, httpStatus: null } };
+    }
+
     /** Device-local profile ids can differ on an approved replay of this same Home. */
     private async isNativeWorkspaceHomeCurrent(serverId: string, context: RpcActionExecutorContext,
         heldHome = this.lifecycleDependencies.resolveCurrentServerIdentityId?.() ?? null): Promise<boolean> {
@@ -3112,7 +3132,7 @@ export class ApiMachineClient {
                         || !owner || this.projectionSchedulingClosed || owner.currentServerId !== serverId
                         || request.context.serverIdentityId && request.context.serverIdentityId !== heldHome
                         || !request.context.serverIdentityId && request.context.serverId !== serverId)
-                        return { ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable' };
+                        return this.filesystemActionTargetUnavailable(serverId, request.context, heldHome);
                     if (request.actionId === 'daemon.filesystem.copy' && request.input && typeof request.input === 'object'
                         && 'kind' in request.input && request.input.kind === 'target_copy')
                         return { ok: false, errorCode: 'filesystem_transfer_custody_required', error: 'Target copy requires a mounted caller byte driver' };
@@ -3148,7 +3168,7 @@ export class ApiMachineClient {
             const target = request.context.externalActionTarget;
             if (target?.kind !== 'machine' || target.machineId !== this.machine.id
                 || !await this.isNativeWorkspaceHomeCurrent(serverId, request.context)) {
-                return { ok: false, errorCode: 'target_unavailable', error: 'Filesystem target is unavailable' };
+                return this.filesystemActionTargetUnavailable(serverId, request.context);
             }
             // A present physical owner already holds ordinary host IO rights on
             // every supported platform. Only a protected requester needs the

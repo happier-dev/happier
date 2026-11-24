@@ -15,6 +15,25 @@ import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { startDirectPeerTransferServer } from './directPeerTransport';
 
 describe('prepared filesystem Actions', () => {
+  it('reports the refused prepared-copy destination binding to the Action caller before accepting custody', async () => {
+    const rootPath = await mkdtemp(join(tmpdir(), 'happier-copy-target-refusal-'));
+    const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
+    try {
+      const owner = createPreparedFilesystemTransferActionExecutor({ lifecycle, workingDirectory: rootPath,
+        accessPolicy: { kind: 'restrictedRoots', roots: [rootPath] } });
+      const result = projectPreparedFilesystemActionResult(await owner({ actionId: 'daemon.filesystem.copy',
+        context: { runtimeAccountId: 'account', serverId: 'held-home', externalActionTarget: { kind: 'machine', machineId: 'receiver' },
+          operationAcceptance: { operationId: 'copy', actionId: 'daemon.filesystem.copy',
+            accept: () => { throw new Error('A foreign destination must not acquire custody'); } } },
+        input: { kind: 'prepared_transfer', source: { kind: 'file', serverId: 'held-home', machineId: 'source', rootPath,
+          path: 'archive.tar', sourceId: 'entry', sizeBytes: 1, sha256: '0'.repeat(64) },
+          destination: { serverId: 'foreign-home', machineId: 'receiver', rootPath, path: 'archive.tar' }, overwrite: false, recursive: false } }));
+      expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable',
+        failureCause: { errorCode: 'target_unavailable', nativeErrorReason: 'prepared_copy_destination_binding_mismatch' } });
+      expect(lifecycle.getState().status).toBe('stopped');
+    } finally { await lifecycle.stop(); await rm(rootPath, { recursive: true, force: true }); }
+  });
+
   it('withdraws download authority before disclosing a descriptor', async () => {
     const rootPath = await mkdtemp(join(tmpdir(), 'happier-download-withdrawal-'));
     const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });

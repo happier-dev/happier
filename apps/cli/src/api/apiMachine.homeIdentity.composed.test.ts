@@ -80,7 +80,8 @@ it('uses the held Home binding for admitted native filesystem effects without re
   const admitted = await execute(f.homeServerIdentityId, 'owner');
   expect(admitted, JSON.stringify(admitted)).toMatchObject({ success: true });
   await expect(access(join(f.directory, 'owner'))).resolves.toBeUndefined();
-  await expect(execute('srv_foreign_home', 'foreign')).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+  await expect(execute('srv_foreign_home', 'foreign')).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable',
+    failureCause: { errorCode: 'target_unavailable', nativeErrorReason: 'target_binding_mismatch' }, effectAttempted: false });
   await expect(access(join(f.directory, 'foreign'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
