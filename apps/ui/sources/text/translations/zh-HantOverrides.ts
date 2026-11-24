@@ -12383,6 +12383,8 @@ settingsSession: {
         emailPasswordWithoutPassword: ({ email }: { email: string }) => `${email} · 尚未設定密碼`,
         passwordOnly: "已設定密碼",
         emailPasswordNotSetUp: "尚未設定",
+        connectionNotConnected: "尚未連線",
+        connectionNotOffered: "此 Home 未提供",
         emailPasswordManageHint: "管理你的登入電子郵件與密碼",
         manageSignIn: "管理",
         connect: "連接",

@@ -15080,6 +15080,8 @@ settingsSession: {
     emailPasswordWithoutPassword: ({ email }: { email: string }) => `${email} · пароля пока нет`,
     passwordOnly: "Пароль задан",
     emailPasswordNotSetUp: "Пока не настроено",
+    connectionNotConnected: "Пока не подключено",
+    connectionNotOffered: "Недоступно в этом Home",
     emailPasswordManageHint: "Управляйте почтой и паролем для входа",
     manageSignIn: "Управлять",
     connect: "Подключить",

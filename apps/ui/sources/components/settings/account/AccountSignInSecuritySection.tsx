@@ -12,6 +12,8 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import { t } from '@/text';
@@ -20,9 +22,9 @@ import { ACCOUNT_SETTINGS } from './accountSettings';
 import type { AccountSecurityProjectionState } from './useAccountSecurityProjection';
 import { AccountRecoveryKeyItem } from './AccountRecoveryKeyItem';
 
-function describeEmailPassword(security: AccountSecurityProjectionState): string | undefined {
+function describeEmailPassword(security: AccountSecurityProjectionState): string | null {
     // While the facts load the row keeps its title and action; it never prints "Loading…".
-    if (security.kind === 'loading') return undefined;
+    if (security.kind === 'loading') return null;
     if (security.kind === 'unavailable') return t('settingsAccount.emailPasswordManageHint');
     const { nativeEmail, password } = security.projection;
     const enrolled = password.status === 'enrolled';
@@ -51,6 +53,8 @@ export const AccountSignInSecuritySection = React.memo(function AccountSignInSec
     const encryptionControlsEnabled = useFeatureEnabled('encryption.accountOptOut');
     const [moreExpanded, setMoreExpanded] = React.useState(false);
     const projection = props.security.kind === 'ready' ? props.security.projection : null;
+    const rowMetrics = usePageRowMetrics();
+    const emailPasswordFacts = describeEmailPassword(props.security);
     const openSecurity = React.useCallback(() => router.push(SETTINGS_ROUTES.accountSecurity), [router]);
 
     return (
@@ -62,7 +66,14 @@ export const AccountSignInSecuritySection = React.memo(function AccountSignInSec
                 setting={ACCOUNT_SETTINGS.settings.emailPassword}
                 testID="settings-account-email-password"
                 icon={<Icon name="envelope" size={18} color={theme.colors.text.secondary} />}
-                subtitle={describeEmailPassword(props.security)}
+                // While its facts load, the description line is held by the quiet bar, so the row keeps the height its
+                // facts will give it and nothing below moves when they land.
+                subtitle={emailPasswordFacts ?? (
+                    <SkeletonTitle
+                        testID="settings-account-email-password-loading"
+                        lineHeight={rowMetrics.subtitle.lineHeight}
+                    />
+                )}
                 mode="info"
                 showChevron={false}
                 rightElementOutsidePressable

@@ -6,7 +6,9 @@ import { useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { happierPageRowDividerWidth } from '@happier-dev/plugin-ui/presentation';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
+import { useSectionLeadingColumn } from '@/components/ui/lists/sectionLeadingColumn';
 import type { PageRowShape } from '@/components/ui/lists/pageRowMetrics';
 import { t } from '@/text';
 import { useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
@@ -92,12 +94,19 @@ const HomeScopedFailedRow = React.memo(function HomeScopedFailedRow(props: Reado
  */
 export const ItemLoadStateRowDividersContext = React.createContext(true);
 
-/** A page row's text edge, with no glyph column: the shared loading rows in the section's row box. */
+/**
+ * A page row's text edge, with no glyph: the shared loading rows in the section's row box. In a section whose rows
+ * reserve the leading column (an icon or mark in any row), the bars start where the titles do.
+ */
 const PAGE_ROW_SKELETON_GEOMETRY = Object.freeze({
     insetStart: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
     insetEnd: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
     glyphColumn: 0,
     gap: 0,
+});
+const PAGE_ROW_SKELETON_GEOMETRY_PAST_LEADING_COLUMN = Object.freeze({
+    ...PAGE_ROW_SKELETON_GEOMETRY,
+    insetStart: PAGE_LIST_METRICS.rowPaddingHorizontalPx + PAGE_LIST_METRICS.rowLeadingColumnPx + PAGE_LIST_METRICS.rowLeadingGapPx,
 });
 
 /**
@@ -118,6 +127,11 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     shape?: PageRowShape;
     /** Names what is loading for assistive technology ("Loading machine pools"). */
     accessibilityLabel?: string;
+    /**
+     * Whether the rows that arrive draw their hairline after the last one, as an `Item` does unless it is its
+     * section's last row (`ItemGroup` passes `false` there). Defaults to `true`, as `Item`'s does.
+     */
+    showDivider?: boolean;
     testID?: string;
 }>) {
     const { theme } = useUnistyles();
@@ -126,9 +140,26 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
     const rowMetrics = usePageRowMetrics(props.shape);
     const divided = React.useContext(ItemLoadStateRowDividersContext);
     const bleedStyle = useSectionRowBleedStyle();
+    const reservesLeadingColumn = useSectionLeadingColumn(false);
     const rowBox = React.useMemo(
         () => ({ minHeight: rowMetrics.minHeightPx, paddingVertical: rowMetrics.paddingVerticalPx }),
         [rowMetrics],
+    );
+    const lines = props.lines ?? 2;
+    // A page row's hairline stands in its flow, under the row: each reserved row keeps that room, and the last one
+    // keeps it, with its hairline, when the arriving last row will draw one.
+    const trailingDivider = divided && props.showDivider !== false;
+    const ruleRoom = React.useMemo(() => {
+        const hairline = happierPageRowDividerWidth();
+        return divided ? { rowGap: hairline, paddingBottom: trailingDivider ? hairline : 0 } : undefined;
+    }, [divided, trailingDivider]);
+    // Each bar stands in the line box of the text it holds, so a reserved line is exactly as tall as the row that
+    // arrives: its title line and, for a two-line row, the gap and its description line, as `Item` draws them.
+    const lineHeights = React.useMemo(
+        () => lines === 2
+            ? [rowMetrics.title.lineHeight, rowMetrics.subtitle.marginTop + rowMetrics.subtitle.lineHeight] as const
+            : [rowMetrics.title.lineHeight] as const,
+        [lines, rowMetrics],
     );
 
     if (props.state.kind === 'failed' && props.state.homeServerIds && props.state.homeServerIds.length > 0) {
@@ -144,10 +175,11 @@ export const ItemLoadStateRows = React.memo(function ItemLoadStateRows(props: Re
             {...(testID === undefined ? {} : { testID, rowTestID: (index: number) => `${testID}-skeleton:${index}` })}
             {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
             rows={Math.max(1, Math.floor(props.rows ?? 2))}
-            lines={props.lines ?? 2}
+            lineHeights={lineHeights}
             rowBox={rowBox}
-            geometry={PAGE_ROW_SKELETON_GEOMETRY}
-            {...(divided ? { dividerColor: theme.colors.border.subtle, dividerPlacement: 'between' as const } : {})}
+            geometry={reservesLeadingColumn ? PAGE_ROW_SKELETON_GEOMETRY_PAST_LEADING_COLUMN : PAGE_ROW_SKELETON_GEOMETRY}
+            {...(divided ? { dividerColor: theme.colors.border.subtle, dividerPlacement: trailingDivider ? 'below' as const : 'between' as const } : {})}
+            {...(ruleRoom ? { style: ruleRoom } : {})}
         />
     );
     // The reserved rows stand where the rows will: in a bare contained section they reach past the column as rows do.

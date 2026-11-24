@@ -88,6 +88,31 @@ describe('ProviderIdentityItems catalog recovery', () => {
         expect(screen.findHostByTestId('settings-account-identity-catalog-retry')).toBeNull();
     });
 
+    // TH-VISUAL-FIX-23 D1: a catalog connection draws the provider mark its icon hint names, from the one
+    // presentation owner Welcome uses; a hint the app ships no mark for draws the generic sign-in mark, never nothing.
+    it.each([
+        ['github', 'github-logo'],
+        ['northwind-sso', 'sign-in'],
+    ] as const)('draws a registry mark for a catalog connection hinted %s', async (iconHint, expected) => {
+        readEntry = async () => Response.json({
+            v: 1,
+            state: 'ready',
+            scope: { kind: 'home' },
+            actions: [{
+                kind: 'authenticate', methodId: 'northwind-github', action: 'connect', mode: 'keyed', origin: 'home',
+                presentation: { displayName: 'Northwind GitHub', iconHint },
+            }],
+            autoRedirect: null,
+        } satisfies AuthEntryProjectionV1);
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const { asIconName } = await import('@/components/ui/icons/asIconName');
+        const screen = await renderIdentities();
+        await vi.waitFor(() => expect(screen.findHostByTestId('settings-account-identity-northwind-github-connect')).not.toBeNull());
+        const marks = screen.findAllByType(Icon).map((node) => String(node.props.name));
+        expect(marks).toContain(expected);
+        for (const mark of marks) expect(asIconName(mark)).toBe(mark);
+    });
+
     it('exposes initial failure and retries the same Home without inventing provider availability', async () => {
         readEntry = async () => { throw new TypeError('Network unavailable'); };
         const screen = await renderIdentities();

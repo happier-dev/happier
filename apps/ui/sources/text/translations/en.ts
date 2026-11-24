@@ -18168,6 +18168,8 @@ const enSettingsAccount = {
     `${email} · no password yet`,
   passwordOnly: 'Password set up',
   emailPasswordNotSetUp: 'Not set up yet',
+  connectionNotConnected: "Not connected yet",
+  connectionNotOffered: "Not available on this Home",
   emailPasswordManageHint: 'Manage your sign-in email and password',
   manageSignIn: 'Manage',
   connect: 'Connect',

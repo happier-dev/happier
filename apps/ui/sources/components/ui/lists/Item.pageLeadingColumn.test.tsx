@@ -107,3 +107,34 @@ describe('Item page row leading column', () => {
     expect(overhang).toBeLessThanOrEqual(PAGE_LIST_METRICS.rowLeadingGapPx / 3);
   });
 });
+
+// TH-VISUAL-FIX-23 D2: a composed description (a masked secret, a placeholder bar) stands in the description's own
+// line box, so a row holding one is exactly as tall as a row with a text description and nothing below it moves.
+describe('Item page row composed description', () => {
+  it('holds the description line box of the page row metrics', async () => {
+    const { Item } = await import('./Item');
+    const { ListPresentationProvider } = await import('./listPresentation');
+    const { usePageRowMetrics } = await import('./useResolvedItemDensity');
+    const { StyleSheet, View } = await import('react-native');
+    let metrics: ReturnType<typeof usePageRowMetrics> | null = null;
+    function Probe() {
+      metrics = usePageRowMetrics();
+      return null;
+    }
+    const screen = await renderScreen(
+      <ListPresentationProvider value="page">
+        <Probe />
+        <Item testID="row" title="Recovery key" subtitle={<View testID="short-line" style={{ height: 12 }} />} />
+      </ListPresentationProvider>,
+    );
+    // The nearest host box around the composed description is its line box.
+    const line = screen.findAll((node) => typeof node.type === 'string' && node.props?.testID === 'short-line')[0]!;
+    let wrapper = line.parent;
+    while (wrapper && typeof wrapper.type !== 'string') wrapper = wrapper.parent;
+    const style = StyleSheet.flatten(wrapper!.props.style) as Record<string, number>;
+    expect({ marginTop: style.marginTop, minHeight: style.minHeight }).toEqual({
+      marginTop: metrics!.subtitle.marginTop,
+      minHeight: metrics!.subtitle.lineHeight,
+    });
+  });
+});

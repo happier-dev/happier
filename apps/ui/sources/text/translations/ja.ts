@@ -15519,6 +15519,8 @@ settingsSession: {
     emailPasswordWithoutPassword: ({ email }: { email: string }) => `${email} · パスワード未設定`,
     passwordOnly: "パスワード設定済み",
     emailPasswordNotSetUp: "まだ設定されていません",
+    connectionNotConnected: "まだ接続されていません",
+    connectionNotOffered: "この Home では利用できません",
     emailPasswordManageHint: "サインイン用のメールとパスワードを管理",
     manageSignIn: "管理",
     connect: "接続",

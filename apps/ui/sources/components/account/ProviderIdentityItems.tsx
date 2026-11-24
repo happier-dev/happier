@@ -32,6 +32,7 @@ import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfi
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { Icon } from '@/components/ui/icons/Icon';
+import { oauthProviderIconName } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import { teamAuthenticationPath } from '@/components/settings/teams/teamsRoutes';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { identityAdministrationFailureMessage } from '@/components/settings/identity/identityAdministrationFailure';
@@ -249,7 +250,12 @@ function ProviderIdentityItem(props: Readonly<{
         }
     };
 
-    const iconName = props.provider.badgeIconName ?? 'key-outline';
+    // The provider's mark comes from the one presentation owner Welcome draws it with; a hint the app ships no
+    // mark for takes its generic sign-in mark.
+    const iconName = oauthProviderIconName(props.provider.id, {
+        displayName: providerDisplayName,
+        iconHint: props.provider.badgeIconName ?? null,
+    });
     const iconColor = theme.colors.text.secondary;
     const icon =
         identity?.avatarUrl ? (
@@ -261,18 +267,16 @@ function ProviderIdentityItem(props: Readonly<{
                 cachePolicy="memory-disk"
             />
         ) : (
-            <Icon name={iconName as any} size={29} color={iconColor} />
+            <Icon name={iconName} color={iconColor} />
         );
 
     if (!identity) {
         return (
             <Item
                 title={providerDisplayName}
-                subtitle={
-                    connectAvailable === false
-                        ? t('friends.providerGate.notConfigured', { provider: providerDisplayName })
-                        : t('friends.providerGate.title', { provider: providerDisplayName })
-                }
+                subtitle={connectAvailable === false
+                    ? t('settingsAccount.connectionNotOffered')
+                    : t('settingsAccount.connectionNotConnected')}
                 mode="info"
                 showChevron={false}
                 icon={icon}

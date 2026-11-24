@@ -14290,6 +14290,8 @@ settingsSession: {
         emailPasswordWithoutPassword: ({ email }: { email: string }) => `${email} · encara sense contrasenya`,
         passwordOnly: "Contrasenya configurada",
         emailPasswordNotSetUp: "Encara no configurat",
+        connectionNotConnected: "Encara no connectat",
+        connectionNotOffered: "No disponible en aquest Home",
         emailPasswordManageHint: "Gestiona el correu i la contrasenya d’inici de sessió",
         manageSignIn: "Gestiona",
         connect: "Connecta",

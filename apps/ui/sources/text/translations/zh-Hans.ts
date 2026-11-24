@@ -14752,6 +14752,8 @@ settingsSession: {
     emailPasswordWithoutPassword: ({ email }: { email: string }) => `${email} · 尚未设置密码`,
     passwordOnly: "已设置密码",
     emailPasswordNotSetUp: "尚未设置",
+    connectionNotConnected: "尚未连接",
+    connectionNotOffered: "此 Home 不提供",
     emailPasswordManageHint: "管理你的登录邮箱和密码",
     manageSignIn: "管理",
     connect: "连接",

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 
 import { SchemaFieldControl, resolveSchemaFieldKind } from '@/components/settings/schemaFields/SchemaFieldControl';
@@ -10,6 +12,8 @@ import {
 import { StringListField } from '@/components/ui/forms/StringListField';
 import { CopyIconButton } from '@/components/ui/copy/CopyIconButton';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
@@ -112,6 +116,24 @@ const HomeSettingListControl = React.memo(function HomeSettingListControl(props:
 });
 
 /**
+ * An address that can only be read: one line in the mono face, its middle elided so both the host and
+ * the path stay legible, with Copy at its end (the Account ID's anatomy). Beside the label when it
+ * fits; on a phone, or when it is long, beneath it.
+ */
+const HomeSettingAddressValue = React.memo(function HomeSettingAddressValue(props: Readonly<{
+    text: string;
+    copy: React.ReactNode;
+    testID: string;
+}>) {
+    return (
+        <View style={styles.address}>
+            <MiddleEllipsisText testID={`${props.testID}.value`} style={styles.addressText} value={props.text} />
+            {props.copy}
+        </View>
+    );
+});
+
+/**
  * One registry-declared Home setting rendered from its declaration (plan §3.14 "Console
  * rendering"): boolean → switch; enum of up to four → segmented; longer enum → menu; int/float →
  * number field; string/url/email → text field; list → one field per entry; anything
@@ -187,6 +209,18 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
 
     // An enum with one allowed value is not a choice (a reserved capability): nothing is offered.
     if (declaration?.type === 'enum' && declaration.bounds?.values?.length === 1) return null;
+    // An address is read and registered elsewhere character by character: mono, and never cut without an ellipsis.
+    const address = declaration?.type === 'url';
+    if (kind === null && address) {
+        const shown = value.trim() === '' && props.emptyValue ? props.emptyValue : homeSettingShownValue(entry);
+        return (
+            <SchemaFieldRow
+                {...row}
+                layout="adaptive"
+                control={<HomeSettingAddressValue text={shown} copy={copy} testID={testID} />}
+            />
+        );
+    }
     if (kind === null) {
         return (
             <SchemaFieldRow
@@ -291,28 +325,42 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
         case 'text': {
             const numeric = kind === 'number';
             const fallback = declaration?.default;
+            const fallbackShown = fallback !== undefined && fallback !== null && fallback !== '';
+            const field = (
+                <SchemaFieldControl control="text" inputProps={{
+                    testID: `${testID}.input`,
+                    accessibilityLabel: props.title,
+                    value: staged?.kind === 'text' ? staged.text : value,
+                    // An empty field says what empty means: the default it falls back to, or not set.
+                    placeholder: props.emptyValue ?? (!fallbackShown
+                        ? t('homeSettings.row.notSet')
+                        : Array.isArray(fallback) ? fallback.join(', ') : String(fallback)),
+                    monospace: address,
+                    // The address an empty field stands for is a value, not "Not set".
+                    placeholderIsValue: address && (props.emptyValue !== undefined || fallbackShown),
+                    editable: !props.disabled,
+                    autoCapitalize: 'none',
+                    keyboardType: numeric ? 'number-pad' : undefined,
+                    error: props.error,
+                    onChangeText: stageText,
+                    ...(onCommit ? { onBlur: commit, onSubmitEditing: commit } : {}),
+                    style: SCHEMA_FIELD_INPUT_STYLE,
+                }} />
+            );
             return (
                 <SchemaFieldRow
                     {...row}
-                    layout="adaptive"
-                    control={(
+                    // An address takes the row's whole width under its label at every width, so all of it can be read;
+                    // other text keeps the value slot's readable bound beside its label.
+                    layout={address ? 'stacked' : 'adaptive'}
+                    control={address ? (
+                        <View style={styles.addressField}>
+                            {field}
+                            {copy}
+                        </View>
+                    ) : (
                         <SchemaFieldValueSlot kind={numeric ? 'number' : 'text'} unit={unit}>
-                            <SchemaFieldControl control="text" inputProps={{
-                                testID: `${testID}.input`,
-                                accessibilityLabel: props.title,
-                                value: staged?.kind === 'text' ? staged.text : value,
-                                // An empty field says what empty means: the default it falls back to, or not set.
-                                placeholder: props.emptyValue ?? (fallback === undefined || fallback === null || fallback === ''
-                                    ? t('homeSettings.row.notSet')
-                                    : Array.isArray(fallback) ? fallback.join(', ') : String(fallback)),
-                                editable: !props.disabled,
-                                autoCapitalize: 'none',
-                                keyboardType: numeric ? 'number-pad' : undefined,
-                                error: props.error,
-                                onChangeText: stageText,
-                                ...(onCommit ? { onBlur: commit, onSubmitEditing: commit } : {}),
-                                style: SCHEMA_FIELD_INPUT_STYLE,
-                            }} />
+                            {field}
                             {copy}
                         </SchemaFieldValueSlot>
                     )}
@@ -321,3 +369,28 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
         }
     }
 });
+
+const styles = StyleSheet.create((theme) => ({
+    // The value slot's anatomy (field, then Copy) without its readable bound: an address uses the row's width.
+    addressField: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        flexGrow: 1,
+        minWidth: 0,
+    },
+    address: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s6,
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    addressText: {
+        ...Typography.variant('body'),
+        ...Typography.mono(),
+        color: theme.colors.text.secondary,
+        flexShrink: 1,
+        minWidth: 0,
+    },
+}));

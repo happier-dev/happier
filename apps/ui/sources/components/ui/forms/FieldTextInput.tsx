@@ -50,6 +50,11 @@ export type FieldTextInputProps = Readonly<{
     editable?: boolean;
     /** Commands, identifiers and paths read better in the monospace face. */
     monospace?: boolean;
+    /**
+     * The placeholder is the value an empty field stands for (the address a Home answers at, a default
+     * path), not prose: a `monospace` field then sets it in the value's face too.
+     */
+    placeholderIsValue?: boolean;
     autoCapitalize?: RNTextInputProps['autoCapitalize'];
     autoFocus?: boolean;
     /** Selects the whole value on focus, so typing replaces a suggested value (a rename). */
@@ -182,8 +187,9 @@ export const FieldTextInput = React.memo(React.forwardRef<React.ElementRef<typeo
                         // The input's text box inside the field box is the shared owner's.
                         inputMetrics,
                         // The mono face is for what is typed (a path, a command); an empty field's placeholder is
-                        // prose ("Whole repository") on an ordinary configuration field.
-                        props.monospace && props.value && !stepSize ? styles.inputMono : null,
+                        // prose ("Whole repository") on an ordinary configuration field, unless it is the value
+                        // the empty field stands for.
+                        props.monospace && (props.value || props.placeholderIsValue) && !stepSize ? styles.inputMono : null,
                         stepMetrics,
                         grows && contentHeight !== null ? { height: Math.max(contentHeight, 0) } : null,
                         props.textAlign ? { textAlign: props.textAlign, fontVariant: ['tabular-nums'] } : null,

@@ -408,6 +408,8 @@ type PageRowStyles = Readonly<{
     padding: Readonly<{ paddingVertical: number }>;
     title: Readonly<Record<string, unknown>>;
     subtitle: Readonly<Record<string, unknown>>;
+    /** A composed description (a masked secret, a placeholder bar, glyphs) stands in the description's own line box. */
+    nodeSubtitle: Readonly<{ marginTop: number; minHeight: number; justifyContent: 'center' }>;
     detail: Readonly<Record<string, unknown>>;
     accessoryBleed: Readonly<{ marginVertical: number }>;
 }>;
@@ -434,6 +436,7 @@ const PAGE_IDENTITY_MARK_SIDE_PANE_STYLE = {
 } as const;
 
 const pageRowStylesByMetrics = new WeakMap<PageRowMetrics, PageRowStyles>();
+const NODE_SUBTITLE_STYLE = { marginTop: Platform.select({ ios: 2, default: 0 }) } as const;
 
 const sheetRowInsetStyles = new Map<number, Readonly<{ paddingHorizontal: number }>>();
 
@@ -455,6 +458,7 @@ function resolvePageRowStyles(metrics: PageRowMetrics): PageRowStyles {
         padding: { paddingVertical: metrics.paddingVerticalPx },
         title: { ...metrics.title, ...Typography.default(metrics.titleWeight) },
         subtitle: { ...metrics.subtitle },
+        nodeSubtitle: { marginTop: metrics.subtitle.marginTop, minHeight: metrics.subtitle.lineHeight, justifyContent: 'center' },
         // A value summary reads at the title's size, in the regular face.
         detail: { ...metrics.title },
         // A trailing control's box may use the row's padding band: a switch's 44px focus and hit box
@@ -1954,7 +1958,7 @@ function ItemRow(props: ItemProps & Readonly<{
                         const normalized = normalizeNode(subtitle);
 
                         return (
-                            <View style={{ marginTop: Platform.select({ ios: 2, default: 0 }) }}>
+                            <View style={pageRowStyles?.nodeSubtitle ?? NODE_SUBTITLE_STYLE}>
                                 <ItemSubtitleTextStyleProvider value={composedSubtitleTextStyle}>
                                     {normalized}
                                 </ItemSubtitleTextStyleProvider>

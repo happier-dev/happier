@@ -95,6 +95,7 @@ export function MachineDeleteAudience(
           <ItemLoadStateRows
             state={PENDING_ROWS}
             rows={1}
+            lines={1}
             testID={`${props.testID}.pending`}
           />
         ) : read.kind === 'unavailable' ? (

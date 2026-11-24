@@ -475,7 +475,10 @@ describe('Sign-in providers page', () => {
         it('shows an admin the suggested address as a fact they can copy', async () => {
             const { screen, writes, expected } = await openGithub(githubEntries(), 'admin');
             expect(screen.findByTestId(`${CALLBACK_ROW}.input`)).toBeNull();
-            expect(screen.getTextContent()).toContain(expected);
+            // The address is one value (drawn on the web as a head run and a whole tail run around its ellipsis).
+            const textOf = (node: unknown): string => typeof node === 'string' ? node
+                : ((node as { children?: unknown[] } | null)?.children ?? []).map(textOf).join('');
+            expect(textOf(screen.findHostByTestId(`${CALLBACK_ROW}.value`))).toBe(expected);
             await screen.pressByTestIdAsync(`${CALLBACK_ROW}.copy`);
             expect(writes).toEqual([expected]);
         });

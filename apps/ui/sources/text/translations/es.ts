@@ -15241,6 +15241,8 @@ settingsSession: {
     emailPasswordWithoutPassword: ({ email }: { email: string }) => `${email} · aún sin contraseña`,
     passwordOnly: "Contraseña configurada",
     emailPasswordNotSetUp: "Aún sin configurar",
+    connectionNotConnected: "Aún sin conectar",
+    connectionNotOffered: "No disponible en este Home",
     emailPasswordManageHint: "Gestiona tu correo y contraseña de inicio de sesión",
     manageSignIn: "Gestionar",
     connect: "Conectar",

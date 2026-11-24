@@ -120,6 +120,63 @@ describe('ItemLoadStateRows', () => {
         expect(notices.map((node) => [node.props.size, node.props.kind])).toEqual([['line', 'error']]);
     });
 
+    // TH-VISUAL-FIX-23 D2: a reserved line takes the box of the row that arrives, by the row's own metrics: a
+    // two-line row's padding plus its title line, the gap and its description line, so nothing below it moves.
+    // In a section that reserves a leading column the bars start on the titles' edge.
+    it('reserves each line in the arriving row\'s box, from the shared page-row metrics', async () => {
+        const { usePageRowMetrics } = await import('./useResolvedItemDensity');
+        const { SectionLeadingColumnProvider, useSectionLeadingColumn } = await import('./sectionLeadingColumn');
+        const { PAGE_LIST_METRICS } = await import('./pageListMetrics');
+        const { StyleSheet } = await import('react-native');
+        let metrics: ReturnType<typeof usePageRowMetrics> | null = null;
+        function Probe(props: Readonly<{ leading?: boolean }>) {
+            metrics = usePageRowMetrics();
+            useSectionLeadingColumn(props.leading === true);
+            return null;
+        }
+        const rowBox = (screen: Screen, id: string) => {
+            const row = screen.findHostByTestId(id);
+            const style = StyleSheet.flatten(row?.props.style) as Record<string, number>;
+            // The row's text column: the line boxes that stand where the title and description will.
+            const textColumn = row!.children.filter((child) => typeof child !== 'string').at(-1) as typeof row & object;
+            const lines = textColumn.children
+                .filter((child) => typeof child !== 'string')
+                .map((child) => (StyleSheet.flatten((child as typeof row & object).props.style) as Record<string, number> | undefined)?.height)
+                .filter((height): height is number => typeof height === 'number');
+            return {
+                height: Math.max(style.minHeight ?? 0, (style.paddingTop ?? 0) + (style.paddingBottom ?? 0) + lines.reduce((sum, line) => sum + line, 0)),
+                textStart: style.paddingLeft,
+            };
+        };
+
+        const plain = await renderScreen(<><Probe /><ItemLoadStateRows testID="ids" state={{ kind: 'loading' }} rows={1} lines={2} /></>);
+        const m = metrics!;
+        const twoLineRow = 2 * m.paddingVerticalPx + m.title.lineHeight + m.subtitle.marginTop + m.subtitle.lineHeight;
+        expect(rowBox(plain, 'ids-skeleton:0')).toEqual({ height: Math.max(m.minHeightPx, twoLineRow), textStart: PAGE_LIST_METRICS.rowPaddingHorizontalPx });
+        // The arriving row draws its hairline in its flow, under it: the reserved line keeps that room too.
+        const { happierPageRowDividerWidth } = await import('@happier-dev/plugin-ui/presentation');
+        const trailingRoom = (screen: Screen) => (StyleSheet.flatten(screen.findHostByTestId('ids')?.props.style) as Record<string, number>).paddingBottom ?? 0;
+        expect(trailingRoom(plain)).toBe(happierPageRowDividerWidth());
+        await plain.unmount();
+        const sectionEnd = await renderScreen(<ItemLoadStateRows testID="ids" state={{ kind: 'loading' }} rows={1} showDivider={false} />);
+        expect(trailingRoom(sectionEnd)).toBe(0);
+        await sectionEnd.unmount();
+
+        const oneLine = await renderScreen(<><Probe /><ItemLoadStateRows testID="ids" state={{ kind: 'loading' }} rows={1} lines={1} /></>);
+        expect(rowBox(oneLine, 'ids-skeleton:0').height).toBe(Math.max(m.minHeightPx, 2 * m.paddingVerticalPx + m.title.lineHeight));
+        await oneLine.unmount();
+
+        const marked = await renderScreen(
+            <SectionLeadingColumnProvider>
+                <Probe leading />
+                <ItemLoadStateRows testID="ids" state={{ kind: 'loading' }} rows={1} lines={2} />
+            </SectionLeadingColumnProvider>,
+        );
+        expect(rowBox(marked, 'ids-skeleton:0').textStart).toBe(
+            PAGE_LIST_METRICS.rowPaddingHorizontalPx + PAGE_LIST_METRICS.rowLeadingColumnPx + PAGE_LIST_METRICS.rowLeadingGapPx,
+        );
+    });
+
     it('offers no Retry when the failure cannot be retried from here', async () => {
         const screen = await renderScreen(
             <ItemLoadStateRows testID="pools" state={{ kind: 'failed', reason: 'This Home needs an update' }} rows={2} />,
