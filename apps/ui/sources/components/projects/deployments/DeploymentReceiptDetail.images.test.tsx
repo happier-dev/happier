@@ -494,15 +494,26 @@ describe('Receipt → upload provenance', () => {
 
 describe('Receipt → running, not verified', () => {
   it.each([
-    { definition: 'stored', opens: true },
-    { definition: 'repository', opens: false },
-  ] as const)('a $definition definition offers its Compose file as the next action: $opens', async ({ definition, opens }) => {
-    const base = createDeploymentEnvironmentDetailV1();
+    { definition: 'stored', opens: true, verified: false },
+    { definition: 'repository', opens: false, verified: false },
+    { definition: 'stored', opens: false, verified: true },
+  ] as const)('a $definition definition offers its Compose file as the next action: $opens (live checked: $verified)', async ({ definition, opens, verified }) => {
+    const serving = createDeploymentReceiptHeaderV1({ state: 'running_unverified' });
+    const initial = createDeploymentEnvironmentDetailV1();
+    const base = verified ? {
+      ...initial,
+      targetLinks: initial.targetLinks.map(row => ({ ...row, targetLink: { ...row.targetLink,
+        id: serving.targetLinkId, activeDeploymentId: serving.id } })),
+      environment: { ...initial.environment, runtimeTargetLinkId: serving.targetLinkId },
+      healthAggregate: { v: 1 as const, environmentId: initial.environment.id, targetLinkId: serving.targetLinkId,
+        protection: initial.environment.protection, status: 'up' as const, n: 1, down: 0, degraded: 0, unknown: 0,
+        members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: true },
+    } : initial;
     // A stored Compose file is edited in the Environment's Settings; a repository's lives in its repository.
     const detail = definition === 'stored' ? { ...base, content: { ...base.content, definition: {
       kind: 'stored' as const, document: 'services: {app: {image: app:1}}', profiles: [], services: ['app'],
       contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` as const } } } : base;
-    const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'running_unverified' }) });
+    const receipt = createDeploymentReceiptDetailV1({ deployment: serving });
     const controller = createDeploymentReadControllerV1({ scope, transport: {
       listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
       readEnvironment: async () => ({ ok: true, value: detail }),
@@ -522,6 +533,12 @@ describe('Receipt → running, not verified', () => {
     );
     const notice = 'project-deployments.receipt.notice.running_unverified';
     try {
+      if (verified) {
+        await act(async () => { await controller.refreshDemanded(); });
+        expect(screen.findByTestId(notice)).toBeNull();
+        expect(screen.findByTestId('project-deployments.receipt.facts.health')).not.toBeNull();
+        return;
+      }
       await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(notice), node => node !== null); });
       // The Environment read settles after the receipt; wait for the definition it names before judging the action.
       await act(async () => { await controller.refreshDemanded(); });

@@ -58,6 +58,7 @@ import {
   deploymentFailureTitle,
   deploymentHeadline,
   deploymentHealthFact,
+  deploymentEnvironmentVerificationPending,
   deploymentMachineHealthLabel,
   deploymentOperationLabel,
   deploymentRevisionLabel,
@@ -354,7 +355,10 @@ export const DeploymentReceiptDetail = React.memo(
     const machineName = (machineId: string) =>
       machineNames[machineId] ?? t('projects.deployments.aMachine');
     const images = 'images' in content ? content.images : NO_IMAGES;
-    const notice = deploymentStateNotice(deployment.state, facts.failure);
+    const currentHealth = serving ? environmentValue?.healthAggregate : undefined;
+    const notice = deployment.state === 'running_unverified'
+      && !deploymentEnvironmentVerificationPending(deployment.state, currentHealth?.status)
+      ? null : deploymentStateNotice(deployment.state, facts.failure);
     // Domains are read only while this receipt serves natively, so a historical one never borrows them.
     const live = resolveDeploymentLiveAddress({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving);
     const outcomeUrl = live?.url ?? null;
@@ -395,7 +399,7 @@ export const DeploymentReceiptDetail = React.memo(
       // A version running without a health check has its notice below say so; the facts don't repeat it.
       healthSaidByNotice: deployment.state === 'running_unverified' && notice !== null,
       serving,
-      health: environmentValue?.healthAggregate,
+      health: currentHealth,
       state: deployment.state,
     });
     // A rollback is the failure's one filled way back (lab d3d `failed`); finding out why stays beside it, quiet.

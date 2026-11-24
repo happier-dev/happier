@@ -8,11 +8,12 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type {
-  DeploymentEnvironmentReadDetailV1,
-  DeploymentEnvironmentSettingsSectionV1,
-  DeploymentReadControllerV1,
-  DeploymentReadDemandV1,
+import {
+  isDeploymentServiceRunningWithoutCheckV1,
+  type DeploymentEnvironmentReadDetailV1,
+  type DeploymentEnvironmentSettingsSectionV1,
+  type DeploymentReadControllerV1,
+  type DeploymentReadDemandV1,
 } from '@happier-dev/deployments';
 import type { DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
@@ -609,18 +610,23 @@ function ChecksRows(props: SectionProps) {
   return (
     <>
       {members.map((member) => {
-        const failing = member.services.filter((service) => service.state === 'down' || service.state === 'degraded');
-        const summary = member.status === 'loading' || member.services.every((service) => service.state === 'unknown')
-          ? t('projects.deployments.checksWaiting')
-          : failing.length > 0
-            ? t('projects.deployments.checksFailing', { names: failing.map((service) => service.name ?? service.serviceId).join(', ') })
-            : t('projects.deployments.checksAllPassing');
+        const reportable = member.services.filter(service =>
+          !isDeploymentServiceRunningWithoutCheckV1(service.state, service.reason));
+        const passing = reportable.filter(service => service.observedAt !== null && service.state === 'up');
+        const failing = reportable.filter(service => service.observedAt !== null
+          && (service.state === 'down' || service.state === 'degraded'));
+        const checkCount = passing.length + failing.length;
+        const summary = failing.length > 0
+          ? t('projects.deployments.checksFailing', { names: failing.map(service => service.name ?? service.serviceId).join(', ') })
+          : member.status === 'ready' && passing.length > 0 && reportable.length === passing.length
+            ? t('projects.deployments.checksAllPassing')
+            : t('projects.deployments.checksWaiting');
         return (
           <Item
             key={`${member.machineId}:${member.installationId}`}
             testID={`${props.testID}.member.${member.machineId}`}
-            title={member.services.length > 0
-              ? t('projects.deployments.checksServices', { count: member.services.length })
+            title={checkCount > 0
+              ? t('projects.deployments.checksServices', { count: checkCount })
               : t('projects.deployments.checksNoServices')}
             subtitle={t('projects.deployments.checksOnMachine', { summary, machine: props.machineName(member.machineId) })}
             rightElement={failing.length > 0

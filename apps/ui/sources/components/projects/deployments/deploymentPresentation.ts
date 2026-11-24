@@ -320,7 +320,7 @@ export function deploymentEnvironmentRowState(item: Readonly<{
   return state ? deploymentRailState(state) : null;
 }
 
-function deploymentEnvironmentVerificationPending(
+export function deploymentEnvironmentVerificationPending(
   state: ReceiptState | null | undefined,
   health: NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>['status'] | undefined,
 ): boolean {
