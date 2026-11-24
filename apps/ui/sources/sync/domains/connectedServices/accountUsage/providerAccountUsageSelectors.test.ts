@@ -106,7 +106,13 @@ describe('provider account usage selectors', () => {
         const snapshot = makeSnapshot();
 
         expect(selectors.selectProviderUsageDisplaySource({
-            agentId: null,
+            agentId: 'codex',
+            usageAccount: {
+                status: 'known', source: 'session_binding',
+                account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+                groupId: null,
+            },
+            sourcesByRecordId: { [snapshot.recordId]: [] },
             metadataRecordIds: [snapshot.recordId],
             accountUsageSnapshotsByRecordId: {
                 [snapshot.recordId]: snapshot,
@@ -123,6 +129,12 @@ describe('provider account usage selectors', () => {
 
         expect(selectors.selectProviderUsageDisplaySource({
             agentId: 'codex',
+            usageAccount: {
+                status: 'known', source: 'session_binding',
+                account: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' },
+                groupId: null,
+            },
+            sourcesByRecordId: { [snapshot.recordId]: [] },
             metadataRecordIds: [snapshot.recordId],
             accountUsageSnapshotsByRecordId: {
                 [snapshot.recordId]: snapshot,
@@ -140,7 +152,9 @@ describe('provider account usage selectors', () => {
         const snapshot = makeSnapshot({ recoveryCreditDetails: { saved: { remainingCount: 2, appliesToProviderLimitIds: ['seven_day'], unavailableReason: 'paused' } } });
 
         expect(selectors.selectProviderUsageDisplaySource({
-            agentId: null,
+            agentId: 'codex',
+            usageAccount: { status: 'not_connected' },
+            sourcesByRecordId: { [snapshot.recordId]: [] },
             metadataRecordIds: [snapshot.recordId],
             accountUsageSnapshotsByRecordId: {
                 [snapshot.recordId]: snapshot,
@@ -168,6 +182,8 @@ describe('provider account usage selectors', () => {
         } });
         expect(selectors.selectProviderUsageDisplaySource({
             agentId, catalogProviderIds, metadataRecordIds: [snapshot.recordId],
+            usageAccount: { status: 'not_connected' },
+            sourcesByRecordId: { [snapshot.recordId]: [] },
             accountUsageSnapshotsByRecordId: { [snapshot.recordId]: snapshot }, connectedServiceProfileRef: null,
             connectedServiceQuotaView: null,
         })).toEqual({ kind: 'account_usage', snapshot });

@@ -44,11 +44,14 @@ export function resolveSessionUsageAccount(params: Readonly<{
     const service = parseQualifiedPluginContributionKey(serviceKey);
     if (!service || binding.source !== 'connected') return UNKNOWN;
     const groupId = binding.selection === 'group' ? binding.groupId : null;
-    if (!binding.profileId) return groupId ? { status: 'unknown', pool: { service, groupId } } : UNKNOWN;
+    const accountId = binding.selection === 'group'
+        ? binding.appliedProfileId ?? binding.profileId
+        : binding.profileId;
+    if (!accountId) return groupId ? { status: 'unknown', pool: { service, groupId } } : UNKNOWN;
     return {
         status: 'known',
         source: 'session_binding',
-        account: { service, accountId: binding.profileId },
+        account: { service, accountId },
         groupId,
     };
 }

@@ -33,6 +33,7 @@ function connectedCodexSession(): Session {
       path: '/tmp',
       homeDir: '/tmp',
       connectedServices: {
+        v: 1,
         bindingsByServiceId: {
           'openai-codex': {
             source: 'connected',
@@ -88,6 +89,45 @@ describe('useSessionProviderUsageGauge', () => {
         remainingPct: 60,
       }),
     );
+    await hook.unmount();
+  });
+
+  it('does not show the current pool member when the Session binding names no member', async () => {
+    const { useSessionProviderUsageGauge } = await import('./useSessionProviderUsage');
+    const session = connectedCodexSession();
+    const profile = storage.getState().profile;
+    storage.getState().applyProfile({
+      ...profile,
+      connectedServicesV2: [{
+        serviceId: 'openai-codex',
+        profiles: [{
+          profileId: 'work', status: 'connected', kind: null, providerEmail: null,
+          providerAccountId: null, expiresAt: null, lastUsedAt: null, health: null,
+        }],
+        groups: [{
+          groupId: 'pool', displayName: 'Pool', activeProfileId: 'work', generation: 1,
+          memberProfileIds: ['work'],
+        }],
+      }],
+    });
+    const poolSession = {
+      ...session,
+      metadata: {
+        ...session.metadata!,
+        connectedServices: {
+          v: 2 as const,
+          bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'group' as const, groupId: 'pool' },
+          },
+        },
+      },
+    };
+    const serverId = getActiveServerSnapshot().serverId;
+    const hook = await renderHook(() => useSessionProviderUsageGauge({ session: poolSession, serverId }).gauge,
+      { wrapper: Wrapper });
+    await flushHookEffects({ cycles: 12, turns: 12 });
+    expect(hook.getCurrent()).toBeNull();
+    expect(boundary.plainRead).not.toHaveBeenCalled();
     await hook.unmount();
   });
 

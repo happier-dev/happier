@@ -1,54 +1,19 @@
-import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
-import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBuiltInLegacyConnectedServiceIdForQualifiedService, type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { AccountProfile } from '@happier-dev/protocol/account/profile';
-import type { QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
-import { shouldHideQuotaForCredentialStatus } from '@/sync/domains/connectedServices/shouldHideQuotaForCredentialStatus';
-import {
-    parseConnectedServicesBindingsByServiceIdFromAgentOptionState,
-    parseConnectedServicesServiceBinding,
-    type ConnectedServicesServiceBinding,
-} from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import {
-    resolveQualifiedConnectedAccountServiceKey,
-} from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import {
-    resolveProjectedConnectedAccountServiceKeys,
-} from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
-import type { Metadata } from '@happier-dev/session-core/state';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
+import type { SessionUsageAccount } from '@/sync/domains/connectedServices/resolveSessionUsageAccount';
 
-type AccountProfileConnectedService = AccountProfile['connectedServicesV2'][number];
-
-/**
- * The session quota/recovery corridor's resolved Connected Account binding.
- * `serviceKey` is the canonical qualified identity the resolution decided in;
- * `legacyServiceId` is its exact released scalar projection for the released
- * V2/V3 quota lookups (transport selection and recovery-credit consume wire).
- * Pool identity comes from applied runtime evidence or the current pool owner.
- * Novel external services have no scalar projection and no
- * quota/recovery capability in this corridor — they fail closed upstream and
- * never reach this shape.
- */
+/** The resolved Session account's projection onto the released scalar quota transport. */
 export type ConnectedServiceSessionQuotaProfileRef = Readonly<{
     serviceKey: string;
     legacyServiceId: ConnectedServiceId;
     profileId: string;
     groupId?: string;
 }>;
-
-function readObjectRecord(value: unknown): Record<string, unknown> | null {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : null;
-}
-
-function readTrimmedString(value: unknown): string | null {
-    const trimmed = typeof value === 'string' ? value.trim() : '';
-    return trimmed.length > 0 ? trimmed : null;
-}
 
 /**
  * The supported Connected Account services for the current Session identity,
@@ -75,179 +40,21 @@ function resolveSupportedQualifiedServiceKeys(params: Readonly<{
     return out;
 }
 
-/**
- * Binding-map keys are canonical qualified keys on current writers. Released
- * bundled Sessions persisted scalar keys surface only through the named legacy
- * ingress; unknown keys fail closed and are dropped.
- */
-function readQualifiedServiceBindingLookup(
-    entries: ReadonlyArray<readonly [string, unknown]>,
-): Readonly<Record<string, ConnectedServicesServiceBinding>> {
-    const out: Record<string, ConnectedServicesServiceBinding> = {};
-    for (const [serviceId, value] of entries) {
-        const binding = parseConnectedServicesServiceBinding(value, 'stored');
-        const qualifiedServiceKey = resolveQualifiedConnectedAccountServiceKey(serviceId);
-        if (!qualifiedServiceKey || !binding) continue;
-        out[qualifiedServiceKey] ??= binding;
-    }
-    return out;
-}
-
-function resolveActiveGroupProfileId(params: Readonly<{
-    services: ReadonlyArray<AccountProfileConnectedService>;
-    serviceId: ConnectedServiceId;
-    groupId: string;
-}>): string | null {
-    const service = params.services.find((candidate) => candidate.serviceId === params.serviceId) ?? null;
-    if (!service) return null;
-
-    const group = service.groups.find((candidate) => candidate.groupId === params.groupId) ?? null;
-    if (!group) return null;
-
-    // Usage DISPLAY fails OPEN: exclude a member ONLY for an explicit,
-    // recognized needs_reauth. Absent/unknown/'' status keeps the member
-    // eligible for the session quota badge (single shared predicate).
-    const connectedProfileIds = new Set(
-        service.profiles
-            .filter((profile) => !shouldHideQuotaForCredentialStatus(profile.status))
-            .map((profile) => profile.profileId.trim())
-            .filter(Boolean),
-    );
-    if (connectedProfileIds.size === 0) return null;
-
-    const activeProfileId = readTrimmedString(group.activeProfileId);
-    if (activeProfileId && connectedProfileIds.has(activeProfileId)) {
-        return activeProfileId;
-    }
-
-    for (const memberProfileId of group.memberProfileIds) {
-        const candidate = memberProfileId.trim();
-        if (candidate && connectedProfileIds.has(candidate)) return candidate;
-    }
-
-    return null;
-}
-
-/**
- * Connected Account profile/group facts live only on the `connected` arm of the
- * binding union; a `native` or `team_resource` selection carries none.
- */
-function readConnectedBinding(
-    binding: ConnectedServicesServiceBinding | undefined,
-): Extract<ConnectedServicesServiceBinding, { source: 'connected' }> | undefined {
-    return binding?.source === 'connected' ? binding : undefined;
-}
-
-function resolveBindingProfile(params: Readonly<{
-    optionBinding: ConnectedServicesServiceBinding | undefined;
-    payloadBinding: ConnectedServicesServiceBinding | undefined;
-    accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
-    accountProfileConnectedAccountGroupsV4?: ReadonlyArray<QualifiedConnectedAccountGroupV4>;
-    serviceKey: string;
-    legacyServiceId: ConnectedServiceId | null;
-}>): Readonly<{ profileId: string; groupId?: string }> | null {
-    const optionBinding = readConnectedBinding(params.optionBinding);
-    const payloadBinding = readConnectedBinding(params.payloadBinding);
-    const explicitProfileId =
-        readTrimmedString(optionBinding?.profileId)
-        ?? readTrimmedString(payloadBinding?.profileId);
-    const selection = optionBinding ? optionBinding.selection : payloadBinding?.selection;
-    if (selection !== 'group') return explicitProfileId ? { profileId: explicitProfileId } : null;
-
-    const groupId = readTrimmedString(optionBinding?.groupId)
-        ?? readTrimmedString(payloadBinding?.groupId);
-    if (!groupId) return null;
-
-    const appliedProfileId = payloadBinding?.selection === 'group' && payloadBinding.groupId === groupId
-        ? readTrimmedString(payloadBinding.appliedProfileId) : null;
-    if (appliedProfileId) return { profileId: appliedProfileId, groupId };
-
-    // The current pool owner already chose its active member. Retained V2 facts must not choose again.
-    if (params.accountProfileConnectedAccountGroupsV4) {
-        const group = params.accountProfileConnectedAccountGroupsV4.find(candidate => (
-            buildQualifiedPluginContributionKey(candidate.ref.service) === params.serviceKey
-            && candidate.ref.groupId === groupId
-        ));
-        return group?.activeConnectedAccountId ? { profileId: group.activeConnectedAccountId, groupId } : null;
-    }
-    if (explicitProfileId) return { profileId: explicitProfileId, groupId };
-
-    // The V2 account lookup still speaks scalar service ids; convert the
-    // already-resolved qualified binding locally and typed. A service without
-    // a released scalar projection has no V2 group facts — fail closed.
-    if (!params.legacyServiceId) return null;
-    const profileId = resolveActiveGroupProfileId({
-        services: params.accountProfileConnectedServicesV2,
-        serviceId: params.legacyServiceId,
-        groupId,
-    });
-    return profileId ? { profileId, groupId } : null;
-}
-
 export function resolveConnectedServiceQuotaProfileRefForSession(params: Readonly<{
-    metadata: Metadata | null | undefined;
+    usageAccount: SessionUsageAccount;
     agentId: string;
-    accountProfileConnectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
-    accountProfileConnectedAccountGroupsV4?: ReadonlyArray<QualifiedConnectedAccountGroupV4>;
-    /** Exact Agent-owned account declarations from the machine catalog projection, when available. */
     connectedAccounts?: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
 }>): ConnectedServiceSessionQuotaProfileRef | null {
-    const supportedServiceKeys = resolveSupportedQualifiedServiceKeys({
-        agentId: params.agentId,
-        connectedAccounts: params.connectedAccounts,
-    });
-    if (supportedServiceKeys.length === 0) return null;
-
-    const metadata = readObjectRecord(params.metadata);
-    if (!metadata) return null;
-
-    const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: params.agentId });
-    const agentOptionStateByAgentId = readObjectRecord(metadata.agentNewSessionOptionStateByAgentId);
-    const agentOptionState =
-        readObjectRecord(agentOptionStateByAgentId?.[targetKey])
-        ?? readObjectRecord(agentOptionStateByAgentId?.[params.agentId])
-        ?? null;
-    const optionStateBindings = readQualifiedServiceBindingLookup(
-        Object.entries(parseConnectedServicesBindingsByServiceIdFromAgentOptionState({
-            agentOptionState,
-        })),
-    );
-    const connectedServicesPayload =
-        readObjectRecord(metadata.connectedServices)
-        ?? readObjectRecord(agentOptionState?.connectedServices)
-        ?? null;
-    const payloadBindings = readQualifiedServiceBindingLookup(
-        Object.entries(readObjectRecord(connectedServicesPayload?.bindingsByServiceId) ?? {}),
-    );
-
-    for (const serviceKey of supportedServiceKeys) {
-        const optionBinding = optionStateBindings[serviceKey];
-        const payloadBinding = payloadBindings[serviceKey];
-        const source = optionBinding?.source ?? (payloadBinding?.source === 'connected' ? 'connected' : payloadBinding?.source === 'native' ? 'native' : null);
-        if (source !== 'connected') continue;
-        const identity = parseQualifiedPluginContributionKey(serviceKey);
-        const legacyServiceId = identity
-            ? readBuiltInLegacyConnectedServiceIdForQualifiedService(identity)
-            : null;
-        // Without a released scalar quota identity the session quota/recovery
-        // corridor cannot serve this binding (fail closed).
-        if (!legacyServiceId) continue;
-        const binding = resolveBindingProfile({
-            optionBinding,
-            payloadBinding,
-            accountProfileConnectedServicesV2: params.accountProfileConnectedServicesV2,
-            accountProfileConnectedAccountGroupsV4: params.accountProfileConnectedAccountGroupsV4,
-            serviceKey,
-            legacyServiceId,
-        });
-        if (!binding) continue;
-        return {
-            serviceKey,
-            legacyServiceId,
-            profileId: binding.profileId,
-            ...(binding.groupId ? { groupId: binding.groupId } : {}),
-        };
-    }
-
-    return null;
+    if (params.usageAccount.status !== 'known') return null;
+    const { account, groupId } = params.usageAccount;
+    const serviceKey = buildQualifiedPluginContributionKey(account.service);
+    if (!resolveSupportedQualifiedServiceKeys(params).includes(serviceKey)) return null;
+    const legacyServiceId = readBuiltInLegacyConnectedServiceIdForQualifiedService(account.service);
+    if (!legacyServiceId) return null;
+    return {
+        serviceKey,
+        legacyServiceId,
+        profileId: account.accountId,
+        ...(groupId ? { groupId } : {}),
+    };
 }

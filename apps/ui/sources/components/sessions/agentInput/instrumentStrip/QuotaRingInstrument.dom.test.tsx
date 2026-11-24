@@ -8,6 +8,7 @@ import { installPopoverCommonModuleMocks } from '@/components/ui/popover/popover
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { writeProviderAccountUsageRecordIdToMetadata } from '@happier-dev/protocol/sessions/metadata/providerAccountUsageRefsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 
@@ -145,7 +146,47 @@ describe('QuotaRingInstrument', () => {
         }
     });
 
-    it('opens the connected Muse account from a percent-only Session reading', async () => {
+    const rightAccount = 'fixture-muse-work';
+    const otherAccount = 'fixture-muse-other';
+    const pool = { source: 'connected', selection: 'group', groupId: 'fixture-pool' } as const;
+    const native = { source: 'native' } as const;
+    type BindingCase = {
+        label: string;
+        binding?: ConnectedServiceBindingsV2['bindingsByServiceId'][string];
+        secondBinding?: boolean;
+        presentation?: 'unavailable' | 'recipient';
+        expected: 'connected' | 'native' | 'none';
+        otherNative?: boolean;
+    };
+
+    it.each<BindingCase>([
+        { label: 'opens the exact scalar Muse percent-only row despite a newer neighbor',
+            binding: { source: 'connected', selection: 'profile', profileId: rightAccount }, expected: 'connected' },
+        { label: 'opens the applied-only Pool member despite a newer neighbor',
+            binding: { ...pool, appliedProfileId: rightAccount }, expected: 'connected' },
+        { label: 'opens the applied Pool member instead of the authored member',
+            binding: { ...pool, appliedProfileId: rightAccount, profileId: otherAccount }, expected: 'connected' },
+        { label: 'opens the authored-only Pool member',
+            binding: { ...pool, profileId: rightAccount }, expected: 'connected' },
+        { label: 'opens the Pool member when authored and applied agree',
+            binding: { ...pool, appliedProfileId: rightAccount, profileId: rightAccount }, expected: 'connected' },
+        { label: 'shows no instrument when the Pool has no named member', binding: pool, expected: 'none' },
+        { label: 'shows no instrument without a readable binding', expected: 'none' },
+        { label: 'shows no instrument with multiple connected bindings',
+            binding: { source: 'connected', selection: 'profile', profileId: rightAccount }, secondBinding: true, expected: 'none' },
+        { label: 'shows no personal instrument for a brokered Team model',
+            binding: { source: 'team_resource', resourceId: 'fixture-team-resource', deliveryMode: 'brokered' }, expected: 'none' },
+        { label: 'shows no personal instrument for a direct Team resource',
+            binding: { source: 'team_resource', resourceId: 'fixture-team-resource', deliveryMode: 'direct',
+                disclosedMember: { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: rightAccount } },
+            expected: 'none' },
+        { label: 'opens the Session native reading without borrowing the newer connected reading', binding: native, expected: 'native' },
+        { label: 'shows no instrument if two native readings could belong to the Session', binding: native, otherNative: true, expected: 'none' },
+        { label: 'shows no instrument with explicit unavailable owner metadata',
+            binding: { source: 'connected', selection: 'profile', profileId: rightAccount }, presentation: 'unavailable', expected: 'none' },
+        { label: 'shows no instrument for a recipient without the owner projection',
+            binding: { source: 'connected', selection: 'profile', profileId: rightAccount }, presentation: 'recipient', expected: 'none' },
+    ])('$label', async ({ binding, secondBinding, presentation, expected, otherNative }) => {
         const { createSessionFixture, flushHookEffects } = await import('@/dev/testkit');
         const { createQualifiedQuotaTestHarness, quotaTestProviderUsageResponse, quotaTestResponse } =
             await import('@/hooks/server/connectedServices/qualifiedConnectedAccountQuotaTestHarness');
@@ -155,7 +196,7 @@ describe('QuotaRingInstrument', () => {
         const { useSessionProviderUsage } = await import('@/components/sessions/usage/useSessionProviderUsage');
         const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
         const agentId = 'happier.agent.muse/muse';
-        const ref = { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'fixture-muse-work' };
+        const ref = { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: rightAccount };
         const source = { bindingKind: 'account' as const, ref };
         const serviceKey = buildQualifiedPluginContributionKey(ref.service);
         const now = Date.now();
@@ -169,7 +210,7 @@ describe('QuotaRingInstrument', () => {
                 utilizationPct: 8, remainingPct: 92, resetsAt: now + 3_600_000, status: 'ok', confidence: 'exact',
             }],
         });
-        const otherRef = { ...ref, accountId: 'fixture-muse-other' };
+        const otherRef = { ...ref, accountId: otherAccount };
         const otherKey = { ...recordKey, accountSubjectId: 'fixture-muse-other-subject' };
         const other = ProviderAccountUsageSnapshotV1Schema.parse({
             ...record, recordKey: otherKey, recordId: buildProviderAccountUsageRecordId(otherKey),
@@ -180,13 +221,28 @@ describe('QuotaRingInstrument', () => {
         const metadata = writeProviderAccountUsageRecordIdToMetadata({
             ...createSessionFixture().metadata,
             flavor: agentId,
-            connectedServices: { v: 2, bindingsByServiceId: {
-                [serviceKey]: { source: 'connected', selection: 'profile', profileId: ref.accountId },
-            } },
+            ...(binding ? {
+                connectedServices: {
+                    v: 2,
+                    bindingsByServiceId: {
+                        [serviceKey]: binding,
+                        ...(secondBinding ? { 'happier.agent.claude/claude-subscription': {
+                            source: 'connected', selection: 'profile', profileId: 'fixture-claude',
+                        } } : {}),
+                    },
+                },
+            } : {}),
         }, { recordId: record.recordId, updatedAtMs: now });
-        const session = createSessionFixture({ metadata: MetadataSchema.parse(writeProviderAccountUsageRecordIdToMetadata(
+        const parsedMetadata = MetadataSchema.parse(writeProviderAccountUsageRecordIdToMetadata(
             metadata, { recordId: other.recordId, updatedAtMs: now + 1 },
-        )) });
+        ));
+        const session = createSessionFixture({
+            metadata: parsedMetadata,
+            ...(presentation === 'unavailable' ? { ownerMetadataView: null } : {}),
+            ...(presentation === 'recipient' ? {
+                accessLevel: 'view', metadataLayoutVersion: 1, ownerMetadataView: null,
+            } : {}),
+        });
         const boundary = await createQualifiedQuotaTestHarness({
             request: async (input) => new URL(String(input)).pathname === '/v4/connect/qualified/provider-account-usage/sources/resolve'
                 ? Response.json({ source, recordId: record.recordId, providerAccountId: recordKey.accountSubjectId,
@@ -197,49 +253,61 @@ describe('QuotaRingInstrument', () => {
             const serverId = getActiveServerSnapshot().serverId;
             await getServerFeaturesSnapshot({ serverId, force: true });
             boundary.read.mockImplementation(async account => {
-                expect(account).toEqual(ref);
+                const reading = account.accountId === ref.accountId ? record : other;
                 const response = quotaTestResponse({
-                    v: 1, ref, activeAccountId: recordKey.accountSubjectId, fetchedAt: record.fetchedAtMs,
-                    staleAfterMs: record.staleAfterMs, planLabel: null, accountLabel: null, meters: record.meters,
+                    v: 1, ref: account, activeAccountId: reading.recordKey.accountSubjectId, fetchedAt: reading.fetchedAtMs,
+                    staleAfterMs: reading.staleAfterMs, planLabel: null, accountLabel: null, meters: reading.meters,
                 });
-                return Response.json({ ...response, sourceResolution: { ...response.sourceResolution, recordId: record.recordId } });
+                return Response.json({ ...response, sourceResolution: { ...response.sourceResolution, recordId: reading.recordId } });
             });
             boundary.usageRead.mockImplementation(async (recordId) => {
                 if (recordId === record.recordId) {
-                    return Response.json({ ...quotaTestProviderUsageResponse(record), sources: [source] });
+                    return Response.json({ ...quotaTestProviderUsageResponse(record), sources: binding?.source === 'native' ? [] : [source] });
                 }
                 expect(recordId).toBe(other.recordId);
-                return Response.json({ ...quotaTestProviderUsageResponse(other), sources: [{ ...source, ref: otherRef }] });
+                return Response.json({ ...quotaTestProviderUsageResponse(other), sources: otherNative ? [] : [{ ...source, ref: otherRef }] });
             });
             storage.getState().applySettingsLocal({ featureToggles: { connectedServices: true, 'connectedServices.quotas': true } });
             storage.getState().applyProfile({
                 ...storage.getState().profile,
-                connectedAccountsV4: [{
-                    ref, status: 'connected', authenticationModeId: 'device', revisionSemantics: 'revisioned',
+                connectedAccountsV4: [ref, otherRef].map(account => ({
+                    ref: account, status: 'connected', authenticationModeId: 'device', revisionSemantics: 'revisioned',
                     credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: true, configurationRevision: null, scopes: [],
-                }],
+                })),
             });
+            const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
             function ComposerQuota() {
                 const { gauge } = useSessionProviderUsage({ session, serverId, agentId, activeModelId: null });
-                return <SessionInstrumentStrip agentId={agentId} metadata={session.metadata}
+                return <SessionInstrumentStrip agentId={agentId} metadata={readSessionOwnerMetadataView(session)}
                     quota={gauge ? { viewModel: gauge } : null} />;
             }
             await act(async () => root.render(
                 <InjectedAuthProvider credentials={boundary.account.credentials}><ComposerQuota /></InjectedAuthProvider>,
             ));
             await act(async () => { await flushHookEffects({ cycles: 16, turns: 16 }); });
-            expect(boundary.usageRead.mock.calls).toEqual(expect.arrayContaining([[record.recordId], [other.recordId]]));
             expect(boundary.requests.filter(request => request.path.endsWith('/sources/resolve'))).toHaveLength(0);
             const instrument = container.querySelector<HTMLElement>('[data-testid="session-instrument-quota-ring"]');
-            expect(instrument).not.toBeNull();
+            if (expected === 'none') {
+                expect(instrument?.textContent ?? null).toBeNull();
+                if (binding?.source !== 'native') expect(boundary.usageRead).not.toHaveBeenCalled();
+                return;
+            }
+            expect(boundary.usageRead.mock.calls).toEqual(expect.arrayContaining([[record.recordId], [other.recordId]]));
             expect(instrument?.textContent).toContain('92% left');
             await act(async () => { instrument!.click(); });
             await act(async () => { await flushHookEffects({ cycles: 16, turns: 16 }); });
-            const accountKey = connectedServiceProfileKey({ serviceId: serviceKey, profileId: ref.accountId });
             const panel = popover();
             expect(panel).not.toBeNull();
-            const account = panel?.querySelector(`[data-testid="sidebar-usage-account-${accountKey}"]`);
-            expect(account?.textContent).toContain('92%');
+            const accountRow = (profileId: string) => panel?.querySelector(
+                `[data-testid="sidebar-usage-account-${connectedServiceProfileKey({ serviceId: serviceKey, profileId })}"]`,
+            );
+            expect(accountRow(otherRef.accountId)).toBeNull();
+            if (expected === 'connected') {
+                expect(accountRow(ref.accountId)?.textContent).toContain('92%');
+            } else {
+                expect(accountRow(ref.accountId)).toBeNull();
+                expect(panel?.textContent).toContain('92%');
+            }
         } finally {
             await act(async () => root.render(null));
             await boundary.dispose();

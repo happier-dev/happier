@@ -41,6 +41,19 @@ describe('resolveSessionUsageAccount', () => {
         })).toMatchObject({ status: 'known', account: { accountId: 'personal' }, groupId: null });
     });
 
+    it.each([undefined, 'authored', 'applied'])(
+        'uses the observed Pool member with an authored profile of %s',
+        (profileId) => {
+            expect(resolveSessionUsageAccount({
+                metadata: metadata({ [CLAUDE]: {
+                    source: 'connected', selection: 'group', groupId: 'work', appliedProfileId: 'applied',
+                    ...(profileId ? { profileId } : {}),
+                } }),
+                agentId: 'claude',
+            })).toMatchObject({ status: 'known', account: { accountId: 'applied' }, groupId: 'work' });
+        },
+    );
+
     it('never takes a pool\'s account for the session\'s: a pool binding without its account is unknown', () => {
         // The pool's current member may have moved since this session signed in; only the pool is a session fact.
         expect(resolveSessionUsageAccount({

@@ -26,9 +26,7 @@ import {
   type ConnectedServiceQuotaGaugeViewModel,
   type ConnectedServiceQuotaGaugeWindowMode,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
-import { resolveConnectedAccountUiNegotiation } from '@/sync/domains/connectedServices/resolveConnectedAccountUiNegotiation';
 import { resolveSessionUsageAccount } from '@/sync/domains/connectedServices/resolveSessionUsageAccount';
-import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionModelSelectionForComposer } from '@/sync/domains/sessionControl/readSessionControlMetadata';
@@ -113,13 +111,9 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
   });
   const connectedAccounts = catalogIdentity.entry.connectedAccounts;
   const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
-  // Only the connected-service facts usage reads; a timestamp-only Account update leaves it still.
-  const accountProfile = useProfile((profile) => ({
-    connectedServicesV2: profile?.connectedServicesV2,
-    connectedAccountGroupsV4: profile?.connectedAccountGroupsV4,
-  }), ['connectedServicesV2', 'connectedAccountGroupsV4']);
-  const connectedAccountTransport = resolveConnectedAccountUiNegotiation(
-    useServerFeaturesSnapshotForServerId(serverId),
+  const connectedAccountGroups = useProfile(
+    profile => profile.connectedAccountGroupsV4,
+    ['connectedAccountGroupsV4'],
   );
   const { present } = useConnectedAccountIdentityPrivacy();
   const gaugeMode = useSetting('sessionProviderUsageGaugeMode');
@@ -130,27 +124,15 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
   const pinnedMeterIdsByKey = useSetting(
     'connectedServicesQuotaPinnedMeterIdsByKey',
   );
+  const usageAccount = React.useMemo(
+    () => resolveSessionUsageAccount({ metadata: ownerMetadata, agentId: agentId ?? '' }),
+    [agentId, ownerMetadata],
+  );
   const quotaProfileRef = React.useMemo(
-    () =>
-      resolveConnectedServiceQuotaProfileRefForSession({
-        metadata: ownerMetadata,
-        agentId: agentId ?? '',
-        accountProfileConnectedServicesV2:
-          accountProfile?.connectedServicesV2 ?? [],
-        accountProfileConnectedAccountGroupsV4:
-          connectedAccountTransport === 'legacy'
-            ? undefined
-            : (accountProfile?.connectedAccountGroupsV4 ?? []),
-        connectedAccounts,
-      }),
-    [
-      accountProfile?.connectedServicesV2,
-      accountProfile?.connectedAccountGroupsV4,
-      connectedAccountTransport,
-      agentId,
-      connectedAccounts,
-      ownerMetadata,
-    ],
+    () => resolveConnectedServiceQuotaProfileRefForSession({
+      usageAccount, agentId: agentId ?? '', connectedAccounts,
+    }),
+    [agentId, connectedAccounts, usageAccount],
   );
   const quotaSnapshots = useConnectedServiceQuotaSnapshots(
     quotaProfileRef
@@ -227,7 +209,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
       quotaProfileRef.serviceKey,
     );
     if (!service) return null;
-    const group = accountProfile?.connectedAccountGroupsV4?.find(
+    const group = connectedAccountGroups?.find(
       (candidate) =>
         candidate.ref.groupId === quotaProfileRef.groupId &&
         candidate.ref.service.pluginId === service.pluginId &&
@@ -235,28 +217,25 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
     );
     return group ? group.policy.quotaLimitSelection : null;
   }, [
-    accountProfile?.connectedAccountGroupsV4,
+    connectedAccountGroups,
     quotaProfileRef?.groupId,
     quotaProfileRef?.serviceKey,
   ]);
   const accountUsageRecordIds = React.useMemo(
-    () => readProviderAccountUsageRecordIdsFromMetadata(ownerMetadata),
-    [ownerMetadata],
+    () => usageAccount.status === 'unknown' || quotaProfileIdentity
+      ? []
+      : readProviderAccountUsageRecordIdsFromMetadata(ownerMetadata),
+    [ownerMetadata, quotaProfileIdentity, usageAccount.status],
   );
-  const connectedUsageAccount = React.useMemo(() => {
-    if (quotaProfileIdentity) return undefined;
-    const usageAccount = resolveSessionUsageAccount({ metadata: ownerMetadata, agentId: agentId ?? '' });
-    return usageAccount.status === 'known' ? usageAccount.account : undefined;
-  }, [agentId, ownerMetadata, quotaProfileIdentity]);
   const accountUsageSnapshots = useProviderAccountUsageSnapshots(
     accountUsageRecordIds,
-    { includeSources: connectedUsageAccount !== undefined },
+    { includeSources: true },
   );
   const displaySource = React.useMemo(
     () =>
       selectProviderUsageDisplaySource({
         agentId,
-        connectedAccount: connectedUsageAccount,
+        usageAccount,
         catalogProviderIds: connectedAccounts.flatMap(purpose => {
           const providerId = getConnectedServiceUsageIdentity(purpose.service)?.providerId;
           return providerId ? [providerId] : [];
@@ -270,7 +249,7 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
       }),
     [
       agentId,
-      connectedUsageAccount,
+      usageAccount,
       connectedAccounts,
       quotaProfileIdentity,
       quotaSnapshot,
@@ -292,19 +271,14 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
       usageLimitRecoveryState?.recoveryCredits ??
       null);
   const runtimeIssue = session.lastRuntimeIssue ?? null;
-  const gaugeQuotaSnapshot = quotaProfileRef
-    ? displaySource?.kind === 'connected_service_quota_view'
+  const gaugeQuotaSnapshot =
+    displaySource?.kind === 'connected_service_quota_view'
       ? selectConnectedServiceSessionProviderUsageSnapshot({
           connectedServiceSnapshot: displaySource.snapshot,
           recoveryCredits,
           runtimeIssue,
         })
-      : null
-    : selectConnectedServiceSessionProviderUsageSnapshot({
-        connectedServiceSnapshot: quotaSnapshot,
-        recoveryCredits,
-        runtimeIssue,
-      });
+      : null;
   const gaugeQuotaProfileIdentity =
     displaySource?.kind === 'connected_service_quota_view' &&
     gaugeQuotaSnapshot &&
@@ -347,17 +321,6 @@ export function useSessionProviderUsage(input: SessionProviderUsageInput) {
           presentIdentity: present,
         });
       }
-      const connectedServiceGauge = computeConnectedServiceQuotaGaugeViewModel({
-        snapshot: gaugeQuotaSnapshot,
-        activeModelId,
-        quotaLimitSelection,
-        windowMode,
-        windowModes,
-        nowMs: Date.now(),
-        formatter: connectedServiceQuotaGaugeFormatter,
-        presentIdentity: present,
-      });
-      if (connectedServiceGauge) return connectedServiceGauge;
       return computeProviderAccountUsageGaugeViewModel({
         snapshot: accountUsageSnapshot,
         activeModelId,

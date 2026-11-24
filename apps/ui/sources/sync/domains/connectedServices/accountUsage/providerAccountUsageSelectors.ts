@@ -2,7 +2,7 @@ import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 
 import { ProviderAccountUsageRecordIdSchema, type ProviderAccountUsageRecordId, type ProviderAccountUsageSnapshotV1, type ProviderAccountUsageStateV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
-import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
@@ -13,6 +13,7 @@ import {
 } from '../connectedServiceQuotaGauge';
 
 import type { ConnectedAccountIdentityPresenter } from '../maskAccountEmail';
+import type { SessionUsageAccount } from '../resolveSessionUsageAccount';
 
 export type ProviderAccountUsageSnapshotsByRecordId = Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null>>;
 
@@ -56,61 +57,55 @@ function compareProviderAccountUsageCandidates(
 type ProviderUsageCandidates = Readonly<{
     agentId: string | null;
     catalogProviderIds?: readonly string[];
-    connectedAccount?: QualifiedConnectedAccountRef;
-    sourcesByRecordId?: Readonly<Record<string, readonly QualifiedConnectedServiceUsageSourceV4[]>>;
+    usageAccount: SessionUsageAccount;
+    sourcesByRecordId: Readonly<Record<string, readonly QualifiedConnectedServiceUsageSourceV4[]>>;
     metadataRecordIds: ReadonlyArray<string>;
     accountUsageSnapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null | undefined>>;
 }>;
 
-function selectCandidateAccountUsageSnapshots(params: ProviderUsageCandidates): ProviderAccountUsageSnapshotV1[] {
-    const { connectedAccount, agentId } = params;
+function selectAccountUsageSnapshot(params: ProviderUsageCandidates): ProviderAccountUsageSnapshotV1 | null {
+    const { usageAccount, agentId } = params;
+    if (usageAccount.status === 'unknown') return null;
+
     const candidates: ProviderAccountUsageSnapshotV1[] = [];
-    const seenRecordIds = new Set<string>();
-    for (const rawRecordId of params.metadataRecordIds) {
-        const parsedRecordId = ProviderAccountUsageRecordIdSchema.safeParse(rawRecordId.trim());
-        if (!parsedRecordId.success || seenRecordIds.has(parsedRecordId.data)) continue;
-        seenRecordIds.add(parsedRecordId.data);
-        const snapshot = params.accountUsageSnapshotsByRecordId[parsedRecordId.data] ?? null;
-        if (!snapshot) continue;
-        if (!isDisplayableProviderAccountUsageSnapshot(snapshot)) continue;
-        if (connectedAccount) {
-            if (!params.sourcesByRecordId?.[parsedRecordId.data]?.some(source =>
-                sameQualifiedConnectedAccountRef(source.ref, connectedAccount))) continue;
-        } else if (agentId && !params.catalogProviderIds?.includes(snapshot.providerId)
-            // Released native observations may carry the catalog's Agent spelling.
-            && !areSameAgentRoutingIdentity(agentId, snapshot.providerId)) continue;
-        candidates.push(snapshot);
+    for (const recordId of normalizeProviderAccountUsageRecordIds(params.metadataRecordIds)) {
+        const sources = params.sourcesByRecordId[recordId];
+        const snapshot = params.accountUsageSnapshotsByRecordId[recordId];
+        if (usageAccount.status === 'known') {
+            if (snapshot && isDisplayableProviderAccountUsageSnapshot(snapshot)
+                && sources?.some(source => sameQualifiedConnectedAccountRef(source.ref, usageAccount.account))) {
+                candidates.push(snapshot);
+            }
+            continue;
+        }
+
+        // Only the Session's admitted references can establish native membership. A
+        // missing source list cannot establish that a retained record is native.
+        if (!sources) return null;
+        if (sources.length > 0 || !snapshot || !agentId) continue;
+        // Released native observations may use the Agent or the declared Provider spelling.
+        if (params.catalogProviderIds?.includes(snapshot.providerId)
+            || areSameAgentRoutingIdentity(agentId, snapshot.providerId)) {
+            candidates.push(snapshot);
+        }
     }
-    return candidates.sort(compareProviderAccountUsageCandidates);
+
+    if (usageAccount.status === 'known') return candidates.sort(compareProviderAccountUsageCandidates)[0] ?? null;
+    const [native] = candidates;
+    return candidates.length === 1 && native && isDisplayableProviderAccountUsageSnapshot(native) ? native : null;
 }
 
 export function selectProviderUsageDisplaySource(params: ProviderUsageCandidates & Readonly<{
     connectedServiceProfileRef: ProviderUsageDisplayConnectedServiceProfileRef | null;
     connectedServiceQuotaView: ConnectedServiceQuotaSnapshotV1 | null;
 }>): ProviderUsageDisplaySnapshotSource | null {
-    if (params.connectedServiceProfileRef) {
-        return params.connectedServiceQuotaView
-            ? {
-                kind: 'connected_service_quota_view',
-                snapshot: params.connectedServiceQuotaView,
-            }
-            : null;
+    if (params.usageAccount.status === 'known' && params.connectedServiceProfileRef) {
+        const snapshot = params.connectedServiceQuotaView;
+        return snapshot ? { kind: 'connected_service_quota_view', snapshot } : null;
     }
 
-    const nativeSnapshot = selectCandidateAccountUsageSnapshots(params)[0] ?? null;
-    if (nativeSnapshot) {
-        return {
-            kind: 'account_usage',
-            snapshot: nativeSnapshot,
-        };
-    }
-
-    return params.connectedServiceQuotaView
-        ? {
-            kind: 'connected_service_quota_view',
-            snapshot: params.connectedServiceQuotaView,
-        }
-        : null;
+    const snapshot = selectAccountUsageSnapshot(params);
+    return snapshot ? { kind: 'account_usage', snapshot } : null;
 }
 
 export function resolveProviderAccountUsageSnapshotState(params: Readonly<{
