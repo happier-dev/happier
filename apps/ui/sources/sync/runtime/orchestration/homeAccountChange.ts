@@ -38,6 +38,7 @@ import {
     plannedChangesAffectWorkflowPluginSources,
     plannedWorkflowDefinitionAutomationIds,
     plannedSessionReadinessChanges,
+    plannedSessionFollowSourceIds,
     planSessionReadinessWake,
     type SessionReadinessChanges,
     type ReviewCommentChange,
@@ -66,8 +67,8 @@ export type HomeAccountChangeEvent = Readonly<{
     changesCatchUp?: true;
     /** Advisory committed ids are routing facts, not proof that a feed page was consumed. */
     entityIds?: readonly string[];
-    /** Session and share keys selected by the changes planner. */
-    sessionIdsToCatchUp?: readonly string[];
+    /** Follow receiver demand selected by the Account change planner. */
+    sessionFollowSourceIds?: readonly string[];
     /** The detailed page passed planner dispatch, not a cursor checkpoint or materialization proof. */
     feedPageConsumed?: true;
     /** Revision hints from the consumed change page; never inferred from a socket wake. */
@@ -154,7 +155,7 @@ export type HomeAccountChangeEvent = Readonly<{
 type HomeAccountChangeDetails = Readonly<{
     reviewCommentChanges?: readonly ReviewCommentChange[];
     entityRevisions?: Readonly<Record<string, number>>;
-    sessionIdsToCatchUp?: readonly string[];
+    sessionFollowSourceIds?: readonly string[];
     workflowRunsMaterialized?: true;
     savedSecretResourcesRefreshStarted?: true;
     source?: 'connected' | 'catch-up-pending' | 'socket' | 'snapshot';
@@ -562,7 +563,7 @@ export function publishHomeAccountChangeForRouting(
         && details?.managedMachineChangedIds !== undefined ? new Set(details.managedMachineChangedIds) : undefined;
     const managedMachineRowsOnly = managedMachineChangedIds?.size && rawKinds?.length && rawKinds.every(kind => kind === 'account')
         && entityIds?.length && entityIds.every(id => managedMachineChangedIds.has(id));
-    const sessionIdsToCatchUp = details?.sessionIdsToCatchUp ?? routingPlan?.sessionIdsToCatchUp;
+    const sessionFollowSourceIds = details?.sessionFollowSourceIds ?? (routingPlan ? plannedSessionFollowSourceIds(routingPlan) : undefined);
     const event = Object.freeze({
         serverId,
         publicProfileAffects,
@@ -574,7 +575,7 @@ export function publishHomeAccountChangeForRouting(
         ...((details?.source === 'connected' || details?.source === 'socket') && details.changesCatchUp
             ? { changesCatchUp: true as const } : {}),
         ...(admittedIds ? { entityIds: Object.freeze([...new Set(admittedIds)]) } : {}),
-        ...(sessionIdsToCatchUp ? { sessionIdsToCatchUp: Object.freeze([...sessionIdsToCatchUp]) } : {}),
+        ...(sessionFollowSourceIds ? { sessionFollowSourceIds: Object.freeze([...sessionFollowSourceIds]) } : {}),
         ...(admittedIds?.length && changeKinds?.length && changeKinds.every(kind => kind === 'artifact')
             ? { changedWorkflowDefinitionIds: Object.freeze([...new Set(admittedIds)]
                 .filter(id => WorkflowDefinitionIdV1Schema.safeParse(id).success)) } : {}),

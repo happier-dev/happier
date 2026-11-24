@@ -619,6 +619,7 @@ import {
     plannedChangesAffectUsageQuery,
     plannedChangesAffectUsageAccounting,
     plannedSessionReadinessChanges,
+    plannedSessionFollowSourceIds,
 } from './runtime/orchestration/changesPlanner';
 import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
 import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
@@ -13816,7 +13817,7 @@ class Sync {
                                 // second time to the earlier content-free wake.
                                 publishHomeAccountChange(plannedServerId, changedEntityIds, {
                                     feedPageConsumed: true,
-                                    sessionIdsToCatchUp: publishedPlan.sessionIdsToCatchUp,
+                                    sessionFollowSourceIds: plannedSessionFollowSourceIds(publishedPlan),
                                     entityRevisions: Object.fromEntries(changes.flatMap(change => {
                                         const hint = change.hint;
                                         if (!hint || typeof hint !== 'object' || !('revision' in hint)

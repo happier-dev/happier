@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
+import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID, buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
+import type { ChangeEntry } from '@happier-dev/protocol/changes';
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -230,6 +231,12 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
     homes.answer(serverId, '/v2/account/session-follow-rules', { select: () => ({ body: { rules: [{ ...rule, sources: delivered }] } }) });
     homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
     homes.answer(serverId, mutePath, { body: { scopes: [] } });
+    homes.answer(serverId, '/v2/cursor', { body: { cursor: 0, changesFloor: 0 } });
+    let changePage: { changes: ChangeEntry[]; nextCursor: number } = { changes: [], nextCursor: 0 };
+    homes.answer(serverId, '/v2/changes', { select: (_input, request) => ({
+        body: Number(new URL(request.url).searchParams.get('after')) < changePage.nextCursor
+            ? changePage : { changes: [], nextCursor: changePage.nextCursor },
+    }) });
     let finishedTurnArrived = false;
     for (const session of [...candidates, ownSource, offScreen, gapSource]) {
         const response = createPlainSessionByIdResponseFixture(session);
@@ -365,16 +372,38 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         expect.soft(record('explicit equal refresh', before)).toEqual({ routes: [], queries: 2 });
 
         before = mark();
+        const { sync } = await import('@/sync/syncEngine');
+        const runtime = sync as unknown as {
+            changesCursor: string | null;
+            handleUpdate(update: { id: string; seq: number; createdAt: number; body: { t: 'account-change' } }): Promise<void>;
+        };
+        changePage = { nextCursor: 1, changes: [{ kind: 'session', entityId: source.id, cursor: 1, changedAt: 11,
+            hint: { metadataVersion: 2, followSourceChanged: false, followSourceUnchangedSinceCursor: 0, followReceiverAvailabilityChanged: false } }] };
+        await act(async () => runtime.handleUpdate({ id: 'projection-after-send', seq: 1, createdAt: 11, body: { t: 'account-change' } }));
+        await vi.waitFor(() => expect(runtime.changesCursor).toBe('1'));
+        await flushHookEffects({ cycles: 2, advanceTimersMs: 60_000 });
+        expect.soft(record('projection-only echo followed by 60 seconds idle', before)).toEqual({ routes: [], queries: 0 });
+
+        before = mark();
         readyToDeliver.add(source.id);
-        await act(async () => publishHomeAccountChange(serverId, [source.id], { changeKinds: ['session'], sessionListQueryAffects: false }));
+        changePage = { nextCursor: 3, changes: [{ kind: 'session', entityId: source.id, cursor: 3, changedAt: 13,
+            hint: { metadataVersion: 3, followSourceChanged: false, followSourceUnchangedSinceCursor: 2, followReceiverAvailabilityChanged: false } }] };
+        await act(async () => runtime.handleUpdate({ id: 'new-original-then-projection', seq: 3, createdAt: 13, body: { t: 'account-change' } }));
+        await vi.waitFor(() => expect(runtime.changesCursor).toBe('3'));
         await vi.waitFor(() => expect(acceptedEffects).toBe(1));
         await flushHookEffects();
         expect.soft(record('one changed source', before)).toEqual({ routes: [route(source.id)], queries: 0 });
+        const beforeSettledIdle = homes.requests.length;
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 60_000 });
+        expect(homes.requests.slice(beforeSettledIdle).filter(request =>
+            request.path === '/v2/sessions/query' || request.path === '/v2/sessions/read-batch'
+            || request.path === '/v2/changes' || request.path.startsWith('/v2/account/settings/history/')
+            || request.path.endsWith('/messages') || request.path.endsWith('/follows/occurrence-routes'))).toEqual([]);
 
         before = mark();
         const beforeShare = homes.requests.length;
         await act(async () => publishHomeAccountChange(serverId, [offScreen.id, siblings[0]!.id], {
-            feedPageConsumed: true, changeKinds: ['share', 'machine'], sessionIdsToCatchUp: [offScreen.id], sessionListQueryAffects: false,
+            feedPageConsumed: true, changeKinds: ['share', 'machine'], sessionFollowSourceIds: [offScreen.id], sessionListQueryAffects: false,
         }));
         await vi.waitFor(() => expect(acceptedEffects).toBe(2));
         await flushHookEffects();
@@ -409,10 +438,11 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
 
         before = mark();
         finishedTurnArrived = true;
-        const publishTurn = () => publishHomeAccountChange(serverId, [source.id], {
-            feedPageConsumed: true, changeKinds: ['session'], sessionIdsToCatchUp: [source.id], sessionListQueryAffects: false,
-        });
-        await act(async () => publishTurn());
+        changePage = { nextCursor: 4, changes: [{ kind: 'account', entityId: buildSessionFollowReceiverChangeEntityIdV1(source.id),
+            cursor: 4, changedAt: 14, hint: null }] };
+        const turnWake = { id: 'finished-turn-demand', seq: 4, createdAt: 14, body: { t: 'account-change' as const } };
+        await act(async () => runtime.handleUpdate(turnWake));
+        await vi.waitFor(() => expect(runtime.changesCursor).toBe('4'));
         await vi.waitFor(() => expect(acceptedEffects).toBe(4));
         await flushHookEffects();
         expect.soft(record('one new finished Turn', before)).toEqual({ routes: [route(source.id)], queries: 0 });
@@ -421,8 +451,8 @@ it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only
         });
 
         before = mark();
-        await act(async () => publishTurn());
-        await flushHookEffects();
+        await act(async () => runtime.handleUpdate({ ...turnWake, id: 'finished-turn-demand-repeated' }));
+        await flushHookEffects({ cycles: 2, advanceTimersMs: 60_000 });
         expect.soft(record('unchanged finished Turn', before)).toEqual({ routes: [], queries: 0 });
         expect(acceptedEffects).toBe(4);
     }

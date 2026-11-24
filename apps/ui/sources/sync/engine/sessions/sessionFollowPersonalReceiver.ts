@@ -179,7 +179,7 @@ export function createSessionFollowPersonalReceiverRuntime(input: Readonly<{
             reconcile();
             return;
         }
-        const sourceIds = event.sessionIdsToCatchUp
+        const sourceIds = event.sessionFollowSourceIds
             ?? (event.changeKinds?.some(kind => kind === 'session' || kind === 'share') ? event.entityIds : undefined);
         for (const id of sourceIds ?? []) demanded.add(id);
         start();

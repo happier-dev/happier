@@ -18,6 +18,8 @@ import {
     readConnectedServicesAccountChangeV1,
     isProviderAccountUsageRefreshChangeEntityIdV1,
     readSessionUpdatedMessageChangeHintV1,
+    readSessionFollowReceiverAvailabilityChangedV1,
+    readSessionFollowSourceChangedV1,
     readSessionUsageAccountingChangedV1,
     artifactKindsMayIncludeKindV1,
     readArtifactKindsChangeHintV1,
@@ -717,9 +719,8 @@ export function planSyncActionsFromChanges(
         }
 
         if (kind === 'account') {
-            // Receiver demand is consumed by the daemon. Its ordinary Session
-            // projection independently refreshes UI state; this key changes
-            // neither encrypted Settings nor the Account profile.
+            // Receiver demand is routed separately from the ordinary Session
+            // projection. This key changes neither Settings nor the Account profile.
             if (readSessionFollowReceiverChangeV1(change) !== null) continue;
             // Disclosure changes only the exact activity reader, never secret material or Settings.
             if (readSavedSecretDisclosureActivityEntityIdV1(change.entityId) !== null) continue;
@@ -1004,6 +1005,22 @@ const ROW_METADATA_HINT_KEYS: ReadonlySet<string> = new Set(['metadataVersion', 
 const ROW_ACTIVITY_HINT_KEYS: ReadonlySet<string> = new Set(['runtimeActivityRevision', 'latestTurnStatusObservedAt', 'meaningfulActivityAt']);
 
 export type ReviewCommentChange = ReviewCommentChangesHintV1['changes'][number] & Readonly<{ reviewId: string }>;
+
+/** Route receiver work using the feed cursor that preceded these coalesced changes. */
+export function plannedSessionFollowSourceIds(planned: PlannedChangeActions): readonly string[] {
+    const sourceIds = new Set<string>();
+    const afterCursor = planned.afterCursor ?? Number.NaN;
+    for (const change of planned.changes) {
+        const receiverSource = readSessionFollowReceiverChangeV1(change);
+        if (receiverSource !== null) sourceIds.add(receiverSource);
+        else if (change.entityId && (change.kind === 'share'
+            || (change.kind === 'session' && (
+                readSessionFollowSourceChangedV1(change, afterCursor)
+                || readSessionFollowReceiverAvailabilityChangedV1(change, afterCursor) !== false
+            )))) sourceIds.add(change.entityId);
+    }
+    return [...sourceIds];
+}
 
 /** The Review publication owner supplies bodyless revisions; consumers never reinterpret raw hints. */
 export function plannedReviewCommentChanges(planned: PlannedChangeActions): readonly ReviewCommentChange[] | undefined {

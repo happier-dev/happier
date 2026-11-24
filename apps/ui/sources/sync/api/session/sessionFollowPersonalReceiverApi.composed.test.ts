@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceProjectionV1';
+import { SessionFollowObserveSourceRoutesRequestV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 import { createPlainSessionByIdResponseFixture, createLockedEncryptedSessionByIdResponseFixture,
     createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -24,13 +25,14 @@ let restored: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefine
 beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(boundary); });
 afterEach(async () => { await standardCleanup(); await restored?.dispose(); restored = undefined; getStorage().setState(initial, true); });
 
-async function prepare(locked = false) {
+async function prepare({ locked = false, followOnlyLastMessage = false } = {}) {
     const serverUrl = 'https://follow-personal-reader.test';
     const serverId = await homes.addHome({ name: 'Receiver', serverUrl, accountId: 'alice', currentAccount: true });
     const source = createSessionFixture({ id: 'foreign-source', serverId, ownerAccountId: 'bob',
         origin: { kind: 'direct' }, seq: SESSION_FOLLOW_SOURCE_PROJECTION_MAX_PAGE_ROWS_V1 + 1,
         access: createSessionAccessFixture('view'), ...(locked ? { encryptionMode: 'e2ee', encryptedContentAvailability: 'locked' } : {}) });
-    const rule = { ruleId: 'personal-rule', receiver: { kind: 'account' }, version: 0, inception: { createdAt: 1 },
+    const rule = { ruleId: 'personal-rule', receiver: { kind: 'account' }, version: 0,
+        inception: { createdAt: followOnlyLastMessage ? source.seq + 9 : 1 },
         content: { t: 'plain', v: { v: 1, enabled: true, policy: { preset: 'everything' },
             filter: normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId], scope: 'all_accessible', startedBy: [] }) } } };
     homes.answer(serverId, '/v2/sessions/query', { body: { sessions: [], hasNext: false, nextCursor: null,
@@ -43,7 +45,7 @@ async function prepare(locked = false) {
     const rows = Array.from({ length: source.seq }, (_, index) => SessionMessageV1Schema.parse({
         id: `original-${index + 1}`, localId: `original-local-${index + 1}`, seq: index + 1, createdAt: index + 10, messageRole: 'agent',
         content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
-            type: index === source.seq - 1 ? 'message' : 'reasoning', message: 'Committed source text',
+            type: followOnlyLastMessage || index === source.seq - 1 ? 'message' : 'reasoning', message: 'Committed source text',
         } } } },
     }));
     const pageRequests: URL[] = [];
@@ -54,9 +56,11 @@ async function prepare(locked = false) {
         const throughSeq = messages.at(-1)?.seq ?? afterSeq;
         return { body: { messages, hasMore: throughSeq < source.seq, nextAfterSeq: throughSeq < source.seq ? throughSeq : null } };
     } });
-    homes.answer(serverId, `POST /v2/sessions/${source.id}/follows/occurrence-routes`, { body: {
-        ok: true, v: 1, sourceSessionId: source.id, routes: [], originalCreatedAt: 10,
-        receiverEvaluation: { ownerAccountId: 'bob', production: 'source' },
+    homes.answer(serverId, `POST /v2/sessions/${source.id}/follows/occurrence-routes`, { select: input => {
+        const occurrence = SessionFollowObserveSourceRoutesRequestV1Schema.parse(input);
+        const originalCreatedAt = occurrence.sourceMessage ? rows[occurrence.sourceMessage.seq - 1]?.createdAt : 10;
+        return { body: { ok: true, v: 1, sourceSessionId: source.id, routes: [], originalCreatedAt,
+            receiverEvaluation: { ownerAccountId: 'bob', production: 'source' } } };
     } });
     restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
         credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) }, request: boundary.request });
@@ -86,6 +90,19 @@ it('traverses real ascending original pages and never reloads private definition
     expect(privateReads()).toBe(before);
 });
 
+it('admits only the new message when a shared transcript predates the active Follow rule', async () => {
+    const fixture = await prepare({ followOnlyLastMessage: true });
+    const visited: number[] = [];
+    await visitSessionFollowPersonalReceiverOriginals({ ...fixture, sourceSessionIds: [fixture.source.id], onOccurrence: async value => {
+        if ('sourceMessage' in value.original) visited.push(value.original.sourceMessage.seq);
+        return true;
+    } });
+    const routes = homes.requests.filter(request => request.path.endsWith('/follows/occurrence-routes'));
+    expect(routes).toHaveLength(1);
+    expect(routes[0]?.input).toMatchObject({ sourceMessage: { localId: `original-local-${fixture.source.seq}`, seq: fixture.source.seq } });
+    expect(visited).toEqual([fixture.source.seq]);
+});
+
 it.each(['account', 'credentials', 'mode'] as const)('refuses a private snapshot from another %s before reading source bodies', async mismatch => {
     const fixture = await prepare();
     const snapshot = { ...fixture.snapshot, ...(mismatch === 'account' ? { accountId: 'bob' }
@@ -97,7 +114,7 @@ it.each(['account', 'credentials', 'mode'] as const)('refuses a private snapshot
 });
 
 it('does not open source bodies or produce an occurrence without that encrypted source key', async () => {
-    const fixture = await prepare(true);
+    const fixture = await prepare({ locked: true });
     const onOccurrence = vi.fn(async () => true);
     await visitSessionFollowPersonalReceiverOriginals({ ...fixture, sourceSessionIds: [fixture.source.id], onOccurrence });
     expect(fixture.pageRequests).toHaveLength(0);

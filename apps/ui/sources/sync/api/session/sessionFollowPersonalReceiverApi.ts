@@ -85,6 +85,7 @@ export async function visitSessionFollowPersonalReceiverOriginals(input: Receive
     if (!input.sourceSessionIds.length || !input.snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled)) return;
     await withReceiverAuthority(input, async (authority, check, signal) => {
         const rules = input.snapshot.rules.filter(rule => rule.receiver.kind === 'account' && rule.definition.enabled);
+        const earliestInception = rules.reduce((earliest, rule) => Math.min(earliest, rule.inception?.createdAt ?? Infinity), Infinity);
         const sessionIds = [...new Set(input.sourceSessionIds)];
         const snapshots = await readSessionSnapshotsForAuthority({ authority, sessionIds, includeTurns: false,
             signal, isCurrent: () => { check(); return true; } });
@@ -215,11 +216,16 @@ export async function visitSessionFollowPersonalReceiverOriginals(input: Receive
                         ownerAccountId, origin: session.origin ?? null, row, opened: opened.value });
                     if (read.status === 'unavailable') { sourceAvailable = false; break; }
                     if (read.status === 'occurrence' && !('sourceRequests' in read.occurrence)) {
+                        // Message admission uses the same stored createdAt as this row.
+                        // Turn admission uses the Turn's own terminal timestamp.
                         if ('sourceTurn' in read.occurrence) {
                             if (!row.localId) { sourceAvailable = false; break; }
                             terminal.set(read.occurrence.sourceTurn.id, { original: read.occurrence,
                                 evidence: read.occurrence.evidence, terminalSourceMessage: { localId: row.localId, seq: row.seq } });
-                        } else if (!await visit(read.occurrence, read.occurrence.evidence)) { sourceAvailable = false; break; }
+                        } else if (row.createdAt >= earliestInception && !await visit(read.occurrence, read.occurrence.evidence)) {
+                            sourceAvailable = false;
+                            break;
+                        }
                     }
                     scannedThroughSeq = row.seq;
                 }
