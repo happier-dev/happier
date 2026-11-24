@@ -11564,7 +11564,7 @@ describe("external Action execution authorization", () => {
             // HTTP continuation eligibility refuses this already-replaced peer
             // before the mint; retain that separate Action-authority refusal.
             expect(unavailableChild.statusCode).toBe(403);
-            expect(unavailableChild.json()).toEqual({ error: 'credential_scope_denied' });
+            expect(unavailableChild.json()).toEqual({ error: 'credential_scope_denied', authorizationRefusal: 'principal' });
             await db.machine.update({ where: { id: destination.id }, data: { installationId: destination.installationId } });
             await db.machine.update({ where: { id: fixture.machine.id }, data: { installationId: 'replacement-source-installation' } });
             expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing)).toBeNull();
@@ -11687,14 +11687,16 @@ describe("external Action execution authorization", () => {
             expect(minted.statusCode, minted.body).toBe(200);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
             const apply = (payload: unknown) => app.inject({ method: 'POST', url: `/v1/actions/${actionId}`, headers, payload });
-            if (scenario === 'legacy') expect((await apply(envelope)).json()).toEqual({ error: 'credential_scope_denied' });
+            if (scenario === 'legacy') expect((await apply(envelope)).json()).toEqual({ error: 'credential_scope_denied',
+                authorizationRefusal: 'credential_action_admission' });
             if (scenario === 'withdrawn-publisher') remainingDiscovery = 1;
             const relay = { v: 1, machineId: destination.id, envelope, executionAuthorization: authorization };
             const applied = await apply(relay);
             expect(applied.statusCode, applied.body).toBe(200);
             expect(forwardRpc).toHaveBeenCalledOnce();
             if (scenario === 'withdrawn-publisher') {
-                expect((await apply(relay)).json()).toEqual({ error: 'credential_scope_denied' });
+                expect((await apply(relay)).json()).toMatchObject({ error: 'credential_scope_denied',
+                    authorizationRefusal: 'source_after_principal' });
                 expect(forwardRpc).toHaveBeenCalledOnce();
             }
         } finally { await app.close(); }

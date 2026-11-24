@@ -577,7 +577,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
                 const denied = await app.inject({ method: 'POST', url: `/v1/actions/ui.current_context.read${suffix}`,
                     headers, payload: envelope });
                 expect(denied.statusCode).toBe(403);
-                expect(denied.json()).toEqual({ error: 'credential_scope_denied' });
+                expect(denied.json()).toEqual({ error: 'credential_scope_denied', authorizationRefusal: 'credential_action_admission' });
             }
             const retained = await profile();
             expect(retained.statusCode).toBe(200);
@@ -672,7 +672,8 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
                 const response = await app.inject({ method: 'POST', url: `/v1/actions/${refusal.actionId}`,
                     headers: refusal.headers, payload: envelope });
                 expect(response.statusCode).toBe(refusal.status);
-                expect(response.json()).toEqual({ error: refusal.error });
+                expect(response.json()).toEqual({ error: refusal.error,
+                    ...(refusal.error === 'credential_scope_denied' ? { authorizationRefusal: 'credential_action_admission' } : {}) });
             }
             expect(dispatch).not.toHaveBeenCalled();
             const response = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`, headers, payload: envelope });
