@@ -76,7 +76,7 @@ function automationPreviousStateForWorkflowTerminalEffects(state: WorkflowRunSta
 }
 
 export class WorkflowRunServiceError extends Error {
-    constructor(readonly code: "invalid_input" | "target_unavailable" | "run_not_found" | "run_access_denied" | "visible_team_not_granted" | "data_key_not_required" | "currentness_conflict" | "ineligible_state" | "custody_pending" | "content_unavailable") {
+    constructor(readonly code: "invalid_input" | "target_unavailable" | "run_not_found" | "run_access_denied" | "visible_team_not_granted" | "data_key_not_required" | "currentness_conflict" | "ineligible_state" | "custody_pending" | "content_unavailable" | "requester_custody_unavailable") {
         super(code);
         this.name = "WorkflowRunServiceError";
     }
@@ -950,6 +950,7 @@ export async function getWorkflowRun(params: Readonly<{ accountId: string; runId
             { actorAccountId: params.accountId, runId: params.runId }, workflowRunSelect));
         const mode = keyCensus.encryptionMode;
         if (row.workflowAcceptedSnapshotEnvelope === null) {
+            if (row.errorCode === "requester_custody_unavailable") throw new WorkflowRunServiceError(row.errorCode);
             throw new WorkflowRunServiceError(row.workflowCustodyState === "pending" ? "custody_pending" : "content_unavailable");
         }
         const checkpointEnvelope = decodeStoredText(row.workflowCheckpointEnvelope, row.workflowCheckpointEnvelopeBytes);

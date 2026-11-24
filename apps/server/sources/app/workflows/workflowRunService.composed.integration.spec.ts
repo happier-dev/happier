@@ -12,6 +12,7 @@ import {
     MACHINE_PLAIN_DATA_KEY_MARKER,
     ManagedWakeTargetV1Schema,
     AutomationRunCauseSchema,
+    AutomationTriggerIdSchema,
     measureExternalActionResultResponseEnvelopeUtf8BytesV1,
     prepareExternalActionResponseEnvelopeV1,
     PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
@@ -485,7 +486,7 @@ describe("workflowRunService (integration)", () => {
         expect((await getWorkflowRun({ accountId: seeded.accountId, runId })).run).not.toHaveProperty('errorCode');
     });
 
-    it.each(['queued', 'claimed', 'running', 'paused', 'running_child'] as const)("settles missing requester custody only through the admitted installation without returning Run content (%s)", async state => {
+    it.each(['queued', 'scheduled', 'claimed', 'running', 'paused', 'running_child'] as const)("settles missing requester custody only through the admitted installation without returning Run content (%s)", async state => {
         const seeded = await seed();
         const guest = await seed();
         const otherHost = await seed();
@@ -498,13 +499,35 @@ describe("workflowRunService (integration)", () => {
             await db.machine.update({ where: { id: host.machineId }, data: { installationId: id,
                 installationPublicKey: new Uint8Array(keys.publicKey) } });
         }
-        const runId = randomUUID();
         await makeShareEligibleForTest(seeded.accountId, guest.accountId);
         await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: seeded.accountId, machineId: seeded.machineId,
             principal: { kind: 'account', accountId: guest.accountId }, level: 'view' }));
-        await admitWorkflowRun({ accountId: guest.accountId, machineId: seeded.machineId, runId,
-            origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: seeded.machineId, runId }) });
-        if (state !== 'queued') {
+        const runId = await (async () => {
+            if (state === 'scheduled') {
+                const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+                const automation = await createAutomation({ accountId: guest.accountId, recipeFeaturePolicy: { workflowsEnabled: true },
+                    input: { automationId: randomUUID(), name: 'Scheduled guest Workflow', enabled: true,
+                        executionRecipe: createAutomationWorkflowRecipeFixture({ templateVersion: 1, directory: '/repo', prompt: 'Work' }),
+                        assignments: [{ machineId: seeded.machineId, enabled: true, priority: 0 }], triggers: [{ triggerId, trigger: { kind: 'schedule', enabled: true,
+                            schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } } }] } });
+                const now = new Date();
+                const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerId, triggerRevision: automation.triggers[0]!.revision,
+                    triggerKind: 'schedule', occurrenceKey: 'A'.repeat(43), occurredAt: now.getTime(), evidence: { scheduledFor: now.getTime() } });
+                const occurrence = await inTx(tx => admitAutomationRunTx({ tx, accountId: guest.accountId, automationId: automation.id,
+                    now, cause, recipeFeaturePolicy: { workflowsEnabled: true } }));
+                expect(occurrence).toMatchObject({ kind: 'admitted' });
+                if (occurrence.kind !== 'admitted') throw new Error('Expected schedule occurrence admission');
+                await expect(getWorkflowRun({ accountId: guest.accountId, runId: occurrence.run.id }))
+                    .rejects.toMatchObject({ code: 'custody_pending' });
+                return occurrence.run.id;
+            }
+            const id = randomUUID();
+            await admitWorkflowRun({ accountId: guest.accountId, machineId: seeded.machineId, runId: id,
+                origin: { kind: 'direct' }, acceptedEnvelope: await acceptedEnvelope({ accountId: guest.accountId, machineId: seeded.machineId, runId: id }) });
+            return id;
+        })();
+        const queued = state === 'queued' || state === 'scheduled';
+        if (state !== 'queued' && state !== 'scheduled') {
             const claim = await claimAutomationRun({ accountId: guest.accountId, machineId: seeded.machineId,
                 scope: 'workflow', leaseDurationMs: 30_000, recipeFeaturePolicy: { workflowsEnabled: true },
                 claimRequest: { machineInstallationId: installationId, nonce: randomUUID(),
@@ -533,7 +556,7 @@ describe("workflowRunService (integration)", () => {
             expect(historical.statusCode).toBe(401);
             await db.automationRunAssignment.update({ where: { runId_machineId: { runId, machineId: seeded.machineId } },
                 data: { admittedMachineInstallationId: installationId } });
-            if (state !== 'queued') {
+            if (!queued) {
                 await db.automationRunAssignment.create({ data: { runId, machineId: otherHost.machineId,
                     admittedMachineInstallationId: otherInstallationId } });
                 const selectedExecutorRun = await db.automationRun.findUniqueOrThrow({ where: { id: runId },
@@ -558,15 +581,25 @@ describe("workflowRunService (integration)", () => {
             expect(response.json()).toEqual({ recorded: true });
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId },
                 select: { attempt: true, revision: true, claimedByMachineId: true } })).toEqual({
-                attempt: beforeRefusal.attempt + (state === 'queued' ? 1 : 0),
-                revision: beforeRefusal.revision + (state === 'queued' ? 2 : 1),
+                attempt: beforeRefusal.attempt + (queued ? 1 : 0),
+                revision: beforeRefusal.revision + (queued ? 2 : 1),
                 claimedByMachineId: seeded.machineId,
             });
             expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { state: true, errorCode: true, workflowCustodyState: true } }))
                 .toEqual({ state: "failed", errorCode: "requester_custody_unavailable",
                     workflowCustodyState: state === 'running_child' ? 'pending' : 'settled' });
-            expect(await getWorkflowRun({ accountId: guest.accountId, runId }))
-                .toMatchObject({ run: { errorCode: 'requester_custody_unavailable' } });
+            if (state === 'scheduled') {
+                const guestReader = await createReviewStorageApp(guest.accountId);
+                try {
+                    const exact = await guestReader.app.inject({ method: 'POST', url: '/v3/automations/runs/workflow-storage',
+                        headers: guestReader.headers, payload: { operation: 'get', runId } });
+                    expect(exact.statusCode).toBe(422);
+                    expect(exact.json()).toEqual({ error: 'requester_custody_unavailable' });
+                } finally { await guestReader.app.close(); }
+            } else {
+                expect(await getWorkflowRun({ accountId: guest.accountId, runId }))
+                    .toMatchObject({ run: { errorCode: 'requester_custody_unavailable' } });
+            }
             await expect(getWorkflowRun({ accountId: seeded.accountId, runId })).rejects.toMatchObject({ code: 'run_not_found' });
             const terminal = await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { revision: true } });
             const repeated = await app.inject({ method: 'POST', url: path, payload: body, headers: { ...headers,
