@@ -128,7 +128,7 @@ describe('Workflow trigger removal through the Action and retained SQLite owners
         const f = await fixture();
         expect(await executor(f.accountId).execute('workflow.trigger.remove', { automationId: f.automationId }, {
             surface: 'ui', authority: 'present_user',
-        })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        })).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
         expect(await executor(f.accountId).execute('workflow.trigger.remove', { automationId: f.automationId }, {
             surface: 'mcp', actionCaller: { kind: 'session', sessionId: 'driver', starterDepth: 0, turnDepth: 0 },
         })).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
