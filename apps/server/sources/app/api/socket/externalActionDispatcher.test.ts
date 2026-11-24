@@ -1009,6 +1009,29 @@ describe("createExternalActionDaemonDispatcher", () => {
         }]);
     });
 
+    it('leaves a submitted Session birth running when the HTTP request closes', async () => {
+        const connection = new AbortController();
+        const emit = vi.fn();
+        const dispatch = createExternalActionDaemonDispatcher({
+            io: { to: () => ({ emit }) } as never,
+            resolveMachine: async () => 'available',
+            forwardRpc: async ({ cancellation, onSubmittedUnknown }) => {
+                cancellation?.onTargetSelected({ id: 'machine-socket' } as never);
+                connection.abort();
+                onSubmittedUnknown?.();
+                return { ok: false, error: 'HTTP caller disconnected' };
+            },
+        });
+
+        await expect(dispatch({ actionId: 'session.spawn_new', principal,
+            envelope: { v: 1, requestId: 'birth-caller-disconnected',
+                target: { kind: 'machine', machineId: 'machine-1' }, input: {} },
+        }, { signal: connection.signal })).resolves.toEqual({
+            kind: 'submitted_unknown', cause: { reason: 'daemon_acknowledgement_lost' },
+        });
+        expect(emit).not.toHaveBeenCalled();
+    });
+
     it("preserves the daemon's authenticated V2 cancellation outcome after submission", async () => {
         const controller = new AbortController();
         const binding = {

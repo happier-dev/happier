@@ -1980,6 +1980,11 @@ Uncertainty does not authorize another invocation. Installed-plugin controls
 retain the exact target for their existing read-back recovery rather than
 reporting an unknown mutation as Done or replaying it.
 
+For `session.spawn_new`, closing the caller’s HTTP connection retires its wait.
+Once the request reaches the daemon, the Session creation operation owns startup
+and first-input settlement. A caller with the operation address can read the
+terminal result through `action.operations.get` on a new connection.
+
 If a managed guest loses the completion acknowledgement for `session.spawn_new`,
 Home keeps the original invocation open for the same guest to reconnect. The
 guest reads the Session by its original creation identity and verifies the

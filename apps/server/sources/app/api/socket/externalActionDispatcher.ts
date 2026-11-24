@@ -995,7 +995,10 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 // Cancellation is best effort at the transport boundary.
             }
         };
-        options.signal?.addEventListener("abort", cancelTarget, { once: true });
+        // Session birth owns its lifetime once the guest receives the request.
+        // The HTTP signal still retires target discovery and the ACK waiter.
+        const cancelTargetSignal = request.actionId === 'session.spawn_new' ? undefined : options.signal;
+        cancelTargetSignal?.addEventListener("abort", cancelTarget, { once: true });
 
         const callParams = {
             actionId: request.actionId,
@@ -1027,7 +1030,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(cancellation ? { cancellation } : {}),
             }), request.envelope.requestId);
         } finally {
-            options.signal?.removeEventListener("abort", cancelTarget);
+            cancelTargetSignal?.removeEventListener("abort", cancelTarget);
         }
         const signal = options.signal;
         if (submittedUnknown && (forwarded.kind === 'failed' || !forwarded.value.ok)
