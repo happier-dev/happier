@@ -14,6 +14,7 @@ import type { MachineAgentInventoryItem } from '@happier-dev/protocol/capabiliti
 import { buildMachineAgentInventoryKey, MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { AgentInstallJobSchema, DaemonAgentInstallCancelRequestSchema, DaemonAgentInstallReadRequestSchema, DaemonAgentInstallStartRequestSchema } from '@happier-dev/protocol/daemon/agent-install-jobs';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createAccountTokenForTests, createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
@@ -402,8 +403,9 @@ describe('agent install job owner', () => {
     });
     it('reads successor Account facts through the inventory after the old detect retires', async () => {
         const { refreshMachineAgents } = await import('../useMachineAgents');
-        const server = await addJobHome({ serverUrl: 'https://inventory-switch.example.test' });
+        const server = await addJobHome({ serverUrl: 'https://inventory-switch.example.test', accountId: 'account-a' });
         const machine = createMachineFixture({ id: 'inventory-switch', active: true, activeAt: Date.now(), daemonStateVersion: 1 });
+        publishMachineActivityForTest([machine]);
         storage.setState({ machineListByServerId: { [server.id]: [machine] } });
         const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {
             codex: { id: 'codex', title: 'Codex', providerOwnedEnvironmentKeys: [], capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
@@ -432,6 +434,7 @@ describe('agent install job owner', () => {
         await vi.waitFor(() => expect(boundary.rpc.mock.calls.some(([args]) => args.method === RPC_METHODS.CAPABILITIES_DETECT)).toBe(true));
         aCurrent = false;
         for (const cancel of retirements) cancel();
+        await homes.switchAccount(server.id, 'account-b', { currentAccount: true });
         currentAccount = 'account-b';
         await refreshMachineAgents({ serverId: server.id, machineId: machine.id, accountLifetime: {
             scope: bScope, isCurrent: () => true, onRetire: () => ({ dispose() {} }),
