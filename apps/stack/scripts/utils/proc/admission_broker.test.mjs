@@ -3708,26 +3708,53 @@ test('commit entry uses its two charged cores under outside CPU pressure', linux
   await granted.release();
 });
 
-test('a saturated commit entry queue leaves capacity for a source bundle head', linux, async t => {
+test('commit entry loads use idle broker capacity beyond their two-core share', linux, async t => {
+  const { root } = await fixture(t, { cpuCores: 6 });
+  const gateClass = { resourceClass: 'gate-entry-loads',
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['gate-entry-loads'].cpuCores };
+  const first = await (await acquire(root, 1, t, gateClass)).admit();
+  const second = await (await acquire(root, 1, t, { ...gateClass, noWait: true })).admit();
+  const check = await requestAdmissionSample(root, { kind: 'check', className: 'gate-entry-loads',
+    floorKiB: 1, cpuCost: gateClass.cpuCost });
+  assert.equal(check.kind, 'admitted');
+  const third = await (await acquire(root, 1, t, { ...gateClass, noWait: true })).admit();
+  assert.equal((await requestAdmissionSample(root)).reservedCpuCores, 6);
+  for (const gate of [first, second, third]) await gate.release();
+});
+
+test('a waiting source bundle limits commit entry loads to their two-core share', { ...linux, timeout: 10000 }, async t => {
   const gib = 1024 * 1024;
-  const { root } = await fixture(t, { cpuCores: 6,
-    readMemory: () => ({ availableMemoryKiB: 24 * gib, totalMemoryKiB: 24 * gib }),
+  const { root } = await fixture(t, { cpuCores: 8,
+    readMemory: () => ({ availableMemoryKiB: 32 * gib, totalMemoryKiB: 32 * gib }),
     admitDisk: () => ({ admitted: true }),
   });
-  const gateClass = { className: 'gate-entry-loads', resourceClass: 'gate-entry-loads',
+  const entry = 'node apps/stack/scripts/build/build_source_runtime.mjs';
+  const sourceCpuHistory = JSON.stringify(['cpu-millicores/source-bundle', '.', entry, []]);
+  const cpu = await observedCpuRequests(root, [3], { [sourceCpuHistory]: [2500] });
+  const holder = await (await acquire(root, gib, t, cpu.get(3))).admit();
+  const gateClass = { resourceClass: 'gate-entry-loads',
     cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['gate-entry-loads'].cpuCores };
   const gate = await (await acquire(root, 3 * gib, t, gateClass)).admit();
-  await acquire(root, 3 * gib, t, gateClass);
-  await acquire(root, 3 * gib, t, gateClass);
-  assert.equal((await requestAdmissionSample(root)).reservedCpuCores, 2,
-    'queued gate loads must leave ordinary capacity available');
-
-  const source = await (await acquire(root, 13 * gib, t, {
+  const source = await acquire(root, 13 * gib, t, {
     className: 'source-bundle', resourceClass: 'source-bundle',
-    entry: 'node apps/stack/scripts/build/build_source_runtime.mjs',
-    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['source-bundle'].cpuCores, noWait: true,
-  })).admit();
-  assert.equal(source.admitted.floorKiB, 13 * gib);
-  await source.release();
+    component: '.', entry,
+    cpuCost: HEAVYWEIGHT_COMMAND_RESOURCES['source-bundle'].cpuCores,
+  });
+  let sample = await requestAdmissionSample(root);
+  for (let attempt = 0; !sample.waitingCount && attempt < 20; attempt++) sample = await requestAdmissionSample(root);
+  assert.equal(sample.waitingCount, 1);
+  assert.equal(sample.unreservedCpuCores, 3, 'a second gate fits in the idle CPU while the source head waits');
+  assert.ok(sample.unreservedMemoryKiB >= 3 * gib);
+  const check = await requestAdmissionSample(root, { kind: 'check', className: 'gate-entry-loads',
+    floorKiB: 3 * gib, cpuCost: gateClass.cpuCost });
+  assert.equal(check.kind, 'refused');
+  const excess = await acquire(root, 3 * gib, t, { ...gateClass, noWait: true });
+  assert.equal((await excess.next()).kind, 'refused');
+
+  await holder.release();
+  const producer = await source.admit();
+  assert.equal(producer.admitted.floorKiB, 13 * gib);
+  assert.equal(producer.admitted.cpuCores, 4);
+  await producer.release();
   await gate.release();
 });

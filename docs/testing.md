@@ -732,9 +732,10 @@ are served first in arrival order. Once such a waiter is blocked at the head,
 the broker stops admitting smaller jobs until the head fits. Classes with no
 recorded duration use the existing head-reservation rules.
 The `gate-entry-loads` class has a two-core share for one entry load.
-Additional entry loads can use ordinary CPU and memory when their recorded
-run time fits the existing backfill window for a non-gate head. Waiting entry
-loads beyond the share cannot reserve capacity as head.
+Additional entry loads can use spare CPU and memory after the broker has
+offered capacity to eligible non-gate waiters. If an eligible producer or
+ordinary head is still waiting for capacity, only the gate share is available
+to new entry loads. Live grants retain their slots.
 The shared runtime producer (`source-bundle` running
 `apps/stack/scripts/build/build_source_runtime.mjs`) and the shared web export
 (`source-web-export` running `apps/stack/scripts/build/build_source_web_ui.mjs`)
