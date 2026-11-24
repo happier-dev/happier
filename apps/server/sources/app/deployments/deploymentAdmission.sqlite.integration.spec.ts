@@ -229,6 +229,43 @@ describe('current Source deployment authority', () => {
             };
             expect(await readReceipts(signed, environment.id)).toBeNull();
             expect(await readReceipts(regression, crypto.randomUUID())).toBeNull();
+            // F16: direct Compare reads each Receipt's recorded source label from that Receipt's own content.
+            // Only an exact Receipt of an admitted telemetry Environment opens; no other Artifact does.
+            const receiptContent = async (environmentId: string) => {
+                const content = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+                    kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+                    header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1', title: 'Receipt' })),
+                    body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                    dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+                if (!content.ok) throw new Error(content.error);
+                const link = await db.deploymentTargetLink.create({ data: { environmentId,
+                    createdByAccountId: owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+                    targetKind: 'ownServer', state: 'deployed', contentArtifactId: artifact.artifact.id,
+                    contentHeaderVersion: 1, contentBodyVersion: 1 } });
+                await db.deployment.create({ data: { environmentId, targetLinkId: link.id,
+                    operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), requestedByAccountId: owner.id,
+                    actionOperationId: crypto.randomUUID(), contentArtifactId: content.artifact.id,
+                    contentHeaderVersion: 1, contentBodyVersion: 1 } });
+                return content.artifact.id;
+            };
+            const readArtifact = (root: typeof regression, artifactId: string, effectActionId: string = ACTION_INVOKE_ACTION_ID_V1) => {
+                const target = root.binding.target;
+                const method = 'GET', path = `/v1/artifacts/${artifactId}`;
+                const signature = signExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId, target,
+                    installationId: root.binding.installationId, requestId: root.binding.requestId,
+                    method, path, privateKey: collectorSigning.secretKey });
+                return verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token, effectActionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(target), machineSignature: signature, method, path });
+            };
+            const admittedReceipt = await receiptContent(environment.id);
+            const otherEnvironmentReceipt = await receiptContent(preview.id);
+            expect((await readArtifact(regression, admittedReceipt))?.deploymentChildArtifactRead).toMatchObject({
+                content: { contentArtifactId: admittedReceipt, contentHeaderVersion: 1, contentBodyVersion: 1 },
+                requesterAccountId: teammate.id });
+            expect(await readArtifact(regression, artifact.artifact.id)).toBeNull();
+            expect(await readArtifact(regression, otherEnvironmentReceipt)).toBeNull();
+            expect(await readArtifact(regression, admittedReceipt, 'deployments.receipts.get')).toBeNull();
+            expect(await readArtifact(signed, admittedReceipt)).toBeNull();
             await db.teamMembership.delete({ where: { id: membership.id } });
             expect((await admit(readerToken, makeRead(teammate.id, collector.id).body)).statusCode).toBe(403);
             expect((await post(readerToken, route, { ...body, executionAuthorization })).statusCode).toBe(403);

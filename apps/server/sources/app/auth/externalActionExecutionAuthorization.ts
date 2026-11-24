@@ -3361,8 +3361,21 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     if ('telemetryCollector' in admission) {
         // Compare uses settled receipt headers to choose its two sample windows.
         // The same finite root covers that read on the admitted Environment.
-        if (!verified.binding.deploymentTelemetryRead || verified.effectActionId !== DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1
-            || formatQualifiedPluginActionId(admission.action) !== TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1
+        if (!verified.binding.deploymentTelemetryRead
+            || formatQualifiedPluginActionId(admission.action) !== TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1) return false;
+        const artifact = verified.effectActionId === verified.binding.actionId && isReadOnlyArtifactHttpPurpose(proof)
+            ? /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path) : null;
+        if (artifact) {
+            // Each Receipt's recorded source label is in that exact Receipt's own content.
+            let artifactId: string;
+            try { artifactId = decodeURIComponent(artifact[1]); } catch { return false; }
+            const receipt = await db.deployment.findFirst({ where: { contentArtifactId: artifactId,
+                environmentId: { in: [...admission.telemetryCollector.environmentIds] } }, select: { id: true, environmentId: true } });
+            const scope = receipt && await readAdmittedDeploymentReadScopeInTx(db, { environmentId: receipt.environmentId, deploymentId: receipt.id });
+            const content = scope?.artifactContents.find(reference => encodeURIComponent(reference.contentArtifactId) === artifact[1]);
+            return content ? { deploymentChildArtifactRead: { content, requesterAccountId: verified.binding.accountId } } : false;
+        }
+        if (verified.effectActionId !== DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1
             || !isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, proof)) return false;
         const input = DeploymentActionInputSchemasV1[DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1].safeParse(proof.routeInput);
         return input.success && input.data.serverId === admission.telemetryCollector.serverId
