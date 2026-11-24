@@ -116,7 +116,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     removeFailed: '無法移除此副本。',
     copyLastSynced: ({ time }: { time: string }) => `上次同步 ${time}`,
     copySynced: ({ time }: { time: string }) => `已同步 ${time}`,
-    freshCopiesUnavailable: '暫時無法顯示新副本。',
+    freshCopiesUnavailable: '無法讀取部分專案。',
     removeKeepFiles: '不再保留此副本',
     removeWithFiles: '同時移除其檔案',
     removeWithFilesDetail: ({ machine }: { machine: string }) => `刪除 ${machine} 上的資料夾。`,

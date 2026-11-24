@@ -130,7 +130,7 @@ export const projectWorkersEn = {
     removeFailed: 'Couldn’t remove this copy.',
     copyLastSynced: ({ time }: { time: string }) => `last synced ${time}`,
     copySynced: ({ time }: { time: string }) => `Synced ${time}`,
-    freshCopiesUnavailable: 'Fresh copies can’t be shown right now.',
+    freshCopiesUnavailable: 'Some Projects couldn’t be read.',
     removeKeepFiles: 'Stop keeping this copy',
     removeWithFiles: 'Also remove its files',
     removeWithFilesDetail: ({ machine }: { machine: string }) => `Deletes the folder on ${machine}.`,

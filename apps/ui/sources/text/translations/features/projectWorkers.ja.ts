@@ -116,7 +116,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     removeFailed: 'このコピーを削除できませんでした。',
     copyLastSynced: ({ time }: { time: string }) => `最終同期 ${time}`,
     copySynced: ({ time }: { time: string }) => `同期 ${time}`,
-    freshCopiesUnavailable: '現在、フレッシュコピーを表示できません。',
+    freshCopiesUnavailable: '一部のプロジェクトを読み取れませんでした。',
     removeKeepFiles: 'このコピーの保持をやめる',
     removeWithFiles: 'ファイルも削除する',
     removeWithFilesDetail: ({ machine }: { machine: string }) => `${machine} 上のフォルダを削除します。`,

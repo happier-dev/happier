@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createPlainSharedMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -51,6 +52,7 @@ const machineHttp = vi.hoisted(() => ({
   read: null as null | (() => Response),
   gate: null as null | Promise<void>,
 }));
+let projectRowsRead: (() => Promise<Response>) | null = null;
 const viewport = vi.hoisted(() => ({ compact: false }));
 // Window size is an environment adapter; every row below it is production code.
 vi.mock('@/utils/platform/useViewportClass', async (importOriginal) => {
@@ -76,6 +78,7 @@ let fixture:
   | Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>
   | undefined;
 afterEach(async () => {
+  projectRowsRead = null;
   machineHttp.read = null;
   machineHttp.gate = null;
   viewport.compact = false;
@@ -133,6 +136,7 @@ async function setup(
   await loadSyncSingletonForTests();
   fixture = await createPlainArtifactHomeFixture('https://machine-work.test', { currentAccount: true,
     handleRequest: async (path, init) => {
+      if (path === '/v1/account/project-rows/list' && projectRowsRead) return projectRowsRead();
       const batch = path === '/v1/machines/read-batch' && init?.method === 'POST';
       if (!machineHttp.read || (path !== '/v1/machines/m1' && !batch)) return null;
       policyReads += 1;
@@ -747,6 +751,50 @@ describe('Machine › Work from your projects through the Machine policy Actions
     expect(screen.findAllByTestId('work.copies.empty').length).toBeGreaterThan(
       0,
     );
+  });
+
+  it('keeps an asleep Machine out of the Project-read failure and retry state', async () => {
+    const { screen } = await setup({ deferMachineDiscovery: true });
+    const scope = storage.getState().profileScope!;
+    const machine = createMachineFixture({ id: 'm1' });
+    await act(async () => {
+      storage.getState().activateProjectAccountRowsScope(scope);
+      storage.getState().setProjectAccountRowsStatusForScope(scope, 'error');
+      storage.getState().applyMachines([{ ...machine, active: false, activeAt: Date.UTC(2026, 10, 18, 12, 18),
+        managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep', asleepWake: 'off' } }]);
+    });
+    const asleep = screen.findAllByTestId('work.copies.asleep')[0];
+    expect(asleep).toBeDefined();
+    expect(asleep?.props.action).toBeUndefined();
+    expect(screen.findAllByTestId('work.copies.unavailable')).toHaveLength(0);
+  });
+
+  it('Check again rereads partial Project rows once and shows the recovered copies', async () => {
+    const { screen } = await setup({ deferMachineDiscovery: true });
+    const { scope } = await seedWorkerCopy();
+    const rows = storage.getState().projectAccountRows!;
+    const body = createPlainProjectAccountRowListFixture({ workspaceRefs: rows.workspaceRefs, relationships: rows.relationships });
+    await act(async () => {
+      storage.getState().applyProjectAccountRowsForScope(scope, { ...rows, coverage: 'partial' });
+    });
+    const unavailable = () => screen.findAllByTestId('work.copies.unavailable')[0]?.props;
+    expect(unavailable()?.action).toBeDefined();
+    let release = () => {};
+    const held = new Promise<void>(resolve => { release = resolve; });
+    projectRowsRead = async () => { await held; return Response.json(body); };
+    const reads = () => fixture!.requests.filter(request => request.path === '/v1/account/project-rows/list').length;
+    const before = reads();
+    try {
+      await act(async () => { screen.pressByTestId('work.copies.unavailable-action'); });
+      await vi.waitFor(() => expect(reads()).toBe(before + 1));
+      expect(screen.findHostByTestId('work.copies.unavailable-action')?.props.accessibilityState).toMatchObject({ busy: true, disabled: true });
+      // A second press while the network read is held cannot start another census.
+      await act(async () => { screen.pressByTestId('work.copies.unavailable-action'); });
+      expect(reads()).toBe(before + 1);
+    } finally { release(); }
+    await act(async () => { await vi.waitFor(() => expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0)); });
+    expect(screen.findAllByTestId('work.copies.unavailable')).toHaveLength(0);
+    expect(reads()).toBe(before + 1);
   });
 
   it('does not claim Fresh-copy emptiness when the current Account/Home row observation is unavailable', async () => {

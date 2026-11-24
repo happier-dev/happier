@@ -116,7 +116,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     removeFailed: 'Diese Kopie konnte nicht entfernt werden.',
     copyLastSynced: ({ time }: { time: string }) => `zuletzt synchronisiert ${time}`,
     copySynced: ({ time }: { time: string }) => `Synchronisiert ${time}`,
-    freshCopiesUnavailable: 'Frische Kopien können gerade nicht angezeigt werden.',
+    freshCopiesUnavailable: 'Einige Projekte konnten nicht gelesen werden.',
     removeKeepFiles: 'Diese Kopie nicht mehr vorhalten',
     removeWithFiles: 'Auch ihre Dateien entfernen',
     removeWithFilesDetail: ({ machine }: { machine: string }) => `Löscht den Ordner auf ${machine}.`,

@@ -116,7 +116,7 @@ export const projectWorkers: ProjectWorkersTranslations = {
     removeFailed: 'No s’ha pogut eliminar aquesta còpia.',
     copyLastSynced: ({ time }: { time: string }) => `última sincronització ${time}`,
     copySynced: ({ time }: { time: string }) => `Sincronitzada ${time}`,
-    freshCopiesUnavailable: 'Ara mateix no es poden mostrar les còpies fresques.',
+    freshCopiesUnavailable: 'No s’han pogut llegir alguns projectes.',
     removeKeepFiles: 'Deixa de mantenir aquesta còpia',
     removeWithFiles: 'Elimina també els seus fitxers',
     removeWithFilesDetail: ({ machine }: { machine: string }) => `Suprimeix la carpeta a ${machine}.`,

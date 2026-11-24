@@ -17,6 +17,9 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { CheckoutReachabilityLine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { Switch } from '@/components/ui/forms/Switch';
+import { useProjectRowsRetry } from '@/components/projects/ProjectOpenResolution';
+import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { describeAsleepAsOf } from '@/components/settings/machines/managed/managedLifecyclePresentation';
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -372,6 +375,8 @@ export function MachineProjectWorkSection(
   const capacityAnchor = React.useRef<View>(null);
   const [capacityOpen, setCapacityOpen] = React.useState(false);
   const freshCopies = useMachineFreshCopies(props.serverId, props.machineId);
+  const retryProjectRows = useProjectRowsRetry();
+  const { nativeState, lastSeenAt } = useMachinePresenceSummary(props.serverId, props.machineId);
   const state = policy.state;
   const value = state.kind === 'ready' ? state.value.policy : null;
   // An unreachable Machine keeps its last-known policy, says so once, and takes no edits it can't receive.
@@ -565,7 +570,14 @@ export function MachineProjectWorkSection(
             onDismiss={() => freshCopies.dismissNotice(notice.relationshipId)}
           />
         ))}
-        {freshCopies.loading ? (
+        {freshCopies.copies === null && nativeState === 'asleep' ? (
+          <SurfaceStateCard
+            testID={`${testID}.copies.asleep`}
+            size="line"
+            kind="empty"
+            title={lastSeenAt == null ? t('managedPower.asleep') : describeAsleepAsOf(lastSeenAt)}
+          />
+        ) : freshCopies.loading ? (
           <SurfaceStateCard
             testID={`${testID}.copies.loading`}
             size="line"
@@ -579,7 +591,7 @@ export function MachineProjectWorkSection(
             size="line"
             kind="unavailable"
             title={t('projectWorkers.freshCopiesUnavailable')}
-            action={{ label: t('projectWorkers.checkAgain'), onPress: freshCopies.refresh }}
+            action={{ label: t('projectWorkers.checkAgain'), onPress: retryProjectRows }}
           />
         ) : freshCopies.copies.length === 0 ? (
           <SurfaceStateCard
