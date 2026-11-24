@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "Выберите URL подключения к базе {database} для учётной записи с доступом только для чтения. Если его нет в списке, сначала добавьте его в раздел «Сохранённые секреты».",
   "plugins.database.readSetup.title": "Настроить доступ только для чтения",
   "plugins.database.readSetup.unknown": "Не удалось проверить результат настройки.",
-  "plugins.database.readSetup.unverifiedServer": "Подключение зашифровано, но подлинность сервера не проверена.",
+  "plugins.database.connection.unverifiedServer": "Подключение зашифровано, но подлинность сервера не проверена.",
   "plugins.database.access.agentsAsk": "Агенты могут читать данные и запрашивают разрешение на запись.",
   "plugins.database.access.agentsOff": "Агенты не могут использовать эту базу данных.",
   "plugins.database.access.agentsRead": "Агенты могут читать данные из этой базы.",

@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "Tria l’URL de connexió d’unes credencials de només lectura per a {database}. Si no apareix a la llista, desa-la primer a «Secrets desats».",
   "plugins.database.readSetup.title": "Configura l’accés de només lectura",
   "plugins.database.readSetup.unknown": "No s’ha pogut verificar el resultat de la configuració.",
-  "plugins.database.readSetup.unverifiedServer": "La connexió està xifrada, però la identitat del servidor no s’ha verificat.",
+  "plugins.database.connection.unverifiedServer": "La connexió està xifrada, però la identitat del servidor no s’ha verificat.",
   "plugins.database.access.agentsAsk": "Els agents poden llegir i demanen permís abans d’escriure.",
   "plugins.database.access.agentsOff": "Els agents no poden utilitzar aquesta base de dades.",
   "plugins.database.access.agentsRead": "Els agents poden llegir aquesta base de dades.",

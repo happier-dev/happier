@@ -1219,9 +1219,10 @@ declaration, with no retry in another mode:
   the provider's `ca`, and the dialed host name. Verified MySQL refuses an IP
   literal host, because mysql2 3.24.6 checks identity only for a DNS name.
 - `encrypted_unverified` requires TLS but authenticates neither chain nor name.
-  A plaintext-only server is refused. Both setup results then carry
-  `endpointTrust: 'encrypted_unverified'`, and the Workbench review says the
-  connection is encrypted but the server's identity isn't verified. A network
+  A plaintext-only server is refused. Read setup results and the connected
+  database descriptor carry `endpointTrust: 'encrypted_unverified'`. Workbench
+  shows the same notice when you review a read-only login or staged writes.
+  A network
   attacker between the controller and the endpoint could impersonate the server
   and capture the login.
 

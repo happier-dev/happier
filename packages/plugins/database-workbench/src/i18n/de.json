@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "Wähle die Verbindungs-URL für einen Nur-Lese-Zugang zu {database}. Falls sie in der Liste fehlt, speichere sie zuerst unter „Gespeicherte Geheimnisse“.",
   "plugins.database.readSetup.title": "Lesezugriff einrichten",
   "plugins.database.readSetup.unknown": "Das Ergebnis der Einrichtung konnte nicht überprüft werden.",
-  "plugins.database.readSetup.unverifiedServer": "Die Verbindung ist verschlüsselt, aber die Identität des Servers wurde nicht überprüft.",
+  "plugins.database.connection.unverifiedServer": "Die Verbindung ist verschlüsselt, aber die Identität des Servers wurde nicht überprüft.",
   "plugins.database.access.agentsAsk": "Agents dürfen lesen und fragen vor dem Schreiben nach.",
   "plugins.database.access.agentsOff": "Agents können diese Datenbank nicht verwenden.",
   "plugins.database.access.agentsRead": "Agents dürfen diese Datenbank lesen.",

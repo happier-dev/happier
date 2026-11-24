@@ -11,6 +11,7 @@ import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui'
 import { Action, Button, CodeBlock, ErrorState, PageHeader, ScrollArea, Stack, SurfaceState, Text, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier-dev/plugin-ui/components';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, useExecutePluginAction } from '@happier-dev/plugin-ui/hostApi';
+import { translateUnverifiedServerNotice } from './connectionCopy.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
 const createAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
@@ -72,7 +73,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
         ? t('plugins.database.readSetup.savedSecret', 'Choose the connection URL for a read-only login to {database}. If it isn’t listed, save it in Saved Secrets first.', { database: target.database })
         : t('plugins.database.readSetup.reviewDescription', 'These statements will create {role} and grant it read access to {database}.', { role: review?.role ?? '', database: target.database })} />
     {!attaching && review?.endpointTrust === 'encrypted_unverified'
-      ? <Text tone="secondary" value={t('plugins.database.readSetup.unverifiedServer', 'The connection is encrypted, but the server’s identity isn’t verified.')} />
+      ? <Text tone="secondary" value={translateUnverifiedServerNotice(t)} />
       : null}
     {attaching
       ? <SavedSecretChoiceList testIDPrefix="database-read-access-secret" selectedRef={secret?.ref ?? null}

@@ -21,6 +21,7 @@ import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import { useWorkbenchDraft, useWorkbenchInstance } from '../hooks.js';
 import type { WorkbenchApplyOutcome, WorkbenchReview } from '../models.js';
 import { presentCell } from './cells.js';
+import { translateUnverifiedServerNotice } from './connectionCopy.js';
 import { formatMoment } from './insights/format.js';
 
 function countLine(
@@ -327,6 +328,9 @@ export function StagedReview(
       ) : null}
       {target && (refusal === 'write_role_setup_required' || refusal === 'write_connection_setup_required')
         ? host?.renderWriteSetup?.({ target, code: refusal }) : null}
+      {descriptor.endpointTrust === 'encrypted_unverified'
+        ? <Text tone="secondary" value={translateUnverifiedServerNotice(translate)} />
+        : null}
       <ModalCardFooterActions cancel={{ onPress: props.onClose }}>
         <Action.Control
           {...apply}

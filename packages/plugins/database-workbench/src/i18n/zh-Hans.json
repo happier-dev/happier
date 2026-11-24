@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "请选择用于以只读账号登录 {database} 的连接 URL。如果列表中没有该 URL，请先将其保存到「已保存的密钥」。",
   "plugins.database.readSetup.title": "设置只读访问",
   "plugins.database.readSetup.unknown": "无法验证设置结果。",
-  "plugins.database.readSetup.unverifiedServer": "连接已加密，但服务器身份未经验证。",
+  "plugins.database.connection.unverifiedServer": "连接已加密，但服务器身份未经验证。",
   "plugins.database.access.agentsAsk": "代理可以读取数据，写入前会征求批准。",
   "plugins.database.access.agentsOff": "代理无法使用此数据库。",
   "plugins.database.access.agentsRead": "代理可以读取此数据库。",

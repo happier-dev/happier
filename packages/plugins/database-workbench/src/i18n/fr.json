@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "Choisissez l’URL de connexion d’un compte en lecture seule pour {database}. Si elle ne figure pas dans la liste, enregistrez-la d’abord dans « Secrets enregistrés ».",
   "plugins.database.readSetup.title": "Configurer l’accès en lecture seule",
   "plugins.database.readSetup.unknown": "Impossible de vérifier le résultat de la configuration.",
-  "plugins.database.readSetup.unverifiedServer": "La connexion est chiffrée, mais l’identité du serveur n’a pas été vérifiée.",
+  "plugins.database.connection.unverifiedServer": "La connexion est chiffrée, mais l’identité du serveur n’a pas été vérifiée.",
   "plugins.database.access.agentsAsk": "Les agents peuvent lire et demandent votre accord avant d’écrire.",
   "plugins.database.access.agentsOff": "Les agents ne peuvent pas utiliser cette base de données.",
   "plugins.database.access.agentsRead": "Les agents peuvent lire cette base de données.",

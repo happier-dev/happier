@@ -497,8 +497,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 // A declared endpoint owns how this database is reached, for reads and writes alike.
                 const resolved = (operation === 'read' || operation === 'write') && bound.runtime.readRoleEndpoint
                     ? await (operation === 'read' ? bindReadAccess(admitted, bound).openRead()
-                        : bindReadAccess(admitted, bound).openWrite()).then(connection => ({ connection, descriptor: {
-                        target, engine: connection.engine, label: target.database, origin: admission.origin,
+                        : bindReadAccess(admitted, bound).openWrite()).then(({ connection, reported }) => ({ connection, descriptor: {
+                        target, engine: connection.engine, label: target.database, origin: admission.origin, ...reported,
                         capabilities: builtinDatabaseCapabilities(connection.engine), access: summary, placement: bound.placement,
                     } }))
                     : await bound.runtime.open({ preparation: bound.preparation, target, access: operation,

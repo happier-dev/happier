@@ -43,7 +43,7 @@
   "plugins.database.readSetup.savedSecret": "Elige la URL de conexión de un usuario de solo lectura para {database}. Si no aparece en la lista, guárdala primero en «Secretos guardados».",
   "plugins.database.readSetup.title": "Configurar el acceso de solo lectura",
   "plugins.database.readSetup.unknown": "No se pudo verificar el resultado de la configuración.",
-  "plugins.database.readSetup.unverifiedServer": "La conexión está cifrada, pero no se ha verificado la identidad del servidor.",
+  "plugins.database.connection.unverifiedServer": "La conexión está cifrada, pero no se ha verificado la identidad del servidor.",
   "plugins.database.access.agentsAsk": "Los agentes pueden leer y piden permiso antes de escribir.",
   "plugins.database.access.agentsOff": "Los agentes no pueden usar esta base de datos.",
   "plugins.database.access.agentsRead": "Los agentes pueden leer esta base de datos.",

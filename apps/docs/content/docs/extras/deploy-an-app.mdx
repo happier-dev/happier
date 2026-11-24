@@ -104,9 +104,9 @@ through Railway's public TCP proxy and asks for a read-only login: attach an
 existing one from Saved Secrets, or review and create one with the database's
 write login. The connection is always encrypted. Railway's database templates
 use certificates from their own private authority that don't name the public
-proxy, so Happier can't verify the server's identity, and Workbench says so
-when you review the login. Live validation of the Railway deployment and
-database journeys remains pending.
+proxy, so Happier can't verify the server's identity. Workbench tells you this
+when you review a read-only login or review staged changes before applying them.
+Live validation of the Railway deployment and database journeys remains pending.
 
 ## What you need
 

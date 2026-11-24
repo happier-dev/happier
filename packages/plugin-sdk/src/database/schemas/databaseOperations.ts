@@ -116,6 +116,8 @@ export const DatabaseDescriptorV1Schema = z.strictObject({
     target: DatabaseTargetV1Schema, label: z.string(), engine: DatabaseEngineIdV1Schema,
     /** Connection owner projects only the public host and explicit port, never credentials or URL options. */
     endpointLabel: z.optional(z.string().check(z.minLength(1))),
+    /** The managed connection owner reports when TLS cannot verify the server's identity. */
+    endpointTrust: z.optional(z.literal('encrypted_unverified')),
     origin: z.strictObject({ label: z.string(), environment: z.optional(z.enum(['development', 'preview', 'production'])) }),
     capabilities: z.array(DatabaseCapabilityV1Schema),
     access: z.optional(DatabaseAccessSummaryV1Schema),

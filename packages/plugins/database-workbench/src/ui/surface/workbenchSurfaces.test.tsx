@@ -89,8 +89,8 @@ const invoices = { schema: 'public', name: 'invoices' };
 const savedDatabasePath = `target/${encodeBase64(new TextEncoder().encode(createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(descriptor.target))), 'base64url')}`;
 
 /** The mounted Resource transport supplies the selected connection's admitted snapshot. */
-function connectionResourceHandlers() {
-  const text = JSON.stringify({ descriptor, ownWriteRevision: 0, relationRevisions: [] });
+function connectionResourceHandlers(connected = descriptor) {
+  const text = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
   const digest = `sha256:${computeSha256HexDigest(text)}`;
   return {
     readResource: async () => ({ contentType: 'application/json', digest, bytes: new TextEncoder().encode(text) }),
@@ -793,15 +793,22 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it('stages a new row for review without executing a database write', async () => {
-    const executeAction = daemonAnswers([descriptor], true);
+  it.each([
+    { provider: 'Railway', trust: { endpointTrust: 'encrypted_unverified' as const }, showsNotice: true },
+    { provider: 'Neon', trust: {}, showsNotice: false },
+  ])('reviews staged changes for $provider without executing a database write', async ({ provider, trust, showsNotice }) => {
+    const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
+      targetLinkId: 'link', database: 'billing_dev', contribution: { pluginId: `fixture.${provider.toLowerCase()}`, contributionId: 'postgres' },
+      platformProjectId: 'project', branchId: 'branch' } as const;
+    const connected = { ...descriptor, target, origin: { label: provider }, ...trust };
+    const executeAction = daemonAnswers([connected], true);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'insert-row', mountNonce: 'insert-row' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
-      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor: connected }), subPath: 'data/public/invoices',
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
-      handlers: { ...connectionResourceHandlers(), executeAction },
+      handlers: { ...connectionResourceHandlers(connected), executeAction },
     });
     try {
       await settle(20);
@@ -812,6 +819,9 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       expect(await fixture.getByText('New row')).toBeTruthy();
       expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
+      const notice = 'The connection is encrypted, but the server’s identity isn’t verified.';
+      if (showsNotice) expect(await fixture.getByText(notice)).toBeTruthy();
+      else expect(await fixture.queryByText(notice)).toBeUndefined();
       expect(executeAction).not.toHaveBeenCalled();
     } finally { await fixture.dispose(); }
   });

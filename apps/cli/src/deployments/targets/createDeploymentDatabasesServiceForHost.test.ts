@@ -287,6 +287,7 @@ describe('managed database attachment at the deployment owner', () => {
             const writable = await service.resolve(write, 'write');
             try {
                 expect(writable.descriptor.access).toMatchObject({ canWrite: true });
+                expect(writable.descriptor).not.toHaveProperty('endpointTrust');
                 await expect(writable.connection.execute(write)).resolves.toMatchObject({ ok: true,
                     results: [{ affectedRows: '1' }] });
             } finally { await writable.connection.close(); }
@@ -313,6 +314,11 @@ describe('managed database attachment at the deployment owner', () => {
                     expect.stringContaining('ACCOUNT UNLOCK')] });
             expect(JSON.stringify(preview)).not.toContain('writer:fixture');
 
+            const verified = await service.resolve(write, 'write');
+            try {
+                expect(verified.descriptor).not.toHaveProperty('endpointTrust');
+            } finally { await verified.connection.close(); }
+
             // Workbench writes reach the same declared endpoint as reads: TLS is mandatory and the
             // provider's unverified trust is honoured; the person's URL options cannot turn it off.
             runtime.readRoleEndpoint = vi.fn(async () => ({ connectionString: `mysql://selected/${target.database}`,
@@ -320,6 +326,7 @@ describe('managed database attachment at the deployment owner', () => {
             writeUrl = `mysql://writer:fixture@selected:3306/${target.database}?ssl=false&sslmode=DISABLED`;
             const encrypted = await service.resolve(write, 'write');
             try {
+                expect(encrypted.descriptor).toMatchObject({ endpointTrust: 'encrypted_unverified' });
                 await expect(encrypted.connection.execute(write)).resolves.toMatchObject({ ok: true });
             } finally { await encrypted.connection.close(); }
             expect(createConnection.mock.calls.at(-1)?.[0]).toMatchObject({ uri: `mysql://writer:fixture@selected/${target.database}`,

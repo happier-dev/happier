@@ -96,17 +96,18 @@ export function createManagedReadAccessForHost(ports: Ports) {
     };
 
     return {
-        async openRead(): Promise<Connection> {
+        async openRead() {
             const login = await ports.readBinding('readOnlyPassword');
             if (!login) return refuse('read_role_setup_required');
-            return await checked(await readEndpoint(), login);
+            const selected = await readEndpoint();
+            return { connection: await checked(selected, login), reported: selected.reported };
         },
         /** Workbench writes reach the same declared endpoint and trust; only the login's credentials are used. */
-        async openWrite(): Promise<Connection> {
+        async openWrite() {
             const selected = await readEndpoint();
             const login = await ports.readBinding('write');
             if (!login) return refuse('write_connection_setup_required');
-            return await open(selected, login, 'write');
+            return { connection: await open(selected, login, 'write'), reported: selected.reported };
         },
         async attach(secret: Secret): Promise<Configured> {
             const selected = await readEndpoint();
