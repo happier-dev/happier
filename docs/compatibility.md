@@ -10556,6 +10556,12 @@ selected observation as the baseline. Explicit baselines preserve the
 existing request semantics. A client that omits the baseline requires the
 matching bundled declaration and daemon from 0.3 development source.
 
+The unreleased 0.3 Database finding brief build Action also accepts an
+`add_telemetry` task with an exact Environment and collector Machine. This
+strict input supplies Session evidence for the setup brief. The existing
+worktree task remains available. Use matching bundled declarations and daemon
+source for the Environment task.
+
 In unreleased 0.3, the selected capture trace result may include committed
 findings. Each finding retains the emitting Machine, observation window,
 coverage, and the typed capture trace and trace-list inputs for verification.

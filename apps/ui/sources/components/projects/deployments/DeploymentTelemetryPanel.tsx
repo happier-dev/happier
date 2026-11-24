@@ -296,6 +296,16 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const canAddCheck = environment.capabilities.role === 'manager' && lifetime !== null;
   const endpointDemand = active && tab === 'endpoints' ? reads : null;
   const { openBrief } = useDeploymentTelemetryBrief(lifetime, endpointDemand);
+  const setupDemand = active && environment.capabilities.manageBindings ? environment : null;
+  const { openingBrief: openingSetup, openBrief: openSetup } = useDeploymentTelemetryBrief(lifetime, setupDemand);
+  const addTelemetry = setupDemand && lifetime ? () => {
+    const { serverId } = lifetime.scope;
+    void openSetup(() => ({
+      kind: 'add_telemetry',
+      environment: { serverId, projectSourceId: setupDemand.projectSourceId, environmentId: setupDemand.id },
+      sourceScope: { serverId, machineId: collectorId },
+    }));
+  } : null;
   const readAt = state.readAt;
   const windowMs = WINDOW_MS[windowId];
   const endpointActions = React.useMemo<readonly CaptureEndpointAction[]>(() => [
@@ -400,8 +410,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
               { id: 'week', label: t('deploymentTelemetry.window.week') }]}
             onSelectTab={(id) => { setWindowId(id); setOpenTrace(null); }}
           />
-          {props.onOpenSettings || clear
-            ? <TelemetryMenu onOpenSettings={props.onOpenSettings} onClear={clear} /> : null}
+          {props.onOpenSettings || addTelemetry || clear
+            ? <TelemetryMenu onOpenSettings={props.onOpenSettings} onAddTelemetry={addTelemetry}
+                openingSetup={openingSetup} onClear={clear} /> : null}
         </View>
       </View>
       </View>
@@ -436,8 +447,10 @@ function DeploymentTelemetryTabs(props: Readonly<{
   );
 }
 
-function TelemetryMenu({ onOpenSettings, onClear }: Readonly<{
+function TelemetryMenu({ onOpenSettings, onAddTelemetry, openingSetup, onClear }: Readonly<{
   onOpenSettings: (() => void) | null;
+  onAddTelemetry: (() => void) | null;
+  openingSetup: boolean;
   onClear: (() => Promise<void>) | null;
 }>) {
   const [open, setOpen] = React.useState(false);
@@ -445,6 +458,8 @@ function TelemetryMenu({ onOpenSettings, onClear }: Readonly<{
   const items = [
     ...(onOpenSettings ? [{ id: 'settings', testID: 'project-deployments.telemetry.menu.settings',
       title: t('deploymentTelemetry.menu.settings') }] : []),
+    ...(onAddTelemetry ? [{ id: 'add-telemetry', testID: 'project-deployments.telemetry.menu.add-telemetry',
+      title: t('deploymentTelemetry.menu.addTelemetry'), disabled: openingSetup }] : []),
     ...(onClear ? [{ id: 'clear', testID: 'project-deployments.telemetry.menu.clear',
       title: t('deploymentTelemetry.menu.clear'), destructive: true, disabled: clearing }] : []),
   ];
@@ -459,6 +474,7 @@ function TelemetryMenu({ onOpenSettings, onClear }: Readonly<{
       onSelect={id => {
         setOpen(false);
         if (id === 'settings') onOpenSettings?.();
+        if (id === 'add-telemetry') onAddTelemetry?.();
         if (id === 'clear' && onClear && !clearing) {
           setClearing(true);
           void onClear().finally(() => setClearing(false));

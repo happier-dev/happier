@@ -141,6 +141,11 @@ export const DatabaseTaskEvidenceV1Schema = z.union([
         repositoryObservation: z.optional(asProtocolZod(projectZodProtocolSchema(ProjectRepositoryObservationV1Schema))),
     }),
     z.strictObject({
+        kind: z.literal('add_telemetry'),
+        environment: DeploymentEnvironmentRefV1Schema,
+        sourceScope: MachineTargetV1Schema,
+    }),
+    z.strictObject({
         kind: z.literal('enable_pg_stat_statements'),
         target: DatabaseTargetV1Schema, sourceScope: MachineTargetV1Schema,
         engineId: z.literal('postgresql'),

@@ -387,7 +387,7 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it.each(['request', 'endpoint'] as const)('opens an editable Session draft with the selected %s and verification reads', async (feature) => {
+  it.each(['request', 'endpoint', 'setup'] as const)('opens an editable Session draft with the selected %s and verification reads', async (feature) => {
     await prepareSessionDraftPersistenceStorage();
     const homes = createHomeGovernanceHarness();
     installHomeGovernanceBoundaries(homes);
@@ -418,7 +418,8 @@ describe('Environment Telemetry tabs', () => {
         },
       } };
     });
-    const screen = await renderScreen(panel(invoke, setUpDetail('reader'), { lifetime: { ...lifetime, scope } }));
+    const detail = setUpDetail(feature === 'setup' ? 'manager' : 'reader');
+    const screen = await renderScreen(panel(invoke, detail, { lifetime: { ...lifetime, scope } }));
     try {
       await settle();
       if (feature === 'request') {
@@ -428,6 +429,12 @@ describe('Environment Telemetry tabs', () => {
         await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
         await settle();
         await screen.pressByTestIdAsync('project-deployments.telemetry.request.investigate');
+      } else if (feature === 'setup') {
+        await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
+        await waitForHomeGovernance(() => {
+          expect(screen.findByTestId('project-deployments.telemetry.menu.add-telemetry')).not.toBeNull();
+        });
+        await screen.pressByTestIdAsync('project-deployments.telemetry.menu.add-telemetry');
       } else {
         await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
         const menu = screen.findAll(node => node.props.triggerAccessibilityLabel === 'Actions for POST /checkout'
@@ -457,10 +464,19 @@ describe('Environment Telemetry tabs', () => {
         return params.draftId;
       });
       const draft = readNewSessionDraftFromRepository({ scope, draftId });
-      expect(draft?.input).toContain(feature === 'request' ? 'Endpoint request failed' : 'Endpoint latency');
       const evidence = JSON.stringify(draft?.composerAttachmentSeeds);
-      expect(evidence).toContain(feature === 'request' ? 'retained-request-failure' : 'retained-endpoint-latency');
-      expect(evidence).toContain(feature === 'request' ? 'happier.telemetry/actions/capture/trace/get' : DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1);
+      if (feature === 'setup') {
+        expect(draft?.input).toContain('same-origin');
+        expect(draft?.input).toContain('Environment');
+        expect(evidence).toContain(JSON.stringify({
+          serverId, projectSourceId: detail.environment.projectSourceId, environmentId: 'production',
+        }).replaceAll('"', '\\"'));
+        expect(evidence).toContain('browserSetup');
+      } else {
+        expect(draft?.input).toContain(feature === 'request' ? 'Endpoint request failed' : 'Endpoint latency');
+        expect(evidence).toContain(feature === 'request' ? 'retained-request-failure' : 'retained-endpoint-latency');
+        expect(evidence).toContain(feature === 'request' ? 'happier.telemetry/actions/capture/trace/get' : DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1);
+      }
     } finally {
       await screen.unmount();
       confirm.mockRestore();

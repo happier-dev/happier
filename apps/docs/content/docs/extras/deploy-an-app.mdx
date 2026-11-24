@@ -292,9 +292,11 @@ collector and check which version emitted it.
 ### Verify browser exception capture
 
 Select **Exceptions** in the Environment's telemetry setup and redeploy so the
-app receives its collector configuration. In Database Workbench, the **Add
-telemetry to this app** agent brief includes code for browser errors and
-unhandled promise rejections.
+app receives its collector configuration. In 0.3 development builds, open the
+Environment's **Telemetry** tab, then choose **Add telemetry to this app** from
+the more menu. The editable Session brief includes code for browser errors and
+unhandled promise rejections. Database Workbench offers the same setup brief
+for a selected worktree.
 Adapt it to your framework and route reports through your app's own server or
 edge endpoint. Keep the collector credential in the server-side configuration.
 A static-only app needs a server or edge endpoint, or an existing error

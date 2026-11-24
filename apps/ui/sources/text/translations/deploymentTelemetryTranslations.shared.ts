@@ -29,7 +29,7 @@ export type Copy = Readonly<{
     queries: string;
   }>;
   window: Readonly<{ label: string; hour: string; day: string; week: string }>;
-  menu: Readonly<{ settings: string; clear: string; clearFailed: string }>;
+  menu: Readonly<{ settings: string; addTelemetry: string; clear: string; clearFailed: string }>;
   offline: Readonly<{
     title: (p: MachineName) => string;
     reason: string;
@@ -133,7 +133,7 @@ const en: Copy = {
     queries: 'Queries',
   },
   window: { label: 'Time window', hour: '1 h', day: '24 h', week: '7 d' },
-  menu: { settings: 'Telemetry settings…', clear: 'Clear capture…', clearFailed: 'Capture could not be cleared.' },
+  menu: { settings: 'Telemetry settings…', addTelemetry: 'Add telemetry to this app', clear: 'Clear capture…', clearFailed: 'Capture could not be cleared.' },
   offline: {
     title: ({ machine }) => `${machine} isn’t answering`,
     reason: 'your app keeps running; this is what Happier last read',
