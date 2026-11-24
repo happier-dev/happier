@@ -51,7 +51,6 @@ import { resolveResourceProposalLabels } from '@/components/approvals/resourcePr
 import { useResourceProposalCheck } from '@/components/approvals/resourceProposal/useResourceProposalCheck';
 import { CapabilityEnableApproval } from '@/components/sessions/capabilities/CapabilityEnableApproval';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { ToolOutcomeStatus } from '../presentation/ToolOutcomeStatus';
 import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
 import { useApprovalAccountLabel, useApprovalRequesterViewer } from '@/components/approvals/ApprovalRequesterConfirmationSection';
@@ -255,8 +254,6 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
     const [recordedArtifactId, setRecordedArtifactId] = React.useState<string | null>(null);
     const decisionRecorded = recordedArtifactId === props.artifact.id;
     const chrome = props.chrome ?? 'card';
-    // On a phone the composer's inline prompt keeps its decision in view: the arguments wait behind Details.
-    const phone = useDeviceType() === 'phone';
     const actionTitle = React.useMemo(() => resolveApprovalActionTitle(props.approval), [props.approval]);
     const previewSummary = React.useMemo(() => getPreviewSummary(props.approval.preview), [props.approval.preview]);
     const bindingChoice = useEnvironmentBindingApprovalChoice({ artifactId: props.artifact.id, approval: props.approval,
@@ -602,8 +599,8 @@ const BuiltInApprovalPromptCard = React.memo(function BuiltInApprovalPromptCard(
                     <ActionApprovalFieldsCard presentation={actionFields} request={props.approval} serverId={approvalHome.serverId}
                         failureTechnicalDetails={failureOutcome?.technicalDetails}
                         outputText={toolOutput}
-                        // Only a prompt waiting on a decision keeps its arguments behind Details so the decision stays in view.
-                        collapsed={failureOutcome !== null || draftAnswer !== null || (chrome === 'inline' && phone && props.approval.status === 'open')} />
+                        // A prompt waiting on a decision shows its first fact and keeps the rest behind Details, at every width.
+                        collapsed={failureOutcome !== null || draftAnswer !== null || (chrome === 'inline' && props.approval.status === 'open')} />
                 </ItemGroupRowPositionBoundary>
             ) : null}
             {/* A specialized body keeps the same failure facts when it replaces the generic fields card. */}

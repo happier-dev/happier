@@ -769,12 +769,17 @@ it('reads the approval\u2019s own Home and Account when the request carries the 
     expect(text).toContain('Your account');
 });
 
-it('keeps a collapsed card to its Details line until the person opens it', async () => {
+it('shows a folded card\'s first fact, keeping only the remaining facts behind Details until the person opens it', async () => {
+    // UI refinements ruling 2026-11-24 10:38Z: a person sees what they approve before Approve is in reach, at every
+    // width: the first fact (the deciding value) stands above the fold; Details folds the rest.
     const presentation = describeApprovalActionFields({ actionId: 'browser.view.open', actionArgs: {
         commandId: 'cmd-1', browserSessionId: 'browser-session-1', viewId: 'view-1', kind: 'openView', platform: 'web', focus: true,
         target: { targetId: 'target-1', kind: 'externalUrl', url: 'http://127.0.0.1:4000' } } });
+    const first = presentation.rows.find(row => row.kind === 'value' && !row.technical);
+    expect(first?.kind === 'value' ? first.title : null).toBeTruthy();
     const screen = await renderScreen(<ActionApprovalFieldsCard collapsed presentation={presentation} />);
     expect(screen.getTextContent()).toContain(t('approvals.details'));
+    expect(screen.getTextContent()).toContain(first?.kind === 'value' ? first.title : '');
     expect(screen.getTextContent()).not.toContain('http://127.0.0.1:4000');
     const disclosure = screen.findAllByTestId('approvals.details-disclosure').find(node => typeof node.props.onExpandedChange === 'function');
     await act(async () => { disclosure?.props.onExpandedChange(true); });

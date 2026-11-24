@@ -248,10 +248,13 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
     }
 
     if (props.collapsed) {
-        // Inside the prompt card the arguments wait behind one quiet "Details" line, not a second card.
+        // Inside the prompt card the first fact (the deciding value) always reads, at every width, so a person sees
+        // what they approve before Approve is in reach; the remaining facts wait behind one quiet "Details" line.
+        const [firstRow, ...remainingRows] = cardRows;
         return (
-            <View>
-                <ExpandableItem
+            <View style={styles.foldedFacts}>
+                {firstRow ? <HappierApprovalFields {...look} testID="approvals.first-fact" anatomy="stack" rows={[firstRow]} /> : null}
+                {remainingRows.length > 0 || technicalDetails ? <ExpandableItem
                     testID="approvals.details-disclosure"
                     expanded={detailsOpen}
                     onExpandedChange={setDetailsOpen}
@@ -269,9 +272,9 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: A
                     )}
                 >
                     <View style={styles.disclosureBody}>
-                        <HappierApprovalFields {...look} anatomy="stack" rows={cardRows} footer={technicalDetails} />
+                        <HappierApprovalFields {...look} anatomy="stack" rows={remainingRows} footer={technicalDetails} />
                     </View>
-                </ExpandableItem>
+                </ExpandableItem> : null}
             </View>
         );
     }
@@ -575,6 +578,9 @@ export function ApprovalTechnicalDetails(props: Readonly<{ lines: readonly Appro
 }
 
 const styles = StyleSheet.create((theme) => ({
+    foldedFacts: {
+        gap: theme.space.s8,
+    },
     disclosureBody: {
         paddingTop: theme.space.s8,
     },
