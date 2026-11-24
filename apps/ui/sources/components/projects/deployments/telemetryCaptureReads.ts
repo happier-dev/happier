@@ -24,6 +24,7 @@ import {
   type DatabaseCaptureSummaryV1,
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -99,6 +100,11 @@ function settle<T extends { ok: boolean }>(
   return data as Extract<T, { ok: true }>;
 }
 
+/** Turn on/off settles, or the person's approval policy holds it as an approval request. */
+export type TelemetryCaptureConfigureOutcome =
+  | Readonly<{ kind: 'configured'; enabled: boolean }>
+  | Readonly<{ kind: 'approval_pending'; artifactId: string }>;
+
 export type TelemetryCaptureList = 'endpoints' | 'traces' | 'logs' | 'queries';
 export type TelemetryCapturePage<Item, Cursor> = Readonly<{
   items: readonly Item[];
@@ -159,13 +165,14 @@ export function createTelemetryCaptureReads(
       ));
     },
     /** A worktree's Project Capture switch on its Machine (P5 Q3); the person's press is the confirmation. */
-    async configure(enabled: boolean) {
+    async configure(enabled: boolean): Promise<TelemetryCaptureConfigureOutcome> {
       if (!environment.worktree) throw new HappyError('telemetry_unavailable', false, { code: 'telemetry_unavailable' });
       const project = { serverId: environment.scope.serverId, machineId: environment.collectorMachineId,
         projectId: environment.worktree.projectId };
-      return settle(DatabaseCaptureConfigureResultV1Schema.safeParse(
-        await call(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled }),
-      ));
+      const result = await call(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, { project, enabled });
+      const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+      if (approval.success) return { kind: 'approval_pending', artifactId: approval.data.artifactId };
+      return { kind: 'configured', enabled: settle(DatabaseCaptureConfigureResultV1Schema.safeParse(result)).enabled };
     },
     async status(signal?: AbortSignal) {
       return settle(

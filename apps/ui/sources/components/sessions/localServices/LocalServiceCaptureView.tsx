@@ -10,6 +10,8 @@ import {
   CaptureLogs,
   CaptureTraces,
 } from '@happier-dev/plugins-telemetry/capture-views';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -26,7 +28,10 @@ import {
   telemetryCaptureFailureCode,
   type TelemetryCaptureReads,
 } from '@/components/projects/deployments/telemetryCaptureReads';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import {
+  serverAccountScopeKeySuffix,
+  type ServerAccountScopeLifetime,
+} from '@/sync/domains/scope/serverAccountScope';
 import { getPreferredLanguage, t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
@@ -137,13 +142,23 @@ export function LocalServiceCaptureView(
         : Promise.reject(new Error('telemetry_unavailable')),
     [active, reads],
   );
+  // A held Turn on is the person's approval request: the shared approval owner shows it and re-reads once it runs.
+  const approval = useActionApprovalContinuation({
+    scopeKey: lifetime ? serverAccountScopeKeySuffix(lifetime.scope) : '',
+    serverId: lifetime?.scope.serverId ?? '',
+    onExecuted: retry,
+  });
+  const { requestApproval } = approval;
   const [turningOn, setTurningOn] = React.useState(false);
   const turnOn = React.useCallback(async () => {
     if (!reads || turningOn) return;
     setTurningOn(true);
     try {
-      await reads.configure(true);
-      if (lifetime?.isCurrent()) retry();
+      const outcome = await reads.configure(true);
+      if (!lifetime?.isCurrent()) return;
+      if (outcome.kind === 'approval_pending')
+        requestApproval(outcome.artifactId);
+      else retry();
     } catch (error) {
       if (lifetime?.isCurrent())
         alertActionFailure({
@@ -153,7 +168,7 @@ export function LocalServiceCaptureView(
     } finally {
       setTurningOn(false);
     }
-  }, [lifetime, reads, retry, turningOn]);
+  }, [lifetime, reads, requestApproval, retry, turningOn]);
 
   const coverageReason =
     status?.kind === 'ready' ? status.status.coverage.reason : null;
@@ -199,13 +214,17 @@ export function LocalServiceCaptureView(
         scene="nothingListening"
         title={t('deploymentTelemetry.local.offTitle')}
         reason={t('deploymentTelemetry.local.offBody')}
-        action={{
-          label: t('deploymentTelemetry.local.turnOn'),
-          onPress: () => {
-            void turnOn();
-          },
-          testID: `${testID}-turn-on`,
-        }}
+        {...(approval.approvalPending
+          ? {}
+          : {
+              action: {
+                label: t('deploymentTelemetry.local.turnOn'),
+                onPress: () => {
+                  void turnOn();
+                },
+                testID: `${testID}-turn-on`,
+              },
+            })}
       />
     ) : failed && data === null ? (
       <SurfaceStateCard
@@ -276,6 +295,15 @@ export function LocalServiceCaptureView(
 
   return (
     <View style={styles.root} testID={testID}>
+      {approval.approvalPending ? (
+        <ActionApprovalPendingNotice
+          testID={`${testID}-approval`}
+          presentation="banner"
+          message={t('approvals.waitingForYou')}
+          summary={approval.approvalSummary}
+          onOpenApproval={approval.openApproval}
+        />
+      ) : null}
       <View style={styles.lines}>
         {restartRequired ? (
           <SurfaceFreshnessLine

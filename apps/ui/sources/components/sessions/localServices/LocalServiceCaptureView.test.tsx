@@ -175,4 +175,31 @@ describe('LocalServiceCaptureView', () => {
       screen.unmount();
     }
   });
+
+  it('shows Turn on capture waiting for approval, not a failure, when the policy holds it', async () => {
+    const { invoke } = machine((call) => {
+      if (call.actionId.endsWith('/capture/configure'))
+        return {
+          kind: 'approval_request_created',
+          artifactId: 'approval-capture-1',
+          actionId: 'happier.telemetry/actions/capture/configure',
+        };
+      if (call.actionId.endsWith('/capture/status'))
+        return { ok: true, source, coverage, enabled: false };
+      return { ok: true, source, items: [] };
+    });
+    modal.spies.alert.mockClear();
+    const screen = await renderScreen(view(invoke, 'logs'));
+    await settle();
+    try {
+      await screen.pressByTestIdAsync('capture-turn-on');
+      await settle();
+      expect(modal.spies.alert).not.toHaveBeenCalled();
+      expect(screen.findByTestId('capture-approval')).not.toBeNull();
+      // Nothing changed yet: the Project switch is still off until the approval runs.
+      expect(screen.findByTestId('capture-off')).not.toBeNull();
+    } finally {
+      screen.unmount();
+    }
+  });
 });
