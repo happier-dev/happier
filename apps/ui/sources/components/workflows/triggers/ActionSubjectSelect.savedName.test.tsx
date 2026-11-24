@@ -189,8 +189,8 @@ describe('A reopened Action trigger names its saved resource', () => {
       account.dispose();
     }
     const root = '/v1/deployments/environments';
-    homes.answer(serverId, `${root}/production`, {
-      body: { ok: true, environment: detail.environment, targetLinks: [] },
+    homes.answer(serverId, root, {
+      body: { ok: true, items: [detail.environment], nextCursor: null },
     });
 
     const screen = await renderScreen(
@@ -210,10 +210,10 @@ describe('A reopened Action trigger names its saved resource', () => {
     await vi.waitFor(() =>
       expect(screen.getTextContent()).toContain('Production'),
     );
-    // One exact selection read: never the Environment list.
-    expect(
-      homes.requests.filter((request) => request.path.split('?')[0] === root),
-    ).toHaveLength(0);
+    const environmentReads = homes.requests.filter((request) => request.path.startsWith(root));
+    expect(environmentReads.map(({ path }) => path.split('?')[0])).toEqual([root]);
+    const query = environmentReads[0]?.path.split('?')[1];
+    expect(new URLSearchParams(query).getAll('environmentIds')).toEqual([detail.environment.id]);
     await screen.unmount();
   });
 });

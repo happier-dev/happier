@@ -165,16 +165,14 @@ it('keeps the desktop page tabs still while the page around them re-renders for 
     await screen.unmount();
 });
 
-it('offers the authoring agent as the editor\'s one companion; settings are a popover, never a sidebar (owner 2026-11-15)', async () => {
+it('offers Live Events independently of the authoring agent and keeps both companions in phone More', () => {
     const all = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor', agentAvailable: true });
-    // Steps is the page; Flow is both a page and a companion; the agent is a companion on the rail and in More.
+    // Flow remains a page and a companion, while Settings stays out of the companion rail.
     expect(all.find(item => item.id === 'flow')?.navigation.kind).toBe('both');
-    expect(all.filter(item => item.navigation.kind === 'companion').map(item => item.id)).toEqual(['agent']);
+    expect(all.filter(item => item.navigation.kind === 'companion').map(item => item.id)).toEqual(['agent', 'events']);
     expect(all.filter(item => item.navigation.kind === 'companion').every(item => item.phonePlacement === 'more')).toBe(true);
-    // A companion that cannot present is not offered (no authoring agent).
     const quiet = catalog.resolveDetailNavigationItems({ scope: 'workflowEditor' });
-    // Steps, Flow and Sentence (round 1116c) are pages; nothing else without the agent.
-    expect(quiet.map(item => item.id)).toEqual(['steps', 'flow', 'sentence']);
+    expect(quiet.map(item => item.id)).toEqual(['steps', 'flow', 'sentence', 'events']);
 });
 
 it('reports the page navigation as shown exactly when it draws something, so its row never keeps an empty band (QA-WAVE-1115)', async () => {
