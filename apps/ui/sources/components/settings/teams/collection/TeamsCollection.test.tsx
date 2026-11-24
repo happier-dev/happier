@@ -86,6 +86,8 @@ describe('Team collection first read', () => {
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-directory-loading'));
         // How many Teams there are is the directory's answer: nothing on screen claims a count.
         expect(collectRenderedTestIds(screen.tree.toJSON()).filter((id) => /-skeleton:\d+$/.test(id))).toEqual([]);
+        // The archived toggle belongs under the rows: it arrives with them, never under the waiting line.
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('teams-directory-toggle-archived');
     });
 });
 
@@ -258,4 +260,36 @@ it('keeps the last known Team count during a Team-change refetch', async () => {
         await vi.waitFor(() => expect(requested).toBe(true));
         expect(screen.tree.findByType(CollectionList).props.count).toBe(1);
     } finally { await act(async () => { release(); await pending; }); }
+});
+
+/**
+ * A return to the collection mounts it again in the same document. Every commit of that remount is
+ * recorded, so a loading line drawn for a single frame before the store's rows arrive is seen.
+ */
+async function remountRecording(screen: Awaited<ReturnType<typeof renderScreen>>, element: React.ReactElement) {
+    await screen.update(<></>);
+    const commits: string[][] = [];
+    const stop = screen.tree.subscribe(() => { commits.push(collectRenderedTestIds(screen.tree.toJSON())); });
+    try {
+        await screen.update(element);
+    } finally { stop(); }
+    return commits;
+}
+
+describe('Team collection return', () => {
+    it.each(['rail', 'page'] as const)('paints the %s from the last-known directory in its first frame, never "Loading Teams…"', async (surface) => {
+        const home = await addHome('return-home');
+        await harness.selectHomes([home]);
+        harness.answer(home, LIST_PATH, { body: { items: [teamSummaryFixture({ id: 'northwind' })], nextCursor: null } });
+        const { TeamsDirectoryScreen } = await import('../TeamsDirectoryScreen');
+        const element = surface === 'rail' ? <TeamsCollectionRail /> : <TeamsDirectoryScreen />;
+        const screen = await renderScreen(element);
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:northwind`));
+        // The return's own read is held: only the store's last-known rows can paint it.
+        harness.answer(home, LIST_PATH, { body: { items: [teamSummaryFixture({ id: 'northwind' })], nextCursor: null }, respondAfter: new Promise<void>(() => {}) });
+        const commits = await remountRecording(screen, element);
+        expect(commits.length).toBeGreaterThan(0);
+        expect(commits[0]).toContain(`teams-row:${home}:northwind`);
+        expect(commits.filter((ids) => ids.includes('teams-directory-loading'))).toEqual([]);
+    });
 });

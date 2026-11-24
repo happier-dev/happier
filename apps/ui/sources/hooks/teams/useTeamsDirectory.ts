@@ -11,7 +11,7 @@ import {
 } from '@/components/settings/teams/teamsDirectoryViewState';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { readCurrentServerCredentialAccountScopeLifetime, retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useTeamsSettingsAdmission } from '@/hooks/teams/useTeamsSettingsAdmission';
 import {
     serverAccountScopeListKey,
@@ -108,6 +108,25 @@ export function useTeamsDirectory(options?: Readonly<{
         return out.length > 0 ? Object.freeze(out) : EMPTY_SCOPES;
     }, [capableServerIds, scopeResolutions]);
 
+    // A surface mounting again (a return) re-resolves each Home's credential. While that runs, the
+    // credential this device already holds, while it is still current, names the Account whose
+    // last-known pages the store keeps, so those rows paint at once instead of a loading line. Only
+    // a bound credential is observed or refreshed; this scope only reads.
+    const readScopes = React.useMemo(() => {
+        const out = new Map<string, ServerAccountScope>();
+        for (const serverId of capableServerIds) {
+            const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(serverId));
+            const scope = resolution?.kind === 'bound'
+                ? resolution.scope
+                : resolution === undefined || resolution.kind === 'resolving'
+                    ? readCurrentServerCredentialAccountScopeLifetime(serverId)?.scope
+                    : undefined;
+            if (scope) out.set(serverId, scope);
+        }
+        return out;
+    }, [capableServerIds, scopeResolutions]);
+    const readScopeList = React.useMemo(() => [...readScopes.values()], [readScopes]);
+
     const inputs = React.useMemo(() => archived === 'all'
         ? [directoryInput(scope, 'active'), directoryInput(scope, 'archived')]
         : [directoryInput(scope, archived)], [scope, archived]);
@@ -131,18 +150,15 @@ export function useTeamsDirectory(options?: Readonly<{
         const byServerId: Record<string, readonly (TeamsDirectorySnapshot | undefined)[]> = {};
         // Credential/snapshot keys use the published Home identity; the view
         // keeps the requested profile identifier, including its navigation address.
-        for (const serverId of capableServerIds) {
-            const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(serverId));
-            if (resolution?.kind === 'bound') {
-                byServerId[serverId] = queryKeys.map((queryKey) => getTeamsDirectorySnapshot(resolution.scope, queryKey) ?? undefined);
-            }
+        for (const [serverId, scope] of readScopes) {
+            byServerId[serverId] = queryKeys.map((queryKey) => getTeamsDirectorySnapshot(scope, queryKey) ?? undefined);
         }
         return byServerId;
-    }, [capableServerIds, queryKeys, scopeResolutions]);
+    }, [queryKeys, readScopes]);
 
     const readSelectionKey = React.useCallback(
-        () => getTeamsDirectorySnapshotsSelectionKey(scopes, queryKeys),
-        [scopes, queryKeys],
+        () => getTeamsDirectorySnapshotsSelectionKey(readScopeList, queryKeys),
+        [readScopeList, queryKeys],
     );
     const snapshotsVersion = React.useSyncExternalStore(
         subscribeTeamsSnapshots,
@@ -165,14 +181,14 @@ export function useTeamsDirectory(options?: Readonly<{
     const homes = React.useMemo<readonly TeamsHomeAdmissionEntry[]>(() => admittedHomes.map((home) => {
         if (home.state !== 'capable') return home;
         const resolution = scopeResolutions.get(resolveServerProfileScopeIdForIdentifier(home.serverId));
-        if (resolution?.kind === 'bound') return home;
+        if (resolution?.kind === 'bound' || readScopes.has(home.serverId)) return home;
         if (resolution?.kind === 'signed_out' || resolution?.kind === 'unknown_home') {
             return { serverId: home.serverId, state: 'disabled' as const };
         }
         return resolution?.kind === 'unavailable'
             ? { serverId: home.serverId, state: 'unresolved' as const, reason: 'credential_unreadable' as const }
             : { serverId: home.serverId, state: 'unresolved' as const, reason: 'loading' as const };
-    }), [admittedHomes, scopeResolutions]);
+    }), [admittedHomes, readScopes, scopeResolutions]);
 
     const previousState = React.useRef<TeamsDirectoryViewState | null>(null);
     const state = React.useMemo(
@@ -191,9 +207,9 @@ export function useTeamsDirectory(options?: Readonly<{
     );
 
     const hasMore = React.useMemo(
-        () => scopes.some((scope) => queryKeys.some((queryKey) => (getTeamsDirectorySnapshot(scope, queryKey)?.nextCursor ?? null) !== null)),
+        () => readScopeList.some((scope) => queryKeys.some((queryKey) => (getTeamsDirectorySnapshot(scope, queryKey)?.nextCursor ?? null) !== null)),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [queryKeys, scopesKey, snapshotsVersion],
+        [queryKeys, readScopeList, snapshotsVersion],
     );
 
     const unreadableServerIdsKey = JSON.stringify(homes

@@ -118,7 +118,10 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
         }
     };
     if (drafting) add('draft', () => <TeamDraftRow />);
-    if (active.kind === 'loading' && total === 0) {
+    // Until the directory answers, its set of Teams is unknown: one line waits, and nothing that belongs under the
+    // rows (the archived toggle) is drawn beneath it, to be pushed down when the rows arrive.
+    const activeUnknown = active.kind === 'loading' && total === 0;
+    if (activeUnknown) {
         // How many Teams there are is the directory's answer: one quiet line waits, and no rows are guessed.
         add('loading', () => <View style={collectionListStyles.stateLine}>
             <SurfaceStateCard testID="teams-directory-loading" size="line" kind="loading" title={t('teams.directory.loading')}
@@ -140,7 +143,7 @@ export const TeamsCollectionRail = React.memo(function TeamsCollectionRail() {
     if (unavailableHomes.length > 0) {
         add('unavailable-homes', () => <UnavailableHomesRail homes={unavailableHomes} onRetry={active.refresh} />);
     }
-    if (sourceHint === null && collection.offerArchived) {
+    if (sourceHint === null && collection.offerArchived && !activeUnknown) {
         add('toggle-archived', () => (
             <Item testID="teams-directory-toggle-archived"
                 title={collection.showArchived ? t('teams.directory.hideArchived') : t('teams.directory.showArchived')}
