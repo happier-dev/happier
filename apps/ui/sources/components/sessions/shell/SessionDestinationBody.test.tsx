@@ -178,14 +178,13 @@ function WorkspaceSessionDestination(props: Readonly<{ id: string; serverId: str
 }
 
 describe('bare Session Details address', () => {
-    it('opens docked Details on the first unqualified Session link after sign-in', async () => {
+    it('docks Details when the first cold document after sign-in hydrates an unqualified Session', async () => {
         viewport.width = 1440;
         viewport.followNavigation = true;
-        expoLocation.pathname = '/';
         const id = 'after-sign-in-details';
         const parentPath = `/session/${id}`;
         const href = `${parentPath}/details`;
-        const location = new URL('https://shell.test/');
+        const location = new URL(`https://shell.test${href}`);
         const history = {
             state: null as unknown,
             replaceState(state: unknown, _unused: string, url?: string | URL | null) {
@@ -197,66 +196,81 @@ describe('bare Session Details address', () => {
             },
             go() {},
         };
-        vi.stubGlobal('window', Object.assign(new EventTarget(), { history, location,
-            sessionStorage: { getItem: () => 'details-sign-in' } }));
+        expoLocation.pathname = href;
+        expoLocation.params = { id };
         expoLocation.replace = next => {
             if (typeof next !== 'string') throw new Error('Expected a Session pathname');
             history.replaceState(history.state, '', next);
-            expoLocation.pathname = location.pathname;
-            expoLocation.params = { id, ...Object.fromEntries(location.searchParams) };
         };
+        vi.stubGlobal('window', Object.assign(new EventTarget(), { history, location,
+            sessionStorage: { getItem: () => 'details-sign-in' } }));
 
-        function ExpoScene() {
-            return expoLocation.pathname === href ? <SessionDetailsRouteEntry /> : null;
-        }
-
-        function ActiveSession() {
+        const requestRouteReplacement = vi.fn();
+        function ActiveWorkspace() {
             const workspace = useOptionalWorkspaceNavigation();
             if (!workspace?.active) return null;
             const group = workspace.state.groups[workspace.state.focusedGroupId];
             const tab = workspace.state.tabs[group.activeTabId];
             if (tab.target.kind !== 'session') return null;
-            const pathname = tab.target.params.workspacePathname ?? parentPath;
-            return <DestinationInstanceHost tabId={tab.id} ref={tab.target} pathname={pathname} focused visible
-                navigation={workspace.navigationForTab(tab.id)}>
+            // Hold the navigation acknowledgement. The export displayed the
+            // admitted bare destination after the exact Session read had settled.
+            return <DestinationInstanceHost tabId={tab.id} ref={tab.target}
+                pathname={tab.target.params.workspacePathname ?? parentPath} focused visible
+                navigation={{ ...workspace.navigationForTab(tab.id), replace: requestRouteReplacement }}>
                 <SessionDestinationBody />
             </DestinationInstanceHost>;
         }
 
-        const tree = (signedIn: boolean) => <InjectedAuthProvider credentials={signedIn ? credentials : null}>
-            <AppPaneProvider>
-                <WorkspaceAppShellProvider>
-                    {signedIn ? <ExpoScene /> : null}
-                    <ActiveSession />
-                </WorkspaceAppShellProvider>
-            </AppPaneProvider>
-        </InjectedAuthProvider>;
-        const screen = await renderScreen(tree(false));
+        const releaseRead = createDeferred<void>();
+        const boundary = createSessionReadBatchHttpBoundary(async ({ path }) => {
+            if (!path.endsWith(`/${id}`)) return undefined;
+            await releaseRead.promise;
+            return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id })));
+        });
         try {
-            expect(screen.findAllByType(SessionView)).toHaveLength(0);
             await withSessionFixture(async serverId => {
-                // The URL becomes available with the sign-in projection, before the workspace takes
-                // over Expo's leaf. Session metadata may already be present while the pane is still cold.
-                storage.getState().applySessions([createSessionFixture({ id, serverId, active: true })]);
+                // Sign-in saved credentials. The next document starts at Details with an
+                // empty ordinary list; the exact route read supplies the first Session.
                 storage.setState({ isDataReady: false });
-                location.pathname = href;
-                expoLocation.pathname = href;
-                expoLocation.params = { id };
-                await screen.update(tree(true));
-                await act(async () => { storage.setState({ isDataReady: true }); });
-                await vi.waitFor(() => {
-                    const view = screen.findAllByType(SessionView)[0];
-                    expect(view?.props.routeHydrationState).toMatchObject({ kind: 'available', serverId });
-                });
-                const details = screen.findHostByTestId('multi-pane-details-docked');
-                expect({ pathname: location.pathname, docked: details !== null }).toEqual({ pathname: href, docked: true });
-                const selected = details!.findAll(node => typeof node.type === 'string'
-                    && node.props.accessibilityRole === 'tab' && node.props.accessibilityState?.selected);
-                expect(selected.map(tab => tab.props.accessibilityLabel))
-                    .toEqual([t('session.detailsPanel.openTabA11y', { title: t('files.toolbar.review') })]);
+                const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+                    <AppPaneProvider><WorkspaceAppShellProvider>
+                        <SessionDetailsRouteEntry />
+                        <ActiveWorkspace />
+                    </WorkspaceAppShellProvider></AppPaneProvider>
+                </InjectedAuthProvider>);
+                try {
+                    expect(screen.findAllByType(SessionView)).toHaveLength(0);
+                    await act(async () => { storage.setState({ isDataReady: true }); });
+                    await vi.waitFor(() => {
+                        expect(boundary.componentRequests.some(request => request.path.endsWith(`/${id}`))).toBe(true);
+                    });
+                    expect(screen.findAllByType(SessionView)).toHaveLength(0);
+                    await act(async () => { releaseRead.resolve(); });
+                    await vi.waitFor(() => {
+                        const view = screen.findAllByType(SessionView)[0];
+                        expect(view?.props.routeHydrationState).toMatchObject({ kind: 'available', serverId });
+                        expect(view?.props.routeServerId).toBeUndefined();
+                    });
+                    const details = screen.findHostByTestId('multi-pane-details-docked');
+                    expect({ pathname: location.pathname, docked: details !== null }).toEqual({ pathname: href, docked: true });
+                    const selected = details!.findAll(node => typeof node.type === 'string'
+                        && node.props.accessibilityRole === 'tab' && node.props.accessibilityState?.selected);
+                    expect(selected.map(tab => tab.props.accessibilityLabel))
+                        .toEqual([t('session.detailsPanel.openTabA11y', { title: t('files.toolbar.review') })]);
+                } finally {
+                    releaseRead.resolve();
+                    await screen.unmount();
+                }
+            }, async (input, init) => {
+                const url = new URL(input instanceof Request ? input.url : String(input));
+                return await boundary.handle({
+                    home: 'shell-test', accountId: 'account-shell', url, path: url.pathname,
+                    method: init?.method ?? 'GET', headers: new Headers(init?.headers),
+                    body: init?.body ? JSON.parse(String(init.body)) : undefined, signal: init?.signal,
+                }) ?? createPlainAccountEncryptionCurrentnessHttpResponse(url.pathname)
+                    ?? createEmptyAccountBootstrapHttpResponse(url.pathname, init);
             });
         } finally {
-            await screen.unmount();
             vi.unstubAllGlobals();
         }
     });

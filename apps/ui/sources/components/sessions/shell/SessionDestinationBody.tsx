@@ -155,13 +155,6 @@ export function SessionDestinationBody(props: Readonly<{
         const data = getTempData<{ attachmentDrafts?: readonly AttachmentDraft[] | null }>(trimmedRecoveryDataId);
         return Array.isArray(data?.attachmentDrafts) ? data.attachmentDrafts : null;
     }, [recoveryDataId]);
-    const scopeId = createSessionPaneScopeId(sessionId, routeScope.serverId, instanceKey);
-    const { scopeState: surfaceFacts } = useAppPaneScope(scopeId, selectSessionSurfaceFacts);
-    const dispatchPane = useAppPaneContext(value => value.dispatch);
-    const revealDetails = isSessionDetailsWorkspacePath(params.workspacePathname);
-    React.useLayoutEffect(() => {
-        if (revealDetails) dispatchPane({ type: 'revealDetailsWorkspace', scopeId, defaultTab: createSessionScmReviewDetailsTab() });
-    }, [dispatchPane, revealDetails, scopeId]);
     const { cockpitEnabled } = useMobileWorkspaceExperienceState();
     const activeServerAccountScope = useActiveServerAccountScope();
     const activeServerSnapshot = useActiveServerSnapshot();
@@ -193,6 +186,17 @@ export function SessionDestinationBody(props: Readonly<{
         routeScope.hydrationOptions,
     );
     const expectedSessionServerId = routeHydrationState.serverId ?? routeScope.serverId;
+    // The exact read can admit a bare Session before the hosted URL publishes its Home.
+    // Reveal Details in the same Home-qualified scope the Session pane driver mounts.
+    const scopeId = createSessionPaneScopeId(sessionId, expectedSessionServerId, instanceKey);
+    const { scopeState: surfaceFacts } = useAppPaneScope(scopeId, selectSessionSurfaceFacts);
+    const dispatchPane = useAppPaneContext(value => value.dispatch);
+    const revealDetails = isSessionDetailsWorkspacePath(params.workspacePathname);
+    React.useLayoutEffect(() => {
+        if (revealDetails && expectedSessionServerId) {
+            dispatchPane({ type: 'revealDetailsWorkspace', scopeId, defaultTab: createSessionScmReviewDetailsTab() });
+        }
+    }, [dispatchPane, expectedSessionServerId, revealDetails, scopeId]);
     const routeSessionAddress = normalizeSessionAddress(
         expectedSessionServerId ?? activeServerSnapshot.serverId,
         sessionId,
