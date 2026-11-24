@@ -188,15 +188,16 @@ function deployFailureTitle(phase: DeploymentReceiptFailureV1['phase'] | undefin
 }
 
 /**
- * What a history row says after its title: a failed attempt's recorded cause in words (the canonical failure
- * title; its code stays on the receipt's Details), else the state word in its tone. Healthy settled says nothing.
+ * What a history row says after its title: the recorded cause when available, or the failed step's title.
+ * Healthy settled says nothing.
  */
 export function deploymentHistoryLead(
   receipt: Pick<DeploymentReceiptHeaderV1, 'state' | 'operation'>,
   failure: DeploymentReceiptFailureV1 | null | undefined,
 ): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   if (receipt.state === 'failed' && failure) {
-    return { tone: 'danger', text: deploymentFailureTitle(failure, receipt.operation) };
+    const nativeCause = failure.nativeActivation ? readDeploymentRefusalRecovery(failure.code, failure)?.remedy : null;
+    return { tone: 'danger', text: nativeCause ?? deploymentFailureTitle(failure, receipt.operation) };
   }
   if (receipt.state === 'outcome_unknown' && failure?.code === 'deployment_activation_not_observed') {
     return deploymentStateNotice(receipt.state, failure);

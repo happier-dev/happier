@@ -307,6 +307,7 @@ export const DeploymentReceiptDetail = React.memo(
       && failureCause?.errorCode === 'database_connection_unavailable' && failureCause.httpStatus === 503;
     const recordedCause = deployment.state !== 'failed' ? null
       : homeStorageUnavailable ? t('projects.deployments.receipt.homeStorageUnavailable')
+      : facts.failure?.nativeActivation && recovery ? recovery.remedy
       : facts.failure ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
       : t('workflows.recovery.causeNotRecorded');
     const { deploy, teardown, promote, environmentId } = props;

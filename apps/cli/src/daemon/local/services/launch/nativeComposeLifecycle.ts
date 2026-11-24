@@ -1,6 +1,7 @@
 import type { DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
-import { projectDeploymentFailureRecoveryV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1,
+    type DeploymentNativeActivationFailureV1, type DeploymentNativeComposeFailureV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE, readNativeComposeCommandFailure, readNativeDockerSocketAccessFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
@@ -1727,6 +1728,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 activation = retainActivation(current, capture, proof, launch, prefix, stopLending);
                 return activation;
             } catch (error) {
+                let activationFailure: DeploymentNativeActivationFailureV1 | undefined;
                 try {
                     // Recovery can recreate the logical project immediately. Capture
                     // this attempt while its containers and original masking still exist.
@@ -1736,18 +1738,31 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                             const candidates = snapshot.rows.filter(row => record(row.Config) && record(row.Config.Labels)
                                 && row.Config.Labels['com.docker.compose.project.working_dir'] === input.source.rootPath
                                 && current.services.includes(String(row.Config.Labels['com.docker.compose.service'])));
+                            const exits: Array<DeploymentNativeActivationFailureV1 & { id: string }> = [];
                             for (const row of candidates) {
                                 const service = String(record(row.Config) && record(row.Config.Labels)
                                     && row.Config.Labels['com.docker.compose.service']);
                                 if (typeof row.Image !== 'string') return nativeRefusal('deployment_generation_unavailable');
                                 await identity.prove(row.Image, pin(service));
-                                if (record(row.State)) input.stageOutput.appendRedacted('stderr',
-                                    Buffer.from(`\n${service}: ${String(row.State.Status)} (exit ${String(row.State.ExitCode)})\n`));
+                                if (record(row.State)) {
+                                    const { Status, ExitCode } = row.State;
+                                    input.stageOutput.appendRedacted('stderr', Buffer.from(`\n${service}: ${String(Status)} (exit ${String(ExitCode)})\n`));
+                                    if (Status === 'exited' && typeof ExitCode === 'number' && Number.isInteger(ExitCode) && ExitCode > 0) {
+                                        exits.push({ id: row.Id, service, exitStatus: ExitCode });
+                                    }
+                                }
                             }
                             if (candidates.length) {
                                 const tuple = authorizedPrefixes.get(launch) ?? nativeRefusal('native_service_admission_required');
+                                // A single failing container is the only safe source for a named variable hint.
+                                const exit = exits.length === 1 ? exits[0] : undefined;
+                                if (exit) activationFailure = { service: exit.service, exitStatus: exit.exitStatus };
                                 const logs = await readNativeComposeLogsForHost({ containerIds: candidates.map(row => row.Id),
                                     environment: true, redactionLease: launch.secretRedactionLease,
+                                    ...(exit ? { inspectContainerLog: { id: exit.id, read(text) {
+                                        const missingVariable = /^([A-Z_][A-Z0-9_]*) is not set[.!]?\r?$/mu.exec(text)?.[1];
+                                        if (missingVariable) activationFailure = { service: exit.service, exitStatus: exit.exitStatus, missingVariable };
+                                    } } } : {}),
                                     run: (args, signal, capture) => input.io.run({ command: launch.command,
                                         args: [...tuple.prefix, ...args], cwd: launch.cwd!, env: tuple.env,
                                         ...(signal ? { signal } : {}), ...capture }),
@@ -1764,6 +1779,12 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                                 projectActionFailureCauseV1(captureError, 'deployment.logs.capture', { allowUnknownErrorCode: false }));
                         }
                     }
+                    const original = parseActionExecuteFailure(error) ?? (isPluginError(error) ? parseActionExecuteFailure(error.cause) : null);
+                    const command = original && DeploymentFailureRecoveryV1Schema.safeParse(original.details).data?.nativeCompose;
+                    const enriched = activationFailure && original?.errorCode === 'native_failed'
+                        ? createActionExecuteFailureError({ ...original, details: projectDeploymentFailureRecoveryV1({
+                            nativeActivation: activationFailure, ...(command ? { nativeCompose: command } : {}),
+                        }, original.errorCode) }) : undefined;
                     if (isPluginError(error) && request.cleanupOnFailure && !request.signal?.aborted && isJsonObject(error.details)) {
                         const reason = error.details.reason;
                         const attemptedNativeEffect = parseActionExecuteFailure(error.cause)?.effectAttempted === true;
@@ -1805,10 +1826,11 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                             throw new PluginError({ ...error.data, details: { ...error.details,
                                 firstDeployCleanup: cleanupFailure ? 'failed' : 'removed',
                                 ...(cleanupFailure ? { cleanupFailure } : {}),
-                            } }, error.cause === undefined ? undefined : { cause: error.cause });
+                            } }, enriched || error.cause !== undefined ? { cause: enriched ?? error.cause } : undefined);
                         }
                     }
-                    throw error;
+                    if (enriched && isPluginError(error)) throw new PluginError(error.data, { cause: enriched });
+                    throw enriched ?? error;
                 } finally { stopLending(); await launch.release(); }
             }
         },

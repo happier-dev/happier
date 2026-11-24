@@ -259,6 +259,22 @@ describe('finite host operation custody', () => {
     expect(executions).toBe(1);
   });
 
+  it('rejoins a failed Deploy with the exact Receipt and typed failure from the executor', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+      resolveAccountId: async () => 'owner', generateOperationId: () => 'deploy-operation' });
+    const actionId = 'deployments.deploy' as const;
+    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime', requestKey: 'deploy' };
+    const details = { serverId: input.serverId, environmentId: input.environmentId, targetLinkId: input.targetLinkId,
+      deploymentId: 'failed-receipt', failure: { code: 'native_failed', phase: 'activate' } };
+    const execute = vi.fn(async () => ({ ok: false as const, errorCode: 'native_failed', error: 'native_failed', details }));
+    const request = { actionId, input, execute };
+    await runtime.observeExecution(request);
+    const retained = await runtime.handlers.getV2({ operationId: 'deploy-operation', waitForTerminal: true });
+    expect(retained).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { details } } });
+    expect(await runtime.observeExecution(request)).toMatchObject({ ok: false, errorCode: 'native_failed', details });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
   it('retains native recovery for an unclassified Domain result through operation settlement', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
       resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-result' });

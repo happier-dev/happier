@@ -12,7 +12,7 @@ import { createOwnServerDockerBoundary } from '@/deployments/targets/ownServer/o
 import { createNativeComposeLifecycle } from './nativeComposeLifecycle';
 import { machineNativeEffectAdmission } from './machineNativeEffectAdmission';
 
-it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'addressPoolExhausted', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
+it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'missingVariable', 'addressPoolExhausted', 'cancelled', 'unprovedRemoval', 'previewFresh', 'previewExisting'] as const)('limits first-deploy cleanup to witnessed introduced containers and fresh preview data after %s failure', async mode => {
     const root = await mkdtemp(join(tmpdir(), 'happier-first-deploy-'));
     const captures = new Set<ProjectNativeEffectCaptureForHost>();
     try {
@@ -20,6 +20,7 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
         const image = await docker.registerImage('app', 'first');
         const database = await docker.registerImage('db', 'incumbent');
         await docker.failImageHealth(image.configDigest);
+        if (mode === 'missingVariable') await docker.exitImage(image.configDigest, 78);
         const signal = new AbortController().signal;
         const source = { environmentId: 'environment', environmentInstanceId: 'instance', deploymentId: 'first', machineId: 'machine',
             installationId: 'installation', rootPath: root, manifestFingerprint: 'manifest', async assertCurrent() {}, async commit() {}, async abort() {} };
@@ -36,6 +37,8 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
         let cancelAfterUp = false;
         let failBeforeCreate = false;
         let removalUnproved = false;
+        const capturedLogs: string[] = [];
+        let incumbentIds: readonly string[];
         // Lost caller custody immediately after Docker's real OS effect. This
         // boundary interruption must not be interpreted as proven failure.
         const io = { ...realIo, async run(request: Parameters<typeof realIo.run>[0]) {
@@ -50,6 +53,13 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
                     : 'fixture up refused before create' };
             }
             if (removalUnproved && ['ps', 'inspect'].includes(request.args[0]!)) return { exitCode: 1, stdout: '[]', stderr: '' };
+            if (mode === 'missingVariable' && request.args[0] === 'logs') {
+                const id = request.args.at(-1)!;
+                capturedLogs.push(id);
+                const log = incumbentIds.includes(id) ? 'incumbent log' : 'FIELD_NOTES_SECRET_KEY is not set';
+                request.output?.onChunk?.('stderr', Buffer.from(`${log}\n`));
+                return { exitCode: 0, stdout: '', stderr: '' };
+            }
             const output = await realIo.run(request);
             if (cancelAfterUp && request.args.includes('up')) candidateController.abort();
             if (mode === 'unprovedRemoval' && request.args[0] === 'container' && request.args[1] === 'rm') removalUnproved = true;
@@ -57,6 +67,7 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
         } };
         const native = (services: readonly string[], images: readonly DeploymentImageV1[]) => createNativeComposeLifecycle({ kind: 'environmentProject', source, exec, envPort,
             files: ['compose.yaml'], services, images, io,
+            ...(mode === 'missingVariable' ? { stageOutput: { appendRedacted() {}, assertWritten() {} } } : {}),
             storage: { runtimeMachineCount: 1, ...(mode.startsWith('preview')
                 ? { previewDataVolumes: [{ service: 'app', target: '/data' }] } : {}) }, async settleNative() {
                 await Promise.all([...captures].map(capture => capture.waitForSettlement()));
@@ -64,7 +75,6 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
         await writeFile(join(root, 'compose.yaml'), JSON.stringify({ services: { db: { image: database.registryReference,
             volumes: [{ type: 'volume', source: 'db_data', target: '/data' }] } }, volumes: { db_data: {} } }));
         const incumbent = native(['db'], [database]);
-        let incumbentIds: readonly string[];
         try {
             const rendered = await incumbent.render();
             const running = await machineNativeEffectAdmission.run({ operation: { operationId: 'incumbent', kind: 'deployments.deploy' }, keys: rendered.keys },
@@ -73,7 +83,7 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
             await running.dispose();
         } finally { await incumbent.dispose(); }
         await writeFile(join(root, 'compose.yaml'), JSON.stringify({ services: {
-            app: { image: image.registryReference, volumes: [{ type: 'volume', source: 'app_data', target: '/data' }] },
+            app: { image: image.registryReference, environment: { DEPLOY_PASSWORD: 'fixture-password' }, volumes: [{ type: 'volume', source: 'app_data', target: '/data' }] },
             db: { image: database.registryReference, volumes: [{ type: 'volume', source: 'db_data', target: '/data' }] },
         }, volumes: { app_data: {}, db_data: {} } }));
         const project = native(['app', 'db'], [image, database]);
@@ -90,7 +100,20 @@ it.skipIf(process.platform === 'win32').each(['proven', 'beforeCreate', 'address
             if (mode === 'previewExisting') await docker.seedVolume(appVolume, rendered.projectName);
             const activation = machineNativeEffectAdmission.run({ operation: { operationId: 'first', kind: 'deployments.deploy', signal: candidateSignal }, keys: rendered.keys },
                 context => project.activate({ render: rendered, context, cleanupOnFailure: true, signal: candidateSignal }));
-            if (mode === 'addressPoolExhausted') {
+            if (mode === 'missingVariable') {
+                const error = await activation.catch((failure: unknown) => failure);
+                const failure = projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate');
+                expect(failure).toMatchObject({ nativeActivation: {
+                    service: 'app', exitStatus: 78, missingVariable: 'FIELD_NOTES_SECRET_KEY',
+                } });
+                expect(readDeploymentFailureRecoveryV1(failure.code, failure)).toMatchObject({
+                    remedy: expect.stringMatching(/app.*78.*FIELD_NOTES_SECRET_KEY/),
+                    nextAction: { destination: 'variables' },
+                });
+                expect(capturedLogs).toHaveLength(2);
+                expect(capturedLogs).toEqual(expect.arrayContaining(incumbentIds));
+                return;
+            } else if (mode === 'addressPoolExhausted') {
                 const error = await activation.catch((failure: unknown) => failure);
                 const receiptFailure = projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate');
                 expect(receiptFailure).toMatchObject({ code: 'native_failed', phase: 'activate',

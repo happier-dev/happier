@@ -17,6 +17,15 @@ it('presents the recorded interruption reason on the receipt and its history row
     });
 });
 
+it('leads a failed history row with the recorded container cause and recovery', () => {
+    const receipt = createDeploymentReceiptHeaderV1({ state: 'failed' });
+    const failure = { code: 'native_failed', phase: 'activate' as const,
+        nativeActivation: { service: 'web', exitStatus: 78, missingVariable: 'FIELD_NOTES_SECRET_KEY' } };
+    expect(deploymentHistoryLead(receipt, failure)).toEqual({
+        tone: 'danger', text: expect.stringMatching(/web.*78.*FIELD_NOTES_SECRET_KEY.*Variables/),
+    });
+});
+
 describe('deploy availability', () => {
     const environment = { capabilities: { deploy: true } } as Parameters<typeof deploymentDeployAvailability>[0]['environment'];
     const link = (targetKind: string) => ({ id: 'link-1', targetKind }) as NonNullable<Parameters<typeof deploymentDeployAvailability>[0]['runtimeTargetLink']>;

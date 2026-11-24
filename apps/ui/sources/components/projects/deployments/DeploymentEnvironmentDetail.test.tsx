@@ -800,7 +800,7 @@ function controllerFor(
           .map(row => {
             // The real transport's per-row projection: revision title, source, the recorded failure and captured actor.
             const entry = projectDeploymentReceiptHistoryEntryV1(row);
-            return { ...row.deployment, source: entry.source, failure: entry.failure, actor: entry.actor,
+            return { ...row.deployment, source: entry.source, failure: entry.failure, ...(entry.actor ? { actor: entry.actor } : {}),
               ...(entry.historyTitle ? { title: entry.historyTitle } : {}) };
           }), nextCursor: null },
       };
@@ -3035,10 +3035,11 @@ describe('Project deployments page', () => {
   });
 
   it.each([
-    ['nothing deployed yet', false, null],
-    ['only an older receipt', true, null],
-    ['the refusal naming its failed receipt', true, 'failed-release'],
-  ] as const)('opens "Read deployment logs" on the failed step\'s own receipt, never a dead control (%s)', async (_name, older, failedId) => {
+    ['nothing deployed yet', false, null, undefined],
+    ['only an older receipt', true, null, undefined],
+    ['the refusal naming its failed receipt', true, 'failed-release', true],
+    ['an admitted receipt without logs', true, 'failed-release', false],
+  ] as const)('opens "Read deployment logs" on the failed step\'s own receipt, never a dead control (%s)', async (_name, older, failedId, logsAvailable) => {
     const base = environmentDetailForHome();
     // A platform target with nothing serving: logs exist only on a receipt the refusal names.
     const platform = environmentDetailForHome({
@@ -3046,34 +3047,71 @@ describe('Project deployments page', () => {
         source: { kind: 'plugin' as const, contribution: { pluginId: 'vercel', localId: 'project' } },
         targetKind: 'vercel', machines: [], members: [], machineId: 'machine-a', installationId: 'installation-a' } })),
     });
-    const { controller } = controllerFor({ detail: platform, history: older ? [createDeploymentReceiptDetailV1()] : [] });
+    const link = platform.targetLinks[0]!.targetLink;
+    const previous = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+      environmentId: platform.environment.id, targetLinkId: link.id,
+    }) });
+    const { controller } = controllerFor({ detail: platform, history: older ? [previous] : [] });
     const opened: unknown[][] = [];
     const review = { ...noReview, openRecovery: (...args: unknown[]) => { opened.push(args); } };
-    const link = platform.targetLinks[0]!.targetLink;
     // The controller's refusal names the receipt whose step failed when one was recorded.
     const deploy = vi.fn(async () => { throw new HappyError('native_failed', false, { code: 'native_failed', details: failedId ? {
       serverId: platform.environment.serverId, environmentId: platform.environment.id, targetLinkId: link.id,
-      deploymentId: failedId, failure: { code: 'native_failed', phase: 'build' },
+      deploymentId: failedId, logsAvailable, failure: { code: 'native_failed', phase: 'build' },
     } : undefined }); });
     const { t } = await import('@/text');
     try {
       const screen = await renderScreen(
         <DeploymentEnvironmentDetail controller={controller} environmentId={platform.environment.id} demand={shown}
-          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={review} onOpenReceipt={() => {}} />,
+          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy} review={review} destination={{ tab: 'history', section: null }} onOpenReceipt={() => {}} />,
       );
-      if (older) await waitForContent(screen, 'project-deployments.receipt.row.deployment-a');
+      if (older) await waitForContent(screen, `project-deployments.receipt.row.${previous.deployment.id}`);
       await screen.pressByTestIdAsync('project-deployments.environment.deploy');
       const banner = 'project-deployments.outcome.refused.other';
       await vi.waitFor(() => expect(screen.findByTestId(banner)).not.toBeNull());
-      if (failedId) {
+      if (failedId && logsAvailable) {
         await screen.pressByTestIdAsync(`${banner}.action`);
         expect(opened).toEqual([['logs', { deploymentId: failedId }]]);
       } else {
         // This attempt recorded no step to inspect: no dead control, and the banner says why.
         expect(screen.findByTestId(`${banner}.action`)).toBeNull();
         expect(screen.getTextContent()).not.toContain('Open the deployment logs');
-        expect(screen.getTextContent()).toContain(t('projects.deployments.refusedBeforeLogs'));
+        const details = screen.findByTestId(`${banner}.details`);
+        if (details) await screen.pressByTestIdAsync(`${banner}.details`);
+        expect(screen.getTextContent()).not.toMatch(/read (the )?deployment logs/i);
+        if (failedId) expect(screen.getTextContent()).not.toContain(t('projects.deployments.refusedBeforeLogs'));
+        else expect(screen.getTextContent()).toContain(t('projects.deployments.refusedBeforeLogs'));
       }
+    } finally { controller.retire(); }
+  });
+
+  it('shows a registry lookup refusal on Deploy with one Compose action and no new receipt', async () => {
+    const detail = environmentDetailForHome();
+    const { controller } = controllerFor({ detail });
+    const opened = vi.fn();
+    const onOpenReceipt = vi.fn();
+    const deploy = vi.fn(async () => { throw new HappyError('native_failed', false, {
+      code: 'native_failed', requestId: 'request-registry-lookup',
+      details: { kind: 'deploymentImageResolutionFailure', service: 'web', reference: 'registry.example.invalid/field-notes:missing',
+        reason: 'deployment_image_not_found' },
+    }); });
+    try {
+      const screen = await renderScreen(
+        <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id} demand={shown}
+          accountId="account-owner" serverId={scope.serverId} phone={false} deploy={deploy}
+          review={{ ...noReview, openRecovery: opened }} onOpenReceipt={onOpenReceipt} />,
+      );
+      await screen.pressByTestIdAsync('project-deployments.environment.deploy');
+      const banner = 'project-deployments.outcome.refused.other';
+      await vi.waitFor(() => expect(screen.findByTestId(banner)).not.toBeNull());
+      await screen.pressByTestIdAsync(`${banner}.details`);
+      expect(screen.getTextContent()).toContain('request-registry-lookup');
+      expect(screen.getTextContent()).toContain('registry.example.invalid/field-notes:missing');
+      expect(screen.getTextContent()).toContain('service web');
+      expect(screen.getTextContent()).not.toMatch(/read (the )?deployment logs/i);
+      await screen.pressByTestIdAsync(`${banner}.action`);
+      expect(opened).toHaveBeenCalledExactlyOnceWith('source', undefined);
+      expect(onOpenReceipt).not.toHaveBeenCalled();
     } finally { controller.retire(); }
   });
 

@@ -253,9 +253,14 @@ describe('Receipt → failed', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it.each(['deployment_image_unavailable', 'build_platform_unsupported', 'stateful_service_multi_machine'])('offers the canonical remedy for the recorded cause (%s)', async code => {
+  it.each([
+    { code: 'deployment_image_unavailable' },
+    { code: 'build_platform_unsupported' },
+    { code: 'stateful_service_multi_machine' },
+    { code: 'native_failed', nativeActivation: { service: 'web', exitStatus: 78, missingVariable: 'FIELD_NOTES_SECRET_KEY' } },
+  ])('offers the canonical remedy for the recorded cause ($code)', async ({ code, nativeActivation }) => {
     const base = createDeploymentReceiptDetailV1();
-    const failure = { code, phase: 'build' as const };
+    const failure = nativeActivation ? { code, phase: 'activate' as const, nativeActivation } : { code, phase: 'build' as const };
     const content = DeploymentOwnServerContentV1Schema.parse({ ...base.content, buildMachineId: 'builder-c', failure });
     const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ state: 'failed' }), content });
     const detail = createDeploymentEnvironmentDetailV1();
@@ -287,11 +292,15 @@ describe('Receipt → failed', () => {
       const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.outcome.failed'
         && node.props.description !== undefined)[0];
       expect(banner).not.toBeNull();
-      expect(screen.findAllByType(AgentActionButton)).toHaveLength(1);
+      if (!nativeActivation) expect(screen.findAllByType(AgentActionButton)).toHaveLength(1);
       expect(String(banner?.props.description)).toContain(readDeploymentFailureRecoveryV1(failure.code, failure).remedy);
       // The canonical next action opens where the cause is fixed.
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.recovery');
-      expect(opened).toEqual([code === 'stateful_service_multi_machine' ? ['settings']
+      if (nativeActivation) {
+        expect(String(banner?.props.description)).toMatch(/web.*78.*FIELD_NOTES_SECRET_KEY/);
+        expect(String(banner?.props.description)).not.toMatch(/read (the )?deployment logs/i);
+        expect(opened).toEqual([['variables']]);
+      } else expect(opened).toEqual([code === 'stateful_service_multi_machine' ? ['settings']
         : [readDeploymentFailureRecoveryV1(failure.code, failure).nextAction.destination,
           // A failed step's logs open on this receipt itself.
           code === 'build_platform_unsupported' ? { machineId: 'builder-c' } : { deploymentId: receipt.deployment.id }]]);

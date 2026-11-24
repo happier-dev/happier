@@ -61,7 +61,7 @@ export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
     const sourceAdmission = DeploymentSourceAdmissionFailureV1Schema.safeParse(authorDetails);
     const validation = readDeploymentOutputValidation(result);
     const recovery = DeploymentFailureRecoveryV1Schema.safeParse(result.details).data;
-    const commandRecovery = recovery?.nativeCompose || result.failureCause?.errorCode === 'deployment_docker_socket_access_denied'
+    const commandRecovery = recovery?.nativeCompose || recovery?.nativeActivation || result.failureCause?.errorCode === 'deployment_docker_socket_access_denied'
         ? recovery : undefined;
     return DeploymentReceiptFailureV1Schema.parse(projectDeploymentFailureRecoveryV1({ code: result.errorCode,
         phase: phase.success ? phase.data : fallbackPhase,
@@ -156,7 +156,7 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
         ? { ...thrownCause, errorCode: typedReason } : thrownCause;
     const recovery = normalized?.errorCode === errorCode
         ? DeploymentFailureRecoveryV1Schema.safeParse(normalizedDetails).data : undefined;
-    const commandRecovery = recovery?.nativeCompose || thrownCause?.errorCode === 'deployment_docker_socket_access_denied'
+    const commandRecovery = recovery?.nativeCompose || recovery?.nativeActivation || thrownCause?.errorCode === 'deployment_docker_socket_access_denied'
         ? recovery : undefined;
     const retainedDetails = commandRecovery ?? readDeploymentBackupMaintenanceFailureEvidenceV1(error)
         ?? (error instanceof MachineNativeEffectAdmissionError && error.code === errorCode ? error.details : undefined)

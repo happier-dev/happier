@@ -1636,17 +1636,19 @@ export function DeployOutcomeBanner(
   // The press's own request (an exact pull-request head) chose a more specific remedy than the refusal's stored one.
   const requestSpecific = outcome.request !== undefined
     && typedRecovery?.remedy !== readDeploymentRefusalRecovery(outcome.code, outcome.failure?.details)?.remedy;
-  // A failed step's logs are on the receipt the refusal names. Without one, this attempt left no step to inspect:
-  // no action, and the sentence says why instead.
-  const failedDeploymentId = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data?.deploymentId;
-  const leadsNowhere = typedRecovery?.nextAction.destination === 'logs' && !failedDeploymentId;
+  // Action settlement carries the same log fact that the exact Receipt reads. Older responses may only carry its ID.
+  const failedReceipt = DeploymentExecutionFailureDetailsV1Schema.safeParse(outcome.failure?.details).data;
+  const failedDeploymentId = failedReceipt?.deploymentId;
+  const leadsNowhere = typedRecovery?.nextAction.destination === 'logs'
+    && (!failedReceipt || failedReceipt.logsAvailable === false);
   // The cure is this Environment's own Deploy, already on the page: the sentence names it, no second button.
   const ownDeploy = typedRecovery?.nextAction.destination === 'deploy';
   const recovery = leadsNowhere || ownDeploy ? null : typedRecovery;
   const recoveryMachineId = recovery?.nextAction.machineId
     ?? (recovery?.nextAction.destination === 'machines' ? props.machineId : undefined);
   const storedRemedy = failure?.technicalDetails.find(line => line.key === 'failure-remedy')?.value;
-  const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy ? failure.reason : null;
+  const canonicalReason = failure && failure.reason !== storedRemedy && !requestSpecific && !ownDeploy && !leadsNowhere
+    ? failure.reason : null;
   const { openRecovery } = controller;
   // A refusal whose way forward is a review needs the person, not a retry of a failure: amber, paired with that review.
   const needsReview = recovery?.nextAction.destination === 'review';
@@ -1691,7 +1693,7 @@ export function DeployOutcomeBanner(
               ? t('projects.deployments.deployNeedsBuild', {
                   machine: props.machine,
                 })
-              : leadsNowhere ? t('projects.deployments.refusedBeforeLogs')
+              : leadsNowhere ? (failedReceipt ? undefined : t('projects.deployments.refusedBeforeLogs'))
               : (ownDeploy ? typedRecovery?.remedy : recovery?.remedy) ?? failure?.reason ?? refusalConsequence(outcome.code))
       }
       {...(recovery?.nextAction.destination === 'review'
@@ -1703,7 +1705,7 @@ export function DeployOutcomeBanner(
                 : recoveryMachineId ? { machineId: recoveryMachineId } : undefined) } } : {})}
       // The typed code is for support; the sentence says what it left. When the typed remedy is the sentence, the
       // stored recovery line would only repeat or contradict it.
-      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && (recovery || ownDeploy) && !canonicalReason))
+      details={failure ? failure.technicalDetails.filter(line => !(line.key === 'failure-remedy' && (leadsNowhere || ((recovery || ownDeploy) && !canonicalReason))))
         .map(line => `${line.label}: ${line.value}`) : [outcome.code]}
     />
   );

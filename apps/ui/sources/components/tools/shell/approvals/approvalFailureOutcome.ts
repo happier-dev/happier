@@ -14,7 +14,7 @@ import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/de
 import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFailureDetailsV1Schema,
     readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
-import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
+import { DeploymentFailureRecoveryV1Schema,
     projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
@@ -172,12 +172,9 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     // A deploy refused before review names the required secrets that have no value (names only, never values).
     const missingSecrets = scope === 'deployment' && failure.errorCode === 'secret_missing'
         ? DeploymentMissingRequiredSecretsV1Schema.safeParse(failure.details) : null;
-    const imageResolution = scope === 'deployment' && failure.errorCode === 'native_failed'
-        ? DeploymentImageResolutionFailureV1Schema.safeParse(failure.details) : null;
     const targetReason = scope === 'deployment' && failure.errorCode === 'target_unavailable'
         ? resolveActionExecutionFailureMessage(failure, '', { closedCodesOnly: true }) || null : null;
-    const reason = targetReason ?? (imageResolution?.success ? describeDeploymentImageResolutionFailureV1(imageResolution.data)
-        : finiteCommand.success && finiteCommand.data.exitCode !== null
+    const reason = targetReason ?? (finiteCommand.success && finiteCommand.data.exitCode !== null
             ? t('localServices.actions.failure.exitCode', { code: String(finiteCommand.data.exitCode) })
             : machineSetup.success && remedy ? remedy
             : missingSecrets?.success

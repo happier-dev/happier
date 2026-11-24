@@ -40,10 +40,19 @@ export const DeploymentNativeComposeFailureV1Schema = lazyZodSchema(() => z.stri
 }));
 export type DeploymentNativeComposeFailureV1 = z.infer<typeof DeploymentNativeComposeFailureV1Schema>;
 
+/** Existing activation evidence publishes names and exit status, never runnable environment values or raw logs. */
+export const DeploymentNativeActivationFailureV1Schema = lazyZodSchema(() => z.strictObject({
+    service: DeploymentImageResolutionFailureV1Schema.shape.service,
+    exitStatus: z.number().check(z.int(), z.positive()),
+    missingVariable: z.optional(z.string().check(z.regex(/^[A-Z_][A-Z0-9_]*$/u))),
+}));
+export type DeploymentNativeActivationFailureV1 = z.infer<typeof DeploymentNativeActivationFailureV1Schema>;
+
 /** The fallback names the unavailable result, never an invented provider prerequisite. */
 export const DeploymentFailureRecoveryV1Schema = lazyZodSchema(() => z.strictObject({
     requiredFact: z.literal('deploymentActionResult'),
     nativeCompose: z.optional(DeploymentNativeComposeFailureV1Schema),
+    nativeActivation: z.optional(DeploymentNativeActivationFailureV1Schema),
     remedy: z.string().check(z.trim(), z.minLength(1)),
 }));
 
@@ -369,6 +378,13 @@ const occupiedCheckoutRecovery = recovery(
 
 function recoveryFor(details: Record<string, unknown>, errorCode?: string, request?: DeploymentRefusalRequestV1) {
     details = recoveryDetails(details);
+    const image = DeploymentImageResolutionFailureV1Schema.safeParse(details).data;
+    if (image) {
+        const reason = describeDeploymentImageResolutionFailureV1(image);
+        return image.reason === 'deployment_image_pull_denied'
+            ? recovery(`${reason} Check the registry credential used for this image.`, 'connectedAccounts', 'Open registry credentials')
+            : recovery(`${reason} Check the image reference in the Compose file.`, 'source', 'Open Compose source');
+    }
     const replacement = readDeploymentInstallationReplacementRefusalV1(errorCode, details);
     if (replacement) return recovery(replacement.remedy, 'reinstall', 'Reinstall on this Machine', replacement.machineId);
     if (details.kind === 'refused') {
@@ -386,6 +402,13 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     // The transport sets this fact only after consuming Home's confirmed rollback.
     if (details.requiredFact === 'transaction_commit') return transactionRollbackRecovery;
     const failure = isRecord(details.failure) ? details.failure : undefined;
+    const activation = DeploymentNativeActivationFailureV1Schema.safeParse(failure?.nativeActivation ?? details.nativeActivation).data;
+    if (activation) {
+        const exit = `Service ${activation.service} exited with code ${activation.exitStatus}.`;
+        return activation.missingVariable
+            ? recovery(`${exit} ${activation.missingVariable} is not set. Set it in this Environment's Variables.`, 'variables', 'Open Variables')
+            : recovery(`${exit} Check the service definition in the Compose file.`, 'source', 'Open Compose source');
+    }
     const sourceAdmission = isRecord(details.sourceAdmission) ? details.sourceAdmission
         : isRecord(failure?.sourceAdmission) ? failure.sourceAdmission : undefined;
     // A recorded typed cause (an unconfirmed transition's Home refusal) is more specific than the outcome code it settled as.

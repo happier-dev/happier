@@ -14,6 +14,7 @@ export async function readNativeComposeLogsForHost(input: Readonly<{
     environment?: boolean;
     redactionLease?: ProviderRedactionLease;
     redactionComplete?: boolean;
+    inspectContainerLog?: Readonly<{ id: string; read(text: string): void }>;
     run(args: readonly string[], signal?: AbortSignal, capture?: NativeLogCapture): Promise<Readonly<{ exitCode: number | null }>>;
 }>, options: ManagedServiceNativeLogReadForHost): Promise<ManagedServiceNativeLogResultV1> {
     const assertRedaction = () => {
@@ -43,6 +44,7 @@ export async function readNativeComposeLogsForHost(input: Readonly<{
     const bytes = Buffer.alloc(options.maxBytes);
     let used = 0;
     let truncated = false;
+    let inspection: { start: number; end: number } | undefined;
     const append = (chunk: Uint8Array) => {
         const length = Math.min(chunk.byteLength, bytes.byteLength - used);
         bytes.set(chunk.subarray(0, length), used);
@@ -58,14 +60,19 @@ export async function readNativeComposeLogsForHost(input: Readonly<{
             if (index) append(Buffer.from('\n'));
             // Docker selects lines, whose lengths are unbounded. Only this
             // byte projection retains output; the process result buffers none.
+            const start = used;
             const result = await input.run(['logs', '--tail', String(options.maxBytes), id], options.signal, {
                 maxStdoutBytes: 0, maxStderrBytes: 0, allowTruncatedStdout: true,
                 output: { redaction, onChunk(_stream, chunk) { append(chunk); } },
             });
             if (result.exitCode !== 0) return { kind: 'unavailable', reason: 'unavailable' };
+            if (id === input.inspectContainerLog?.id) inspection = { start, end: used };
         }
         options.signal?.throwIfAborted();
         const incomplete = assertRedaction();
+        if (inspection && !incomplete) {
+            input.inspectContainerLog?.read(new TextDecoder().decode(bytes.subarray(inspection.start, inspection.end), { stream: true }));
+        }
         return { kind: 'page', page: { sourceRevision,
             text: new TextDecoder('utf-8').decode(bytes.subarray(0, used), { stream: true }),
             nextCursor: null, truncated,

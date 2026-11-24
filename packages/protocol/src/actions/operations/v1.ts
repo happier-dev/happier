@@ -53,7 +53,7 @@ import { MachineReachabilityNativeFailureDetailsV1Schema } from '../../machines/
 import { MachineReachabilityConfigureResultV1Schema } from '../../machines/reachability/actionsV1.js';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '../../machines/reachability/actionIdsV1.js';
 import { DeploymentDomainCaddyFailureDetailsV1Schema } from '../../deployments/deploymentDomainCaddyFailureV1.js';
-import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
+import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
 import { DeploymentBackupFailureResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
   type DeploymentBackupFailureResultV1 } from '../../deployments/deploymentBackupActionsV1.js';
 import { MachineProvisionerSnapshotResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
@@ -285,7 +285,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
     DeploymentTemplateInstantiationPartialV1Schema, OpenProjectRefusalV1Schema, DeploymentDomainFailureDetailsV1Schema, DeploymentFailureRecoveryV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema,
     MachineReachabilityNativeFailureDetailsV1Schema,
-    DeploymentExecutionFailureDetailsV1Schema,
+    DeploymentExecutionFailureDetailsV1Schema, DeploymentImageResolutionFailureV1Schema,
     MachineAvailabilityDiagnosticV1Schema, SessionSpawnNewActionResultV1Schema])),
 }).check(z.refine(failure => !failure.details || ('type' in failure.details
   ? failure.details.type === 'error' && failure.details.code === failure.errorCode
@@ -311,6 +311,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   : failure.details.kind === 'machineSetup'
   ? failure.errorCode === 'outcome_unknown' || failure.errorCode === failure.details.failure.kind
     || failure.errorCode === 'platform_unsupported'
+  : failure.details.kind === 'deploymentImageResolutionFailure'
+  ? failure.errorCode === 'native_failed'
   : failure.details.kind === 'partial'
   ? failure.details.errorCode === failure.errorCode
   : failure.details.kind === 'refused'

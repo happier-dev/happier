@@ -8,6 +8,7 @@ import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/acti
 import { join } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentOwnServerContentV1Schema, OwnServerDeploymentInputBasisV1Schema, getDeploymentTargetLinkLineageV1, environmentSecretBindingIdentityV1 } from '@happier-dev/deployments/contracts/v1';
+import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import { DeploymentReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentEnvironmentDetailV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentRuntimeProjectionV1, DeploymentMachineResultV1 } from '@happier-dev/deployments/contracts/v1';
 import { isJsonObject, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -1622,6 +1623,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 const details = DeploymentExecutionFailureDetailsV1Schema.parse({ serverId: host.serverId,
                     environmentId: settled.receipt.deployment.environmentId, targetLinkId: settled.receipt.deployment.targetLinkId,
                     deploymentId: settled.receipt.deployment.id, failure: knownFailure,
+                    logsAvailable: projectDeploymentReceiptFactsV1(settled.receipt).logs.length > 0,
                     ...(!result.ok && cleanupFailed ? { cleanupFailure: { code: result.errorCode, phase: 'cleanup',
                         ...(result.failureCause ? { failureCause: result.failureCause } : {}) } } : {}),
                 });

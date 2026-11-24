@@ -1,3 +1,5 @@
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { expect, it } from 'vitest';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
@@ -76,4 +78,16 @@ it('retains teardown inventory refusal in the Action result', async () => {
     try { await observeOwnServerTeardownVolumes({ resources: [{ id: 'volume', kind: 'data', ownership: 'owned', disposition: 'remove' }],
         run: async () => ({ exitCode: 1, stdout: '', stderr: '' }) }); } catch (error) { caught = error; }
     expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'volume_observation_unavailable' });
+});
+
+
+it('explains the exact image rejected before review and points at the Compose source', () => {
+    const refusal = projectDeploymentException(new PluginError({ code: 'native_failed', details: {
+        kind: 'deploymentImageResolutionFailure', service: 'web',
+        reference: 'example.invalid/field-notes:latest', reason: 'deployment_image_not_found',
+    } }));
+    expect(readDeploymentRefusalRecoveryV1(refusal.errorCode, refusal.details)).toMatchObject({
+        remedy: expect.stringContaining('The registry could not find image example.invalid/field-notes:latest for service web.'),
+        nextAction: { destination: 'source' },
+    });
 });
