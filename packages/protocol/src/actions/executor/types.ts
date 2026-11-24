@@ -3128,6 +3128,14 @@ export type ActionExecutorDeps = Readonly<{
     | { decision: 'canceled'; request: ApprovalRequest; reason?: string }
   >;
 
+  /** Join the existing durable approval's recorded result for an admitted child. */
+  observeDeferredActionResult?: (args: Readonly<{
+    result: ActionExecuteResult;
+    actionId: ActionId;
+    requestId: string;
+    signal?: AbortSignal;
+  }>) => Promise<ActionExecuteResult>;
+
   /** Render the canonical admitted UI default confirmation; explicit Ask-first retains Artifact custody. */
   presentUserActionConfirmation?: (args: Readonly<{
     actionId: ActionId;

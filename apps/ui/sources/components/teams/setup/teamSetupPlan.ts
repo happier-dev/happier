@@ -68,6 +68,7 @@ export async function runTeamSetupPlan(params: Readonly<{
     actionRequestId?: string;
     onMachineApplied?: (result: NonNullable<TeamSetupRunResult['machine']>) => void;
     onRepositoryOpening?: (id: string) => void;
+    onChildApproval?: (artifactId: string | null) => void;
 }>): Promise<TeamSetupRunResult> {
     const { plan, context, actionRequestId } = params;
     const execution = await params.executeAction.confirmed(TEAM_SETUP_RUN_ACTION_ID_V1, {
@@ -79,7 +80,8 @@ export async function runTeamSetupPlan(params: Readonly<{
         ...(actionRequestId ? { actionRequestId } : {}),
         onTeamSetupBatchProgress: event => {
             if (event.kind === 'machineApplied') params.onMachineApplied?.(event.result);
-            else params.onRepositoryOpening?.(event.id);
+            else if (event.kind === 'repositoryOpening') params.onRepositoryOpening?.(event.id);
+            else params.onChildApproval?.(event.artifactId);
         },
     });
     return execution.ok ? TeamSetupBatchResultV1Schema.parse(execution.result)

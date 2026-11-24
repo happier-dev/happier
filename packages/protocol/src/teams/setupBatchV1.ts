@@ -51,6 +51,7 @@ export const TeamSetupBatchResultV1Schema = lazyZodSchema(() => {
 export type TeamSetupBatchResultV1 = z.infer<typeof TeamSetupBatchResultV1Schema>;
 export type TeamSetupBatchProgressV1 =
   | Readonly<{ kind: 'machineApplied'; result: NonNullable<TeamSetupBatchResultV1['machine']> }>
+  | Readonly<{ kind: 'childApproval'; artifactId: string | null }>
   | Readonly<{ kind: 'repositoryOpening'; id: string }>;
 
 /** Observe the existing Project operation slot for each reviewed checkout. */

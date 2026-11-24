@@ -2631,7 +2631,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         sameHome: isSameHome(caller.sessionTargetsV1?.targets[0]?.serverId, caller.serverId, caller) });
       return sessionTargetsV1 === caller.sessionTargetsV1 ? caller : { ...caller, sessionTargetsV1 };
     };
-    const executeChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean,
+    const executeChild = async (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext, hostInternal: boolean,
       execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>) => {
       const position = childPositions.get(childId) ?? 0;
       childPositions.set(childId, position + 1);
@@ -2659,9 +2659,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         && childCaller.runtimeAccountId === ctx.runtimeAccountId
         && sameStrictJsonValue(childCaller.externalActionTarget ?? null, ctx.externalActionTarget ?? null)
         ? workflowSessionScope : undefined;
-      return !hostInternal && deps.executeOrdinaryChildAction
-        ? deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext })
-        : executeInvocation(childId, childInput, derivedContext, hostInternal, inheritedScope);
+      if (!hostInternal && deps.executeOrdinaryChildAction) {
+        return deps.executeOrdinaryChildAction({ actionId: childId, input: childInput, context: derivedContext });
+      }
+      const result = await executeInvocation(childId, childInput, derivedContext, hostInternal, inheritedScope);
+      const requestId = derivedContext.actionRequestId;
+      if (actionId !== TEAM_SETUP_RUN_ACTION_ID_V1 || !hostInternal || !deps.observeDeferredActionResult
+        || !requestId || !result.ok) return result;
+      const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+      if (!approval.success) return result;
+      ctx.onTeamSetupBatchProgress?.({ kind: 'childApproval', artifactId: approval.data.artifactId });
+      try {
+        return await deps.observeDeferredActionResult({ result, actionId: childId, requestId, signal: derivedContext.signal });
+      } finally {
+        ctx.onTeamSetupBatchProgress?.({ kind: 'childApproval', artifactId: null });
+      }
     };
     const executeHostChild = (childId: ActionId, childInput: unknown, childContext: ActionExecutorContext) =>
       executeChild(childId, childInput, childContext, true);

@@ -15,7 +15,7 @@ import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { presentProjectSourceIssue } from '@/components/projects/sources/projectSourceIssue';
 import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import { resolveInboxItemPageRoute } from '@/components/inbox/inboxItemFocus';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
@@ -94,6 +94,7 @@ export type TeamSetupRunState =
 
 function readTeamSetupRunState(batch: TeamSetupBatch | null): TeamSetupRunState {
   if (!batch) return { kind: 'idle' };
+  if (batch.approvalArtifactId) return { kind: 'approval', operationId: null, artifactId: batch.approvalArtifactId };
   const machine = batch.settlement?.machine ?? batch.machine;
   const operationId = machine?.ok && 'operationId' in machine.result ? machine.result.operationId : null;
   if (batch.running) return { kind: 'running', operationId };
@@ -280,6 +281,8 @@ function TeamSetupPlanPage(
   const [selectionFailed, setSelectionFailed] = React.useState(false);
   const run = selectionFailed ? { kind: 'stopped' as const, operationId: null, failure: null }
     : readTeamSetupRunState(currentBatch && currentBatch.selection !== dismissedRun ? currentBatch : null);
+  const approval = useInPlaceApprovalReview({ approvalId: run.kind === 'approval' ? run.artifactId : null,
+    approvalPending: run.kind === 'approval', serverId: context.scope.serverId });
 
   // The preset's own plan is read for the chosen Machine so each step shows before anything runs.
   const prepareKey =
@@ -485,9 +488,7 @@ function TeamSetupPlanPage(
       canRun={canRun}
       onRun={() => { void start(); }}
       onOpenOperation={openOperation}
-      onOpenApproval={artifactId => router.push(resolveInboxItemPageRoute({
-        kind: 'approval', id: artifactId, serverId: context.scope.serverId,
-      }) as never)}
+      onOpenApproval={approval.reopen}
       onRetryFailedSetup={setupRetry ? openSetupRetry : undefined}
       sources={{
         loading: sourcesLoading,

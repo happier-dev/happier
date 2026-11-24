@@ -25,6 +25,7 @@ export type TeamSetupBatch = Readonly<{
         isReviewPresented?: () => boolean;
     }>;
     machine?: NonNullable<TeamSetupRunResult['machine']>;
+    approvalArtifactId?: string | null;
     dispatched: ReadonlySet<string>;
     running: boolean;
     completed: boolean;
@@ -106,6 +107,10 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                     onMachineApplied: result => {
                         setBatch(current => current?.selection === selection ? { ...current, machine: result } : current);
                         run.onMachineApplied?.(result);
+                    },
+                    onChildApproval: artifactId => {
+                        setBatch(current => current?.selection === selection ? { ...current, approvalArtifactId: artifactId } : current);
+                        run.onChildApproval?.(artifactId);
                     },
                     onRepositoryOpening: id => {
                         setBatch(current => current?.selection === selection ? {

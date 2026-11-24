@@ -5123,6 +5123,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     approvalsResolveBlockingDecision: async ({ artifactId, request, decision, decisionAuthority }) =>
       await approvalCoordinator.resolveBlockingDecision({ artifactId, request, decision, decisionAuthority }),
 
+    observeDeferredActionResult: accountContext ? async args => {
+      const { waitForDeferredActionResult } = await import('@/components/approvals/observeActionApprovalContinuation');
+      return waitForDeferredActionResult({ ...args, lifetime: accountContext.accountLifetime,
+        fetchArtifact: (artifactId, signal) => accountContext.fetchArtifact(artifactId, { signal }) });
+    } : undefined,
+
     approvalsWaitForDecision: async ({ artifactId, request, serverId, signal }) => {
       const accountLifetime = accountContext?.accountLifetime ?? captureActiveServerAccountScopeLifetime();
       const scopeChanged = () => Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' as const });

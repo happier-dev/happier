@@ -36,6 +36,8 @@ import { createActionApprovalContinuationObserver } from './actionApprovalContin
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { ManagedMachineBirthResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { waitForDeferredActionResult } from './observeActionApprovalContinuation';
 
 await initializeRealAppRuntimeForTests();
 
@@ -146,6 +148,33 @@ function executedArtifact(overrides?: Readonly<{
         isDecrypted: true,
     };
 }
+
+describe('exact deferred Action settlement', () => {
+    it.each([true, false])('joins a Machine Apply receipt only for the admitted child request (%s)', async matchingRequest => {
+        const machineAction = 'machines.setup.apply';
+        const requestId = 'reviewed-machine-child';
+        const result = { operationId: 'accepted-machine-setup' };
+        const artifact = executedArtifact({ actionId: machineAction, actionArgs: {}, surface: 'cli',
+            requestedSurface: 'cli', requestId: matchingRequest ? requestId : 'different-machine-child', result });
+        const lifetime = { scope: { serverId: 'home-1', accountId: 'account-1' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const firstRead = createDeferred<void>();
+        let recorded: DecryptedArtifact | null = null;
+        const fetchArtifact = vi.fn(async () => { firstRead.resolve(); return recorded; });
+        const settlement = waitForDeferredActionResult({
+            result: { ok: true, result: { kind: 'approval_request_created', artifactId: artifact.id, actionId: machineAction } },
+            actionId: machineAction, requestId, lifetime, fetchArtifact,
+        });
+        await firstRead.promise;
+        recorded = artifact;
+        publishHomeAccountChange(lifetime.scope.serverId, [artifact.id]);
+        expect(await settlement).toEqual(matchingRequest ? { ok: true, result }
+            : { ok: false, errorCode: 'approval_binding_mismatch', error: 'approval_binding_mismatch' });
+        expect(fetchArtifact.mock.calls).toEqual([
+            [artifact.id, expect.any(AbortSignal)], [artifact.id, expect.any(AbortSignal)],
+        ]);
+    });
+});
 
 function failedArtifact(overrides?: Readonly<{
     status?: 'failed' | 'outcome_unknown';

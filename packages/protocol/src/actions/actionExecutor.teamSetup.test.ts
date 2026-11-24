@@ -21,6 +21,37 @@ describe('requester Team Setup batch', () => {
   const context = { serverId: target.serverId, surface: 'ui', authority: 'present_user', runtimeAccountId: 'requester',
     expectedAccountId: 'requester', actionRequestId: requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
 
+  it('joins the exact deferred Machine decision before opening reviewed checkouts', async () => {
+    const pending = { kind: 'approval_request_created', artifactId: 'machine-approval', actionId: CHILD.machine } as const;
+    const effects: string[] = [];
+    const executor = createActionExecutor({
+      machineSetupApply: async () => { effects.push('apply'); return pending; },
+      actionOperationAction: async ({ input }) => {
+        expect(input).toMatchObject({ operationId: 'accepted-operation', waitForTerminal: true });
+        effects.push('wait');
+        return { kind: 'found', operation: { version: 1, operationId: 'accepted-operation', revision: 1,
+          actionId: CHILD.machine, state: 'succeeded', scope: { accountId: 'requester', machineId: target.machineId },
+          title: 'Machine setup', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported' } };
+      },
+      projectsOpen: async (project) => {
+        if (project.source.kind !== 'folder') throw new Error('Expected the reviewed folder selection');
+        effects.push(project.source.path);
+        return { kind: 'opened', setup: 'notRequired', directory: project.source.path,
+          workspace: { serverId: target.serverId, machineId: target.machineId, workspaceId: project.source.path.slice(1), rootPath: project.source.path } };
+      },
+      observeDeferredActionResult: async ({ result, actionId, requestId: childRequestId }) => {
+        expect(result).toEqual({ ok: true, result: pending });
+        expect(actionId).toBe(CHILD.machine);
+        expect(childRequestId).not.toBe(requestId);
+        effects.push('approved');
+        return { ok: true, result: { operationId: 'accepted-operation' } };
+      },
+    });
+    const result = await executor.execute(actionId, input, bindPresentUserActionConfirmationV1(actionId, input, context));
+    expect(result).toMatchObject({ ok: true, result: { completed: true, repositories: [{ id: 'one' }, { id: 'two' }] } });
+    expect(effects).toEqual(['apply', 'approved', 'wait', '/one', '/two']);
+  });
+
   it.each(['succeeded', 'failed'] as const)('waits once for the %s Machine prerequisite before opening checkouts', async state => {
     const effects: string[] = [];
     const observedRequestIds: (string | null | undefined)[] = [];

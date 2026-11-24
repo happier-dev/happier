@@ -1,11 +1,14 @@
 import { isAccountCurrentnessEntityIdV1 } from '@happier-dev/protocol/changes';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { InvalidateSync } from '@/utils/sessions/sync';
-import type { createActionApprovalContinuationObserver } from './actionApprovalContinuation';
+import { createActionApprovalContinuationObserver, resumeActionExecutionResult } from './actionApprovalContinuation';
 
 /** Headless adapter for the same exact-Home Artifact observation used by mounted approvals. */
 export function observeActionApprovalContinuation(input: Readonly<{
@@ -41,4 +44,39 @@ export function observeActionApprovalContinuation(input: Readonly<{
     const observe = input.observer.subscribe(observePending);
     observePending();
     return () => { read.stop(); observe(); wake(); };
+}
+
+/** Recover the exact recorded result without deciding or dispatching the child again. */
+export async function waitForDeferredActionResult(input: Readonly<{
+    result: ActionExecuteResult;
+    actionId: ActionId;
+    requestId: string;
+    lifetime: ServerAccountScopeLifetime;
+    signal?: AbortSignal;
+    fetchArtifact(artifactId: string, signal: AbortSignal): Promise<DecryptedArtifact | null>;
+}>): Promise<ActionExecuteResult> {
+    const { lifetime } = input;
+    const ended = new AbortController();
+    const retirement = lifetime.onRetire(() => ended.abort());
+    if (!lifetime.isCurrent()) ended.abort();
+    const cancellation = mergeAbortSignals([input.signal, ended.signal]);
+    const observer = createActionApprovalContinuationObserver({ onExecuted: () => {} });
+    const deliver = observer.subscribe(observer.deliverSettlement);
+    const unobserve = observeActionApprovalContinuation({ observer, scope: lifetime.scope,
+        isCurrent: () => lifetime.isCurrent() && !cancellation.signal.aborted,
+        fetchArtifact: id => input.fetchArtifact(id, cancellation.signal) });
+    try {
+        return await resumeActionExecutionResult({ result: input.result, actionId: input.actionId,
+            requestId: input.requestId, scope: lifetime.scope, signal: cancellation.signal,
+            aborted: () => lifetime.isCurrent()
+                ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
+                : { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' },
+            onApprovalPending: observer.requestApproval });
+    } finally {
+        unobserve();
+        deliver();
+        observer.dispose();
+        cancellation.dispose();
+        retirement.dispose();
+    }
 }
