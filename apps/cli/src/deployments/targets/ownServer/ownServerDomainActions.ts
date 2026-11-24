@@ -39,7 +39,7 @@ import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudfl
 import { createActionExecuteFailureError, isActionExecuteFailure, readActionFailureCauseV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { isDeploymentDomainAdminAccessRefusalV1, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { logger } from '@/ui/logger';
 
 type DomainAction = DeploymentDomainChildActionIdV1;
@@ -52,16 +52,17 @@ const failure = (reason: string, details?: unknown, failureCause?: unknown, effe
     const errorCode = reason === 'mode_none' || reason === 'not_preauthorized' ? 'machine_admin_access_required'
         : reason === 'machine_reachability_posture_unavailable' ? 'machine_network_review_required' : reason;
     const parsedCause = failureCause === undefined ? undefined : readActionFailureCauseV1(failureCause);
+    const adminAccessRefused = isDeploymentDomainAdminAccessRefusalV1(errorCode);
     const { machineId, ...scope } = nativeScope ?? {};
     const scoped = nativeScope ? { ...scope, ...(isRecord(details) ? details : {}),
-        ...(errorCode === 'machine_admin_access_required' && machineId ? { machineId } : {}) } : details;
+        ...(adminAccessRefused && machineId ? { machineId } : {}) } : details;
     const recoveryFacts = nativeScope && isRecord(scoped) && typeof scoped.tunnelId === 'string' ? { ...scoped,
         ...(scoped.requiredFact === undefined || scoped.requiredFact === 'nativeExecutionResult' ? { requiredFact: 'cloudflarePreparation' } : {}),
         recovery: { kind: 'adopt' as const, tunnelId: scoped.tunnelId },
         remedy: `${typeof scoped.remedy === 'string' ? `${scoped.remedy} ` : ''}Cloudflare tunnel ${scoped.tunnelId} remains available. Resolve the reported error, then review this Domain using that tunnel (Adopt). Remove cleans its owned routes while retaining the tunnel.` } : scoped;
     const recovery = isRecord(recoveryFacts) && recoveryFacts.step === 'native_execution'
         ? projectDeploymentFailureRecoveryV1(recoveryFacts,
-            errorCode === 'machine_admin_access_required' ? errorCode : undefined) : recoveryFacts;
+            adminAccessRefused ? errorCode : undefined) : recoveryFacts;
     return { ok: false as const, errorCode, error: errorCode, ...(recovery === undefined ? {} : { details: recovery }),
         ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
         ...(parsedCause === undefined ? {} : { failureCause: parsedCause }) };

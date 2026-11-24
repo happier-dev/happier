@@ -1039,11 +1039,18 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it('opens the refused origin Machine setup from a Domain Add refusal', async () => {
+  it.each(['machine_admin_access_required', 'admin_access_unavailable'] as const)(
+    'opens the serving Machine administrator setup when Domain Add returns %s', async (code) => {
     const detail = createDeploymentEnvironmentDetailV1();
     const actions = { ...domainActions(detail), addDomain: vi.fn(async () => ({
-      ok: false as const, error: 'machine_admin_access_required',
-      details: { step: 'native_execution', machineId: 'origin-machine' },
+      ok: false as const, error: code,
+      details: {
+        step: 'native_execution', machineId: 'origin-machine',
+        operation: { serverId: 'home', machineId: 'controller-machine', operationId: 'domain-operation' },
+        ...(code === 'admin_access_unavailable' ? {
+          remedy: 'The machine needs administrator access for this change. Review its administrator connection before retrying.',
+        } : {}),
+      },
     })) };
     const openRecovery = vi.fn();
     const { screen, controller, settle } = await renderDomains(detail, [], actions, false, undefined, false, { ...noReview, openRecovery });
@@ -1060,9 +1067,10 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
       const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
       const banner = screen.findAllByType(AttentionBanner)
         .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
-      expect(banner?.props.description).toContain('origin-machine');
       await act(async () => { banner?.props.action?.onPress(); });
       expect(openRecovery).toHaveBeenCalledExactlyOnceWith('machineAdminAccess', { machineId: 'origin-machine' });
+      expect(banner?.props.description).toContain('origin-machine');
+      expect(banner?.props.description).not.toContain('controller-machine');
     } finally { await screen.unmount(); controller.retire(); }
   });
 
@@ -1268,14 +1276,17 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
     credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const, account } }] });
   const created = selection({ kind: 'create', name: 'docs.happier.dev' });
   const adopted = selection({ kind: 'adopt', tunnelId: 'tunnel-1', name: 'office' });
-  async function findChoices(existing: readonly unknown[], previewDomainDns?: () => Promise<never>, automaticSelection = false) {
+  async function findChoices(existing: readonly unknown[], previewDomainDns?: () => Promise<never>, automaticSelection = false,
+    refusal?: { addDomain: () => Promise<unknown>; openRecovery: () => void }) {
     const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async (_action, input) => (input as { zoneId?: string }).zoneId
       ? { ok: true, value: { kind: 'ready', options: existing, createOption: { label: 'docs.happier.dev', selection: created } } }
       : { ok: true, value: { kind: 'ready', zones: [{ zoneId: 'zone-1', name: 'happier.dev' }], options: [] } } as never);
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
-    const actions = { ...domainActions(detail), inspectPlatformTarget, previewDomainDns };
-    const rendered = await renderDomains(detail, [], actions);
+    const actions = { ...domainActions(detail), inspectPlatformTarget, previewDomainDns,
+      ...(refusal ? { addDomain: refusal.addDomain } : {}) };
+    const rendered = await renderDomains(detail, [], actions, false, undefined, false,
+      refusal ? { ...noReview, openRecovery: refusal.openRecovery } : noReview);
     expect(await rendered.settle(id)).not.toBeNull();
     await rendered.screen.pressByTestIdAsync(id);
     const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
@@ -1327,6 +1338,27 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
       expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
         content: expect.objectContaining({ ingress: created }),
       }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('opens the serving Machine administrator setup when adding a Tunnel Domain is refused', async () => {
+    const openRecovery = vi.fn();
+    const addDomain = vi.fn(async () => ({ ok: false, error: 'admin_access_unavailable', details: {
+      step: 'native_execution', machineId: 'tunnel-origin',
+      operation: { serverId: 'home', machineId: 'controller-machine', operationId: 'domain-operation' },
+    } }));
+    const { screen, controller, settle } = await findChoices([], undefined, false, { addDomain, openRecovery });
+    try {
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        content: expect.objectContaining({ ingress: created }),
+      }));
+      expect(await settle(`${id}.outcome`)).not.toBeNull();
+      const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+      const banner = screen.findAllByType(AttentionBanner)
+        .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
+      await act(async () => { banner?.props.action?.onPress(); });
+      expect(openRecovery).toHaveBeenCalledExactlyOnceWith('machineAdminAccess', { machineId: 'tunnel-origin' });
     } finally { await screen.unmount(); controller.retire(); }
   });
 

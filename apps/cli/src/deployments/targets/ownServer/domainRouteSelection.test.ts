@@ -605,14 +605,16 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review with ready Caddy', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator access unavailable', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review with ready Caddy', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
     const incumbentJoining = scenario === 'incumbent receipt joining member' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
     const membership = scenario === 'membership join installed' || scenario === 'membership drain';
-    const adminAccessRefused = scenario === 'administrator access off' || scenario === 'administrator access not applied';
+    const adminAccessUnavailable = scenario === 'administrator access unavailable';
+    const adminAccessRefused = scenario === 'administrator access off' || scenario === 'administrator access not applied'
+        || adminAccessUnavailable;
     const removingNativeOutput = scenario === 'Remove native parsed output invalid' || scenario === 'Remove malformed native observation';
     const nativeOutcomeUnknown = scenario === 'administrator native outcome unknown'
         || scenario === 'administrator native outcome unknown with fact';
@@ -990,6 +992,12 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             if (job.kind === 'domainDiscover') {
                 if (adminAccessRefused && job.machineId === 'a') {
                     acknowledge({ ok: true, result: machines[0] });
+                    return;
+                }
+                if (adminAccessUnavailable) {
+                    // The installed child could not capture administrator setup. Its RPC refusal carries the code;
+                    // the controller already addressed this call to an exact Machine and installation.
+                    acknowledge({ ok: true, result: { ok: false, errorCode: 'admin_access_unavailable', error: 'admin_access_unavailable' } });
                     return;
                 }
                 if (scenario === 'network review required' || scenario === 'firewall prerequisite failed' || scenario === 'firewall policy unavailable' || scenario === 'firewall partial failure'
@@ -1372,7 +1380,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             expect(admissions).toHaveLength(0);
             expect(children).toHaveLength(0);
         } else if (adminAccessRefused) {
-            expect(result).toMatchObject({ ok: false, errorCode: 'machine_admin_access_required', details: {
+            expect(result).toMatchObject({ ok: false, errorCode: adminAccessUnavailable ? 'admin_access_unavailable' : 'machine_admin_access_required', details: {
                 environmentId: input.environmentId, domainId: input.domainId, step: 'native_execution', machineId: 'b',
                 remedy: expect.stringContaining('administrator access'),
             } });

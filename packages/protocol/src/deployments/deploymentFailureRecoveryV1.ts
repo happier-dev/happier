@@ -351,8 +351,14 @@ export function readDeploymentInstallationReplacementRefusalV1(errorCode: unknow
     return DeploymentInstallationReplacementRefusalV1Schema.safeParse(details).data ?? null;
 }
 
+export function isDeploymentDomainAdminAccessRefusalV1(
+    errorCode: unknown,
+): errorCode is 'machine_admin_access_required' | 'admin_access_unavailable' {
+    return errorCode === 'machine_admin_access_required' || errorCode === 'admin_access_unavailable';
+}
+
 function readDomainAdminRecoveryMachineId(details: Record<string, unknown>, errorCode?: string): string | undefined {
-    if (errorCode !== 'machine_admin_access_required' || details.step !== 'native_execution') return undefined;
+    if (!isDeploymentDomainAdminAccessRefusalV1(errorCode) || details.step !== 'native_execution') return undefined;
     return DeploymentIdentifierV1Schema.safeParse(details.machineId).data;
 }
 
@@ -394,10 +400,12 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
         && /^(?:unix:\/\/\/[a-z0-9_./-]+\.sock|npipe:\/\/\/\/\.\/pipe\/[a-z0-9_-]+)$/iu.test(details.dockerEndpoint)) {
         return dockerSocketAccessRecovery(details.dockerEndpoint);
     }
-    const adminMachineId = readDomainAdminRecoveryMachineId(details, code);
-    if (adminMachineId) return recovery(
-        `This address change needs administrator access on Machine ${adminMachineId}. Set up administrator access there, then review the address again.`,
-        'machineAdminAccess', recoveries.machine_admin_access_required.nextAction.label, adminMachineId);
+    if (isDeploymentDomainAdminAccessRefusalV1(code)) {
+        const adminMachineId = readDomainAdminRecoveryMachineId(details, code);
+        if (adminMachineId) return recovery(
+            `This address change needs administrator access on Machine ${adminMachineId}. Set up administrator access there, then review the address again.`,
+            'machineAdminAccess', recoveries[code].nextAction.label, adminMachineId);
+    }
     if (code === 'deployment_conflict' && (details.step === 'native_execution'
         || failure?.step === 'native_execution'
         || failureCause?.phase === 'deployment.domain.native_execution')) return nativeConflictRecovery;
@@ -430,7 +438,8 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
         : typeof failure?.remedy === 'string' ? failure.remedy
             : typeof sourceAdmission?.remedy === 'string' ? sourceAdmission.remedy : undefined;
     const supersededRemedy = recovery === nativeConflictRecovery && authoredRemedy === recoveries.deployment_conflict.remedy
-        || recovery === recoveries.native_build_failed && authoredRemedy === recoveries.invalid_request.remedy;
+        || recovery === recoveries.native_build_failed && authoredRemedy === recoveries.invalid_request.remedy
+        || recovery.nextAction.destination === 'machineAdminAccess' && authoredRemedy === recoveries.admin_access_unavailable.remedy;
     return projectActionFailureRecoveryV1({ ...details,
         requiredFact: typeof facts.requiredFact === 'string'
             && !(facts.step === 'native_execution'
