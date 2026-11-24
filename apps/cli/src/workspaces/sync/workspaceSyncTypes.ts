@@ -1,7 +1,9 @@
 import { computeWorkspaceSyncPolicyDigest as computeCanonicalWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, ReadWorkspaceSyncFileResultV1, ReadWorkspaceSyncFileV1, WorkspaceContentPolicyV1, WorkspaceSyncConflictPageRequestV1, WorkspaceSyncConflictPageV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceRootOwnershipHandle } from './workspaceSyncRootOwnership';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ManagedWorkspaceRefV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { WorkspaceSyncStatusWatchRequestV1, WorkspaceSyncStatusWatchResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 export type {
@@ -33,6 +35,23 @@ export type WorkspaceSyncRelationshipPreparation = Readonly<{
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   targetReplacementApprovalReceiptId?: string;
   targetReplacementApprovalActionInput?: unknown;
+  /** Present only for an admitted requester's remote TARGET; its prepare takes the signed path. */
+  requesterTarget?: WorkspaceSyncRequesterTarget;
+}>;
+
+/**
+ * An admitted requester's signed writer → target path for one relationship bootstrap,
+ * qualified by one TARGET preflight. In-process only, never serialized; it lives as long
+ * as the creation transaction that acquired it.
+ */
+export type WorkspaceSyncRequesterTarget = Readonly<{
+  /** The admitted ingress context the prepare carries. */
+  context: RpcHandlerContext;
+  admittedTarget: Readonly<{ machineId: string; rootPath: string; targetManaged?: Pick<ManagedWorkspaceRefV2, 'managedId' | 'controller'> }>;
+  /** Home-proven TARGET installation; both releases address it. */
+  physicalEndpoint: MachineInstallationPublicIdentityV1;
+  /** The installed SOURCE writer's release context for that endpoint. */
+  cleanupContext: RpcHandlerContext;
 }>;
 
 /** Exact requester-admitted finite effect, including its physical endpoint selection. */

@@ -3814,12 +3814,17 @@ export function createWorkspaceSyncTargetAuthority(
       const source = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
       if (context?.callerInputAuthorization && source) {
         context.signal.throwIfAborted();
+        // A relationship bootstrap is named by the relationship its admitted operation derives;
+        // the wire schema already ties owner.relationshipId to bootstrapOperationId.
+        const relationship = wireRequest.owner.kind === 'relationship' ? wireRequest.transientRelationship ?? null : null;
         if (!source.sourceContext || !request.admittedTarget || source.accountServerId !== localServerId
-          || source.operationId !== wireRequest.bootstrapOperationId
+          || (wireRequest.owner.kind === 'relationship'
+            ? wireRequest.bootstrapOperationId !== deriveWorkspaceSyncRelationshipId(source.operationId)
+            : source.operationId !== wireRequest.bootstrapOperationId)
           || !dependencies.callWorkspaceTargetPhase) {
           throw authorityError('workspace_sync_update_required', 'The admitted original target transport is unavailable');
         }
-        assertPrepareWrites(wireRequest, source.sourceContext);
+        assertPrepareWrites(wireRequest, source.sourceContext, relationship);
         return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(await dependencies.callWorkspaceTargetPhase({
           machineId: request.admittedTarget.machineId,
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, request: wireRequest,

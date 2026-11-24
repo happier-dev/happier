@@ -138,6 +138,7 @@ import { createWorkspaceSyncPeerIdentityValidator } from '@/workspaces/sync/tran
 import { inspectRetiredWorkspaceReplicationState } from '@/workspaces/sync/workspaceSyncLegacyState';
 import { sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter, type WorkspaceSyncPrivateExecution, type PrepareWorkspaceSyncHandoffInput,
   type RetainedWorkspaceSyncPrivateExecution, type WorkspaceSyncManagedCopySource } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+import type { WorkspaceSyncRequesterTarget } from '@/workspaces/sync/workspaceSyncTypes';
 import type { SessionHandoffWorkspaceCaptureRequestV3, SessionHandoffWorkspaceCaptureResultV3 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { requesterWorkspaceCaptureRequired, requiresRequesterWorkspaceCapture } from '@/api/machine/machineRpcAuthorization';
 import {
@@ -1634,6 +1635,38 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }),
     };
   };
+  // An admitted requester's TARGET cleanup basis, from exactly one TARGET preflight: the
+  // Home-proven physical TARGET and the installed writer's release context for it. Copy and
+  // relationship bootstraps both take it from here; undefined means no admitted requester.
+  const qualifyRequesterTargetCleanup = async (context: RpcHandlerContext | undefined,
+    target: WorkspaceSyncRequesterTarget['admittedTarget'], bootstrapOperationId: string,
+    destinationIntent: Parameters<typeof targetAuthority.preflightHandoffTargetReplacementAtTarget>[0]['destinationIntent'],
+    signal?: AbortSignal, targetPreflight?: HandoffTargetReplacementPreflightResultV1,
+    // The operation the preflight names: a copy names its own; a relationship, the admitted one.
+    preflightOperationId?: string,
+    resolveChildSourceWriter?: (sourceMachineId: string) => Readonly<{ machineId: string; installationId: string }> | undefined,
+  ) => {
+    const sourceRouting = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
+    if (!context?.callerInputAuthorization || !sourceRouting) return undefined;
+    const preflight = targetPreflight ?? await targetAuthority.preflightHandoffTargetReplacementAtTarget({
+      v: 1, serverId: semanticServerId, operationId: preflightOperationId ?? sourceRouting.operationId,
+      machineId: target.machineId, targetPath: target.rootPath,
+      ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}),
+      destinationIntent, ...(signal ? { signal } : {}),
+    }, context);
+    if (!preflight.physicalEndpoint || !sourceRouting.sourceContext) {
+      throw compositionError('workspace_sync_update_required', 'The installed target cleanup endpoint is unavailable');
+    }
+    const sourceWriter = context.workspaceSyncSourceWriterTargetRouting?.sourceWriter
+      ?? resolveChildSourceWriter?.(sourceRouting.sourceMachineId)
+      ?? context.callerInputAuthorization.binding.workspaceSyncAdmission?.source;
+    return { preflight, physicalEndpoint: preflight.physicalEndpoint,
+      cleanupContext: createInstalledTargetCleanupContext(sourceRouting, sourceWriter,
+        { v: 1, phase: 'release', operationId: bootstrapOperationId,
+          accountServerId: semanticServerId, targetMachineId: target.machineId,
+          targetRootPath: target.rootPath,
+          ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) }) };
+  };
   // One requester TARGET caller: a retained capture forwards its admitted SOURCE
   // context, and cleanup after its prepare uses the installed writer identity.
   const createRequesterTargetPhaseCaller = (context: RpcHandlerContext,
@@ -1934,6 +1967,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   const prepareRelationshipTarget: NonNullable<DaemonWorkspaceSyncRuntimeDependencies['prepareRelationshipTarget']> = async (relationship, signal, preparation, admitted) => {
     const retained = runtime?.handoffAdapter.resolvePrivateExecution?.({ relationshipId: relationship.relationshipId });
     const target = resolveRelationshipBootstrapTarget(admitted ?? retained?.execution.getSnapshot?.() ?? factories.getProjectSnapshot(), relationship, semanticServerId);
+    const requesterTarget = retained ? undefined : preparation?.requesterTarget;
     const prepare = {
       v: 1,
       bootstrapOperationId: relationship.relationshipId,
@@ -1942,7 +1976,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         ? { transientRelationship: relationship } : {}),
       targetWorkspaceRefId: target.workspaceRefId,
       targetMachineId: target.machineId,
-      ...(admitted && !retained ? { admittedTarget: { machineId: target.machineId, rootPath: target.rootPath, ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) } } : {}),
+      ...(requesterTarget ? { admittedTarget: requesterTarget.admittedTarget }
+        : admitted && !retained ? { admittedTarget: { machineId: target.machineId, rootPath: target.rootPath, ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) } } : {}),
       endpointRole: target.endpointRole,
       policyDigest: relationship.contentPolicy.policyDigest,
       createIfMissing: true,
@@ -1980,6 +2015,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         return { ownershipHandles: [await owner.getPreparedBootstrapOwnership(wire)] };
       }
       return;
+    }
+    if (requesterTarget) {
+      // The admitted requester's signed writer → target path; its releases address the same installation.
+      const prepared = await targetAuthority.prepareBootstrapAtTarget(prepare, requesterTarget.context);
+      if (!isDeepStrictEqual(prepared.physicalEndpoint, requesterTarget.physicalEndpoint)) {
+        throw compositionError('workspace_sync_child_unavailable', 'The installed target changed during preparation');
+      }
+      return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
     }
     const prepared = await targetAuthority.prepareBootstrapAtTarget(prepare);
     return prepared.ownershipHandles ? { ownershipHandles: prepared.ownershipHandles } : undefined;
@@ -2314,29 +2357,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           : context ? { ...context, signal: cleanupSignal } : undefined);
       };
       try {
-        const sourceRouting = context?.workspaceSyncSourceWriterTargetRouting?.source ?? context?.workspaceSyncSourceRouting;
-        if (context?.callerInputAuthorization && sourceRouting && admittedTarget) {
-          const preflight = targetPreflight ?? await targetAuthority.preflightHandoffTargetReplacementAtTarget({
-            v: 1, serverId: semanticServerId, operationId: prepareRequest.bootstrapOperationId,
-            machineId: admittedTarget.machineId, targetPath: admittedTarget.rootPath,
-            ...(admittedTarget.targetManaged ? { targetManaged: admittedTarget.targetManaged } : {}),
-            destinationIntent: prepareRequest.targetBootstrap,
-            ...(bootstrapInput.signal ? { signal: bootstrapInput.signal } : {}),
-          }, context);
-          if (!preflight.physicalEndpoint || !sourceRouting.sourceContext) {
-            throw compositionError('workspace_sync_update_required', 'The installed target cleanup endpoint is unavailable');
-          }
-          const sourceWriter = context.workspaceSyncSourceWriterTargetRouting?.sourceWriter
-            ?? basis.childMachines.find(child => child.machineId === sourceRouting.sourceMachineId)?.controller
-            ?? context.callerInputAuthorization.binding.workspaceSyncAdmission?.source;
-          retainedTargetCleanupContext = createInstalledTargetCleanupContext(sourceRouting, sourceWriter,
-            { v: 1, phase: 'release', operationId: prepareRequest.bootstrapOperationId,
-              accountServerId: semanticServerId, targetMachineId: admittedTarget.machineId,
-              targetRootPath: admittedTarget.rootPath,
-              ...(admittedTarget.targetManaged ? { targetManaged: admittedTarget.targetManaged } : {}) });
-          physicalTargetEndpoint = preflight.physicalEndpoint;
-          if (preflight.targetWorkspace) {
-            const target = preflight.targetWorkspace;
+        const cleanup = admittedTarget ? await qualifyRequesterTargetCleanup(context, admittedTarget,
+          prepareRequest.bootstrapOperationId, prepareRequest.targetBootstrap, bootstrapInput.signal, targetPreflight,
+          prepareRequest.bootstrapOperationId,
+          sourceMachineId => basis.childMachines.find(child => child.machineId === sourceMachineId)?.controller) : undefined;
+        if (cleanup) {
+          retainedTargetCleanupContext = cleanup.cleanupContext;
+          physicalTargetEndpoint = cleanup.physicalEndpoint;
+          if (cleanup.preflight.targetWorkspace) {
+            const target = cleanup.preflight.targetWorkspace;
             if ((!bootstrapInput.targetManaged && bootstrapInput.action.kind !== 'copy_once') || target.serverId !== semanticServerId
               || target.id !== prepareRequest.targetWorkspaceRefId || resolveWorkspaceSyncExecutionMachineIdV1(target) !== physicalTargetEndpoint.machineId
               || resolveWorkspaceSyncExecutionMachineIdV1(target) !== bootstrapInput.targetMachineId || target.rootPath !== bootstrapInput.targetRootPath) {
@@ -2564,6 +2593,20 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     ...(input.onStatusPublished ? { onStatusPublished: input.onStatusPublished } : {}),
   });
 
+  // Without a requester TARGET path this is today's raw release; with one, the installed
+  // writer releases the exact installation the signed prepare reached.
+  const releaseInstalledRelationshipTarget = async (relationship: WorkspaceSyncRelationshipV1,
+    reason: 'relationship_committed' | 'abort', requesterTarget?: WorkspaceSyncRequesterTarget) => {
+    const target = resolveRelationshipBootstrapTarget(factories.getProjectSnapshot(), relationship, semanticServerId);
+    const release = { v: 1 as const, bootstrapOperationId: relationship.relationshipId, targetWorkspaceRefId: target.workspaceRefId,
+      targetMachineId: target.machineId, reason };
+    if (!requesterTarget) {
+      await targetAuthority.releaseBootstrapAtTarget(release);
+      return;
+    }
+    await targetAuthority.releaseBootstrapAtTarget({ ...release, targetMachineId: requesterTarget.physicalEndpoint.machineId,
+      physicalEndpoint: requesterTarget.physicalEndpoint }, requesterTarget.cleanupContext);
+  };
   const createInstalledRelationshipOwner = (retirementContext?: RpcHandlerContext) => factories.createRelationshipOwner({
     localMachineId: input.localMachineId,
     observeRelationshipTarget: async (relationship, target) => {
@@ -2583,27 +2626,25 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       if (!runtime) throw controllerUnavailable();
       return await runtime.managedWorkspaceSync.flush(relationshipId, signal);
     },
-    commitRelationshipTarget: async (relationship) => {
+    prepareRequesterTarget: async (relationship, requester) => {
       const target = resolveRelationshipBootstrapTarget(factories.getProjectSnapshot(), relationship, semanticServerId);
-      await targetAuthority.releaseBootstrapAtTarget({
-        v: 1,
-        bootstrapOperationId: relationship.relationshipId,
-        targetWorkspaceRefId: target.workspaceRefId,
-        targetMachineId: target.machineId,
-        reason: 'relationship_committed',
-      });
+      // Design A covers the admitted Project Open; every other flow (a session handoff, the owner's
+      // own Sync) keeps today's path, as does a TARGET this daemon serves, which has no Machine call.
+      if (requester.context.callerInputAuthorization?.binding.actionId !== 'projects.open'
+        || target.machineId === input.localMachineId) return undefined;
+      const admittedTarget = { machineId: target.machineId, rootPath: target.rootPath,
+        ...(target.targetManaged ? { targetManaged: target.targetManaged } : {}) };
+      const cleanup = await qualifyRequesterTargetCleanup(requester.context, admittedTarget, relationship.relationshipId,
+        requester.targetBootstrap, requester.signal);
+      return cleanup ? { context: requester.context, admittedTarget, physicalEndpoint: cleanup.physicalEndpoint,
+        cleanupContext: cleanup.cleanupContext } : undefined;
     },
-    terminateRelationshipRuntime: async (relationship) => {
+    commitRelationshipTarget: async (relationship, requesterTarget) =>
+      await releaseInstalledRelationshipTarget(relationship, 'relationship_committed', requesterTarget),
+    terminateRelationshipRuntime: async (relationship, requesterTarget) => {
       if (!runtime) throw controllerUnavailable();
       await runtime.managedWorkspaceSync.terminate(relationship.relationshipId);
-      const target = resolveRelationshipBootstrapTarget(factories.getProjectSnapshot(), relationship, semanticServerId);
-      await targetAuthority.releaseBootstrapAtTarget({
-        v: 1,
-        bootstrapOperationId: relationship.relationshipId,
-        targetWorkspaceRefId: target.workspaceRefId,
-        targetMachineId: target.machineId,
-        reason: 'abort',
-      });
+      await releaseInstalledRelationshipTarget(relationship, 'abort', requesterTarget);
     },
     waitForProjectReconciliation: async (graphRevision, signal) => {
       if (!runtime) throw controllerUnavailable();

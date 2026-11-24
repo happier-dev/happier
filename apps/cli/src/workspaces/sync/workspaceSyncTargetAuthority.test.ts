@@ -1829,6 +1829,7 @@ function createAuthorityHarness(options: Readonly<{
   getProjectSnapshot: () => ActiveProjectAccountRowsSnapshot | null;
   refreshProjectSnapshot?: (signal?: AbortSignal) => Promise<ActiveProjectAccountRowsSnapshot>;
   callMachineRpc?: (input: Readonly<{ machineId: string; method: string; request: unknown; signal?: AbortSignal }>) => Promise<unknown>;
+  callWorkspaceTargetPhase?: NonNullable<Parameters<typeof createWorkspaceSyncTargetAuthority>[0]['callWorkspaceTargetPhase']>;
   openRootedAgent?: (input: Readonly<{ operationId: string; role: 'alpha' | 'beta'; workspaceRefId: string; canonicalRoot: string; signal?: AbortSignal }>) => Promise<ReturnType<typeof ownedRootedAgent>>;
   materializeRemoteSeed?: false | NonNullable<NonNullable<Parameters<typeof createWorkspaceSyncTargetAuthority>[0]['bootstrap']>['materializeRemoteSeed']>;
   materializeLocalSeed?: NonNullable<NonNullable<Parameters<typeof createWorkspaceSyncTargetAuthority>[0]['bootstrap']>['materializeLocalSeed']>;
@@ -1862,6 +1863,7 @@ function createAuthorityHarness(options: Readonly<{
       return current;
     }),
     callMachineRpc: options.callMachineRpc ?? (async () => { throw new Error('unexpected machine RPC'); }),
+    ...(options.callWorkspaceTargetPhase ? { callWorkspaceTargetPhase: options.callWorkspaceTargetPhase } : {}),
     assertConflictResolutionAuthorized: options.assertConflictResolutionAuthorized ?? (async () => undefined),
     assertTargetReplacementAuthorized: options.assertTargetReplacementAuthorized ?? (async () => undefined),
     ...(options.assertCommittedCopyRemovalAuthorized ? { assertCommittedCopyRemovalAuthorized: options.assertCommittedCopyRemovalAuthorized } : {}),
@@ -5187,6 +5189,45 @@ describe('workspace sync target bootstrap authority', () => {
       await source.cleanup(); await target.cleanup();
       await rm(fixture, { recursive: true, force: true });
     }
+  });
+
+  // Design A: a stored admission names exactly one relationship, the one its admitted operation derives.
+  it.each(['admitted relationship', 'another relationship', 'renamed bootstrap', 'another operation'] as const)(
+    'sends a signed relationship prepare only for the relationship its admitted operation derives (%s)', async variant => {
+    const operationId = 'admitted-member-open';
+    const admitted = deriveWorkspaceSyncRelationshipId(operationId);
+    const named = variant === 'another relationship' ? deriveWorkspaceSyncRelationshipId('another-open') : admitted;
+    const reached = Object.assign(new Error('The signed TARGET path was reached'), { code: 'reached' });
+    const sent: unknown[] = [];
+    const harness = createAuthorityHarness({ localMachineId: 'machine-a', getProjectSnapshot: () => null,
+      callMachineRpc: async () => { throw new Error('An admitted requester never takes the raw path'); },
+      callWorkspaceTargetPhase: async descriptor => { sent.push(descriptor.routing); throw reached; } });
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: operationId,
+      target: { kind: 'machine', machineId: 'machine-b' }, input: {} });
+    const machineAdmission = { actorAccountId: 'member', custodianAccountId: 'member', machineId: 'machine-a',
+      installationId: 'installation-a', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user', machineAdmission,
+      callerInputAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-root', binding: {
+        accountId: 'member', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'server-1',
+        accountEncryptionMode: 'plain', actionId: 'projects.open', machineId: 'machine-b', installationId: 'installation-b',
+        custodianAccountId: 'owner', requestId: operationId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        target: envelope.target } }),
+      workspaceSyncSourceRouting: WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare',
+        operationId: variant === 'another operation' ? 'another-open' : operationId, accountServerId: 'server-1',
+        sourceMachineId: 'machine-a', sourceRootPath: '/source',
+        sourceContext: { machineAdmission, callerAuthority: 'present_user', workspaceWrites: 'allow' } }),
+      verifyMachineAdmissionCurrent: async () => true };
+    const request = prepareRequest({ bootstrapOperationId: named,
+      owner: { kind: 'relationship', relationshipId: variant === 'renamed bootstrap' ? deriveWorkspaceSyncRelationshipId('renamed') : named },
+      transientRelationship: { ...prepareRequest().transientRelationship, relationshipId: named },
+      targetMachineId: 'machine-b', admittedTarget: { machineId: 'machine-b', rootPath: '/target' } });
+    try {
+      // The wire schema already ties a relationship owner to its bootstrap id; the renamed one never parses.
+      if (variant === 'renamed bootstrap') await expect(harness.authority.prepareBootstrapAtTarget(request, context)).rejects.toThrow();
+      else await expect(harness.authority.prepareBootstrapAtTarget(request, context)).rejects.toMatchObject({
+        code: variant === 'admitted relationship' ? 'reached' : 'workspace_sync_update_required' });
+      expect(sent).toHaveLength(variant === 'admitted relationship' ? 1 : 0);
+    } finally { await harness.cleanup(); }
   });
 
   it('serves a same-machine bootstrap prepare through the local authority', async () => {

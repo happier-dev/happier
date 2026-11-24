@@ -54,7 +54,7 @@ function status(id: string): WorkspaceSyncStatusV1 {
 }
 
 function createHarness(
-  retirement: Pick<WorkspaceSyncRelationshipOwnerOptions, 'removeCommittedRelationshipTarget'> = {},
+  retirement: Pick<WorkspaceSyncRelationshipOwnerOptions, 'removeCommittedRelationshipTarget' | 'prepareRequesterTarget'> = {},
   initialSnapshot: Readonly<Record<string, unknown>> = { workspaceRefs: [], relationships: [] },
 ) {
   let settings: Readonly<Record<string, unknown>> = initialSnapshot;
@@ -786,6 +786,33 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     released.ensureRelationship.mockRejectedValueOnce(homeRefusal());
     released.terminateRelationshipRuntime.mockRejectedValueOnce(new Error('release lost'));
     expect(await released.owner.prepareCreate(createInput).catch((error: unknown) => error)).toBeInstanceOf(AggregateError);
+  });
+
+  // Design A: one admitted requester TARGET path per creation, held in its transaction and passed
+  // to the prepare and to whichever release ends it; without a requester nothing is acquired.
+  it.each(['committed', 'refused', 'no requester'] as const)('holds one requester TARGET path for the whole creation (%s)', async settlement => {
+    const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const };
+    const requesterTarget = { context, admittedTarget: { machineId: 'machine_target', rootPath: '/target' },
+      physicalEndpoint: { machineId: 'machine_target', installationId: 'target-installation', installationPublicKey: 'target-key' },
+      cleanupContext: { signal: new AbortController().signal, callerAuthority: 'present_user' as const } };
+    const prepareRequesterTarget = vi.fn(async () => requesterTarget);
+    const harness = createHarness({ prepareRequesterTarget });
+    if (settlement === 'refused') {
+      harness.ensureRelationship.mockRejectedValueOnce(Object.assign(new Error('The TARGET refused'), { code: 'target_prepare_refused' }));
+    }
+    const prepared = harness.owner.prepareCreate({ ...createInput,
+      ...(settlement === 'no requester' ? {} : { requesterContext: context }) });
+    const held = settlement === 'no requester' ? undefined : requesterTarget;
+    if (settlement === 'refused') {
+      await expect(prepared).rejects.toMatchObject({ code: 'target_prepare_refused' });
+      expect(harness.terminateRelationshipRuntime).toHaveBeenCalledWith(expect.objectContaining({ relationshipId: 'relationship_1' }), ...(held ? [held] : []));
+    } else {
+      await (await prepared).commit();
+      expect(harness.commitRelationshipTarget).toHaveBeenCalledWith(expect.objectContaining({ relationshipId: 'relationship_1' }), ...(held ? [held] : []));
+    }
+    expect(prepareRequesterTarget).toHaveBeenCalledTimes(held ? 1 : 0);
+    expect(harness.ensureRelationship).toHaveBeenCalledWith(expect.objectContaining({ relationshipId: 'relationship_1' }), undefined,
+      held ? expect.objectContaining({ requesterTarget: held }) : expect.not.objectContaining({ requesterTarget: expect.anything() }));
   });
 
   it('rejects malformed relationship settings without rewriting them as an empty desired set', async () => {

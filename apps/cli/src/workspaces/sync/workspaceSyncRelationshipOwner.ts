@@ -13,6 +13,8 @@ import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/
 import type { ProjectAccountSnapshotMutation, ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
 import type { ProjectWorkerDependency } from '@/workspaces/execution/projectWorkerAdmission';
 import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
+import type { WorkspaceSyncRelationshipPreparation, WorkspaceSyncRequesterTarget } from './workspaceSyncTypes';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { validateWorkspaceSyncRelationship } from './workspaceSyncSettings';
 import type { WorkspaceSyncRelationshipCreateRpcRequestV1, WorkspaceSyncRelationshipCreationObservationV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
@@ -42,6 +44,8 @@ export type PrepareWorkspaceSyncRelationshipInput = MaterializeWorkspaceSyncEndp
   targetReplacementApprovalReceiptId?: string;
   targetReplacementApprovalActionInput?: unknown;
   flushBeforeCommit: true;
+  /** The admitted ingress context, in-process only; its owner decides whether a TARGET call carries it. */
+  requesterContext?: RpcHandlerContext;
 }>;
 
 export type PreparedWorkspaceSyncRelationship = Readonly<{
@@ -81,17 +85,14 @@ export type WorkspaceSyncRelationshipOwnerOptions = Readonly<{
   ensureRelationship(
     definition: WorkspaceSyncRelationshipV1,
     signal?: AbortSignal,
-    preparation?: Readonly<{
-      transient: true;
-      targetBootstrap: 'use_existing' | 'materialize_from_source_workspace';
-      targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
-      targetReplacementApprovalReceiptId?: string;
-      targetReplacementApprovalActionInput?: unknown;
-    }>,
+    preparation?: WorkspaceSyncRelationshipPreparation,
   ): Promise<WorkspaceSyncStatusV1>;
   flushRelationship(relationshipId: string, signal?: AbortSignal): Promise<WorkspaceSyncStatusV1>;
-  commitRelationshipTarget(relationship: WorkspaceSyncRelationshipV1): Promise<void>;
-  terminateRelationshipRuntime(relationship: WorkspaceSyncRelationshipV1): Promise<void>;
+  /** Qualifies an admitted requester's TARGET once per creation; undefined keeps today's path. */
+  prepareRequesterTarget?(relationship: WorkspaceSyncRelationshipV1, requester: Readonly<{ context: RpcHandlerContext;
+    targetBootstrap: PrepareWorkspaceSyncRelationshipInput['targetBootstrap']; signal?: AbortSignal }>): Promise<WorkspaceSyncRequesterTarget | undefined>;
+  commitRelationshipTarget(relationship: WorkspaceSyncRelationshipV1, requesterTarget?: WorkspaceSyncRequesterTarget): Promise<void>;
+  terminateRelationshipRuntime(relationship: WorkspaceSyncRelationshipV1, requesterTarget?: WorkspaceSyncRequesterTarget): Promise<void>;
   waitForProjectReconciliation(settingsVersion: number, signal?: AbortSignal): Promise<void>;
   readRelationshipDependencies?(relationship: WorkspaceSyncRelationshipV1, snapshot: ProjectAccountSnapshotV1,
     removal?: NonNullable<WorkspaceSyncRelationshipRetirement['removeTargetCopy']>): Promise<Readonly<{ dependencies: readonly ProjectWorkerDependency[]; uncheckedMachineIds?: readonly string[] }>>;
@@ -122,6 +123,12 @@ function ownerError(code: string, message: string): Error & { code: string } {
 /** Home or the receiver refused this step before it ran, by the step's own typed `effectAttempted: false`. */
 function isRefusedBeforeEffect(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'effectAttempted' in error && error.effectAttempted === false);
+}
+
+/** A settled step's own code, or undefined when it carries none. */
+function readFailureCode(error: unknown): string | undefined {
+  return readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code : undefined);
 }
 
 function withCleanupErrors(primary: unknown, cleanupErrors: readonly unknown[]): unknown {
@@ -526,6 +533,20 @@ export function createWorkspaceSyncRelationshipOwner(
       let reconciliationComplete = false;
       let targetCommitted = false;
       let predecessorReleased = false;
+      // The admitted requester's TARGET path, qualified before any effect; held for this transaction only.
+      let requesterTarget: WorkspaceSyncRequesterTarget | undefined;
+      // Without one, each release keeps today's exact call.
+      const heldRequesterTarget = (): [] | [WorkspaceSyncRequesterTarget] => requesterTarget ? [requesterTarget] : [];
+      if (input.requesterContext && runtimeOwnedByTransaction && options.prepareRequesterTarget) {
+        try {
+          requesterTarget = await options.prepareRequesterTarget(runtimeRelationship, { context: input.requesterContext,
+            targetBootstrap: input.targetBootstrap, ...(input.signal ? { signal: input.signal } : {}) });
+        } catch (error) {
+          const code = readFailureCode(error);
+          if (!input.signal?.aborted && code && code !== 'cancelled') throw new WorkspaceSyncPreparationRefusal(code, error);
+          throw error;
+        }
+      }
 
       const stageDurableIntent = async (): Promise<void> => {
         if (!durableIntentStaged) {
@@ -600,7 +621,7 @@ export function createWorkspaceSyncRelationshipOwner(
       const cleanupFailedCreation = async (definition: WorkspaceSyncRelationshipV1, ensureRefusedBeforeEffect = false): Promise<unknown[]> => {
         const cleanupErrors: unknown[] = [];
         try {
-          await options.terminateRelationshipRuntime(definition);
+          await options.terminateRelationshipRuntime(definition, ...heldRequesterTarget());
         } catch (cleanupError) {
           // Ensure prepares the target first: refused before that effect, there is
           // nothing to release, so a release also refused before it ran is not pending.
@@ -644,6 +665,7 @@ export function createWorkspaceSyncRelationshipOwner(
                 ...(input.targetReplacementApprovalReceiptId ? {
                   targetReplacementApprovalReceiptId: input.targetReplacementApprovalReceiptId,
                 } : {}),
+                ...(requesterTarget ? { requesterTarget } : {}),
               },
         ).catch((error: unknown) => {
           ensureRefusedBeforeEffect = isRefusedBeforeEffect(error);
@@ -653,8 +675,7 @@ export function createWorkspaceSyncRelationshipOwner(
       } catch (error) {
         if (runtimeOwnedByTransaction && !isIndeterminate(error)) {
           const cleanupErrors = await cleanupFailedCreation(relationship, ensureRefusedBeforeEffect);
-          const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-            ? error.code : undefined);
+          const code = readFailureCode(error);
           if (cleanupErrors.length) {
             throw withCleanupErrors(error, cleanupErrors);
           }
@@ -674,7 +695,7 @@ export function createWorkspaceSyncRelationshipOwner(
           try {
             await stageDurableIntent();
             if (!targetCommitted) {
-              await options.commitRelationshipTarget(runtimeRelationship);
+              await options.commitRelationshipTarget(runtimeRelationship, ...heldRequesterTarget());
               targetCommitted = true;
             }
             if (!published) {
@@ -730,7 +751,7 @@ export function createWorkspaceSyncRelationshipOwner(
         async abort(): Promise<void> {
           if (closed) return;
           await restoreStagedIntent();
-          if (runtimeOwnedByTransaction) await options.terminateRelationshipRuntime(runtimeRelationship);
+          if (runtimeOwnedByTransaction) await options.terminateRelationshipRuntime(runtimeRelationship, ...heldRequesterTarget());
           closed = true;
         },
       });

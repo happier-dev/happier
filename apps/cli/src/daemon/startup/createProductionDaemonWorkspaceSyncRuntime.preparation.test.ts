@@ -25,6 +25,9 @@ import { createExternalActionMachineRpcExecution } from '@/api/externalActionExe
 import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
 import { registerProjectOpenRpcHandlers } from '@/rpc/handlers/projects/registerProjectOpenRpcHandlers';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { composeBindChildSourcePhaseTestRuntime } from './createProductionDaemonWorkspaceSyncRuntime.testkit';
 
 const socketIo = vi.hoisted(() => vi.fn());
@@ -211,6 +214,186 @@ describe('signed Project clean preparation', () => {
       expect(settlement.mock.calls).toContainEqual(['[Project Open] Source Sync settlement failed',
         expect.objectContaining({ effectsIssued: false, code: 'project_requester_authority_unavailable' })]);
     }
+  });
+
+  // L12 READY218: Home refuses a non-custodian's raw custodian-only TARGET bootstrap and admits
+  // the signed writer → target path at Use. Both Home decisions below read the route policy
+  // owner and the TARGET grant the way Home does, so a call on the wrong path is refused here too.
+  it.each(['use member', 'no Use on the TARGET', 'no admitted context'] as const)(
+    'bootstraps a member Keep updated TARGET only through the signed writer → target path (%s)', async scenario => {
+    const targetOwner = 'target-owner';
+    const targetCredentials = { token: [
+      Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
+      Buffer.from(JSON.stringify({ sub: targetOwner })).toString('base64url'), 'fixture-signature',
+    ].join('.'), encryption: null };
+    const rows: ProjectAccountRowV1[] = [];
+    const http = createProjectAccountRowsHttpBoundary(rows);
+    const raw: Array<Readonly<{ method: string; refused: boolean }>> = [];
+    const signed: Array<Readonly<{ phase: string; reason?: string; refused?: true }>> = [];
+    const targetResults: unknown[] = [];
+    const targetRole = scenario === 'no Use on the TARGET' ? null : 'use' as const;
+    const homeRefusal = (failureCause?: Readonly<{ phase: string; errorCode: string }>) => ({ ok: false as const,
+      error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+      ...(failureCause ? { failureCause: { ...failureCause, errorClass: 'Error' as const, httpStatus: 403 }, effectAttempted: false as const } : {}) });
+    const targetInstallation = { machineId: 'target-parent', installationId: 'target-parent-installation',
+      installationPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
+    let current: Awaited<ReturnType<typeof composeBindChildSourcePhaseTestRuntime>> | undefined;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, projectRowsFromHttp: true,
+      separateTargetParent: true, targetCredentials,
+      readAdditionalHttpPostResponse: async (url, body) => url.includes('/v1/account/project-rows/') ? http(url, body) : undefined,
+      // Home's generic Machine admission of a raw call: a custodian-only route needs the TARGET custodian.
+      handleAdditionalSocketAck: async (payload, token) => {
+        if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string'
+          || !payload.method.startsWith('target-parent:daemon.workspaceSync.')) return undefined;
+        const method = payload.method.slice('target-parent:'.length);
+        const refused = resolveMachineRpcRoutePolicy(method).sharedMachineAccess === 'custodian_only'
+          && readAccountIdFromToken(token ?? '') !== targetOwner;
+        raw.push({ method, refused });
+        return refused ? homeRefusal({ phase: 'rpc.admission.machine', errorCode: 'custodian_only' }) : undefined;
+      },
+      // Home's writer → target admission, then the TARGET daemon's own registered receiver.
+      callWorkspaceTargetPhase: async (descriptor, context) => {
+        if (!current) throw new Error('The TARGET runtime is not composed');
+        const phase = descriptor.routing.phase;
+        const writer = context.workspaceSyncSourceWriterTargetRouting;
+        const source = writer?.source ?? context.workspaceSyncSourceRouting;
+        const root = context.callerInputAuthorization;
+        const admission = context.machineAdmission;
+        if (descriptor.machineId !== current.targetRef.machineId || !source?.sourceContext) throw new Error('Home has no writer → target route');
+        if (phase === 'release') {
+          // Rootless cleanup: only the installed SOURCE writer, under its own custody.
+          if (root || writer?.target.phase !== 'release' || !descriptor.physicalEndpoint || !admission
+            || admission.actorAccountId !== 'owner' || admission.custodianAccountId !== 'owner'
+            || admission.machineId !== current.sourceRef.machineId || writer.sourceWriter.machineId !== admission.machineId) {
+            signed.push({ phase, refused: true });
+            throw createRpcCallError(homeRefusal());
+          }
+        } else if (root?.binding.actionId !== 'projects.open' || root.binding.machineId !== current.targetRef.machineId
+          || source.operationId !== root.binding.requestId || !targetRole) {
+          // TARGET resolution needs the requester's Use; refused before it is forwarded.
+          signed.push({ phase, refused: true });
+          throw createRpcCallError(homeRefusal());
+        }
+        const request = descriptor.request;
+        signed.push({ phase, ...(phase === 'release' && request && typeof request === 'object' && 'reason' in request
+          ? { reason: String(request.reason) } : {}) });
+        // The TARGET's own materialization is not composed here: it refuses its prepare typed, so the
+        // creation must release through the signed cleanup path to the installation the preflight proved.
+        if (phase === 'prepare') throw createRpcCallError({ error: 'The TARGET refused its preparation', errorCode: 'target_prepare_refused' });
+        const receiver = current.targetParentRpcHandlers.get(descriptor.method);
+        if (!receiver) throw new Error(`The TARGET receiver is not registered: ${descriptor.method}`);
+        const incoming: RpcHandlerContext = phase === 'release'
+          ? { signal: new AbortController().signal, callerAuthority: 'present_user', machineAdmission: admission,
+              workspaceSyncSourceWriterTargetRouting: writer, verifyMachineAdmissionCurrent: async () => true }
+          : { signal: new AbortController().signal, callerAuthority: source.sourceContext.callerAuthority,
+              machineAdmission: { actorAccountId: root!.binding.accountId, custodianAccountId: targetOwner,
+                machineId: targetInstallation.machineId, installationId: targetInstallation.installationId,
+                role: targetRole!, encryptionMode: 'plain' },
+              callerInputAuthorization: root,
+              ...(context.workspaceSyncSourceExecution ? { workspaceSyncSourceExecution: context.workspaceSyncSourceExecution } : {}),
+              workspaceSyncSourceWriterTargetRouting: { v: 1,
+                sourceWriter: { machineId: current.sourceRef.machineId, installationId: current.controller.installationId },
+                source, target: descriptor.routing },
+              verifyMachineAdmissionCurrent: async () => true };
+        // The TARGET is a separate installed daemon: it reads its own published rows first.
+        const readRows = (credentials: typeof targetCredentials) => runWithServerHttpBaseUrl('https://bind-child-home.invalid',
+          () => readProjectAccountRows({ credentials, serverId: current!.serverId, publication: 'installed' }));
+        await readRows(targetCredentials);
+        await current.settleProjects(targetInstallation.machineId);
+        let result: unknown;
+        try { result = await receiver(request, incoming); } finally {
+          await readRows(current.credentials);
+          await current.settleProjects(current.sourceRef.machineId);
+        }
+        targetResults.push({ phase, result });
+        // The SOURCE client binds a TARGET-owned result to Home's verified destination.
+        return phase !== 'release' && result && typeof result === 'object' && 'targetWorkspace' in result
+          ? { ...result, physicalEndpoint: targetInstallation } : result;
+      },
+    });
+    current = fixture;
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+    const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
+    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
+      credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    await fixture.settleProjects();
+    const workspaceAction = { kind: 'create_relationship' as const, mode: 'keep_both_in_sync' as const, contentPolicy, flushBeforeCommit: true as const };
+    if (scenario === 'no admitted context') {
+      // The Machine owner's own Sync: no admitted requester, so today's raw path, which Home refuses here.
+      await expect(runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => fixture.parent.handoffAdapter.prepare({
+        operationId: 'owner-own-sync', accountServerId: fixture.serverId,
+        action: workspaceAction, sourceMachineId: fixture.sourceRef.machineId, sourceWorkspaceRefId: fixture.sourceRef.id,
+        sourceRootPath: fixture.sourceRef.rootPath, targetMachineId: fixture.targetRef.machineId,
+        targetRootPath: fixture.targetPath }))).rejects.toMatchObject({ code: RPC_ERROR_CODES.FORBIDDEN });
+      expect(signed).toEqual([]);
+      expect(raw).toContainEqual({ method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE, refused: true });
+      return;
+    }
+    const request = OpenProjectInputV1Schema.parse({ serverId: fixture.serverId, machineId: fixture.targetRef.machineId,
+      source: { kind: 'workspace', workspaceId: fixture.sourceRef.id, checkout: { serverId: fixture.serverId,
+        workspaceId: fixture.sourceRef.id, machineId: fixture.sourceRef.machineId, rootPath: fixture.sourceRef.rootPath } },
+      materialization: { kind: 'sync', targetPath: fixture.targetPath, workspaceAction } });
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'member-keep-updated-open',
+      target: { kind: 'machine', machineId: fixture.targetRef.machineId }, input: request });
+    // The member's own SOURCE Machine: its installed Account is the requester.
+    const admission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
+      installationId: fixture.controller.installationId, role: 'manage' as const, encryptionMode: 'plain' as const };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-member-open-root', binding: {
+      accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: fixture.serverId,
+      accountEncryptionMode: 'plain', actionId: 'projects.open', machineId: fixture.targetRef.machineId,
+      installationId: targetInstallation.installationId, custodianAccountId: targetOwner, requestId: envelope.requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
+      workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+        sourceWorkspaceRefId: fixture.sourceRef.id, source: admission },
+    } });
+    const routing = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: envelope.requestId,
+      accountServerId: fixture.serverId, sourceMachineId: fixture.sourceRef.machineId, sourceRootPath: fixture.sourceRef.rootPath,
+      originalActionEnvelope: envelope, sourceContext: { machineAdmission: admission, callerAuthority: 'present_user', workspaceWrites: 'allow' } });
+    const keys = tweetnacl.sign.keyPair();
+    const method = `${fixture.sourceRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+    const content = createWorkspaceSyncTargetContent({ destination: { machineId: fixture.sourceRef.machineId,
+      installationId: fixture.controller.installationId, installationPublicKey: Buffer.from(keys.publicKey).toString('base64url') },
+      method, routing });
+    const params = await socketRpcCodec.encodeParams(content, request, { method, callId: 'd'.repeat(32) });
+    const sourceExecution = WorkspaceSyncSourceExecutionV1Schema.parse({ method, requestId: 'member-open-packet', params,
+      externalActionExecution: createExternalActionMachineRpcExecution({ context: {
+        externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target },
+        effectActionId: 'projects.open', installationId: targetInstallation.installationId, method,
+        requestId: 'member-open-packet', params, workspaceSyncSourceRouting: routing,
+        privateKey: Buffer.from(keys.secretKey).toString('base64url') }) });
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true, callerInputAuthorization: authorization,
+      originalActionEnvelope: envelope, workspaceSyncSourceRouting: routing, workspaceSyncSourceExecution: sourceExecution };
+    const handlers = new Map<string, (raw: unknown, context?: RpcHandlerContext) => unknown>();
+    registerProjectOpenRpcHandlers({ registerHandler(method, handler) {
+      handlers.set(method, (raw, admitted) => handler(raw as Parameters<typeof handler>[0], admitted));
+    } }, { serverId: fixture.serverId, machineId: fixture.sourceRef.machineId, runtime: {
+      serverId: fixture.serverId, machineId: fixture.sourceRef.machineId, accountId: 'owner',
+      serverHttpBaseUrl: 'https://bind-child-home.invalid', workspaceSyncAdapter: fixture.parent.handoffAdapter,
+      readCredentials: async () => fixture.credentials } });
+    const receiver = handlers.get(RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN);
+    if (!receiver) throw new Error('The registered persistent Open SOURCE entry is unavailable');
+    const settlement = vi.spyOn(logger, 'warnLocalFile');
+    onTestFinished(() => settlement.mockRestore());
+    const result = await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => receiver(request, context));
+    expect(raw.filter(call => call.refused)).toEqual([]);
+    if (scenario === 'no Use on the TARGET') {
+      // Refused typed by Home at the first TARGET call, before any Account or TARGET effect.
+      expect(result).toMatchObject({ kind: 'refused', code: RPC_ERROR_CODES.FORBIDDEN });
+      expect(signed).toEqual([{ phase: 'preflight', refused: true }]);
+      expect(rows.flatMap(row => {
+        if (row.key.kind !== 'relationship-graph' || row.content === null) return [];
+        const payload = cipher.open(row.key, row.content);
+        return 'relationships' in payload.value ? payload.value.relationships : [];
+      })).toEqual([]);
+      return;
+    }
+    // Admitted at Use: preflight and prepare go signed with the admitted root, and the abort release
+    // goes from the installed writer to the preflight's installation, never raw.
+    expect(result, JSON.stringify({ settlement: settlement.mock.calls, targetResults }))
+      .toMatchObject({ kind: 'refused', code: 'target_prepare_refused' });
+    expect(signed).toEqual([{ phase: 'preflight' }, { phase: 'prepare' }, { phase: 'release', reason: 'abort' }]);
   });
 
   it.each(['requester', 'owner'] as const)('keeps persistent Script preparation in its requester Account (%s)', async requesterAccountId => {

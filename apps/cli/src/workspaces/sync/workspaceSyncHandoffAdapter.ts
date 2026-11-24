@@ -555,6 +555,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           } : {}),
           flushBeforeCommit: true,
           ...(input.signal ? { signal: input.signal } : {}),
+          ...(context ? { requesterContext: context } : {}),
         }).catch(async (error: unknown) => {
           if (error instanceof WorkspaceSyncPreparationRefusal) {
             await adapter.releasePrivateExecution!(input.operationId);
