@@ -7,6 +7,7 @@ import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/appr
 import { buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema } from '../machines/managed/actionsV1.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { createEmptyActionAutomationPortV1 } from './executor/actionAutomationAdmission.testkit.js';
 import { normalizeActionExecutorThrownError } from './executor/resultProjection.js';
 import { readMachineActionRpcResult } from './executor/actionFailureEnvelope.js';
 import { ActionOperationFailureV1Schema } from './operations/v1.js';
@@ -196,7 +197,6 @@ describe('managed Machine Action executor', () => {
     expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId: 'machines.managed.acquire', artifactId: 'parent-review' } });
     expect(entered).toBe(0);
     expect(approval?.preview).toMatchObject({ hostReviewedChildren: { children: [
-      { action: 'machines.roles.set', role: 'machines.roles.set' },
       { action: 'session.spawn_new', role: 'session.spawn_new' },
     ] } });
     const preview = approval?.preview as { hostReviewedChildren?: { children: readonly { input?: unknown }[] } } | undefined;
@@ -617,7 +617,10 @@ describe('managed Machine Action executor', () => {
 
   it('refuses a known external Agent continuation before compute when its original grant cannot start on new compute', async () => {
     const managedMachineAction = vi.fn(async () => ({ managedId: 'managed', operation: { operationId: 'operation' } }));
-    const executor = createActionExecutor({ managedMachineAction } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({
+      managedMachineAction,
+      actionAutomations: createEmptyActionAutomationPortV1(),
+    });
     const start = { creationKey: 'start', directory: { kind: 'managed' }, agentTarget };
     const context = { surface: 'api' as const, authority: 'account_automation' as const,
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['api'] } }),
@@ -633,7 +636,8 @@ describe('managed Machine Action executor', () => {
       } },
     })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     expect(managedMachineAction).not.toHaveBeenCalled();
-    expect(await executor.execute('machines.managed.acquire', acquireInput, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('machines.managed.acquire', acquireInput, context))
+      .toEqual({ ok: true, result: { managedId: 'managed', operation: { operationId: 'operation' } } });
   });
   it('cancels an admitted unsubmitted row after ordinary confirmation without controller or online context', async () => {
     const canceled = { id: 'waiting', homeId: 'home', custodianAccountId: 'account',

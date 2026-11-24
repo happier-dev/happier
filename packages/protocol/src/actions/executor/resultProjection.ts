@@ -135,6 +135,13 @@ function classifyActionExecutorThrownError(
   fallbackErrorCode: 'action_failed' | 'cancelled',
   phase?: string,
 ): Pick<ActionExecuteFailure, 'errorCode' | 'error' | 'details' | 'effectAttempted' | 'failureCause'> {
+  // The host classifier already decided this code is public. Fill an absent
+  // diagnostic code from that decision without re-reading the raw exception code.
+  const withClassifiedCause = (failure: Pick<ActionExecuteFailure, 'errorCode' | 'error' | 'details'>) => {
+    const cause = projectActionFailureCauseV1(error, phase);
+    return { ...failure, failureCause: cause.errorCode === null
+      ? readActionFailureCauseV1({ ...cause, errorCode: failure.errorCode }) : cause };
+  };
   if (error instanceof ActionCatalogUnavailableError) return { errorCode: error.code, error: error.code };
   if (error instanceof ApprovalRequestInvalid || error instanceof ApprovalRequestConflict)
     return { errorCode: error.code, error: error.code, ...(error.details ? { details: error.details } : {}) };
@@ -173,13 +180,13 @@ function classifyActionExecutorThrownError(
     return { errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
   }
   const authorityFailure = readHomeAuthorityMismatchFailure(errorRecord.code, errorRecord.message);
-  if (authorityFailure) return { errorCode: authorityFailure.code, error: authorityFailure.message,
-    ...(authorityFailure.details ? { details: authorityFailure.details } : {}) };
+  if (authorityFailure) return withClassifiedCause({ errorCode: authorityFailure.code, error: authorityFailure.message,
+    ...(authorityFailure.details ? { details: authorityFailure.details } : {}) });
   const sshFailure = readSshCommandFailure(errorRecord.code, errorRecord.message);
-  if (sshFailure) return { errorCode: sshFailure.code, error: sshFailure.message };
+  if (sshFailure) return withClassifiedCause({ errorCode: sshFailure.code, error: sshFailure.message });
   const enrollmentFailure = readRemoteEnrollmentCommandFailure(errorRecord.code, errorRecord.message);
-  if (enrollmentFailure) return { errorCode: enrollmentFailure.code, error: enrollmentFailure.message,
-    ...(enrollmentFailure.details ? { details: enrollmentFailure.details } : {}) };
+  if (enrollmentFailure) return withClassifiedCause({ errorCode: enrollmentFailure.code, error: enrollmentFailure.message,
+    ...(enrollmentFailure.details ? { details: enrollmentFailure.details } : {}) });
   const rawDetails = errorRecord.details;
   if (isRpcError(error)) {
     const finite = readFiniteCommandFailureDetailsV1(error.rpcErrorCode, rawDetails);
@@ -203,7 +210,7 @@ function classifyActionExecutorThrownError(
   const managedRequest = ManagedControllerRequestFailureDetailsV1Schema.safeParse(rawDetails);
   if (managedRequest.success && (!managedRequest.data.code || rawCodes.includes(managedRequest.data.code))) {
     const code = managedRequest.data.code ?? rawCodes[0] ?? 'managed_controller_request_failed';
-    return { errorCode: code, error: code, details: managedRequest.data };
+    return withClassifiedCause({ errorCode: code, error: code, details: managedRequest.data });
   }
   if (ManagedControllerRequestFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success) {
     const code = rawCodes[0] ?? 'managed_controller_request_failed';
@@ -211,7 +218,7 @@ function classifyActionExecutorThrownError(
   }
   const managedNative = ManagedNativeFailureDetailsV1Schema.safeParse(rawDetails);
   if (managedNative.success && rawCodes[0]) {
-    return { errorCode: rawCodes[0], error: rawCodes[0], details: managedNative.data };
+    return withClassifiedCause({ errorCode: rawCodes[0], error: rawCodes[0], details: managedNative.data });
   }
   if (ManagedNativeFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success) {
     const code = rawCodes[0] ?? 'action_failed';
@@ -224,11 +231,14 @@ function classifyActionExecutorThrownError(
     if (failure.success) {
       const details = failure.data.details;
       if (details && 'kind' in details && details.kind === 'managedService' && 'stderrTail' in details) {
-        return { ...failure.data, details: { ...details, stderrTail: redactBugReportSensitiveText(details.stderrTail) } };
+        return withClassifiedCause({ ...failure.data, details: { ...details, stderrTail: redactBugReportSensitiveText(details.stderrTail) } });
       }
-      return details && 'kind' in details && details.kind === 'managedAgentIsolation' && details.phase === 'machines.agentIsolation.set'
+      return withClassifiedCause(details && 'kind' in details && details.kind === 'managedAgentIsolation' && details.phase === 'machines.agentIsolation.set'
         ? { ...failure.data, error: `Agent isolation requires a fresh review (reviewed metadata version ${details.expectedMetadataVersion}, current ${details.metadataVersion}). Review the Machine's Agent isolation settings before applying.` }
-        : failure.data;
+        : failure.data);
+    }
+    if (rawCodes[0] === 'bootstrap_effect_unconfirmed' && readRecord(rawDetails).kind === 'managedBootstrap') {
+      return withClassifiedCause({ errorCode: rawCodes[0], error: rawCodes[0] });
     }
     return { errorCode: rawCodes[0], error: rawCodes[0] };
   }
@@ -236,7 +246,7 @@ function classifyActionExecutorThrownError(
   if (errorRecord.code === 'native_resource_unavailable' || errorRecord.code === 'native_action_failed'
     || errorRecord.code === 'native_ssh_host_key_unavailable' || errorRecord.code === 'host_key_evidence_mismatch'
     || errorRecord.code === 'invalid_trusted_host_key' || errorRecord.code === 'trusted_host_key_mismatch') {
-    return { errorCode: errorRecord.code, error: errorRecord.code };
+    return withClassifiedCause({ errorCode: errorRecord.code, error: errorRecord.code });
   }
   const sessionListUnavailable = SessionListUnavailableQueryV1Schema.safeParse(rawDetails);
   if (sessionListUnavailable.success && rawCodes.includes(sessionListUnavailable.data.code)) {
