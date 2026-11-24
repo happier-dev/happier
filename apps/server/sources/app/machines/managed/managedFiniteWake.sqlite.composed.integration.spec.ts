@@ -1962,7 +1962,11 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const actionId = 'session.spawn_new';
         const envelope = { v: 1 as const, requestId: test.requestId,
             target: { kind: 'machine' as const, machineId: test.guest.id },
-            input: { executionTarget: { serverId: homeId, machineId: test.guest.id }, directory: { kind: 'managed' } } };
+            input: { creationKey: test.requestId,
+                executionTarget: { serverId: homeId, machineId: test.guest.id }, directory: { kind: 'managed' },
+                organizationPlacement: { sectionId: null, tagIds: [] },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+            } };
         const outcome = birth === 'committed'
             ? { type: 'success', disposition: 'rejoined', sessionId: 'committed-session',
                 executionTarget: envelope.input.executionTarget,
