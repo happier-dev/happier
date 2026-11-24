@@ -1,4 +1,5 @@
-import { ACTION_INVOKE_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isActionEffectResult } from '@/sync/domains/scope/actionAccountScopeError';
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -397,8 +398,7 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         account.assertCurrent();
         params.signal?.throwIfAborted();
     }
-    const retainsEffectReceipt = binding.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1
-        || binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+    const retainsEffectReceipt = isActionEffectResult(getActionSpec(binding.actionId).sideEffectClass);
     const path = `/v1/actions/${binding.actionId}`;
     const init = { method: 'POST', headers, body: JSON.stringify(request), signal: params.signal };
     let issued = false;

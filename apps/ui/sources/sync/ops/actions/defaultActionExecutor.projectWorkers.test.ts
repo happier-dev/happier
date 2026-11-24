@@ -250,6 +250,59 @@ describe('worker Actions through the captured UI Home', () => {
       expect(homes.requestsFor(PROJECT_ACCOUNT_ROWS_ROUTE_V1 + '/list')).toHaveLength(3);
     });
 
+  it.each(['acknowledged', 'caller-retired', 'account-retired', 'ack-lost'] as const)(
+    'settles an admitted copy through Home HTTP (%s)', async disposition => {
+      const actionId = 'workspace.sync.relationship.create';
+      const homeId = 'srv_worker_actions';
+      const key = { kind: 'workspace-ref' as const, serverId: homeId, id: 'source-workspace' };
+      homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: { status: 'listed', coverage: 'complete', rows: [
+        ProjectAccountRowV1Schema.parse({ key, revision: 1, content: { t: 'plain', v: { key,
+          value: { id: key.id, serverId: homeId, rootPath: '/source', createdAtMs: 1, machineId: 'source-machine' } } } }),
+      ] } });
+      const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+      const input = { v: 1, sourceWorkspaceRefId: key.id, targetMachineId: 'worker-machine', targetPath: '/worker-copy',
+        mode: 'keep_synced', destinationIntent: 'materialize_from_source_workspace', purpose: 'worker_clean_copy',
+        contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) } };
+      const output = { v: 1, relationshipId: 'copy-relationship', created: true, controllerMachineId: 'source-machine',
+        sourceWorkspaceRefId: key.id, targetWorkspaceRefId: 'worker-workspace', status: {
+          relationshipId: 'copy-relationship', controllerMachineId: 'source-machine', state: 'watching',
+          alphaPath: '/source', betaPath: '/worker-copy', mode: 'keep_synced',
+          endpointStates: { alpha: null, beta: null }, conflictCount: 0, lastCycleObservedAtMs: 1,
+        } };
+      const caller = new AbortController();
+      let committed = false;
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      let reached!: () => void;
+      const entered = new Promise<void>(resolve => { reached = resolve; });
+      await answerExternalActionAccountForHome(homes, serverId, { actionId, machineId: 'source-machine', tokenEpoch: 0,
+        requesterInvocation: 'credentials', execute: async () => output });
+      homes.answer(serverId, `POST /v1/actions/${actionId}`, { select: body => {
+          const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+          committed = true;
+          reached();
+          if (disposition === 'ack-lost') throw new TypeError('Network response lost');
+          return { respondAfter: held, body: { v: 1, actionId, requestId: request.envelope.requestId,
+            execution: { ok: true, result: output } } };
+      } });
+      const pending = createDefaultActionExecutor().execute(actionId, input, {
+        serverId, expectedAccountId: 'owner', surface: 'ui', signal: caller.signal, actionRequestId: 'copy-lifetime',
+      });
+      try {
+        expect(await Promise.race([entered.then(() => 'issued'), pending])).toBe('issued');
+        if (disposition === 'caller-retired') caller.abort();
+        if (disposition === 'account-retired') {
+          const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+          await TokenStorage.removeCredentialsForServerUrl('https://worker-actions.test', { serverId });
+        }
+        release();
+        expect(committed).toBe(true);
+        expect(await pending).toMatchObject(disposition === 'account-retired' || disposition === 'ack-lost'
+          ? { ok: false, errorCode: 'outcome_unknown' } : { ok: true, result: output });
+        expect(rpc.machine).not.toHaveBeenCalled();
+      } finally { release(); await pending; }
+    });
+
   it('returns the receiving Service refusal without a self-approval for the person’s own UI start', async () => {
     await homes.requireUiApproval(serverId, 'localServices.launcher.start');
     const request = { machineId: 'worker-machine', targetId: 'web',
@@ -433,7 +486,7 @@ describe('worker Actions through the captured UI Home', () => {
     expect(homes.findByServerUrl('https://worker-actions.test')?.accountId).toBe('replacement');
   });
 
-  it('returns the public helper retirement receipt to its invoker without borrowing the replacement Account', async () => {
+  it('ends the public helper wait when its original Account retires', async () => {
     homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
       actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.worker.copy.retire': ['ui'] } },
     } }, version: 1 } });
@@ -449,7 +502,7 @@ describe('worker Actions through the captured UI Home', () => {
       actionId: 'projects.worker.copy.retire', machineId: request.machineId, tokenEpoch: 0, requesterInvocation: 'optional', execute: receiver,
     });
     await expect(executeProjectWorkerActionV1('projects.worker.copy.retire', request, { expectedAccountId: 'owner' }))
-      .resolves.toEqual({ status: 'retired' });
+      .rejects.toMatchObject({ errorCode: 'outcome_unknown' });
     expect(homes.findByServerUrl('https://worker-actions.test')?.accountId).toBe('replacement');
     expect(receiver).toHaveBeenCalledTimes(1);
     expect(rpc.machine).not.toHaveBeenCalled();

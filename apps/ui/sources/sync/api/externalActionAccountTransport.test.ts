@@ -160,6 +160,40 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each(['effect-issued', 'effect-before-issuance', 'read-issued'] as const)(
+        'keeps the catalog lifetime at the HTTP issuance boundary (%s)', async phase => {
+            const caller = new AbortController();
+            const actionId = phase === 'read-issued' ? 'plugins.list' : 'plugins.enable';
+            const effectBinding = { ...binding, actionId, requestId: 'catalog-lifetime' };
+            const effectPath = `/v1/actions/${actionId}`;
+            let release!: () => void;
+            const held = new Promise<void>(resolve => { release = resolve; });
+            let reached!: () => void;
+            const entered = new Promise<void>(resolve => { reached = resolve; });
+            const captured = await captureLazyActionAccountContext(serverId, caller.signal,
+                phase === 'effect-before-issuance' ? async () => { reached(); await held; return undefined; } : undefined);
+            homes.answer(serverId, effectPath, { select: () => {
+                reached();
+                return { respondAfter: held, body: { v: 1, actionId, requestId: effectBinding.requestId,
+                    execution: { ok: true, result: { completed: true } } } };
+            } });
+            const pending = executeOriginalAccountActionTransport({ account: captured, binding: effectBinding,
+                input: { machineId: 'machine-1', pluginId: 'example.plugin' } });
+            const settled = pending.then(result => ({ result }), error => ({ error }));
+            try {
+                await entered;
+                caller.abort();
+                release();
+                expect(await settled).toMatchObject(phase === 'effect-before-issuance'
+                    ? { error: { name: 'AbortError' } }
+                    : phase === 'read-issued'
+                        ? { result: { ok: false, errorCode: 'outcome_unknown' } }
+                        : { result: { ok: true, result: { completed: true } } });
+                expect(homes.requestsFor(effectPath)).toHaveLength(phase === 'effect-before-issuance' ? 0 : 1);
+            } finally { release(); await settled; captured.dispose(); }
+        },
+    );
+
     it.each(['before issuance', 'late refusal', 'Account retirement'] as const)(
         'uses issuance as the Send cancellation boundary (%s)', async phase => {
             const cancellation = new AbortController();
@@ -1111,8 +1145,8 @@ describe('captured Account Action response decoding', () => {
         await waitForHomeGovernance(() => expect(homes.requestsFor(path)).toHaveLength(1));
         rejectBody(new TypeError('Failed to read Action response'));
         const result = await pending;
-        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_output',
-            failureCause: { phase: 'external_action.http.response', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+        expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
+            failureCause: { phase: 'external_action.http.execute', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
         expect(readActionOutputDiagnostic(result)).toMatchObject({
             exception: { errorClass: 'TypeError', message: expect.any(String) },
         });
