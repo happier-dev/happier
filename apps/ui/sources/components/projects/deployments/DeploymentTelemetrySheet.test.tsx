@@ -224,6 +224,24 @@ describe('Environment telemetry sheet', () => {
     }
   });
 
+  it('rotates the bound collector credential without saving the pending capability choices', async () => {
+    const setTelemetry = vi.fn(async () => ({
+      ok: true as const,
+      environmentId: 'production',
+      revision: 8,
+      state: 'redeploy_required' as const,
+    }));
+    const onSaved = vi.fn();
+    const screen = await open(setTelemetry, onSaved);
+    try {
+      await screen.pressByTestIdAsync('project-deployments.telemetry.rotate');
+      expect(setTelemetry).toHaveBeenCalledExactlyOnceWith({ rotate: true });
+      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ state: 'redeploy_required' }));
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('keeps the choices and names the recovery when the Action refuses the collector', async () => {
     const setTelemetry = vi.fn(async () => ({
       ok: false as const,

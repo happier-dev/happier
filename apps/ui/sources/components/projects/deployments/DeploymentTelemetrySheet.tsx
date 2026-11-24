@@ -129,18 +129,12 @@ export function DeploymentTelemetrySheet(
       setRefusal(null);
       setConfirmingDelete(false);
     };
-  const save = async () => {
-    if (saving || !ready || !canManage) return;
+  const submit = async (input: DeploymentUiTelemetryInput) => {
+    if (saving || !canManage) return;
     setSaving(true);
     setRefusal(null);
     try {
-      const result = await props.setTelemetry({
-        collector: requests && collectorId ? { machineId: collectorId } : null,
-        ...(requests
-          ? { capabilities: { metrics, appLlmCost, exceptions } }
-          : {}),
-        ...(confirmingDelete ? { confirmDelete: true as const } : {}),
-      });
+      const result = await props.setTelemetry(input);
       if (result.ok) {
         props.onClose();
         props.onSaved(result);
@@ -154,6 +148,14 @@ export function DeploymentTelemetrySheet(
     } finally {
       setSaving(false);
     }
+  };
+  const save = () => {
+    if (!ready) return;
+    void submit({
+      collector: requests && collectorId ? { machineId: collectorId } : null,
+      ...(requests ? { capabilities: { metrics, appLlmCost, exceptions } } : {}),
+      ...(confirmingDelete ? { confirmDelete: true as const } : {}),
+    });
   };
   const collectorName = name(collectorId);
   const footer = (
@@ -174,9 +176,7 @@ export function DeploymentTelemetrySheet(
         }
         loading={saving}
         disabled={saving || !ready || !canManage}
-        onPress={() => {
-          void save();
-        }}
+        onPress={save}
       />
     </ModalCardFooterActions>
   );
@@ -223,6 +223,15 @@ export function DeploymentTelemetrySheet(
             disabled={saving || !canManage || !requests}
             onSelectMachine={(machine) => change(setCollectorId)(machine.id)}
           />
+          {setUp && canManage ? (
+            <Item
+              testID="project-deployments.telemetry.rotate"
+              title={t('deploymentTelemetry.sheet.rotate')}
+              subtitle={t('deploymentTelemetry.sheet.rotateDescription')}
+              disabled={saving}
+              onPress={() => { void submit({ rotate: true }); }}
+            />
+          ) : null}
         </ItemGroup>
         <ItemGroup title={t('deploymentTelemetry.sheet.record')}>
           <Item

@@ -49,6 +49,8 @@ export type Copy = Readonly<{
     collector: string;
     collectorDescription: string;
     machine: string;
+    rotate: string;
+    rotateDescription: string;
     noCollector: string;
     team: string;
     record: string;
@@ -128,6 +130,8 @@ const en: Copy = {
     collectorDescription:
       'The Machine that receives and keeps what this Environment records.',
     machine: 'Machine',
+    rotate: 'Rotate collector credential',
+    rotateDescription: 'Replaces the current credential. Deploy again to send telemetry with the new credential.',
     noCollector:
       'No Machine has its Telemetry role on yet. Turn it on for a Machine that stays on, in that Machine’s Roles.',
     team: 'Your teammates read telemetry from the same Machine, as this Environment’s permissions allow. Personal computers sleep, so choose one that stays on.',
