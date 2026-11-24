@@ -730,7 +730,7 @@ describe('deployment UI Action callbacks', () => {
         expect(homes.artifacts(serverId).list()).toHaveLength(0);
     });
 
-    it.each(['saved Ask', 'controller enrollment'] as const)('saves Preview settings through the Home-signed receiving executor with one native review (%s)', async reviewOrigin => {
+    it.each(['saved Ask', 'unavailable controller watcher'] as const)('sends Preview settings through the Home-signed receiving executor (%s)', async reviewOrigin => {
         const homeId = `srv_${'7'.repeat(32)}`;
         const serverId = await homes.addHome({ name: 'Preview Save replay', serverUrl: 'https://preview-save-replay.test',
             serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
@@ -750,7 +750,8 @@ describe('deployment UI Action callbacks', () => {
         const { createPreviewEnrollmentForHost } = await import('../../../../../cli/src/deployments/previewEnrollment');
         const enrollment = createPreviewEnrollmentForHost({ serverId: homeId,
             machineId: header.controllerMachineId,
-            readEnvironment: async () => createDeploymentEnvironmentDetailV1({ environment: header }) });
+            readEnvironment: async () => ({ ...createDeploymentEnvironmentDetailV1({ environment: header }), targetLinks: [] }),
+            listEnvironments: async () => ({ ok: true, items: [], nextCursor: null, coverage: 'complete' }) });
         homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
             body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
         });
@@ -758,7 +759,7 @@ describe('deployment UI Action callbacks', () => {
         const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
             actionAutomations: createUiActionAutomationPortV1(account),
             resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: header.id } }),
-            ...(reviewOrigin === 'controller enrollment' ? {
+            ...(reviewOrigin === 'unavailable controller watcher' ? {
                 prepareHostReviewedChildren: async ({ actionId, input, context }) => actionId === 'deployments.environments.update'
                     ? enrollment.prepare(DeploymentActionInputSchemasV1[actionId].parse(input), context) : null,
             } satisfies Pick<Parameters<typeof createActionExecutor>[0], 'prepareHostReviewedChildren'> : {}),
@@ -804,10 +805,18 @@ describe('deployment UI Action callbacks', () => {
             },
         });
         try {
-            await expect(createDeploymentActions(account.accountLifetime, header.projectSourceId)
-                .updateEnvironment(header, { previewTemplate })).resolves.toMatchObject({ ok: true, revision: 8 });
-            // The controller carries both saved Ask and its enrollment review
-            // before the exact confirmed receiving admission.
+            const update = createDeploymentActions(account.accountLifetime, header.projectSourceId)
+                .updateEnvironment(header, { previewTemplate });
+            if (reviewOrigin === 'unavailable controller watcher') {
+                await expect(update).rejects.toMatchObject({ code: 'source_unavailable' });
+                expect(admissions).toHaveLength(1);
+                expect(nativeReview.shown).toHaveLength(0);
+                expect(effects).toBe(0);
+                expect(homes.artifacts(serverId).list()).toEqual([]);
+                return;
+            }
+            await expect(update).resolves.toMatchObject({ ok: true, revision: 8 });
+            // A saved Ask carries the exact confirmation to the receiving admission.
             expect(admissions).toHaveLength(2);
             expect(admissions[0]?.requestId).toEqual(expect.any(String));
             expect(admissions[1]?.confirmation).toMatchObject({ target: admissions[1]?.target,
@@ -817,10 +826,6 @@ describe('deployment UI Action callbacks', () => {
             expect(nativeReview.shown[0]).toMatchObject({ actionArgs: admissions[0]?.input,
                 title: expect.any(String),
                 preview: { actionId: 'deployments.environments.update', summary: expect.any(String) } });
-            if (reviewOrigin === 'controller enrollment') {
-                expect(JSON.stringify(nativeReview.shown[0]?.preview)).toContain('workflow.trigger.add');
-                expect(admissions[1]?.reviewDigest).toEqual(expect.any(String));
-            }
             expect(admissions[1]?.requestId).not.toBe(admissions[0]?.requestId);
             expect(effects).toBe(1);
             expect(homes.artifacts(serverId).list()).toEqual([]);
