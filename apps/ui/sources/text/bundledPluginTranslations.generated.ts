@@ -3641,6 +3641,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Pendent",
     "plugins.triage.sessionLinks.status.reading": "Llegint l’estat del PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "ha sol·licitat canvis",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Configura una font per veure’n més detalls.",
     "plugins.triage.sessionLinks.status.unavailable": "L’estat del PR no està disponible.",
     "plugins.triage.sessionLinks.unavailable": "No s’han pogut llegir les entrades vinculades",
     "plugins.triage.sessionLinks.unlink": "Desvincula",
@@ -8277,6 +8278,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Ausstehend",
     "plugins.triage.sessionLinks.status.reading": "PR-Status wird gelesen…",
     "plugins.triage.sessionLinks.status.requestedChanges": "forderte Änderungen an",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Richte eine Quelle ein, um weitere Details zu sehen.",
     "plugins.triage.sessionLinks.status.unavailable": "Der PR-Status ist nicht verfügbar.",
     "plugins.triage.sessionLinks.unavailable": "Verknüpfte Einträge konnten nicht gelesen werden",
     "plugins.triage.sessionLinks.unlink": "Verknüpfung aufheben",
@@ -12911,6 +12913,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Pending",
     "plugins.triage.sessionLinks.status.reading": "Reading PR status…",
     "plugins.triage.sessionLinks.status.requestedChanges": "requested changes",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Configure a source for more details.",
     "plugins.triage.sessionLinks.status.unavailable": "PR status is unavailable.",
     "plugins.triage.sessionLinks.unavailable": "Linked entries could not be read",
     "plugins.triage.sessionLinks.unlink": "Unlink",
@@ -17547,6 +17550,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Pendiente",
     "plugins.triage.sessionLinks.status.reading": "Leyendo el estado del PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "solicitó cambios",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Configura una fuente para ver más detalles.",
     "plugins.triage.sessionLinks.status.unavailable": "El estado del PR no está disponible.",
     "plugins.triage.sessionLinks.unavailable": "No se pudieron leer las entradas vinculadas",
     "plugins.triage.sessionLinks.unlink": "Desvincular",
@@ -22183,6 +22187,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "En attente",
     "plugins.triage.sessionLinks.status.reading": "Lecture du statut de la PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "a demandé des modifications",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Configurez une source pour afficher plus de détails.",
     "plugins.triage.sessionLinks.status.unavailable": "Le statut de la PR est indisponible.",
     "plugins.triage.sessionLinks.unavailable": "Impossible de lire les entrées liées",
     "plugins.triage.sessionLinks.unlink": "Dissocier",
@@ -26819,6 +26824,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "In attesa",
     "plugins.triage.sessionLinks.status.reading": "Lettura dello stato della PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "ha richiesto modifiche",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Configura una fonte per vedere altri dettagli.",
     "plugins.triage.sessionLinks.status.unavailable": "Lo stato della PR non è disponibile.",
     "plugins.triage.sessionLinks.unavailable": "Impossibile leggere le voci collegate",
     "plugins.triage.sessionLinks.unlink": "Scollega",
@@ -31455,6 +31461,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "保留",
     "plugins.triage.sessionLinks.status.reading": "PR の状態を読み取り中…",
     "plugins.triage.sessionLinks.status.requestedChanges": "変更を要求",
+    "plugins.triage.sessionLinks.status.sourceRequired": "詳しい情報を表示するには、ソースを設定してください。",
     "plugins.triage.sessionLinks.status.unavailable": "PR の状態を取得できません。",
     "plugins.triage.sessionLinks.unavailable": "リンク済みの項目を読み取れませんでした",
     "plugins.triage.sessionLinks.unlink": "リンク解除",
@@ -36091,6 +36098,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Oczekuje",
     "plugins.triage.sessionLinks.status.reading": "Odczytywanie statusu PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "poprosił(a) o zmiany",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Skonfiguruj źródło, aby zobaczyć więcej szczegółów.",
     "plugins.triage.sessionLinks.status.unavailable": "Status PR jest niedostępny.",
     "plugins.triage.sessionLinks.unavailable": "Nie udało się odczytać powiązanych wpisów",
     "plugins.triage.sessionLinks.unlink": "Odłącz",
@@ -40727,6 +40735,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Pendente",
     "plugins.triage.sessionLinks.status.reading": "Lendo o status do PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "solicitou alterações",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Configure uma fonte para ver mais detalhes.",
     "plugins.triage.sessionLinks.status.unavailable": "O status do PR está indisponível.",
     "plugins.triage.sessionLinks.unavailable": "Não foi possível ler as entradas vinculadas",
     "plugins.triage.sessionLinks.unlink": "Desvincular",
@@ -45363,6 +45372,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "Ожидается",
     "plugins.triage.sessionLinks.status.reading": "Чтение статуса PR…",
     "plugins.triage.sessionLinks.status.requestedChanges": "запросил(а) изменения",
+    "plugins.triage.sessionLinks.status.sourceRequired": "Настройте источник, чтобы увидеть подробности.",
     "plugins.triage.sessionLinks.status.unavailable": "Статус PR недоступен.",
     "plugins.triage.sessionLinks.unavailable": "Не удалось прочитать связанные записи",
     "plugins.triage.sessionLinks.unlink": "Отвязать",
@@ -49999,6 +50009,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "待处理",
     "plugins.triage.sessionLinks.status.reading": "正在读取 PR 状态…",
     "plugins.triage.sessionLinks.status.requestedChanges": "请求修改",
+    "plugins.triage.sessionLinks.status.sourceRequired": "请配置来源以查看更多详情。",
     "plugins.triage.sessionLinks.status.unavailable": "PR 状态不可用。",
     "plugins.triage.sessionLinks.unavailable": "无法读取已链接的条目",
     "plugins.triage.sessionLinks.unlink": "取消关联",
@@ -54635,6 +54646,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "plugins.triage.sessionLinks.status.pending": "待處理",
     "plugins.triage.sessionLinks.status.reading": "正在讀取 PR 狀態…",
     "plugins.triage.sessionLinks.status.requestedChanges": "要求修改",
+    "plugins.triage.sessionLinks.status.sourceRequired": "請設定來源以查看更多詳細資料。",
     "plugins.triage.sessionLinks.status.unavailable": "PR 狀態無法使用。",
     "plugins.triage.sessionLinks.unavailable": "無法讀取已連結的項目",
     "plugins.triage.sessionLinks.unlink": "取消關聯",
@@ -59272,6 +59284,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.triage.sessionLinks.status.pending'
     | 'plugins.triage.sessionLinks.status.reading'
     | 'plugins.triage.sessionLinks.status.requestedChanges'
+    | 'plugins.triage.sessionLinks.status.sourceRequired'
     | 'plugins.triage.sessionLinks.status.unavailable'
     | 'plugins.triage.sessionLinks.unavailable'
     | 'plugins.triage.sessionLinks.unlink'

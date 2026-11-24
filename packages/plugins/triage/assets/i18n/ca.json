@@ -1051,5 +1051,6 @@
   "plugins.triage.surface.session.resumeFailedIn": "No s’ha pogut lliurar a {session}: no s’ha pogut reprendre. Torna-ho a enviar quan s’estigui executant.",
   "plugins.triage.surface.session.turnFailedIn": "El torn ha fallat a {session}. Revisa-la abans de tornar a enviar.",
   "plugins.triage.surface.session.selectedSessionName": "la sessió seleccionada",
-  "plugins.triage.surface.failure.pacedUntil": "{names} ens ha demanat que esperem · pròxima lectura a les {time}"
+  "plugins.triage.surface.failure.pacedUntil": "{names} ens ha demanat que esperem · pròxima lectura a les {time}",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Configura una font per veure’n més detalls."
 }

@@ -1051,5 +1051,6 @@
   "plugins.triage.surface.session.resumeFailedIn": "Impossible de livrer à {session} : elle n’a pas pu reprendre. Renvoyez-le une fois qu’elle tourne.",
   "plugins.triage.surface.session.turnFailedIn": "Le tour a échoué dans {session}. Vérifiez-la avant de renvoyer.",
   "plugins.triage.surface.session.selectedSessionName": "la session sélectionnée",
-  "plugins.triage.surface.failure.pacedUntil": "{names} nous a demandé de patienter · prochaine lecture à {time}"
+  "plugins.triage.surface.failure.pacedUntil": "{names} nous a demandé de patienter · prochaine lecture à {time}",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Configurez une source pour afficher plus de détails."
 }

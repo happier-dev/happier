@@ -3630,6 +3630,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.triage.sessionLinks.status.pending",
   "plugins.triage.sessionLinks.status.reading",
   "plugins.triage.sessionLinks.status.requestedChanges",
+  "plugins.triage.sessionLinks.status.sourceRequired",
   "plugins.triage.sessionLinks.status.unavailable",
   "plugins.triage.sessionLinks.unavailable",
   "plugins.triage.sessionLinks.unlink",

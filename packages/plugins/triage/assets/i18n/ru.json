@@ -1051,5 +1051,6 @@
   "plugins.triage.surface.session.resumeFailedIn": "Не удалось доставить в «{session}»: сеанс не возобновился. Отправьте снова, когда он будет запущен.",
   "plugins.triage.surface.session.turnFailedIn": "Ход в «{session}» завершился с ошибкой. Проверьте сеанс перед повторной отправкой.",
   "plugins.triage.surface.session.selectedSessionName": "выбранный сеанс",
-  "plugins.triage.surface.failure.pacedUntil": "{names} попросил подождать · следующее чтение в {time}"
+  "plugins.triage.surface.failure.pacedUntil": "{names} попросил подождать · следующее чтение в {time}",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Настройте источник, чтобы увидеть подробности."
 }

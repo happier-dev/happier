@@ -1051,5 +1051,6 @@
   "plugins.triage.surface.session.resumeFailedIn": "Zustellung an {session} fehlgeschlagen: Sie konnte nicht fortgesetzt werden. Sende es erneut, sobald sie läuft.",
   "plugins.triage.surface.session.turnFailedIn": "Der Zug in {session} ist fehlgeschlagen. Prüfe sie, bevor du erneut sendest.",
   "plugins.triage.surface.session.selectedSessionName": "die ausgewählte Sitzung",
-  "plugins.triage.surface.failure.pacedUntil": "{names} hat uns gebeten zu warten · nächster Abruf um {time}"
+  "plugins.triage.surface.failure.pacedUntil": "{names} hat uns gebeten zu warten · nächster Abruf um {time}",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Richte eine Quelle ein, um weitere Details zu sehen."
 }

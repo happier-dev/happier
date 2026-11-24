@@ -3633,6 +3633,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.sessionLinks.status.pending": "保留",
   "plugins.triage.sessionLinks.status.reading": "PR の状態を読み取り中…",
   "plugins.triage.sessionLinks.status.requestedChanges": "変更を要求",
+  "plugins.triage.sessionLinks.status.sourceRequired": "詳しい情報を表示するには、ソースを設定してください。",
   "plugins.triage.sessionLinks.status.unavailable": "PR の状態を取得できません。",
   "plugins.triage.sessionLinks.unavailable": "リンク済みの項目を読み取れませんでした",
   "plugins.triage.sessionLinks.unlink": "リンク解除",

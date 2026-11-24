@@ -1051,5 +1051,6 @@
   "plugins.triage.surface.session.resumeFailedIn": "无法送达 {session}：它未能恢复。待它运行后再发送一次。",
   "plugins.triage.surface.session.turnFailedIn": "{session} 中的对话轮次失败。请先检查它，再重新发送。",
   "plugins.triage.surface.session.selectedSessionName": "所选会话",
-  "plugins.triage.surface.failure.pacedUntil": "{names} 要求我们等待 · 下次读取时间 {time}"
+  "plugins.triage.surface.failure.pacedUntil": "{names} 要求我们等待 · 下次读取时间 {time}",
+  "plugins.triage.sessionLinks.status.sourceRequired": "请配置来源以查看更多详情。"
 }

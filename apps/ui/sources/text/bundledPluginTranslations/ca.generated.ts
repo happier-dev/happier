@@ -3633,6 +3633,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.sessionLinks.status.pending": "Pendent",
   "plugins.triage.sessionLinks.status.reading": "Llegint l’estat del PR…",
   "plugins.triage.sessionLinks.status.requestedChanges": "ha sol·licitat canvis",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Configura una font per veure’n més detalls.",
   "plugins.triage.sessionLinks.status.unavailable": "L’estat del PR no està disponible.",
   "plugins.triage.sessionLinks.unavailable": "No s’han pogut llegir les entrades vinculades",
   "plugins.triage.sessionLinks.unlink": "Desvincula",

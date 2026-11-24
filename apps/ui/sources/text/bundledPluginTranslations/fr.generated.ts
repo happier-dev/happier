@@ -3633,6 +3633,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.sessionLinks.status.pending": "En attente",
   "plugins.triage.sessionLinks.status.reading": "Lecture du statut de la PR…",
   "plugins.triage.sessionLinks.status.requestedChanges": "a demandé des modifications",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Configurez une source pour afficher plus de détails.",
   "plugins.triage.sessionLinks.status.unavailable": "Le statut de la PR est indisponible.",
   "plugins.triage.sessionLinks.unavailable": "Impossible de lire les entrées liées",
   "plugins.triage.sessionLinks.unlink": "Dissocier",

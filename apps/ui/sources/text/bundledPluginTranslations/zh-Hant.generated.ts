@@ -3633,6 +3633,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.sessionLinks.status.pending": "待處理",
   "plugins.triage.sessionLinks.status.reading": "正在讀取 PR 狀態…",
   "plugins.triage.sessionLinks.status.requestedChanges": "要求修改",
+  "plugins.triage.sessionLinks.status.sourceRequired": "請設定來源以查看更多詳細資料。",
   "plugins.triage.sessionLinks.status.unavailable": "PR 狀態無法使用。",
   "plugins.triage.sessionLinks.unavailable": "無法讀取已連結的項目",
   "plugins.triage.sessionLinks.unlink": "取消關聯",

@@ -1051,5 +1051,6 @@
   "plugins.triage.surface.session.resumeFailedIn": "Impossibile consegnare a {session}: non è riuscita a riprendere. Invialo di nuovo quando è in esecuzione.",
   "plugins.triage.surface.session.turnFailedIn": "Il turno non è riuscito in {session}. Controllala prima di inviare di nuovo.",
   "plugins.triage.surface.session.selectedSessionName": "la sessione selezionata",
-  "plugins.triage.surface.failure.pacedUntil": "{names} ci ha chiesto di aspettare · prossima lettura alle {time}"
+  "plugins.triage.surface.failure.pacedUntil": "{names} ci ha chiesto di aspettare · prossima lettura alle {time}",
+  "plugins.triage.sessionLinks.status.sourceRequired": "Configura una fonte per vedere altri dettagli."
 }
