@@ -39,6 +39,37 @@ describe('shared directory viewer presentation', () => {
             await hook.unmount();
         } finally { await home.dispose(); releaseLoader(); }
     });
+    it.each([
+        // Exactly what a Home sends when a released 0.2 sign-in reaches a Team route.
+        { name: 'a Team refusal of the released sign-in', response: () => Response.json(
+            { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } }, { status: 403 }),
+        message: () => t('teams.errors.signInOutdated'), retryable: false },
+        { name: 'a Home failure', response: () => Response.json({ error: 'internal' }, { status: 500 }),
+            message: () => t('teams.errors.loadFailed'), retryable: true },
+    ])('carries $name to the Team and Group pickers with its own words', async ({ response, message, retryable }) => {
+        const releaseLoader = await installRealActionExecutorModuleLoader();
+        const home = await serveAccountHomes({ homes: [{ key: 'legacy', serverUrl: 'https://legacy-directory.test', accountId: 'owner' }],
+            route: request => request.path === '/v1/teams/list' ? response() : undefined,
+        });
+        try {
+            const scope = { serverId: home.homes.legacy!.id, accountId: 'owner' };
+            const hook = await renderHook(() => useSessionAccessDirectory({ scope, enabled: true,
+                availability: 'available', operations: {}, revision: 0, contextTeams: [] }));
+            await act(async () => {
+                await hook.getCurrent().sections.find(section => section.kind === 'group')!
+                    .resolveCandidates!('', new AbortController().signal).catch(() => []);
+            });
+            await vi.waitFor(() => {
+                for (const kind of ['team', 'group'] as const) {
+                    expect(hook.getCurrent().sections.find(section => section.kind === kind)).toMatchObject({
+                        status: 'error', error: { message: message(), retryable },
+                    });
+                }
+            });
+            expect(hook.getCurrent().sections.find(section => section.kind === 'account')!.status).toBe('idle');
+            await hook.unmount();
+        } finally { await home.dispose(); releaseLoader(); }
+    });
     it('prefers the scoped viewer profile to a generic audience name for that same person', () => {
         const principal = presentSharePrincipal({ ref: { kind: 'account', accountId: 'owner' }, viewerAccountId: 'owner', name: 'Person',
             profile: { name: 'Avery Owner', firstName: 'Avery', lastName: 'Owner', username: null, avatarUrl: null } });

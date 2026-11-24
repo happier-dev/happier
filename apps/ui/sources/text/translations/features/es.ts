@@ -16685,6 +16685,7 @@ const spanish: TeamsTranslationRoot = {
             loadFailed: "No se pudo cargar esta información. Inténtalo de nuevo.",
             generic: 'No se pudo completar. No se cambió nada.',
             policySaveFailed: 'No se pudo guardar esta configuración del equipo. Revisa los valores actuales e inténtalo de nuevo.',
+            signInOutdated: 'Los equipos no están disponibles con este inicio de sesión. Cierra la sesión de este Home en este dispositivo y vuelve a iniciarla para usarlos.',
             outcomeUnknown: 'Es posible que el Home haya completado este cambio. Actualiza el equipo antes de volver a intentarlo.',
             authenticationRequired: "Inicia sesión con el método que requiere este equipo e inténtalo de nuevo.",
             forbidden: 'No tienes permiso para este cambio.',

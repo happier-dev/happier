@@ -100,6 +100,23 @@ export function readTeamCreationPolicyRefusalV1(
 }
 
 /**
+ * Why Team routes refused a credential the Home still accepts elsewhere: a
+ * released 0.2 Home sign-in. `team_forbidden` alone also answers a member whose
+ * role lacks a capability; only this cause is fixed by signing in again.
+ */
+const TeamLegacyCredentialRefusalDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: z.literal('legacy_home_credential'),
+}));
+export const TEAM_LEGACY_CREDENTIAL_REFUSAL_DETAILS_V1 = Object.freeze({ reason: 'legacy_home_credential' as const });
+
+/** Whether a Team failure body is the refusal of a released 0.2 Home sign-in. */
+export function isTeamLegacyCredentialRefusalV1(code: unknown, body: unknown): boolean {
+  if (code !== 'team_forbidden' || !body || typeof body !== 'object'
+    || !('error' in body) || body.error !== code || !('details' in body)) return false;
+  return TeamLegacyCredentialRefusalDetailsV1Schema.safeParse(body.details).success;
+}
+
+/**
  * The one error body every Team route sends. Clients read `error`; a route that
  * invented its own envelope would make the same domain result unreadable
  * depending on which path produced it.
@@ -110,13 +127,15 @@ export const TeamErrorV1Schema = lazyZodSchema(() => z.strictObject({
     TeamAuthenticationPolicyUnavailableDetailsV1Schema,
     TeamInputErrorDetailsV1Schema,
     TeamCreationPolicyRefusalDetailsV1Schema,
+    TeamLegacyCredentialRefusalDetailsV1Schema,
   ])),
 }).check(z.superRefine((value, context) => {
   if (value.details !== undefined && !(
     (value.error === 'team_authentication_policy_unavailable'
       && TeamAuthenticationPolicyUnavailableDetailsV1Schema.safeParse(value.details).success)
     || (value.error === 'invalid_team_input' && TeamInputErrorDetailsV1Schema.safeParse(value.details).success)
-    || (value.error === 'team_forbidden' && TeamCreationPolicyRefusalDetailsV1Schema.safeParse(value.details).success)
+    || (value.error === 'team_forbidden' && (TeamCreationPolicyRefusalDetailsV1Schema.safeParse(value.details).success
+      || TeamLegacyCredentialRefusalDetailsV1Schema.safeParse(value.details).success))
   )) {
     context.addIssue({
       code: "custom",

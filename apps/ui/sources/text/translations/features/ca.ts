@@ -16763,6 +16763,7 @@ const catalan: TeamsTranslationRoot = {
             loadFailed: "No s’ha pogut carregar aquesta informació. Torna-ho a provar.",
             generic: 'No s’ha pogut completar. No s’ha canviat res.',
             policySaveFailed: 'No s’ha pogut desar aquesta configuració del Team. Revisa els valors actuals i torna-ho a provar.',
+            signInOutdated: 'Els Teams no estan disponibles amb aquest inici de sessió. Tanca la sessió d’aquest Home en aquest dispositiu i torna a iniciar-la per fer-los servir.',
             outcomeUnknown: 'És possible que el Home hagi completat aquest canvi. Actualitza l’equip abans de tornar-ho a provar.',
             authenticationRequired: "Inicia sessió amb el mètode que requereix aquest equip i torna-ho a provar.",
             forbidden: 'No tens permís per a aquest canvi.',

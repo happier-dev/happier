@@ -16749,6 +16749,7 @@ const italian: TeamsTranslationRoot = {
             loadFailed: "Non è stato possibile caricare queste informazioni. Riprova.",
             generic: 'Operazione non riuscita. Non è stato modificato nulla.',
             policySaveFailed: 'Non è stato possibile salvare questa impostazione del team. Controlla i valori attuali e riprova.',
+            signInOutdated: 'I team non sono disponibili con questo accesso. Esci da questo Home su questo dispositivo, poi accedi di nuovo per usarli.',
             outcomeUnknown: 'L’Home potrebbe aver completato questa modifica. Aggiorna il team prima di riprovare.',
             authenticationRequired: "Accedi con il metodo richiesto da questo team, poi riprova.",
             forbidden: 'Non hai l’autorizzazione per questa modifica.',

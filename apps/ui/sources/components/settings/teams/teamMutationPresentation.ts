@@ -1,4 +1,5 @@
 import { isActionApprovalDeclinedErrorCode, isActionTurnedOffErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isTeamLegacyCredentialRefusalV1 } from '@happier-dev/protocol/teams';
 
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
@@ -62,6 +63,8 @@ export function teamMutationFailureLabel(failure: HomeDomainFailure<string>, con
 }
 
 function teamFailureLabel(failure: HomeDomainFailure<string>, context?: 'authentication_policy' | 'policy'): string {
+    // Team routes refuse a released 0.2 sign-in; signing in again is the fix, not the person's role.
+    if (isTeamLegacyCredentialRefusalV1(failure.code, failure.details)) return t('teams.errors.signInOutdated');
     if (failure.code === 'managed_default_machine_not_member_usable') return t('teams.settings.memberDefaults.machineNotMemberUsable');
     if (failure.code === 'team_authentication_required') return context === 'authentication_policy'
         ? t('teams.authentication.policy.authenticationRequired')

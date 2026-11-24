@@ -202,6 +202,8 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
     if (!searching) sections.push(...roster);
     const collapsedControls: SelectionListOption[] = [];
     const suggestionSections: SelectionListSectionDescriptor[] = [];
+    // Directories refused for one cause (Teams and their Groups) say it once.
+    const refusalsShown = new Set<string>();
     if (model.editable) for (const kind of SHARE_DIRECTORY_KINDS) {
         if (input.directoryKind && input.directoryKind !== kind) continue;
         const source = model.directory.sections.find((section) => section.kind === kind);
@@ -210,15 +212,22 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
         // reachable until the owner resolves it; a resolver alone does not prove an empty directory.
         if (!input.directoryKind && kind !== 'account' && (source.resolved ?? !source.resolveCandidates)
             && source.status === 'idle' && source.candidates.length === 0 && !source.hasMore) continue;
-        if (suggestionsShown) suggestionSections.push(sourceSection(source));
+        // A settled refusal (the Home answered and asking again cannot change it) says why in place of the
+        // directory: no Retry, no suggestions and no Browse into a list that cannot answer.
+        const refusal = source.status === 'error' && source.error && !source.error.retryable ? source.error : undefined;
+        if (suggestionsShown && !refusal) suggestionSections.push(sourceSection(source));
         const controls: SelectionListOption[] = [];
-        if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,
+        if (refusal) {
+            if (!refusalsShown.has(refusal.message)) controls.push({ id: `refusal:${kind}`, label: refusal.message, disabled: true,
+                testID: `${idPrefix}${ns}-directory-refusal:${kind}` });
+            refusalsShown.add(refusal.message);
+        } else if (source.status === 'error' && source.error) controls.push({ id: `retry:${kind}`, label: source.error.message,
             rightAccessoryOutsidePressable: true, rightAccessory: () => <ShareRowAction useHost={host.useGrantRowPresentation} label={host.text('common.retry')}
                 testID={`${idPrefix}${ns}-directory-retry:${kind}`} onPress={() => actions.retryDirectory(kind)} /> });
         // A searchable directory (a resolver) is always one Browse away: a query's page says nothing about everyone
         // else. A fixed people list already shown as suggestions needs Browse only for its next page.
-        const browsable = source.resolveCandidates !== undefined || source.hasMore
-            || (source.candidates.length > 0 && !(kind === 'account' && suggestionsShown));
+        const browsable = !refusal && (source.resolveCandidates !== undefined || source.hasMore
+            || (source.candidates.length > 0 && !(kind === 'account' && suggestionsShown)));
         if (!input.directoryKind && browsable) controls.push({ id: `browse:${kind}`,
             label: host.text(kind === 'account' ? 'shareSheet.browsePeople' : kind === 'team' ? 'shareSheet.browseTeams' : 'shareSheet.browseGroups'),
             icon: () => <host.Icon name="users" />,

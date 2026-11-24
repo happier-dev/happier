@@ -16685,6 +16685,7 @@ const japanese: TeamsTranslationRoot = {
             loadFailed: "この情報を読み込めませんでした。もう一度お試しください。",
             generic: '完了できませんでした。何も変更されていません。',
             policySaveFailed: 'このチーム設定を保存できませんでした。現在の値を確認して、もう一度お試しください。',
+            signInOutdated: 'このサインインではチームを使えません。このデバイスでこの Home からサインアウトし、もう一度サインインしてください。',
             outcomeUnknown: 'Home でこの変更が完了した可能性があります。再試行する前にチームを更新してください。',
             authenticationRequired: "このチームが必要とする方法でサインインし、もう一度お試しください。",
             forbidden: 'この変更を行う権限がありません。',

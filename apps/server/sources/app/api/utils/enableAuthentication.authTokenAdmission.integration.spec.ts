@@ -161,7 +161,7 @@ describe("authentication token admission (integration)", () => {
                     headers: { authorization: `Bearer ${legacy.token}` },
                 });
                 expect({ status: optedOutResponse.statusCode, body: optedOutResponse.json() })
-                    .toEqual({ status: 403, body: { error: "team_forbidden" } });
+                    .toEqual({ status: 403, body: { error: "team_forbidden", details: { reason: "legacy_home_credential" } } });
             }
 
             const current = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });

@@ -5,6 +5,7 @@ import {
     ZodTypeProvider,
 } from "fastify-type-provider-zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TeamErrorV1Schema } from "@happier-dev/protocol/teams";
 
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { registerApiRoutes } from "@/app/api/api";
@@ -163,15 +164,22 @@ describe("Team API composition legacy Home credential admission (SQLite integrat
                 }),
                 // The read a 0.3 client issues during its first Account sync.
                 await inject("/v2/teams/label-envelopes"),
+                // The reads the Share dialog's Team and Group pickers issue.
+                await inject("/v1/teams/list", { v: 1, scope: "member", archived: "active" }),
+                await inject("/v1/teams/groups/list", { v: 1, teamId: team.id, archived: "active" }),
             ];
             // The released bearer is still a valid Home credential, so Team
             // families refuse it as a permission answer. A 401 would tell the
             // client to discard the person's stored credential and sign them out.
+            // The refusal names its cause: the same code also answers a member
+            // whose role lacks a capability, and only this one is fixed by
+            // signing in again.
             for (const attempt of attempts) {
                 expect({ status: attempt.statusCode, body: attempt.json() }).toEqual({
                     status: 403,
-                    body: { error: "team_forbidden" },
+                    body: { error: "team_forbidden", details: { reason: "legacy_home_credential" } },
                 });
+                expect(TeamErrorV1Schema.safeParse(attempt.json()).success).toBe(true);
             }
 
             // Ordinary Account custody remains readable with the released bearer;

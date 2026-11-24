@@ -314,6 +314,18 @@ export function isRestrictedAuthTokenKind(
 }
 
 /**
+ * A released pre-marker Home credential stays valid at the Home, so a route
+ * family that opts out of it refuses it as a permission answer (clients retire
+ * stored credentials only on 401). Its refusal names this cause, because only
+ * signing in again fixes it.
+ */
+export function isLegacyHomeCredentialDeniedForRoute(request: AuthenticatedRouteRequest): boolean {
+    return (request.authTokenKind === "account" || request.authTokenKind === "terminal")
+        && request.authTokenLegacy === true
+        && request.routeOptions?.config?.allowLegacyHomeToken === false;
+}
+
+/**
  * Restricted credentials are opt-in at the HTTP route boundary, and
  * Directory-only routes reject ordinary Home credentials. A verified external
  * Action execution has already reconstructed its exact current PAT principal;
@@ -326,12 +338,8 @@ export function isRestrictedAuthTokenDeniedForRoute(
     switch (request.authTokenKind) {
         case "account":
         case "terminal":
-            // A released pre-marker Home credential stays valid at the Home, so a
-            // route family that opts out of it refuses it here as a permission
-            // answer; clients retire stored credentials only on 401.
             return request.routeOptions?.config?.allowAccountDirectoryToken === true
-                || (request.authTokenLegacy === true
-                    && request.routeOptions?.config?.allowLegacyHomeToken === false);
+                || isLegacyHomeCredentialDeniedForRoute(request);
         case "api_token":
             if (request.externalActionExecutionAuthorized === true) return false;
             if (resolveApiTokenSessionActionForRoute(request) !== undefined

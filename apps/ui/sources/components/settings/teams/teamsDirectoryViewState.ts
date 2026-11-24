@@ -1,6 +1,6 @@
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import type { TeamSummaryV1 } from '@happier-dev/protocol/teams';
+import { isTeamLegacyCredentialRefusalV1, type TeamSummaryV1 } from '@happier-dev/protocol/teams';
 
 import type { TeamsHomeAdmissionEntry } from '@/sync/domains/teams/teamsSettingsAdmission';
 import { teamAddressKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -31,7 +31,7 @@ export type TeamsDirectoryRow = Readonly<{
 export type TeamsDirectoryUnavailableHome = Readonly<{
     serverId: string;
     homeName: string;
-    reason: 'loading' | 'offline' | 'error' | 'denied' | 'unsupported' | 'turned_off' | 'credential_unreadable';
+    reason: 'loading' | 'offline' | 'error' | 'denied' | 'sign_in_outdated' | 'unsupported' | 'turned_off' | 'credential_unreadable';
     retryable: boolean;
 }>;
 
@@ -70,6 +70,8 @@ export function teamsUnavailableReason(
     if (!error) return { reason: 'loading', retryable: false };
     // The person turned the read off in Settings, Actions: the Home was never asked.
     if (isActionTurnedOffErrorCode(error.code)) return { reason: 'turned_off', retryable: false };
+    // Teams refuse a released 0.2 sign-in; signing in again, not a role, is the way forward.
+    if (isTeamLegacyCredentialRefusalV1(error.code, error.details)) return { reason: 'sign_in_outdated', retryable: false };
     if (error.kind === 'forbidden' || error.kind === 'unauthorized') {
         return { reason: 'denied', retryable: false };
     }
@@ -81,6 +83,7 @@ export function teamsUnavailableHomeReason(home: Pick<TeamsDirectoryUnavailableH
     switch (home.reason) {
         case 'loading': return t('teams.directory.loading');
         case 'denied': return t('teams.errors.forbidden');
+        case 'sign_in_outdated': return t('teams.errors.signInOutdated');
         case 'unsupported': return t('teams.unavailable.updateRequired');
         case 'turned_off': return t('actionConfirmations.turnedOffReadMessage');
         case 'offline': return t('teams.unavailable.offline');
@@ -106,6 +109,7 @@ export function teamsUnavailableHomeStateKind(home: Pick<TeamsDirectoryUnavailab
         case 'denied': return 'denied';
         case 'offline': return 'unavailable';
         case 'unsupported':
+        case 'sign_in_outdated':
         case 'turned_off': return 'unavailable';
         default: return 'error';
     }

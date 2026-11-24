@@ -16564,6 +16564,7 @@ const german: TeamsTranslationRoot = {
             loadFailed: "Diese Informationen konnten nicht geladen werden. Versuche es erneut.",
             generic: 'Das hat nicht geklappt. Es wurde nichts geändert.',
             policySaveFailed: 'Diese Team-Einstellung konnte nicht gespeichert werden. Prüfe die aktuellen Werte und versuche es erneut.',
+            signInOutdated: 'Teams sind mit dieser Anmeldung nicht verfügbar. Melde dich auf diesem Gerät von diesem Home ab und dann wieder an, um sie zu nutzen.',
             outcomeUnknown: 'Das Home hat diese Änderung möglicherweise abgeschlossen. Aktualisiere das Team, bevor du es erneut versuchst.',
             authenticationRequired: "Melde dich mit der von diesem Team erforderlichen Methode an und versuche es erneut.",
             forbidden: 'Dir fehlt die Berechtigung für diese Änderung.',

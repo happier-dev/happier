@@ -12,6 +12,9 @@ import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { listTeamGroups } from '@/sync/ops/teams/teamGroupOperations';
 import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
+import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import { teamReadFailureLabel } from '@/components/settings/teams/teamMutationPresentation';
+import { homeDomainFailureFromSnapshotError } from '@/sync/domains/teams/teamSnapshotFailure';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useTeamGroupNameProjectionDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 
@@ -21,6 +24,7 @@ import type {
     SessionAccessDirectoryKind,
     SessionAccessDirectorySectionModel,
     SessionAccessGrantOperationModel,
+    SessionAccessUiError,
 } from './sessionAccessEditorTypes';
 
 export type SessionAccessDirectoryTeamContext = Readonly<{
@@ -37,6 +41,8 @@ type Page = Readonly<{
     teamContexts?: readonly SessionAccessDirectoryTeamContext[];
     nextCursor: string | null;
     failed: boolean;
+    /** The Home's typed answer when the read failed with one. */
+    failure?: HomeDomainFailure<string>;
     loadingMore?: boolean;
     query?: string;
 }>;
@@ -47,12 +53,14 @@ type GroupTeamPage = Readonly<{
     nextCursor: string | null;
     initialized: boolean;
     failed: boolean;
+    failure?: HomeDomainFailure<string>;
 }>;
 
 type GroupDirectoryPage = Readonly<{
     byTeam: Readonly<Record<string, GroupTeamPage>>;
     teamCursor: string | null;
     teamDiscoveryFailed: boolean;
+    teamDiscoveryFailure?: HomeDomainFailure<string>;
     loadingMore: boolean;
     revision: number;
 }>;
@@ -73,6 +81,27 @@ const EMPTY_GROUP_PAGE: GroupDirectoryPage = Object.freeze({
     loadingMore: false,
     revision: 0,
 });
+
+/** Carries a Team read's typed refusal out of the paging code that throws on failure. */
+class TeamDirectoryReadError extends Error {
+    constructor(readonly failure: HomeDomainFailure<string>) {
+        super(failure.code ?? failure.kind);
+        this.name = 'TeamDirectoryReadError';
+    }
+}
+
+function teamDirectoryFailure(error: unknown): HomeDomainFailure<string> | undefined {
+    return error instanceof TeamDirectoryReadError ? error.failure : undefined;
+}
+
+/**
+ * A Team or Group directory read the Home refused or could not answer, in the Team read
+ * presenter's words. Retry is offered only when asking again can succeed.
+ */
+function teamDirectoryError(failure: HomeDomainFailure<string> | null | undefined): SessionAccessUiError {
+    if (!failure) return { code: 'session_access_directory_failed', message: t('teams.errors.loadFailed'), retryable: true };
+    return { code: failure.code ?? 'session_access_directory_failed', message: teamReadFailureLabel(failure), retryable: failure.retryable };
+}
 
 function groupRows(page: GroupDirectoryPage): readonly DirectoryCandidateRow[] {
     return Object.values(page.byTeam).flatMap((source) => source.rows);
@@ -274,7 +303,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             input: { v: 1, scope: 'member', archived: 'active', ...(cursor ? { cursor } : {}) },
             parse: (value): TeamsPageV1 => TeamsPageV1Schema.parse(value),
         });
-        if (outcome.kind !== 'succeeded') throw new Error(outcome.failure.kind);
+        if (outcome.kind !== 'succeeded') throw new TeamDirectoryReadError(outcome.failure);
         return {
             rows: outcome.value.items.map((team) => {
                 const principalSummary = { kind: 'team' as const, teamId: team.id, name: team.name };
@@ -319,8 +348,8 @@ export function useSessionAccessDirectory(input: Readonly<{
             archived: 'active',
             ...(cursor ? { cursor } : {}),
         }).catch(() => null);
-        if (!outcome) return { ...source, failed: true };
-        if (outcome.kind !== 'succeeded') return { ...source, failed: true };
+        if (!outcome) return { ...source, failed: true, failure: undefined };
+        if (outcome.kind !== 'succeeded') return { ...source, failed: true, failure: outcome.failure };
         const nextRows = outcome.value.items.map((group) => {
             const principalSummary = {
                 kind: 'group' as const, teamId: group.teamId, groupId: group.id, name: group.name, teamName: source.team.name,
@@ -349,7 +378,11 @@ export function useSessionAccessDirectory(input: Readonly<{
         const request = (async () => {
             let teamPage = pagesRef.current.team;
             let teamDiscoveryFailed = groupPageRef.current?.teamDiscoveryFailed ?? false;
-            if (teamPage?.failed) teamDiscoveryFailed = true;
+            let teamDiscoveryFailure = groupPageRef.current?.teamDiscoveryFailure;
+            if (teamPage?.failed) {
+                teamDiscoveryFailed = true;
+                teamDiscoveryFailure = teamPage.failure;
+            }
             if (!teamPage || (mode === 'retry' && teamPage.failed)) {
                 try {
                     if (teamPage?.failed) firstTeamPageRequest.current = null;
@@ -359,8 +392,10 @@ export function useSessionAccessDirectory(input: Readonly<{
                         setPages((current) => ({ ...current, team: teamPage! }));
                     }
                     teamDiscoveryFailed = false;
-                } catch {
+                    teamDiscoveryFailure = undefined;
+                } catch (error) {
                     teamDiscoveryFailed = true;
+                    teamDiscoveryFailure = teamDirectoryFailure(error);
                 }
             }
 
@@ -406,9 +441,11 @@ export function useSessionAccessDirectory(input: Readonly<{
                     }
                     teamCursor = nextTeams.nextCursor;
                     teamDiscoveryFailed = false;
+                    teamDiscoveryFailure = undefined;
                     sources = Object.values(byTeam).filter((source) => !source.initialized);
-                } catch {
+                } catch (error) {
                     teamDiscoveryFailed = true;
+                    teamDiscoveryFailure = teamDirectoryFailure(error);
                 }
             }
 
@@ -420,6 +457,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 byTeam,
                 teamCursor,
                 teamDiscoveryFailed,
+                ...(teamDiscoveryFailure ? { teamDiscoveryFailure } : {}),
                 loadingMore: false,
                 revision: base.revision + 1,
             };
@@ -510,7 +548,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             return applyOperations(narrow(page.rows, query));
         } catch (error) {
             if (currentScope.current === scopeKey) {
-                setPages((current) => ({ ...current, team: { ...EMPTY_PAGE, failed: true } }));
+                setPages((current) => ({ ...current, team: { ...EMPTY_PAGE, failed: true, failure: teamDirectoryFailure(error) } }));
             }
             throw error;
         }
@@ -594,9 +632,10 @@ export function useSessionAccessDirectory(input: Readonly<{
                         },
                     };
                 });
-            } catch {
+            } catch (error) {
                 if (currentScope.current !== scopeKey) return;
-                setPages((current) => ({ ...current, team: { ...(current.team ?? EMPTY_PAGE), failed: true, loadingMore: false } }));
+                setPages((current) => ({ ...current, team: { ...(current.team ?? EMPTY_PAGE), failed: true,
+                    failure: teamDirectoryFailure(error), loadingMore: false } }));
             }
         })();
     }, [advanceGroups, availability, loadTeams, scope, scopeKey, sessionId, teamAddress, teamGroups, teamMembers, viewer]);
@@ -679,7 +718,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             const scoped: SessionAccessDirectorySectionModel[] = [{
                 kind: 'account' as const, title: t('session.access.people'), candidates: accountRows,
                 status: teamMembers.status === 'error' ? 'error' as const : teamMembers.status === 'loading' ? 'loading' as const : teamMembers.status === 'loading_more' ? 'refreshing' as const : 'idle' as const,
-                ...(teamMembers.status === 'error' ? { error: directoryError } : {}),
+                ...(teamMembers.status === 'error' ? { error: teamDirectoryError(teamMembers.error && homeDomainFailureFromSnapshotError(teamMembers.error)) } : {}),
                 cursor: teamMembers.hasMore ? `team-members:${teamMemberQuery}:${teamMembers.rows.length}` : null,
                 hasMore: teamMembers.hasMore, loadingMore: teamMembers.status === 'loading_more',
                 resolverKey: `${scopeKey}:team-members:${revision}:${teamMemberQuery}:${teamMembers.rows.length}:${teamMembers.status}:${operationsKey}:${viewerPresentationKey}`,
@@ -688,7 +727,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 kind: 'group' as const, title: t('session.access.groups'), candidates: groupCandidateRows,
                 resolved: teamGroups.status === 'ready',
                 status: teamGroups.status === 'error' ? 'error' as const : teamGroups.status === 'loading' ? 'loading' as const : teamGroups.status === 'loading_more' ? 'refreshing' as const : 'idle' as const,
-                ...(teamGroups.status === 'error' ? { error: directoryError } : {}),
+                ...(teamGroups.status === 'error' ? { error: teamDirectoryError(teamGroups.error) } : {}),
                 cursor: teamGroups.hasMore ? `team-groups:${teamGroups.rows.length}` : null,
                 hasMore: teamGroups.hasMore, loadingMore: teamGroups.status === 'loading_more',
                 resolverKey: `${scopeKey}:team-groups:${revision}:${teamGroups.rows.length}:${teamGroups.status}:${operationsKey}:${groupDisplayNamesKey}`,
@@ -719,7 +758,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             candidates: applyOperations(teamPage.rows),
             resolved: pages.team !== undefined,
             status: teamPage.failed ? 'error' : teamPage.loadingMore ? 'refreshing' : 'idle',
-            ...(teamPage.failed ? { error: directoryError } : {}),
+            ...(teamPage.failed ? { error: teamDirectoryError(teamPage.failure) } : {}),
             cursor: teamPage.nextCursor,
             hasMore: teamPage.nextCursor !== null,
             loadingMore: teamPage.loadingMore ?? false,
@@ -731,7 +770,11 @@ export function useSessionAccessDirectory(input: Readonly<{
         const knownTeamIds = new Set(groupSources.map((source) => source.team.teamId));
         const hasUninitializedKnownTeam = [...contextTeams, ...(teamPage.teamContexts ?? [])]
             .some((team) => !knownTeamIds.has(team.teamId));
-        const groupFailed = currentGroupPage.teamDiscoveryFailed || groupSources.some((source) => source.failed);
+        // Groups are discovered through the member-Team directory, so a settled refusal of that read
+        // is already the Group directory's answer before anyone browses it.
+        const teamRefusal = groupPage === null && teamPage.failed && teamPage.failure?.retryable === false
+            ? teamPage.failure : undefined;
+        const groupFailed = teamRefusal !== undefined || currentGroupPage.teamDiscoveryFailed || groupSources.some((source) => source.failed);
         const groupHasMore = groupFailed
             || hasUninitializedKnownTeam
             || currentGroupPage.teamCursor !== null
@@ -742,7 +785,9 @@ export function useSessionAccessDirectory(input: Readonly<{
             candidates: applyOperations(groupRows(currentGroupPage)),
             resolved: groupPage !== null,
             status: groupFailed ? 'error' : currentGroupPage.loadingMore ? 'refreshing' : 'idle',
-            ...(groupFailed ? { error: directoryError } : {}),
+            ...(groupFailed ? { error: teamDirectoryError(teamRefusal ?? (currentGroupPage.teamDiscoveryFailed
+                ? currentGroupPage.teamDiscoveryFailure
+                : groupSources.find((source) => source.failed)?.failure)) } : {}),
             cursor: groupHasMore ? `${scopeKey}:groups:${currentGroupPage.revision}` : null,
             hasMore: groupHasMore,
             loadingMore: currentGroupPage.loadingMore,

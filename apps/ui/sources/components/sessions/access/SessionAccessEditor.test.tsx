@@ -186,6 +186,39 @@ describe('SessionAccessEditor', () => {
         expect(intent.retryDirectory).toHaveBeenCalledWith('group');
         expect(intent.loadMore).not.toHaveBeenCalled();
     });
+    it('says once why Teams cannot answer, with no Retry or Browse, and keeps Retry for a failure that can recover', async () => {
+        vi.useFakeTimers();
+        const intent = actions();
+        const people = {
+            kind: 'account' as const, title: 'People', candidates: [], status: 'idle' as const,
+            cursor: null, hasMore: false, loadingMore: false, resolverKey: 'people', resolveCandidates: async () => [],
+        };
+        const failed = (kind: 'team' | 'group', retryable: boolean) => ({
+            kind, title: kind, candidates: [], status: 'error' as const, resolved: true,
+            error: { code: 'team_forbidden', message: 'Teams need a newer sign-in.', retryable },
+            cursor: null, hasMore: true, loadingMore: false, resolverKey: kind, resolveCandidates: async () => [],
+        });
+        const screen = await renderScreen(<SessionAccessEditor model={model({ directory: { sections: [people, failed('group', false), failed('team', false)] } })}
+            actions={intent} presentation="compact" />);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        // One cause, said once: the Group row carries it and the Team row does not repeat it.
+        expect(screen.getTextContent()).toContain('Teams need a newer sign-in.');
+        expect(screen.findByTestId('session-access-directory-refusal:group')).not.toBeNull();
+        expect(screen.findByTestId('session-access-directory-refusal:team')).toBeNull();
+        for (const kind of ['team', 'group']) {
+            expect(screen.findByTestId(`session-access-directory-retry:${kind}`)).toBeNull();
+            expect(screen.findByTestId(`session-access-browse:${kind}`)).toBeNull();
+        }
+        // Sharing with a person stays available beside the refusal.
+        expect(screen.findByTestId('session-access-browse:account')).not.toBeNull();
+
+        await screen.update(<SessionAccessEditor model={model({ revision: 2, directory: { sections: [people, failed('group', true)] } })}
+            actions={intent} presentation="compact" />);
+        await flushHookEffects({ runOnlyPendingTimers: true });
+        await screen.pressByTestIdAsync('session-access-directory-retry:group');
+        expect(intent.retryDirectory).toHaveBeenCalledWith('group');
+        expect(screen.findByTestId('session-access-browse:group')).not.toBeNull();
+    });
     it.each(['compact', 'full'] as const)('keeps acknowledged principals during search and failed refresh in %s', async (presentation) => {
         const intent = actions();
         const issue = { code: 'unavailable', message: 'Unavailable', retryable: true };

@@ -7,6 +7,7 @@ import type { TeamsDirectorySnapshot } from '@/sync/store/teams/teamsSnapshots';
 import { resolveTeamsSettingsAdmission } from '@/sync/domains/teams/teamsSettingsAdmission';
 import { renderScreen } from '@/dev/testkit';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { t } from '@/text';
 
 import { resolveTeamsDirectoryViewState, teamsUnavailableHomeReason, teamsUnavailableHomeStateKind } from './teamsDirectoryViewState';
 
@@ -144,6 +145,27 @@ describe('resolveTeamsDirectoryViewState', () => {
         expect(state.unavailableHomes).toEqual([{ serverId: 'alpha', homeName: 'Alpha', reason: 'turned_off', retryable: false }]);
         expect(teamsUnavailableHomeReason(state.unavailableHomes[0]!)).toContain('Settings → Actions');
         expect(teamsUnavailableHomeStateKind(state.unavailableHomes[0]!)).toBe('unavailable');
+    });
+
+    it('says a released 0.2 sign-in is the cause, with no retry that cannot help', () => {
+        const refusal = { error: 'team_forbidden', details: { reason: 'legacy_home_credential' } };
+        const state = resolveTeamsDirectoryViewState({
+            homes: [{ serverId: 'alpha', state: 'capable' }],
+            homeNamesByServerId: HOME_NAMES,
+            snapshotsByServerId: { alpha: snapshot('alpha', null, { status: 'error',
+                error: { kind: 'forbidden', retryable: false, code: 'team_forbidden', details: refusal } }) },
+        });
+        expect(state.unavailableHomes).toEqual([{ serverId: 'alpha', homeName: 'Alpha', reason: 'sign_in_outdated', retryable: false }]);
+        expect(teamsUnavailableHomeReason(state.unavailableHomes[0]!)).toBe(t('teams.errors.signInOutdated'));
+        expect(teamsUnavailableHomeStateKind(state.unavailableHomes[0]!)).toBe('unavailable');
+        // The same code without that cause stays a role refusal.
+        const denied = resolveTeamsDirectoryViewState({
+            homes: [{ serverId: 'alpha', state: 'capable' }],
+            homeNamesByServerId: HOME_NAMES,
+            snapshotsByServerId: { alpha: snapshot('alpha', null, { status: 'error',
+                error: { kind: 'forbidden', retryable: false, code: 'team_forbidden' } }) },
+        });
+        expect(denied.unavailableHomes[0]!.reason).toBe('denied');
     });
 
     it('presents a failed HTTP feature probe as a load error while keeping Teams unadmitted', () => {

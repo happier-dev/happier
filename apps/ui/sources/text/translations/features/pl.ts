@@ -16773,6 +16773,7 @@ const polish: TeamsTranslationRoot = {
             loadFailed: "Nie udało się wczytać tych informacji. Spróbuj ponownie.",
             generic: 'Operacja nie doszła do skutku. Nic nie zostało zmienione.',
             policySaveFailed: 'Nie udało się zapisać tego ustawienia zespołu. Sprawdź bieżące wartości i spróbuj ponownie.',
+            signInOutdated: 'Zespoły nie są dostępne przy tym logowaniu. Wyloguj się z tego Home na tym urządzeniu, a potem zaloguj ponownie, aby z nich korzystać.',
             outcomeUnknown: 'Home mógł wykonać tę zmianę. Odśwież zespół przed ponowną próbą.',
             authenticationRequired: "Zaloguj się metodą wymaganą przez ten zespół i spróbuj ponownie.",
             forbidden: 'Nie masz uprawnień do tej zmiany.',

@@ -9,11 +9,13 @@ import { readAuthDiagnosticsLogsEnabled } from '@/app/home/settings/authDiagnost
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ACCOUNT_DIRECTORY_ERROR_CODES_V1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { TEAM_LEGACY_CREDENTIAL_REFUSAL_DETAILS_V1 } from '@happier-dev/protocol/teams';
 import { parseAccountApiTokenBearerV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { PROVIDER_BROKER_OPEN_HTTP_PATH_V1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import {
+    isLegacyHomeCredentialDeniedForRoute,
     isRestrictedAuthTokenDeniedForRoute,
     isApiTokenSessionRouteGranted,
     readRestrictedCredentialRouteSessionIds,
@@ -387,7 +389,9 @@ export function enableAuthentication(app: Fastify) {
                 ? ACCOUNT_DIRECTORY_ERROR_CODES_V1.invalidRequest
                 : request.routeOptions?.config?.restrictedAuthFailureError
                     ?? PRESENT_USER_REQUIRED_ERROR;
-            return reply.code(403).send({ error });
+            return reply.code(403).send(error === "team_forbidden" && isLegacyHomeCredentialDeniedForRoute(request)
+                ? { error, details: TEAM_LEGACY_CREDENTIAL_REFUSAL_DETAILS_V1 }
+                : { error });
         }
         const sessionAction = resolveApiTokenSessionActionForRoute(request);
         const binding = request.routeOptions.config.restrictedCredentialBinding;

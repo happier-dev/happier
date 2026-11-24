@@ -192,6 +192,8 @@ export const english = {
             policySaveFailed: 'This Team setting could not be saved. Review the current values and try again.',
             outcomeUnknown: 'The Home may have completed this change. Refresh the Team before trying again.',
             forbidden: 'You do not have permission for this change.',
+            // A released 0.2 sign-in still works at the Home, but Team routes refuse it.
+            signInOutdated: 'Teams aren’t available with this sign-in. Sign out of this Home on this device, then sign in again to use them.',
             authenticationRequired: "Sign in with the method this Team requires, then try again.",
             notFound: 'This Team is no longer available.',
             archived: 'This Team is archived. Restore it to make changes.',

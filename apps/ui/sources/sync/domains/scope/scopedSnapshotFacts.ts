@@ -36,6 +36,8 @@ export type ScopedSnapshotError = Readonly<{
     retryable: boolean;
     /** Optional domain-owned typed code carried without reclassifying it here. */
     code?: string | null;
+    /** The Home's strict error envelope for that code, carried the same way. */
+    details?: unknown;
 }>;
 
 /**

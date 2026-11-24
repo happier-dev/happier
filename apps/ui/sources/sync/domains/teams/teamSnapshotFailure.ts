@@ -8,5 +8,6 @@ import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFac
  * page with its meaning instead of collapsing into a generic load failure.
  */
 export function homeDomainFailureFromSnapshotError(error: ScopedSnapshotError): HomeDomainFailure<string> {
-    return Object.freeze({ kind: error.kind, retryable: error.retryable, code: error.code ?? null });
+    return Object.freeze({ kind: error.kind, retryable: error.retryable, code: error.code ?? null,
+        ...(error.details === undefined ? {} : { details: error.details }) });
 }

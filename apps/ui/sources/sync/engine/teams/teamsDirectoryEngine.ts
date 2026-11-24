@@ -135,7 +135,8 @@ function toSnapshotError(failure: HomeDomainFailure): ScopedSnapshotError {
     const kind: ScopedSnapshotError['kind'] = failure.kind === 'conflict' || failure.kind === 'outcome_unknown'
         ? 'unknown'
         : failure.kind;
-    return { kind, retryable: failure.retryable, code: failure.code };
+    return { kind, retryable: failure.retryable, code: failure.code,
+        ...(failure.details === undefined ? {} : { details: failure.details }) };
 }
 
 const loader = createScopedSnapshotLoader<TeamsDirectoryTarget>({

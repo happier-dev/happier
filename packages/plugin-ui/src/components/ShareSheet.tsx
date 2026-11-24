@@ -113,7 +113,8 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             {...(props.maxHeight === undefined ? { heightBehavior: presentation === 'full' ? 'content' as const : 'stabilizedContentHeight' as const }
                 : { maxHeight: props.maxHeight, heightBehavior: 'fixedToMaxHeight' as const })}
             pagination={source ? { hasMore: source.hasMore, loadingMore: source.loadingMore, requestKey: source.cursor,
-                error: source.error?.message, onEndReached: () => actions.loadMore(source.kind), onRetry: () => actions.retryDirectory(source.kind),
+                error: source.error?.message, onEndReached: () => actions.loadMore(source.kind),
+                ...(source.error?.retryable === false ? {} : { onRetry: () => actions.retryDirectory(source.kind) }),
                 loadingLabel: host.text('common.loading'), moreLabel: host.text('shareSheet.browseAll'), retryLabel: host.text('common.retry'),
                 endReachedLabel: source.candidates.length === 0 ? '' : host.text('shareSheet.allLoaded') } : undefined} />
     </HappierShareSheet>;

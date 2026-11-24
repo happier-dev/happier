@@ -1,5 +1,5 @@
 import type { SessionAccessErrorCodeV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
-import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
+import { SessionAccessApiError } from '@/sync/api/session/sessionAccessHttpFailure';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
