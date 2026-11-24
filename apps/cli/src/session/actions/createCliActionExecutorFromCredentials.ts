@@ -2122,11 +2122,11 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             ? selectedTarget.machineId !== machineId : selectedTarget.sessionId !== transport.sessionId)) {
             return { context, invocation: createOneShotPatInvocation(async () => actionFailure('target_unavailable')) };
           }
-          if (actionId === 'session.stop' && pairedTerminal && !requireDaemonIngress
-            && context.authority !== 'account_automation'
-            && readRecord(admittedInput)?.stopIntent !== 'lifecycle_control'
-            && readSessionAccessProjectionRoleV1(transport.rawSession) === 'owner') {
-            // Keep the person's intent with the requester-side Stop writer. The
+          if (pairedTerminal && !requireDaemonIngress && context.authority !== 'account_automation'
+            && readSessionAccessProjectionRoleV1(transport.rawSession) === 'owner'
+            && (actionId === 'session.role.set' || (actionId === 'session.stop'
+              && readRecord(admittedInput)?.stopIntent !== 'lifecycle_control'))) {
+            // Keep the person's intent with the requester-side Session writer. The
             // terminal-authenticated Home Action relay carries automation authority.
             return { context };
           }
