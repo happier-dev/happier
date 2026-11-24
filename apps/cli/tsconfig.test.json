@@ -3013,6 +3013,7 @@
     "src/plugins/daemon/packedTestConnectedAccounts.test.ts",
     "src/plugins/daemon/pathChangePreparer.engine.test.ts",
     "src/plugins/daemon/pathChangePreparer.test.ts",
+    "src/plugins/daemon/pluginList.allocations.test.ts",
     "src/plugins/daemon/resolveInstalledUpdate.test.ts",
     "src/plugins/daemon/runtimeOwner.candidateCleanup.test.ts",
     "src/plugins/daemon/runtimeOwner.test.ts",
