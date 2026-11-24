@@ -8,6 +8,8 @@ export type HappierDataChartProps = Readonly<{
   points: readonly HappierDataPoint[];
   theme: HappierUiTheme;
   viewportHeight?: number;
+  /** The points' first read is still in flight: the chart holds its own frame (see the series owner). */
+  pending?: boolean;
   /** A host lens over the plot (exact values per bucket); the series owner keeps geometry and selection. */
   renderPlotOverlay?: StackedSeriesChartProps['renderPlotOverlay'];
   testID?: string;
@@ -19,6 +21,6 @@ export type HappierDataChartProps = Readonly<{
  */
 export function HappierDataChart(props: HappierDataChartProps) {
   return <StackedSeriesChart theme={props.theme} label={props.label} variant={props.style} size="full" barEmphasis="none"
-    viewportHeight={props.viewportHeight} renderPlotOverlay={props.renderPlotOverlay} testID={props.testID}
+    viewportHeight={props.viewportHeight} pending={props.pending} renderPlotOverlay={props.renderPlotOverlay} testID={props.testID}
     series={[{ id: 'value', label: props.label, points: props.points.map((point, index) => ({ ...point, id: String(index) })) }]} />;
 }

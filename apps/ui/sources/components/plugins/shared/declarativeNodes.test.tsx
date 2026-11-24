@@ -292,6 +292,27 @@ describe('declarative data nodes', () => {
         expect(metric.props).toMatchObject({ label: 'Signups this week', value: 1284, unit: 'people' });
     });
 
+    it('draws a live node whose first read is in flight in its own loading shape, and nothing without that host fact', () => {
+        const resource = { kind: 'resource', resource: { pluginId: 'acme.plugin', localId: 'signups' },
+            inputSchema: { type: 'object' }, outputSchema: { type: 'array', items: { type: 'object' } } };
+        const pending = { ...context, dataPending: true };
+        const rows = renderDeclarativeNode({ kind: 'rows', path: 'root', rows: [], data: resource,
+            columns: [{ label: 'Step', field: { path: ['name'], type: 'string' } }, { label: 'People', field: { path: ['n'], type: 'number' }, proportion: true }],
+        }, pending) as React.ReactElement<Readonly<Record<string, unknown>>>;
+        expect(rows.type).toBe(HappierDataRows);
+        expect(rows.props).toMatchObject({ rows: [], pendingRows: 3, columns: [{ label: 'Step' }, { label: 'People', proportion: true }] });
+        const table = renderDeclarativeNode({ kind: 'table', path: 'root', rows: [], data: resource,
+            columns: [{ label: 'Person', field: { path: ['name'], type: 'string' } }] }, pending) as React.ReactElement<Readonly<Record<string, unknown>>>;
+        expect(table.type).toBe(HappierDataTable);
+        expect(table.props).toMatchObject({ rows: [], pendingRows: 3, columns: [{ label: 'Person' }] });
+        const chart = renderDeclarativeNode({ kind: 'chart', path: 'root', label: 'Signups per day', style: 'bar', rows: [], data: resource,
+            x: { path: ['x'], type: 'string' }, y: { path: ['y'], type: 'number' } }, pending) as React.ReactElement<Readonly<Record<string, unknown>>>;
+        expect(chart.type).toBe(HappierDataChart);
+        expect(chart.props).toMatchObject({ label: 'Signups per day', points: [], pending: true });
+        expect(renderDeclarativeNode({ kind: 'chart', path: 'root', label: 'Signups per day', style: 'bar', rows: [], data: resource,
+            x: { path: ['x'], type: 'string' }, y: { path: ['y'], type: 'number' } }, context)).toBeNull();
+    });
+
     it('draws nothing rather than a guessed value when frozen bytes no longer match their fields', () => {
         expect(renderDeclarativeNode({
             kind: 'metric', path: 'root', label: 'Signups', data: { kind: 'value', value: { total: 'many' } },

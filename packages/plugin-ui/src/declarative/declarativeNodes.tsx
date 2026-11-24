@@ -248,6 +248,12 @@ export type DeclarativeNodeRenderContext = Readonly<{
      */
     renderDataNode?: (node: RecordValue, path: string) => React.ReactNode;
     /**
+     * The host's first read of this live data node is still in flight. The node then draws its own loading shape
+     * (a metric's lines, rows' and a table's rows, a chart's frame) from its authored fields, so the read lands in
+     * place; it never shows data.
+     */
+    dataPending?: boolean;
+    /**
      * Only a live mounted surface can supply the target-local bridge. Immutable
      * transcript rendering deliberately leaves it absent, so a persisted node
      * never resolves a current contributor, renderer, or Host API.
@@ -365,16 +371,41 @@ const containerDisplayText: DeclarativeNodeDescriptor['text'] = (node, localize)
  * host's `renderDataNode`; a node whose frozen bytes no longer match its fields draws nothing rather
  * than a guessed value.
  */
+/** The rows a collection's first read reserves: its length is the source's, so the same few rows every widget had. */
+const DECLARATIVE_DATA_PENDING_ROWS = 3;
+
 const renderDeclarativeData: DeclarativeNodeRenderer = (value, context) => {
     const key = readDeclarativePath(value, context.nodePath);
     if (context.renderDataNode) return context.renderDataNode(value, key);
     const { path: _path, order: _order, ...authored } = value;
     const node = context.host.readDataNode(authored);
-    if (!node || !('data' in node) || node.data.kind !== 'value') return null;
-    const data = node.data.value;
-    const { readDataField: readPluginDeclarativeDataFieldV1, readDataRows: readPluginDeclarativeDataRowsV1 } = context.host;
+    if (!node || !('data' in node)) return null;
     const testID = `plugin-declarative-${node.kind}`;
     const theme = context.presentationTheme;
+    const columns = node.kind === 'rows' || node.kind === 'table' ? node.columns.map((column) => ({ label: context.localize(column.label),
+        ...(column.priority ? { priority: column.priority } : {}), ...(column.proportion ? { proportion: true } : {}) })) : [];
+    const collection = node.kind === 'rows' || node.kind === 'table' ? { testID, theme, columns,
+        ...(node.label ? { label: context.localize(node.label) } : {}),
+        ...(node.incomplete ? { incomplete: context.host.incompleteText } : {}) } : null;
+    if (node.data.kind !== 'value') {
+        if (!context.dataPending) return null;
+        if (node.kind === 'metric') {
+            return <HappierDataMetric key={key} testID={testID} theme={theme} label={context.localize(node.label)} value="" pending
+                {...(node.comparison ? { comparison: { value: '', label: context.localize(node.comparison.label), meaning: node.comparison.meaning } } : {})} />;
+        }
+        if (node.kind === 'chart') {
+            return 'series' in node
+                ? <StackedSeriesChart key={key} testID={testID} theme={theme} label={context.localize(node.label)} variant={node.style}
+                    size="full" barEmphasis="none" viewportHeight={context.widgetPresentation?.geometry?.height} series={[]} pending />
+                : <HappierDataChart key={key} testID={testID} theme={theme} label={context.localize(node.label)} style={node.style}
+                    viewportHeight={context.widgetPresentation?.geometry?.height} points={[]} pending />;
+        }
+        // A collection's length is the source's; a first read reserves the shared few rows, in the rows' own shape.
+        const reserved = { ...collection!, rows: [], pendingRows: DECLARATIVE_DATA_PENDING_ROWS };
+        return node.kind === 'table' ? <HappierDataTable key={key} {...reserved} /> : <HappierDataRows key={key} {...reserved} />;
+    }
+    const data = node.data.value;
+    const { readDataField: readPluginDeclarativeDataFieldV1, readDataRows: readPluginDeclarativeDataRowsV1 } = context.host;
     try {
         if (node.kind === 'metric') {
             return <HappierDataMetric key={key} testID={testID} theme={theme} label={context.localize(node.label)}
@@ -407,17 +438,13 @@ const renderDeclarativeData: DeclarativeNodeRenderer = (value, context) => {
                     return { x: typeof x === 'boolean' ? String(x) : x, y: Number(readPluginDeclarativeDataFieldV1(row, node.y)) };
                 })} />;
         }
-        const columns = node.columns.map((column) => ({ label: context.localize(column.label),
-            ...(column.priority ? { priority: column.priority } : {}), ...(column.proportion ? { proportion: true } : {}) }));
         const cells = rows.map((row) => node.columns.map((column) => readPluginDeclarativeDataFieldV1(row, column.field)));
-        const shared = { testID, theme, columns, rows: cells,
+        const shared = { ...collection!, rows: cells,
             ...(node.mark ? { marks: rows.map(row => {
                 const passed = readPluginDeclarativeDataFieldV1(row, node.mark!.field) === true;
                 const state = passed ? node.mark!.whenTrue : node.mark!.whenFalse;
                 return { passed, label: context.localize(state.label), meaning: state.meaning };
-            }) } : {}),
-            ...(node.label ? { label: context.localize(node.label) } : {}),
-            ...(node.incomplete ? { incomplete: context.host.incompleteText } : {}) };
+            }) } : {}) };
         return node.kind === 'table' ? <HappierDataTable key={key} {...shared} /> : <HappierDataRows key={key} {...shared} />;
     } catch {
         return null;

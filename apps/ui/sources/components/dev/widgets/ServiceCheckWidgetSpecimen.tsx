@@ -3,7 +3,7 @@ import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { getWidgetSizeFootprintV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
-import { ServiceCheckWidgetView } from '@/components/projects/deployments/ServiceCheckWidget';
+import { ServiceCheckWidgetLoading, ServiceCheckWidgetView } from '@/components/projects/deployments/ServiceCheckWidget';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { Text } from '@/components/ui/text/Text';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
@@ -37,7 +37,7 @@ const CARDS: readonly Card[] = [
     target: 'n8n.acme.dev' }) },
 ];
 
-function CheckCard(props: Readonly<{ card: Card }>) {
+function CheckCard(props: Readonly<{ card: Card; loading: boolean }>) {
   const [caption, setCaption] = React.useState<string | null>(null);
   const [meta, setMeta] = React.useState<React.ReactNode>(null);
   const [identity, setIdentity] = React.useState<WidgetFrameBodyIdentity | null>(null);
@@ -50,13 +50,14 @@ function CheckCard(props: Readonly<{ card: Card }>) {
         <WidgetFrameBodyCaptionContext.Provider value={setCaption}>
           <WidgetFrameBodyMetaContext.Provider value={setMeta}>
             <WidgetFrameBodyIdentityContext.Provider value={setIdentity}>
-              <ServiceCheckWidgetView row={props.card.row} environmentName={props.card.environment} testID={`check-widget.${props.card.id}.body`} />
+              {props.loading ? <ServiceCheckWidgetLoading testID={`check-widget.${props.card.id}.body`} />
+                : <ServiceCheckWidgetView row={props.card.row} environmentName={props.card.environment} testID={`check-widget.${props.card.id}.body`} />}
             </WidgetFrameBodyIdentityContext.Provider>
           </WidgetFrameBodyMetaContext.Provider>
         </WidgetFrameBodyCaptionContext.Provider>
       </View>
     ),
-  }), [props.card]);
+  }), [props.card, props.loading]);
   return (
     <WidgetFrame testID={`check-widget.${props.card.id}`} frameStyle="card" placement="home" widgetPresentation={widgetPresentation}
       mark={identity?.mark ?? 'pulse'} title={identity?.title ?? t('projects.deployments.monitoring.widgetTitle')}
@@ -70,13 +71,13 @@ function pairsOf<T>(items: readonly T[]): T[][] {
   return rows;
 }
 
-export function ServiceCheckWidgetSpecimen(props: Readonly<{ phone: boolean }>) {
+export function ServiceCheckWidgetSpecimen(props: Readonly<{ phone: boolean; loading?: boolean }>) {
   return (
     <ScrollView contentContainerStyle={[styles.page, props.phone ? styles.phone : null]} testID="check-widget-specimen">
       <Text variant="title" style={styles.heading}>Good evening</Text>
       {(props.phone ? CARDS.map((card) => [card]) : pairsOf(CARDS)).map((row) => (
         <View key={row.map((card) => card.id).join('+')} style={styles.row}>
-          {row.map((card) => <View key={card.id} style={styles.cell}><CheckCard card={card} /></View>)}
+          {row.map((card) => <View key={card.id} style={styles.cell}><CheckCard card={card} loading={props.loading === true} /></View>)}
         </View>
       ))}
     </ScrollView>

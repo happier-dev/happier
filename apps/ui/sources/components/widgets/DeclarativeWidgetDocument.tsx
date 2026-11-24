@@ -12,7 +12,6 @@ import { projectDeclarativeDataResourceSnapshot, resolveDeclarativeDataResourceB
     type DeclarativeDataSourceProjection } from '@/components/plugins/surfaces/declarativeDataSource';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { readDeclarativeText, renderDeclarativeNode, type DeclarativeNodeRenderContext } from '@/components/plugins/shared/declarativeNodes';
-import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { t } from '@/text';
@@ -134,8 +133,11 @@ function ProjectedResourceDataNode(props: Readonly<{
     lastGood.current = projected.node ? projected : null;
     if (projected.node) return <RetainedDataNode readIdentity={props.readIdentity} reportKey={props.reportKey} node={projected.node} projected={projected}
         refresh={props.refresh} context={props.context} />;
-    if (projected.pending === 'initial' && !projected.errorCode) return <ItemLoadStateRows testID={`${props.testID}-data-loading`}
-        state={{ kind: 'loading' }} rows={3} lines={2} shape="list" />;
+    // A first read draws the node's own loading shape from its authored fields (a metric's lines, rows, a chart's
+    // frame), so its data lands in place instead of replacing a generic list of rows.
+    if (projected.pending === 'initial' && !projected.errorCode) return <View testID={`${props.testID}-data-loading`}>
+        {renderDeclarativeNode(props.node, { ...props.context, renderDataNode: undefined, dataPending: true }, props.reportKey)}
+    </View>;
     return <UnavailableInstalledWidget testID={`${props.testID}-data`} unresolved={{ state: 'unavailable',
         reasonCode: projected.errorCode ?? 'widget_data_source_unavailable' }} />;
 }

@@ -22,6 +22,7 @@ import {
 } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles, type HappierDataTextStyles } from './dataText.js';
 import { ChartDatum, useChartInteractionAvailable, type HappierChartDatum } from './ChartDatum.js';
+import { HappierSkeletonTitle } from '../feedback/Skeleton.js';
 
 export type HappierDataRowsProps = Readonly<{
   /** The collection's name, for assistive technology; the frame's title names it on screen. */
@@ -56,9 +57,18 @@ export type HappierDataRowsProps = Readonly<{
    * full view"); it is drawn under the last row.
    */
   incomplete?: string;
+  /**
+   * The source's first read is still in flight: this many rows hold their place in the rows' own shape (a title line,
+   * the facts line and the proportion bar the columns declare; a table's real header and its cells), so the read
+   * rows land without moving anything. Ignored once `rows` has any.
+   */
+  pendingRows?: number;
   theme: HappierUiTheme;
   testID?: string;
 }>;
+
+const pendingRowIndexes = (props: HappierDataRowsProps): readonly number[] =>
+  props.rows.length === 0 && props.pendingRows ? Array.from({ length: Math.max(0, Math.floor(props.pendingRows)) }, (_, index) => index) : [];
 
 function RowMark(props: Readonly<{ mark: NonNullable<HappierDataRowsProps['marks']>[number]; theme: HappierUiTheme;
   styles: HappierDataTextStyles; testID?: string }>) {
@@ -100,8 +110,26 @@ export function HappierDataRows(props: HappierDataRowsProps) {
     const value = row[proportionIndex];
     return typeof value === 'number' ? value : 0;
   }));
+  const pending = pendingRowIndexes(props);
+  const hasFactsLine = props.columns.some((_, index) => index > 0 && index !== proportionIndex && index !== trailingIndex);
   return (
-    <View testID={props.testID} role="list" accessibilityLabel={props.label} style={{ gap: props.density === 'compact' ? props.theme.spacing.small : HAPPIER_DATA_METRICS.rowGapPx }}>
+    <View testID={props.testID} role="list" accessibilityLabel={props.label} {...(pending.length ? { 'aria-busy': true } : {})}
+      style={{ gap: props.density === 'compact' ? props.theme.spacing.small : HAPPIER_DATA_METRICS.rowGapPx }}>
+      {pending.map((rowIndex) => (
+        <View key={rowIndex} aria-hidden importantForAccessibility="no-hide-descendants"
+          testID={props.testID ? `${props.testID}-pending-${rowIndex}` : undefined}>
+          <HappierSkeletonTitle theme={props.theme} index={rowIndex} lineHeight={text.body.lineHeight ?? props.theme.typography.body.lineHeight} />
+          {hasFactsLine ? <HappierSkeletonTitle theme={props.theme} line="meta"
+            lineHeight={text.caption.lineHeight ?? props.theme.typography.caption.lineHeight} /> : null}
+          {proportionIndex < 0 ? null : (
+            // The bar's own empty track: the step's share arrives in it.
+            <HappierProgress theme={props.theme} label="" semantics="none" value={0}
+              height={HAPPIER_DATA_METRICS.proportionHeightPx} trackColor={props.proportionAppearance?.trackColor ?? props.theme.colors.text}
+              trackOpacity={props.proportionAppearance?.trackColor ? undefined : HAPPIER_DATA_METRICS.trackOpacity}
+              style={{ marginTop: HAPPIER_DATA_METRICS.axisGapPx }} />
+          )}
+        </View>
+      ))}
       {props.rows.map((row, rowIndex) => {
         const mark = props.marks?.[rowIndex];
         const title = row[0] === undefined ? '' : formatHappierDataValue(row[0], text.locale);
@@ -239,11 +267,13 @@ export function HappierDataTable(props: HappierDataRowsProps) {
     : { flexGrow: 0, flexShrink: 1, width: widths[index]! });
   const align = (index: number, position: number) => (index === lastVisible && position > 0 ? { textAlign: 'right' as const } : {});
   const divider = { borderBottomWidth: 1, borderBottomColor: props.theme.colors.divider };
+  const pending = pendingRowIndexes(props);
   return (
     <View
       testID={props.testID}
       role="table"
       accessibilityLabel={props.label}
+      {...(pending.length ? { 'aria-busy': true } : {})}
       style={enclosed ? undefined : {
         ...happierPageSheetFrameStyle(palette), overflow: 'hidden',
         paddingHorizontal: sheetInsetPx, paddingTop: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
@@ -272,6 +302,19 @@ export function HappierDataTable(props: HappierDataRowsProps) {
           </View>
         ))}
       </View>
+      {pending.map((rowIndex) => (
+        <View key={rowIndex} aria-hidden importantForAccessibility="no-hide-descendants"
+          testID={props.testID ? `${props.testID}-pending-${rowIndex}` : undefined}
+          style={{ flexDirection: 'row', columnGap: HAPPIER_DATA_METRICS.columnGapPx, paddingVertical: HAPPIER_DATA_METRICS.cellPaddingVerticalPx,
+            ...(rowIndex < pending.length - 1 ? divider : {}) }}>
+          {visible.map((index, position) => (
+            <View key={index} style={cellStyle(index, position)}>
+              <HappierSkeletonTitle theme={props.theme} index={rowIndex + position} line={position === 0 ? 'title' : 'meta'}
+                lineHeight={text.body.lineHeight ?? props.theme.typography.body.lineHeight} />
+            </View>
+          ))}
+        </View>
+      ))}
       {props.rows.map((row, rowIndex) => {
         const datum = props.rowDatums?.[rowIndex];
         return (

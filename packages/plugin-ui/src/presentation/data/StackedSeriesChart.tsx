@@ -4,7 +4,7 @@ import { Circle, ClipPath, Defs, Path, Pattern, Rect } from 'react-native-svg';
 
 import { HappierDecorativeSvg as Svg } from '../content/DecorativeSvg.js';
 import type { HappierUiTheme } from '../../environment/types.js';
-import { useOptionalHappierUiAccessibility, useOptionalHappierUiLocalization } from '../../environment/context.js';
+import { useOptionalHappierUiAccessibility, useOptionalHappierUiLocalization, useOptionalHappierUiPalette } from '../../environment/context.js';
 import { useHappierNativeMinimumInteractiveTargetSize } from '../../environment/interactiveTarget.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import type { HappierHitReach } from '../../environment/interactiveTarget.js';
@@ -18,6 +18,7 @@ import { ChartDatum, useChartInteractionAvailable, type HappierChartDatumInterac
 import { SeriesHistoryDatum } from './SeriesHistoryDatum.js';
 import { buildHappierSeriesPath, describeHappierSeriesBucket, describeHappierSeriesCoordinate, formatHappierDataValue, resolveHappierSeriesGeometry, resolveHappierSeriesRampColor, resolveHappierSeriesRampStep, type HappierSeries, type HappierSeriesBucket } from './dataModel.js';
 import { HappierDataValuesToggle } from './ValuesToggle.js';
+import { HappierSkeletonBlock } from '../feedback/Skeleton.js';
 
 /** A line-chart fill between caller-produced bounds; it adds no values or forecast semantics. */
 export type StackedSeriesBand = Readonly<{
@@ -36,6 +37,11 @@ export type StackedSeriesChartProps = Readonly<{
   size: 'inline' | 'tile' | 'full';
   viewportHeight?: number;
   width?: number;
+  /**
+   * The series' first read is still in flight: the chart keeps its own frame (the plot at its height, the axis line
+   * and the Details toggle's room) with the quiet loading fill in the plot, so the read lands without moving anything.
+   */
+  pending?: boolean;
   /** Share geometry only; exact values always retain the caller's original numbers. */
   normalized?: boolean;
   /** Fit a micro-line to its observed range, as the incumbent sparkline does. */
@@ -264,6 +270,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const patternId = `chart-hatch-${useId().replace(/:/gu, '')}`;
   const thresholdId = `chart-threshold-${useId().replace(/:/gu, '')}`;
   const text = useHappierDataTextStyles(props.theme);
+  const palette = useOptionalHappierUiPalette(props.theme);
   const [measuredWidth, setWidth] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uncontrolledValuesExpanded, setUncontrolledValuesExpanded] = useState(false);
@@ -724,7 +731,11 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
         return <HappierText key={tick.bucket} testID={axisId(tick.bucket)} style={{ ...text.caption, position: 'absolute', ...place }}>{tick.label}</HappierText>;
       }) : null}
     </View>;
-  const chartBody = <View>
+  const chartBody = props.pending ? <View>
+    <HappierSkeletonBlock color={palette?.skeleton ?? props.theme.colors.control} width="100%" height={height}
+      radius={props.theme.radii.small} style={{ marginTop: peakInset }} testID={props.testID ? `${props.testID}-pending` : undefined} />
+    {showAxis ? <View style={{ height: text.caption.lineHeight, marginTop: axisTop }} /> : null}
+  </View> : <View>
     {plot}
     {showAxis && geometry.buckets.length ? axis : null}
   </View>;
@@ -751,14 +762,16 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     aria-hidden={props.decorative} importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
     role={!props.decorative && !nativeInline ? 'group' : undefined}
     accessibilityRole={!props.decorative && nativeInline ? 'image' : undefined}
-    accessibilityLabel={props.decorative ? undefined : `${props.label}${latest ? imageName(latest) : exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
+    {...(props.pending ? { 'aria-busy': true } : {})}
+    accessibilityLabel={props.decorative ? undefined : props.pending ? props.label : `${props.label}${latest ? imageName(latest) : exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
     onLayout={(event: HappierLayoutChangeEvent) => {
       const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);
       if (visibleWidth !== null) setWidth(visibleWidth);
-    }} style={props.width ? { width: props.width } : undefined}>
+    // A chart still being read has no bars to size it: its plot fills its column until they land.
+    }} style={props.width ? { width: props.width } : props.pending ? { alignSelf: 'stretch' } : undefined}>
     {props.showAnnotations ? geometry.buckets.filter((bucket) => bucket.annotation).map((bucket) => <HappierText key={bucket.id} style={{ ...text.caption, marginBottom: 6 }}>{bucket.label}{` · ${bucket.annotation}`}</HappierText>) : null}
     <View style={{ position: 'relative' }}>
-      {showGrid ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: props.scaleGutter ?? 0, top: peakInset, height }}>
+      {showGrid && !props.pending ? <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: props.scaleGutter ?? 0, top: peakInset, height }}>
         {(props.scaleTicks ? props.scaleTicks.map((tick) => inset + geometry.yAt(tick.value)) : [0, 0.5, 1].map((fraction) => fraction * (height - 1)))
           .map((top, index) => <View key={index} style={{ position: 'absolute', left: 0, right: 0, top, borderTopWidth: 1, borderTopColor: props.theme.colors.divider, opacity: 0.55 }} />)}
       </View> : null}
@@ -774,7 +787,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       </View> : null}
       {/* Baseline, middle and top each carry their value, so the scale's reach reads without hovering (USAGE-ACCEPT 1121 #16).
           The reference label shares the scale gutter: a scale value it would print over steps aside for it. */}
-      {props.showScaleValues ? (props.mirrored ? [geometry.max, 0, geometry.min] : [geometry.min, geometry.min / 2 + geometry.max / 2, geometry.max]).map((value, index) =>
+      {props.showScaleValues && !props.pending ? (props.mirrored ? [geometry.max, 0, geometry.min] : [geometry.min, geometry.min / 2 + geometry.max / 2, geometry.max]).map((value, index) =>
         reference && props.scaleGutter && geometry.buckets.length
           && Math.abs(geometry.yAt(value) - geometry.yAt(reference.value)) < (text.caption.lineHeight ?? props.theme.typography.caption.lineHeight) * 1.5 ? null
           : <HappierText key={index} testID={props.testID ? `${props.testID}-scale-${index}` : undefined}
@@ -815,7 +828,10 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
       {toggleInLegend ? valuesToggle : null}
     </View> : null}
     {props.summary ? <HappierText style={text.caption} tabularNumbers>{props.summary}</HappierText> : null}
-    {valuesLabel && !toggleInLegend ? valuesToggle : null}
+    {valuesLabel && !toggleInLegend ? props.pending
+      // The toggle's room is held, undrawn and inert, until there are values to open.
+      ? <View aria-hidden pointerEvents="none" importantForAccessibility="no-hide-descendants" style={{ opacity: 0 }}>{valuesToggle}</View>
+      : valuesToggle : null}
     {showNativeValues ? <View testID={props.testID ? `${props.testID}-values` : undefined}>
       {exactBuckets.map((bucket, index) => bucketControl(bucket, index, <HappierText style={text.caption} tabularNumbers>{describe(bucket)}</HappierText>,
         { justifyContent: 'center', paddingVertical: HAPPIER_DATA_METRICS.cellPaddingVerticalPx }, { top: 0, bottom: 0 }))}

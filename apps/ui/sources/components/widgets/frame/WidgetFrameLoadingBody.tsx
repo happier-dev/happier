@@ -12,6 +12,9 @@ const WIDGET_FRAME_LOADING_MAX_ROWS = 3;
  * once and quiet rows keep the card's room. Used by the frame's own `loading` body and by content that
  * is still arriving inside a frame (an installed widget's plugin view on its first load), so a card never
  * has two loading looks and never stands empty.
+ *
+ * It is only for a body whose shape is not known before it renders (a plugin's own view). A body that knows its
+ * shape draws its own loading state instead (declarative data nodes, the Check glance), so its content lands in place.
  */
 export function WidgetFrameLoadingBody(
   props: Readonly<{

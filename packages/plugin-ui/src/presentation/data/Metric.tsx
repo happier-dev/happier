@@ -8,6 +8,7 @@ import { useOptionalHappierUiTypography } from '../../environment/context.js';
 import { formatHappierDataValue, formatHappierDataValueWithPrecision, type HappierDataValue } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
 import { ChartDatum, useChartInteractionAvailable } from './ChartDatum.js';
+import { HappierSkeletonTitle } from '../feedback/Skeleton.js';
 
 /** One comparison under a metric ("+18% vs the week before"), coloured only by what it means. */
 export type HappierDataMetricComparison = Readonly<{
@@ -48,6 +49,12 @@ export type HappierDataMetricProps = Readonly<{
   tone?: 'warning' | 'danger';
   /** Visible ink only ("721M"); assistive technology keeps the exact value. */
   valueFormatter?: (value: number) => string;
+  /**
+   * The figure's first read is still in flight: the metric keeps its own shape, each data line (the value, a given
+   * comparison, a given caption, even an empty one) held by the quiet loading bar in that line's box, while a shown
+   * label stays ink. Nothing moves when the figure lands.
+   */
+  pending?: boolean;
   /** Custom ink for an inline figure. The metric still owns the accessible reading. */
   children?: ReactNode;
   theme: HappierUiTheme;
@@ -61,6 +68,8 @@ const metricInk = {
 } as const;
 
 const NO_BREAK_SPACE = '\u00a0';
+/** The room a figure still being read holds: a four-figure count, the width most glance figures land in. */
+const PENDING_FIGURE = '0,000';
 
 function bindNumbersToUnits(text: string): string {
   return text.replace(/(\d) (?=[^\d\s])/gu, `$1${NO_BREAK_SPACE}`);
@@ -83,13 +92,13 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       : exact;
   const preciseValue = formatHappierDataValueWithPrecision(exact, value);
   const spokenValue = props.unit ? `${preciseValue} ${props.unit}` : preciseValue;
-  const accessibilityLabel = [
+  const accessibilityLabel = props.pending ? props.label : [
     `${props.label}: ${spokenValue}`,
     props.comparison ? `${props.comparison.value} ${props.comparison.label}` : null,
     props.caption,
   ].filter(Boolean).join(', ');
   // Only abbreviated or rounded ink needs an exact tooltip. A mounted trigger owns its accessible name.
-  const hasExactTooltip = typeof props.value === 'number' && Number.isFinite(props.value) && !value.includes(exact);
+  const hasExactTooltip = !props.pending && typeof props.value === 'number' && Number.isFinite(props.value) && !value.includes(exact);
   const hideVisual = props.decorative || (hasExactTooltip && chartInteractionAvailable);
   const size = props.size ?? 'default';
   const comparisonColor = props.theme.colors.text;
@@ -112,13 +121,16 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
             color: valueColor,
           }
         : props.tone ? { ...text.metric, color: valueColor } : text.metric;
-  const inlineUnit = size !== 'default' && props.unit;
+  // A figure still arriving holds its whole line, unit included, with one bar: the line's box is the value's.
+  const inlineUnit = size !== 'default' && !props.pending && props.unit;
   // A number is bound to the unit that follows it, so a narrow cell wraps between "3 h" and
   // "22 min" and never leaves "min" alone on a line.
   const shown = bindNumbersToUnits(
     props.unit && !inlineUnit ? `${value} ${props.unit}` : value,
   );
-  const comparison = props.comparison ? (
+  const comparison = props.pending ? (props.comparison || props.comparisonRoom ? (
+    <HappierSkeletonTitle theme={props.theme} lineHeight={text.caption.lineHeight ?? props.theme.typography.caption.lineHeight} line="meta" />
+  ) : null) : props.comparison ? (
     size === 'hero' ? (
       <View
         style={{
@@ -165,6 +177,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       // Never wider than its cell: a value with no space to wrap at (a release name) breaks inside itself instead.
       style={{ gap: size === 'default' ? 0 : 2, minWidth: 0, maxWidth: '100%' }}
       accessibilityLabel={accessibilityLabel}
+      {...(props.pending ? { 'aria-busy': true } : {})}
     >
       {props.showLabel ? (
         <HappierText {...metricInk} style={text.caption} numberOfLines={1}>
@@ -180,7 +193,15 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
           columnGap: HAPPIER_DATA_METRICS.comparisonGapPx,
         }}
       >
-        {props.children ?? (
+        {props.pending ? (
+          // A metric sizes to its figure, so the bar's room is a representative figure in the value's own type, undrawn.
+          <View style={{ position: 'relative' }}>
+            <HappierText style={{ ...valueStyle, opacity: 0 }} tabularNumbers>{PENDING_FIGURE}</HappierText>
+            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, flexDirection: 'row' }}>
+              <HappierSkeletonTitle theme={props.theme} lineHeight={valueStyle.lineHeight ?? props.theme.typography.body.lineHeight} line="whole" />
+            </View>
+          </View>
+        ) : props.children ?? (
           <HappierText
             testID={props.testID ? `${props.testID}-value` : undefined}
             style={valueStyle}
@@ -198,13 +219,14 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
             {props.unit}
           </HappierText>
         ) : null}
-        {size === 'hero' ? comparison : null}
+        {size === 'hero' && !props.pending ? comparison : null}
       </View>
-      {size === 'hero' && props.comparison ? (
+      {size === 'hero' && props.pending ? comparison : null}
+      {size === 'hero' && props.comparison && !props.pending ? (
         <HappierText {...metricInk} style={text.caption}>{props.comparison.label}</HappierText>
       ) : null}
       {size !== 'hero' ? comparison : null}
-      {size === 'stat' && !props.comparison && props.comparisonRoom ? (
+      {size === 'stat' && !props.comparison && props.comparisonRoom && !props.pending ? (
         <View
           aria-hidden
           importantForAccessibility="no-hide-descendants"
@@ -223,7 +245,10 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
           <HappierText style={text.caption}>{props.comparisonRoom.label}</HappierText>
         </View>
       ) : null}
-      {props.caption ? (
+      {props.pending && props.caption !== undefined ? (
+        <HappierSkeletonTitle theme={props.theme} line="meta"
+          lineHeight={(size === 'default' ? text.caption.lineHeight : text.body.lineHeight) ?? props.theme.typography.body.lineHeight} />
+      ) : props.caption ? (
         // Under a glance figure the line is its context ("was 188 ms before the last deploy"): it reads at the
         // meta size, a step above the default node's micro caption.
         <HappierText {...metricInk} style={size === 'default' ? text.caption : { ...text.body, color: props.theme.colors.mutedText }} numberOfLines={2}>

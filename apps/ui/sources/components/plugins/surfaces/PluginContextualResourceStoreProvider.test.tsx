@@ -1815,6 +1815,33 @@ describe('PluginContextualResourceStoreProvider', () => {
         } finally { lease.dispose(); await act(async () => { screen.tree.unmount(); }); }
     });
 
+    it('draws a data node\u2019s own loading shape while its first read is in flight, then its data', async () => {
+        installLiveResourceRpc();
+        const a = await createAccountLifetime({ accountId: 'account-a' });
+        const document = PluginDeclarativeDocumentV1Schema.parse({ version: 1, root: { kind: 'metric', label: 'Checks',
+            data: { kind: 'resource', resource: { pluginId: 'acme.composer', localId: RESOURCE_ID },
+                inputSchema: { type: 'object', additionalProperties: false }, outputSchema: { type: 'number' } },
+            value: { path: [], type: 'number' } } });
+        const projection = widgetProjectionOf([{ pluginId: 'acme.composer', localId: 'widget', target: 'app' }],
+            { 'acme.composer': { ...widgetInstalledPackage('acme.composer', 'Composer'), occurrenceId: 'occurrence-42' } },
+            { state: { id: RESOURCE_ID, pluginId: 'acme.composer', resourceKind: 'config', contentType: 'application/json', scope: 'session' } });
+        const runtime = { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current' as const,
+            interactionEnabled: true, machineId: 'machine-1', serverId: a.lifetime.scope.serverId, platform: 'web' as const, accountLifetime: a.lifetime };
+        let finishRead!: (value: unknown) => void;
+        machineResourceRpc.read.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve; }));
+        const screen = await renderScreen(<DeclarativeWidgetDocument document={document} input={{}} runtime={runtime}
+            accountLifetime={a.lifetime} sessionId="session-1" isCurrent={a.lifetime.isCurrent} testID="first" />);
+        try {
+            await vi.waitFor(() => expect(screen.findAllByTestId('first-data-loading').length).toBeGreaterThan(0));
+            // The metric itself holds its lines, never a generic list of placeholder rows.
+            expect(screen.tree.root.findByType(HappierDataMetric).props).toMatchObject({ label: 'Checks', pending: true });
+            await act(async () => { finishRead(resourceResponse('a')); });
+            await vi.waitFor(() => { expect(JSON.stringify(screen.tree.toJSON())).toContain('"1"'); });
+            expect(screen.findAllByTestId('first-data-loading')).toHaveLength(0);
+            expect(screen.tree.root.findByType(HappierDataMetric).props.pending).toBeUndefined();
+        } finally { await act(async () => { screen.tree.unmount(); }); }
+    });
+
     it('removes private typed content on server authority loss before the local projection retires', async () => {
         installLiveResourceRpc();
         const a = await createAccountLifetime({ accountId: 'account-a' });

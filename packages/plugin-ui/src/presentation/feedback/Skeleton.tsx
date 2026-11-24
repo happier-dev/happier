@@ -166,12 +166,21 @@ export function HappierSkeletonTitle(props: Readonly<{
   theme: HappierUiTheme;
   /** The title's line height: the bar stands centred in it. */
   lineHeight: number;
+  /**
+   * Which line it holds. `title` (default) varies its length by `index`, so consecutive rows of a list or table read
+   * as content of different lengths; `meta` is the short line under a title (a description, a caption); `whole`
+   * fills the room it stands in (a figure's room, held by its own text).
+   */
+  line?: 'title' | 'meta' | 'whole';
+  index?: number;
   testID?: string;
 }>) {
   const palette = useOptionalHappierUiPalette(props.theme);
+  const width = props.line === 'whole' ? '100%' : props.line === 'meta' ? SKELETON_META_WIDTH
+    : SKELETON_TITLE_WIDTHS[(props.index ?? 0) % SKELETON_TITLE_WIDTHS.length]!;
   return (
     <View style={{ height: props.lineHeight, justifyContent: 'center', flexGrow: 1, flexShrink: 1, minWidth: 0 }}>
-      <HappierSkeletonBlock color={palette?.skeleton ?? props.theme.colors.control} width={SKELETON_TITLE_WIDTHS[0]!}
+      <HappierSkeletonBlock color={palette?.skeleton ?? props.theme.colors.control} width={width}
         height={SKELETON_BAR.height} radius={SKELETON_BAR.radius} {...(props.testID === undefined ? {} : { testID: props.testID })} />
     </View>
   );
