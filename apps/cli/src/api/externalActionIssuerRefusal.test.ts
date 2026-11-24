@@ -1,6 +1,43 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import axios from '@/api/client/credentialAxios';
 
+import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
 import { projectSessionActionIssuerRefusal } from './externalActionIssuerRefusal';
+
+describe('Session Action mint HTTP refusal', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  const authoredCause = {
+    phase: 'machine.admission', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null,
+  } satisfies ActionFailureCauseV1;
+
+  it.each([
+    { given: 'a code-only denial', supplied: undefined, expected: {
+      phase: 'session.authorization.mint', errorClass: 'HttpStatusError', errorCode: 'credential_scope_denied', httpStatus: 403,
+    } },
+    { given: 'an authored cause', supplied: authoredCause, expected: authoredCause },
+  ])('retains the Home refusal for $given', async ({ supplied, expected }) => {
+    const requestId = 'sample-mint-refusal';
+    vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 403,
+      data: { error: 'credential_scope_denied', requestId, ...(supplied === undefined ? {} : { failureCause: supplied }) },
+    });
+
+    const result = await mintExternalActionExecutionAuthorization({
+      actionId: 'computer.target.get', machineId: 'sample-machine',
+      serverHttpBaseUrl: 'https://home.invalid', pat: 'test-credential',
+      envelope: { v: 1, requestId, target: { kind: 'machine', machineId: 'sample-machine' }, input: {} },
+      sessionActionOrigin: { v: 1, caller: { kind: 'session', sessionId: 'sample-session', starterDepth: 0, turnDepth: 1 },
+        sourceTurnId: 'sample-turn', requestId, callerPermissionMode: null },
+    });
+
+    expect(result).toMatchObject({ ok: false, code: 'credential_scope_denied', requestId, failureCause: expected });
+    if (result.ok) throw new Error('Expected Home to refuse the mint');
+    expect(projectSessionActionIssuerRefusal({ ...result, phase: 'mint', requiredFact: 'home_minted_authorization' }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied', requestId, failureCause: expected });
+  });
+});
 
 describe('Session Action issuer refusal projection', () => {
   it('preserves the Machine owner target failure without inventing an authorization failure', () => {
