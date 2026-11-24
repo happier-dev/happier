@@ -131,30 +131,6 @@ async function invitationApproval(actionId: 'teams.invitations.create' | 'teams.
     homes.answer(homeId, '/v1/machines', { body: [machineRow] });
     // The original Account Machine is read by id (a532f4a1e0): it is the same Home row, installation identity included.
     homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine: { ...machineRow, kind: 'persistent' } } });
-    if (getActionSpec(actionId).approvalResultCustody === 'live_only' && !publicProposal) {
-        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
-        const abort = new AbortController();
-        let announce!: (artifactId: string) => void;
-        const pending = new Promise<string>(resolve => { announce = resolve; });
-        const originalExecutor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => homeId,
-            onBlockingApprovalPending: ({ artifactId }) => announce(artifactId) });
-        const originalInvocation = originalExecutor.execute(actionId, input, {
-            surface: 'agent', authority: 'account_automation', serverId: homeId, signal: abort.signal,
-            actionCaller: signed ? caller : { kind: 'host' }, actionRequestId: requestId,
-            ...(signed ? { defaultSessionId: 's1', defaultSessionMachineId: target.machineId,
-                callerPermissionMode: null, sessionInputSource: { sourceSessionId: 's1', sourceTurnId: 'turn-1', via: 'action' as const },
-                externalActionTarget: target, externalActionExecutionAuthorization: authorization,
-                signExternalActionApprovalInput: (args: Parameters<NonNullable<ActionExecutorContext['signExternalActionApprovalInput']>>[0]) =>
-                    signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
-                        actionId: args.actionId, input: args.input, target: args.target, privateKey: installation.secretKey }),
-            } : {}),
-        });
-        retainedInvocations.push({ abort, settled: originalInvocation.catch(() => null) });
-        const artifactId = await Promise.race([pending, originalInvocation.then(result => {
-            throw new Error(`Original invitation did not wait: ${result.ok ? 'settled' : result.errorCode}`);
-        })]);
-        return { artifactId, input, proposed: { ok: true, result: { kind: 'approval_request_created', artifactId } }, originalInvocation };
-    }
     if (!signed) {
         // Retained host-CLI approvals remain replayable; current CLI admission
         // does not grant automation permission to create a fresh invitation proposal.
@@ -170,7 +146,7 @@ async function invitationApproval(actionId: 'teams.invitations.create' | 'teams.
             },
             actionId, actionArgs: input, summary: 'Retained Account proposal',
         }));
-        return { artifactId, input, proposed: { ok: true, result: { kind: 'approval_request_created', artifactId } }, originalInvocation: undefined };
+        return { artifactId, input, proposed: { ok: true, result: { kind: 'approval_request_created', artifactId } } };
     }
     const proposed = await executor.execute(publicProposal ? 'approval.request.create' : actionId,
         publicProposal ? proposalInput : input, {
@@ -187,7 +163,7 @@ async function invitationApproval(actionId: 'teams.invitations.create' | 'teams.
         result: publicProposal ? { artifactId: expect.any(String) } : { kind: 'approval_request_created' } });
     if (!proposed.ok || !proposed.result || typeof proposed.result !== 'object'
         || !('artifactId' in proposed.result) || typeof proposed.result.artifactId !== 'string') throw new Error('expected_approval');
-    return { artifactId: proposed.result.artifactId, input, proposed, originalInvocation: undefined };
+    return { artifactId: proposed.result.artifactId, input, proposed };
 }
 
 function approvalRequest(actionId: 'session.title.set' | 'session.stop' = 'session.title.set'): ApprovalRequest {
@@ -1753,8 +1729,8 @@ describe('createDefaultActionExecutor approvals', () => {
         { actionId: 'teams.invitations.create', signed: false },
         { actionId: 'teams.invitations.reissue', signed: false },
     ] as const)(
-        'replays $actionId through its original custody (signed Session: $signed)', async ({ actionId, signed }) => {
-            const { artifactId, input, proposed, originalInvocation } = await invitationApproval(actionId, signed);
+        'gives the deciding person the live $actionId result (signed Session: $signed)', async ({ actionId, signed }) => {
+            const { artifactId, input, proposed } = await invitationApproval(actionId, signed);
             const invitation = { id: 'invitation-a', teamId: 'team-a', state: 'active', role: 'member',
                 historyAccess: 'from_membership', recipientEmailMask: null, expiresAt: 2, createdAt: 1,
                 createdByAccountId: 'account-a', acceptedByAccountId: null, lastEmailDelivery: null };
@@ -1765,12 +1741,7 @@ describe('createDefaultActionExecutor approvals', () => {
             homes.answer(homeId, path, { body: output });
             const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
             const human = await decide();
-            expect(human.ok).toBe(true);
-            if (!originalInvocation) throw new Error('Missing original live invitation');
-            const originalResult = await originalInvocation;
-            // Only the original requester receives the show-once result.
-            expect(originalResult.ok && JSON.stringify(originalResult).includes(joinUrl)).toBe(true);
-            expect(JSON.stringify(human).includes(joinUrl)).toBe(false);
+            expect(human).toMatchObject({ ok: true, result: { liveExecution: { ok: true, result: output } } });
             expect(homes.requestsFor(path)).toHaveLength(1);
             expect(homes.requestsFor(path)[0]?.input).toEqual(input);
             expect(homes.requestsFor(path)[0]?.token === homes.findByServerUrl('https://approval-actions.test')?.token).toBe(true);
@@ -2061,12 +2032,11 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(persistedApproval(artifactId).execution).toBeUndefined();
     });
     it('records the authenticated Home effect failure and does not retry it on a repeated decision', async () => {
-        const { artifactId, originalInvocation } = await invitationApproval('teams.invitations.create', false);
+        const { artifactId } = await invitationApproval('teams.invitations.create', false);
         const path = '/v1/teams/invitations/create';
         homes.answer(homeId, path, { status: 403, body: { error: 'permission_denied' } });
         const decide = () => executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context());
         await expect(decide()).resolves.toMatchObject({ ok: true });
-        await expect(originalInvocation).resolves.toMatchObject({ ok: false });
         expect(persistedApproval(artifactId)).toMatchObject({ status: 'failed',
             decision: { kind: 'approve', authority: 'present_user' }, execution: { ok: false } });
         await decide();
