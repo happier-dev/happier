@@ -858,6 +858,7 @@ export async function createPluginTestkit(
                 pluginId: contributor.pluginId,
                 contributionId: declaration.id,
                 occurrenceId: contributor.occurrenceId,
+                sourceCustody: contributor.sourceCustody,
             }),
             role,
         });

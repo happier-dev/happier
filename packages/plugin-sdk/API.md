@@ -1880,6 +1880,7 @@
 | `./database` | `DatabaseInsightBriefBuildInputV1ProtocolSchema` | value | any |
 | `./database` | `DatabaseInsightSourceDescriptorV1` | type | any |
 | `./database` | `DatabaseInsightSourceDescriptorV1ProtocolSchema` | value | any |
+| `./database` | `DatabaseInsightSourceOperationSchemasV1` | value | any |
 | `./database` | `DatabaseManagedDeploymentTargetV1` | type | any |
 | `./database` | `DatabaseManagedDeploymentTargetV1Schema` | value | any |
 | `./database` | `DatabaseManualTargetV1` | type | any |

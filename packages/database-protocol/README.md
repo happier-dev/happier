@@ -108,6 +108,24 @@ context and retain the catalog revision in finite health evidence.
 Resource. Its `costs` view reads the same admitted cost Action and refreshes
 from the collector's existing push subscription until the host disposes it.
 
+## Contributing a Database insight source
+
+Import `DatabaseInsightSourceContributionProtocolV1` from
+`@happier-dev/database-protocol/v1` and use `contribute()` under
+`contributesTo['happier.database']['insight-sources']`. Bind the `list` and
+`detail` roles to your read Actions. Use `DatabaseInsightSourceOperationSchemasV1`
+from the same entrypoint to declare those Actions' exact input and result
+schemas. Use the descriptor's `targetKinds` and `engineIds` to declare which
+open database targets the source supports.
+
+The Workbench first reads `{ target }` when a person selects the source. It
+reads `{ target, recordKey }` when they open a finding. List entries carry a
+stable key, title and safe numeric summary. Detail carries the source identity,
+observed window and coverage, and can include sanitized SQL shape and a way to
+exercise the finding again. Scope admission, redaction, and typed refusals belong
+to the source Actions. The shared brief reopens the selected detail Action with
+the same target and key, then packages its evidence for the Session Composer.
+
 ## Evolving the ABI
 
 Follow the [protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution).

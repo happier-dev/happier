@@ -120,6 +120,7 @@ export { DatabaseFindingsListResultV1Schema } from './projections.js';
 export { DatabaseForeignKeyV1Schema } from './projections.js';
 export { DatabaseInsightBriefBuildInputV1ProtocolSchema } from './projections.js';
 export { DatabaseInsightSourceDescriptorV1ProtocolSchema } from './projections.js';
+export { DatabaseInsightSourceOperationSchemasV1 } from './projections.js';
 export { DatabaseManagedDeploymentTargetV1Schema } from './projections.js';
 export { DatabaseReadAccessAttachInputV1Schema, DatabaseReadAccessCreateInputV1Schema, DatabaseReadAccessSetupResultV1Schema,
     type DatabaseReadAccessAttachInputV1, type DatabaseReadAccessCreateInputV1, type DatabaseReadAccessSetupResultV1 } from './readAccess.js';

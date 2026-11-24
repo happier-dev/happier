@@ -9,6 +9,7 @@ import { DatabaseFailureV1Schema } from './databaseOperations.js';
 import { ProjectRepositoryObservationV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputForgeEvidenceV1';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import { PluginTargetedContributionSelectionV1Schema } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 import { DatabaseStatsCoverageV1Schema, DatabaseStatsGroupV1Schema, DatabaseStatsIntervalBasisV1Schema,
     DatabaseStatsSizeV1Schema, DatabaseStatsStatementV1Schema,
     DatabaseStatsTableV1Schema, DatabaseStatsIndexV1Schema, DatabaseStatsActivityV1Schema,
@@ -23,6 +24,9 @@ export const DATABASE_INSIGHT_SOURCES_POINT_REF_V1 = {
 } as const;
 
 const records = z.number().check(z.int(), z.nonnegative());
+const recordKey = z.string().check(z.minLength(1));
+const sourceListInput = z.strictObject({ target: DatabaseTargetV1Schema });
+const sourceDetailInput = z.extend(sourceListInput, { recordKey });
 
 /** Numeric evidence only. SQL, result cells and captured bodies have no Event field. */
 export const DatabaseFindingSummaryV1Schema = z.extend(z.partial(z.pick(DatabaseStatsStatementV1Schema, {
@@ -81,7 +85,7 @@ export type DatabaseFindingsListInputV1 = z.infer<typeof DatabaseFindingsListInp
 /** Detail rereads this scoped key for its current sanitized shape. It does not
  * promise to recover an old observation from the connection Resource. */
 export const DatabaseFindingReadInputV1Schema = z.extend(DatabaseFindingsListInputV1Schema, {
-    recordKey: z.string().check(z.minLength(1)),
+    recordKey,
 });
 export type DatabaseFindingReadInputV1 = z.infer<typeof DatabaseFindingReadInputV1Schema>;
 /** Safe before numbers survive closing the pane without a daemon sample store. */
@@ -120,14 +124,17 @@ export const DatabaseTaskEvidenceV1Schema = z.union([
 export type DatabaseTaskEvidenceV1 = z.infer<typeof DatabaseTaskEvidenceV1Schema>;
 export const DatabaseTaskBriefBuildInputV1Schema = z.strictObject({ task: DatabaseTaskEvidenceV1Schema });
 export type DatabaseTaskBriefBuildInputV1 = z.infer<typeof DatabaseTaskBriefBuildInputV1Schema>;
+const sourceBriefInput = z.extend(sourceDetailInput, {
+    sourceSelection: asProtocolZod(PluginTargetedContributionSelectionV1Schema),
+});
 export const DatabaseInsightBriefBuildInputV1Schema = z.union([
-    DatabaseFindingBriefBuildInputV1Schema, DatabaseTaskBriefBuildInputV1Schema,
+    DatabaseFindingBriefBuildInputV1Schema, DatabaseTaskBriefBuildInputV1Schema, sourceBriefInput,
 ]);
 export type DatabaseInsightBriefBuildInputV1 = z.infer<typeof DatabaseInsightBriefBuildInputV1Schema>;
 
 /** Lists contain safe rankings only; statement shapes are fetched on selection. */
 export const DatabaseFindingListEntryV1Schema = z.strictObject({
-    recordKey: z.string().check(z.minLength(1)), summary: DatabaseFindingSummaryV1Schema,
+    recordKey, summary: DatabaseFindingSummaryV1Schema,
     object: z.optional(findingObject),
 });
 export const DatabaseFindingsListResultV1Schema = z.union([
@@ -147,10 +154,32 @@ export const DatabaseFindingBriefBuildResultV1Schema = z.union([
 ]);
 export type DatabaseFindingBriefBuildResultV1 = z.infer<typeof DatabaseFindingBriefBuildResultV1Schema>;
 
+const sourceTitle = z.string().check(z.minLength(1));
+const sourceListEntry = z.strictObject({ recordKey, title: sourceTitle, summary: DatabaseFindingSummaryV1Schema });
+const sourceFinding = z.strictObject({
+    ...observation, kind: z.string().check(z.minLength(1)), title: sourceTitle,
+    normalizedShape: z.optional(z.string()), omittedTextReason: z.optional(z.string()),
+    exercise: z.optional(z.string()),
+});
+const sourceListResult = z.union([
+    DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true), findings: z.array(sourceListEntry) }),
+]);
+const sourceDetailResult = z.union([
+    DatabaseFailureV1Schema, z.strictObject({ ok: z.literal(true), finding: sourceFinding }),
+]);
+export const DatabaseInsightSourceOperationSchemasV1 = {
+    listInput: projectZodProtocolSchema(sourceListInput),
+    detailInput: projectZodProtocolSchema(sourceDetailInput),
+    listResult: projectZodProtocolSchema<z.core.$ZodType<z.infer<typeof sourceListResult>, unknown>>(sourceListResult),
+    detailResult: projectZodProtocolSchema<z.core.$ZodType<z.infer<typeof sourceDetailResult>, unknown>>(sourceDetailResult),
+} as const;
+
 /** Existing targeted contributions bind list/detail Actions; the Resource is
  * the change signal, not a second finding lifecycle or a store. */
 export const DatabaseInsightSourceDescriptorV1Schema = z.strictObject({
     displayName: z.string().check(z.minLength(1)),
+    targetKinds: z.optional(z.array(z.union(DatabaseTargetV1Schema.def.options.map(target => target.def.shape.kind))).check(z.minLength(1))),
+    engineIds: z.optional(z.array(DatabaseEngineIdV1Schema).check(z.minLength(1))),
     evidenceSchema: PluginJsonSchemaV2Schema,
     changeResourceRef: asProtocolZod(PluginContributionIdentityV1Schema),
 });

@@ -2,11 +2,27 @@ import { browserExceptionSetupReferenceV1 } from './browserSetup.js';
 import type {
     DatabaseFindingBaselineV1,
     DatabaseFindingV1,
+    DatabaseInsightBriefBuildInputV1,
+    DatabaseInsightSourceOperationSchemasV1,
     DatabaseTaskEvidenceV1,
 } from '@happier-dev/plugin-sdk/database';
 import { DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
-    DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+    DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+    DATABASE_STATS_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import type { SessionInputDeliveryPlanV1, SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
+
+type SourceFinding = Extract<ReturnType<typeof DatabaseInsightSourceOperationSchemasV1.detailResult.parse>, { ok: true }>['finding'];
+type SelectedFinding = Readonly<{
+    sourceInput: Extract<DatabaseInsightBriefBuildInputV1, { sourceSelection: unknown }>;
+    finding: SourceFinding;
+}>;
+type Brief = Readonly<{ text: string; evidence: SessionInputForgeEvidenceV1 }>;
+
+function findingBrief(instructions: readonly string[], label: string, evidence: object): Brief {
+    return { text: instructions.join('\n\n'), evidence: { v: 1, items: [{
+        source: { kind: 'databaseFinding', label }, author: { kind: 'process' }, text: JSON.stringify(evidence),
+    }] } };
+}
 
 export function databaseFindingBaseline(finding: DatabaseFindingV1): DatabaseFindingBaselineV1 {
     return {
@@ -24,7 +40,16 @@ export function planDatabaseFindingSessionInputV1(finding: DatabaseFindingV1 | D
 
 /** One immutable brief survives leaving the pane. Evidence remains descriptive;
  * the Session host owns framing, admission and delivery. */
-export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | DatabaseTaskEvidenceV1, baseline?: DatabaseFindingBaselineV1): Readonly<{ text: string; evidence: SessionInputForgeEvidenceV1 }> {
+export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | DatabaseTaskEvidenceV1 | SelectedFinding, baseline?: DatabaseFindingBaselineV1): Brief {
+    if ('sourceInput' in finding) {
+        const { sourceInput, finding: detail } = finding;
+        return findingBrief([
+            `Investigate the database finding “${detail.title}” and propose the smallest justified improvement.`,
+            `The source measured ${JSON.stringify(detail.summary)} before the change, from ${detail.observedWindow.fromMs} to ${detail.observedWindow.toMs} ms. It reported ${JSON.stringify(detail.coverage)} for coverage.`,
+            ...(detail.exercise ? ['Repeat the source’s verification exercise. ' + detail.exercise] : []),
+            `After the agreed change, repeat ${DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1} with the exact verification input in the evidence. Compare observations for the same scope and report incomplete coverage or source evidence that expired.`,
+        ], detail.title, { currentDetail: detail, verification: { action: DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1, input: sourceInput } });
+    }
     if (!('evidenceIdentity' in finding)) {
         const genericRequest = {
             setup: 'Review the required database statistics setup and its restart impact before making a change.',
@@ -79,7 +104,7 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         ...(finding.omittedTextReason === undefined ? {} : { omittedTextReason: finding.omittedTextReason }),
         verification: finding.verification,
     };
-    const text = [
+    return findingBrief([
         `Investigate this database ${finding.kind} finding and propose the smallest justified improvement.`,
         `Before: ${JSON.stringify(before.summary)}.`,
         `Before observation window: ${before.observedWindow.fromMs}–${before.observedWindow.toMs} ms. Coverage: ${JSON.stringify(before.coverage)}.`,
@@ -87,9 +112,5 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         ...(finding.omittedTextReason === undefined ? [] : ['Statement text is unavailable; its omission reason is included in the evidence.']),
         'Verify against the same database and interval basis using the exact verification Action operands included in the evidence.',
         'Done means explaining the cause, applying the agreed change, repeating this verification read, and comparing the before and after numbers while reporting any coverage or counter-reset limits.',
-    ].join('\n\n');
-    return { text, evidence: { v: 1, items: [{
-        source: { kind: 'databaseFinding', label: `Database ${finding.kind} finding` },
-        author: { kind: 'process' }, text: JSON.stringify({ baseline: before, currentDetail: detail }),
-    }] } };
+    ], `Database ${finding.kind} finding`, { baseline: before, currentDetail: detail });
 }

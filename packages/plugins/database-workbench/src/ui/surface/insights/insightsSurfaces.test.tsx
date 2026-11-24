@@ -12,7 +12,11 @@ import {
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
-import { type DatabaseDescriptorV1, type DatabaseStatsObservationV1 } from '@happier-dev/plugin-sdk/database';
+import {
+  DATABASE_INSIGHT_SOURCES_POINT_REF_V1,
+  type DatabaseDescriptorV1,
+  type DatabaseStatsObservationV1,
+} from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
@@ -22,6 +26,7 @@ import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
+  type PluginUiTestkitSelectActionInputInput,
 } from '@happier-dev/plugin-sdk/testing';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { PluginUiHostPresentationScope, type PluginUiPresentationHost } from '@happier-dev/plugin-ui/advanced';
@@ -186,6 +191,125 @@ function pageContext() {
 }
 
 describe('Database Insights surfaces', () => {
+  it('reads only the selected insight source on the open database and drops a disabled occurrence', async () => {
+    const { pointId, protocol, pluginId } = DATABASE_INSIGHT_SOURCES_POINT_REF_V1;
+    const contributorPluginId = 'acme.database-observations';
+    const sourceRef = { pluginId: contributorPluginId, localId: 'findings' };
+    const current = pageContext();
+    const target = { pluginId, occurrenceId: 'target-a',
+      sourceCustody: { kind: 'development' as const, registeredRootId: 'target-root' } };
+    const presentSource = (occurrenceId: string) => {
+      const contributor = { pluginId: contributorPluginId, contributionId: sourceRef.localId, occurrenceId,
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'source-root' } };
+      const operations = ['list', 'detail'].map(role => ({ role, point: { pointId, protocol }, contributor,
+        action: { pluginId: contributorPluginId, localId: role } }));
+      return { ...current, targetedContributions: { target, points: [{ pointId, protocols: [{ protocol, contributions: [{
+        contributor, protocol, operations, surfaces: [], descriptor: {
+          displayName: 'Database observations', evidenceSchema: { type: 'object' as const },
+          targetKinds: ['worktree'], engineIds: ['postgresql'],
+          changeResourceRef: { pluginId: contributorPluginId, localId: 'changes' },
+        },
+      }, {
+        contributor: { ...contributor, contributionId: 'other-db' }, protocol, operations: operations.map(operation => ({
+          ...operation, contributor: { ...contributor, contributionId: 'other-db' },
+        })), surfaces: [], descriptor: {
+          displayName: 'MySQL observations', evidenceSchema: { type: 'object' as const },
+          targetKinds: ['worktree'], engineIds: ['mysql'],
+          changeResourceRef: { pluginId: contributorPluginId, localId: 'changes' },
+        },
+      }] }] }] } };
+    };
+    const pick = vi.fn(async ({ request }: PluginUiTestkitSelectActionInputInput) => {
+      if (!('operation' in request) || !request.draft) throw new Error('expected a scoped source Action');
+      const { operation } = request;
+      return { kind: 'submitted' as const, action: operation.action, input: request.draft,
+        selection: { target: { pluginId, sourceCustody: target.sourceCustody }, point: operation.point, contributor: {
+          pluginId: operation.contributor.pluginId, contributionId: operation.contributor.contributionId,
+          sourceCustody: operation.contributor.sourceCustody,
+        } }, connectedAccount: { kind: 'none' as const }, presentation: { connectedAccountLabel: null, machineDisplayName: null } };
+    });
+    const observation = {
+      v: 1, sourceRef, sourceScope: { serverId: scope.workspace.serverId, machineId: scope.workspace.machineId },
+      evidenceIdentity: 'source-observation', kind: 'suspected_n_plus_one', observedWindow: { fromMs: 1, toMs: 2 },
+      coverage: { status: 'complete' }, summary: { records: 1 },
+    };
+    const sourceRead = vi.fn(async (call: PluginUiTestkitExecuteActionInput) => {
+      expect(call.selectedActionInput?.operation.action).toEqual(call.action);
+      if (call.selectedActionInput?.operation.role === 'detail') {
+        return projectNativeJsonValueForTransport({ ok: true, finding: {
+          ...observation, title: 'Repeated query', normalizedShape: LINES,
+          exercise: 'Open the project reports page once.',
+        } });
+      }
+      return projectNativeJsonValueForTransport({
+        ok: true, findings: [{ recordKey: 'n-plus-one-17', title: 'Repeated query', summary: { records: 17 } }],
+      });
+    });
+    const prepare = vi.fn(async (_call: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => ({
+      ok: true, brief: { text: 'Investigate repeated queries.', evidence: { v: 1, items: [{
+        source: { kind: 'databaseFinding', label: 'Repeated query' }, author: { kind: 'process' }, text: 'Source evidence',
+      }] } },
+    }));
+    const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({
+      ok: true, result: { kind: 'composed', destination: { kind: 'newSessionDraft' } },
+    }));
+    const actionControl = createPluginUiActionControlTestHost(handoff);
+    const nativeRead = daemon(statements);
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'insight-source', mountNonce: 'insight-source' },
+      authorPlugin: { id: pluginId, version: '0.0.0' }, surface: renderPage, subPath: 'insights',
+      surfaceContext: presentSource('source-a'), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      handlers: { ...resourceHandlers(), selectActionInput: pick, actionControl: actionControl.handler,
+        replacePageLocation: async ({ subPath }) => subPath,
+        executeAction: call => typeof call.action === 'object' && call.action.pluginId === contributorPluginId
+          ? sourceRead(call) : call.action === databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1)
+            ? prepare(call) : nativeRead(call) },
+    });
+    try {
+      await settle();
+      expect(pick).not.toHaveBeenCalled();
+      await page.press(await page.getByRole('tab', { name: 'Insight sources' }));
+      expect(pick).not.toHaveBeenCalled();
+      expect(await page.queryByRole('button', { name: 'MySQL observations' })).toBeUndefined();
+      await page.press(await page.getByRole('button', { name: 'Database observations' }));
+      await settle();
+      expect(sourceRead.mock.calls.map(([call]) => call.input)).toEqual([{ target: descriptor.target }]);
+      await page.press(await page.getByRole('button', { name: 'Repeated query' }));
+      await settle();
+      expect(sourceRead.mock.calls.map(([call]) => call.input)).toEqual([
+        { target: descriptor.target }, { target: descriptor.target, recordKey: 'n-plus-one-17' },
+      ]);
+      expect(await page.queryByText(LINES)).toBeTruthy();
+      await page.press(await page.getByRole('button', { name: 'Prepare brief' }));
+      await settle();
+      expect(prepare.mock.lastCall?.[0].input).toEqual({ target: descriptor.target, recordKey: 'n-plus-one-17',
+        sourceSelection: { target: { pluginId, sourceCustody: target.sourceCustody }, point: { pointId, protocol }, contributor: {
+          pluginId: contributorPluginId, contributionId: sourceRef.localId, sourceCustody: { kind: 'development', registeredRootId: 'source-root' },
+        } } });
+      expect(await page.getByText('Investigate repeated queries.')).toBeTruthy();
+      await act(async () => { await actionControl.press('Ask for investigation'); });
+      expect(handoff).toHaveBeenCalledWith(expect.objectContaining({ action: 'session.input.handoff',
+        input: expect.objectContaining({ delivery: 'compose', input: expect.objectContaining({ forgeEvidence: {
+          v: 1, items: [{ source: { kind: 'databaseFinding', label: 'Repeated query' }, author: { kind: 'process' }, text: 'Source evidence' }],
+        } }) }),
+      }));
+
+      await act(async () => { await page.updateSurface({ ...current, targetedContributions: { target, points: [] } }); });
+      expect(await page.queryByRole('tab', { name: 'Insight sources' })).toBeUndefined();
+      expect(await page.queryByText('Repeated query')).toBeUndefined();
+      await act(async () => { await page.updateSurface(presentSource('source-b')); });
+      await settle();
+      expect(sourceRead).toHaveBeenCalledTimes(2);
+      await page.press(await page.getByRole('tab', { name: 'Insight sources' }));
+      await page.press(await page.getByRole('button', { name: 'Database observations' }));
+      await settle();
+      expect(sourceRead.mock.calls.at(-1)?.[0].selectedActionInput?.operation.contributor.occurrenceId).toBe('source-b');
+    } finally {
+      await page.dispose();
+    }
+  });
+
   it('opens Insights on statements by total time, read once, with each shape as the row', async () => {
     const executeAction = daemon(statements);
     const page = await createPluginUiTestkit({

@@ -1,7 +1,11 @@
-import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, PluginError,
-    type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { computeCanonicalDomainSeparatedDigest, createCanonicalJsonSigningInput, PluginError, selectCurrentTargetedContribution,
+    type PluginInvocationContext, type TargetedContributionAdmittedEntry } from '@happier-dev/plugin-sdk';
+import type { AdmittedTargetedOperationExecutionHandle } from '@happier-dev/plugin-sdk/actions';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import {
+    DATABASE_INSIGHT_SOURCES_POINT_REF_V1,
+    DatabaseInsightSourceOperationSchemasV1,
     type DatabaseFindingObservationV1,
     type DatabaseFindingV1,
     type DatabaseFindingsListInputV1,
@@ -19,6 +23,17 @@ type FindingRow = Readonly<{ recordKey: string; summary: Summary;
     object?: DatabaseFindingV1['object'];
     normalizedShape?: string; omittedTextReason?: string; activity?: DatabaseFindingV1['activity'] }>;
 type StatsResult = Extract<DatabaseOperationResultV1, { operation: 'stats.read' }> | Extract<DatabaseOperationResultV1, { ok: false }>;
+
+type AdmittedSource = {
+    contributor: TargetedContributionAdmittedEntry['contributor'];
+    protocol: typeof DATABASE_INSIGHT_SOURCES_POINT_REF_V1.protocol;
+    operations: { detail: AdmittedTargetedOperationExecutionHandle };
+};
+const sourcePoint = {
+    targetPluginId: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pluginId,
+    id: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pointId,
+    protocol: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.protocol,
+};
 
 /** Keys identify native rows within their resolved binding, without retaining
  * an independent finding record. */
@@ -181,6 +196,20 @@ export function createDatabaseInsightProducers(options: Readonly<{
         readFinding,
         async buildInsightBrief(input, context) {
             if ('task' in input) return { ok: true, brief: buildDatabaseFindingBriefV1(input.task) };
+            if ('sourceSelection' in input) {
+                const current = await selectCurrentTargetedContribution<AdmittedSource>({
+                    service: context.services.targetedContributions, point: sourcePoint,
+                    selection: input.sourceSelection, operationRole: 'detail', signal: context.signal,
+                });
+                if (current.kind === 'unavailable') return { ok: false, status: 'unavailable',
+                    code: 'database_insight_source_unavailable', reason: current.reason };
+                const result = DatabaseInsightSourceOperationSchemasV1.detailResult.parse(
+                    await context.services.actions.executeAdmittedTargetedOperation(current.contribution.operations.detail,
+                        projectNativeJsonValueForTransport({ target: input.target, recordKey: input.recordKey }), { signal: context.signal }),
+                );
+                if (!result.ok) return result;
+                return { ok: true, brief: buildDatabaseFindingBriefV1({ sourceInput: input, finding: result.finding }) };
+            }
             const result = await readFinding(input, context);
             if (!result.ok) return result;
             return { ok: true, brief: buildDatabaseFindingBriefV1(result.finding, input.baseline) };

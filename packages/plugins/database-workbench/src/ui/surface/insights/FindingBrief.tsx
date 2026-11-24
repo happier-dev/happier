@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import {
   DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
   databaseActionLocalIdV1,
@@ -19,7 +20,9 @@ import { statementByKey } from './statements.js';
 const buildAction = databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1);
 type Brief = Extract<DatabaseFindingBriefBuildResultV1, { ok: true }>['brief'];
 
-export function FindingBrief({ target, recordKey }: Readonly<{ target: DatabaseTargetV1; recordKey: string }>) {
+export function FindingBrief({ target, recordKey, sourceSelection }: Readonly<{
+  target: DatabaseTargetV1; recordKey: string; sourceSelection?: PluginTargetedContributionSelectionV1;
+}>) {
   const t = usePluginTranslation();
   const surface = useSurfaceContext();
   const build = useExecutePluginAction(buildAction);
@@ -28,9 +31,8 @@ export function FindingBrief({ target, recordKey }: Readonly<{ target: DatabaseT
   const missing = t('plugins.database.insights.briefUnavailable', 'The finding brief could not be prepared.');
   const prepare = async () => {
     setError(null);
-    const result = await build.execute(projectNativeJsonValueForTransport({
-      target, recordKey, request: statementByKey(recordKey),
-    }));
+    const input = sourceSelection ? { target, recordKey, sourceSelection } : { target, recordKey, request: statementByKey(recordKey) };
+    const result = await build.execute(projectNativeJsonValueForTransport(input));
     if (result.status === 'pending') return;
     if (result.status !== 'success') {
       setError({ title: 'message' in result ? result.message : missing });

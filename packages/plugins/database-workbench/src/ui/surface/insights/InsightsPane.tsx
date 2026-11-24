@@ -21,6 +21,7 @@ import {
 import { ActivityView } from './ActivityView.js';
 import { formatMoment } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
+import { InsightSources, useInsightSources } from './InsightSources.js';
 import {
   projectStatements,
   STATEMENTS_BY_TOTAL_TIME,
@@ -29,7 +30,7 @@ import {
 import { StatementsView } from './StatementsView.js';
 import { TablesView } from './TablesView.js';
 
-type InsightsTab = 'statements' | 'tables' | 'activity';
+type InsightsTab = 'statements' | 'tables' | 'activity' | 'sources';
 const NO_KEYS: readonly string[] = Object.freeze([]);
 
 /** Statements read once per open; the comparison is the host's device-local last look (R13). */
@@ -124,7 +125,9 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
   const instance = useWorkbenchInstance();
   const location = useWorkbenchLocation();
   const descriptor = instance.target(props.targetKey);
-  const [tab, setTab] = React.useState<InsightsTab>('statements');
+  const [selectedTab, setTab] = React.useState<InsightsTab>('statements');
+  const sources = useInsightSources(descriptor);
+  const tab = selectedTab === 'sources' && sources.length === 0 ? 'statements' : selectedTab;
   const statements = useInsightsStatements(props.targetKey);
   const openConsole = React.useCallback(
     async (sql: string) => {
@@ -154,7 +157,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         title={translate('plugins.database.insights.title', 'Insights')}
         meta={facts}
         actions={
-          tab === 'activity' ? null : (
+          tab === 'activity' || tab === 'sources' ? null : (
             <IconButton
               accessibilityLabel={translate(
                 'plugins.database.refresh',
@@ -170,7 +173,7 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         value={tab}
         onValueChange={(value) =>
           setTab(
-            value === 'tables' || value === 'activity' ? value : 'statements',
+            value === 'tables' || value === 'activity' || value === 'sources' ? value : 'statements',
           )
         }
         ariaLabel={translate('plugins.database.insights.title', 'Insights')}
@@ -210,6 +213,10 @@ export function InsightsPane(props: Readonly<{ targetKey: string }>) {
         >
           <ActivityView targetKey={props.targetKey} />
         </Tabs.Item>
+        {sources.length > 0 ? <Tabs.Item value="sources"
+          title={translate('plugins.database.insights.sources', 'Insight sources')}>
+          <InsightSources key={props.targetKey} sources={sources} target={descriptor.target} />
+        </Tabs.Item> : null}
       </Tabs>
     </Stack>
   );
