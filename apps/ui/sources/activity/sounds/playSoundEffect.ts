@@ -34,6 +34,17 @@ function isAndroidQuietModeActive(): boolean {
     }
 }
 
+/**
+ * expo-audio has no error event for players. iOS reports a failed load as `failed`; Android's
+ * ExoPlayer drops back to `idle` after a playback error and reports only state changes, so it never
+ * sends its initial idle. Web reports no state, and an unreferenced web player is garbage-collected.
+ */
+function isFailedPlaybackState(playbackState: string | undefined): boolean {
+    if (Platform.OS === 'ios') return playbackState === 'failed';
+    if (Platform.OS === 'android') return playbackState === 'idle';
+    return false;
+}
+
 /** Plays one sound effect unless the device is in a quiet mode. */
 export async function playSoundEffect(id: SoundEffectId): Promise<void> {
     if (Platform.OS === 'android' && isAndroidQuietModeActive()) return;
@@ -59,7 +70,7 @@ export async function playSoundEffect(id: SoundEffectId): Promise<void> {
     try {
         player = createAudioPlayer(SOUND_EFFECT_SOURCES[id]);
         subscription = player.addListener('playbackStatusUpdate', (status) => {
-            if (status.didJustFinish) release();
+            if (status.didJustFinish || isFailedPlaybackState(status.playbackState)) release();
         });
         player.play();
     } catch (error) {
