@@ -40,6 +40,8 @@ import {
   evaluateUsageCoach,
 } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { UsageAnalyticsQueryResponseSchema, type UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
@@ -52,7 +54,7 @@ import { buildCacheKey, EMPTY_PROJECTION_SUMMARIES, PROJECTION_CACHE } from '@/a
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getMachineContributionRegistryProjectionRevision } from '@/sync/ops/machineContributionRegistryProjection';
-import { UsageWorkMarks, UsageWorkSectionTitle } from './UsageWorkParts';
+import { UsageWorkMarks, UsageWorkSectionTitle, usageWorkLinksNotice } from './UsageWorkParts';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageWorkAutopsy } from './UsageWorkAutopsy';
@@ -1777,10 +1779,11 @@ describe('Work and Coach widget bodies', () => {
     const ledger = await renderScreen(<UsageProjectLedgerWidget {...props} slice={unread} id="usage_project_ledger" testID="ledger" />);
     await ledger.pressByTestIdAsync('ledger.project.p1.toggle');
     expect(ledger.getTextContent()).toContain(witness.pullRequest.title);
-    const failed = { ...unread, work: allocateUsageOutcomes({ contributions, evidence: [] }) };
-    await ledger.update(<UsageProjectLedgerWidget {...props} slice={failed} id="usage_project_ledger" testID="ledger" />);
+    const withoutLinks = { ...unread, work: allocateUsageOutcomes({ contributions, evidence: [] }) };
+    await ledger.update(<UsageProjectLedgerWidget {...props} slice={withoutLinks} id="usage_project_ledger" testID="ledger" />);
     expect(ledger.getTextContent()).not.toContain(t('usage.board.work.noneLinked'));
-    expect(ledger.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnavailableTitle'));
+    expect(ledger.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(
+      `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: 1, formattedCount: '1' })}`);
   });
 
   it('shows prior linked Work rows with an unknown merged figure after a failed refresh', async () => {
@@ -2103,7 +2106,7 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
   const offline = { source: 'work', status: 'partial', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1011 } } as const;
   const workStates = [
     { state: 'reading', source: { source: 'work', status: 'pending' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
-    { state: 'partly read', source: offline, footer: () => `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOffline', { count: (1011).toLocaleString() })}` },
+    { state: 'partly read', source: offline, footer: () => `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadUnreachable', { count: 1011, formattedCount: (1011).toLocaleString(getPreferredLanguage()) })}` },
     { state: 'failed', source: { source: 'work', status: 'error', errorCode: 'work_evidence_failed' } as const, footer: () => t('usage.board.work.workUnavailableTitle') },
   ];
   const unreadSlice = (source: UsageQueryResultSlice['sources'][number]): UsageQueryResultSlice => ({ ...slice,
@@ -2137,10 +2140,50 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
     const screen = await renderScreen(<UsageProjectLedgerWidget {...props}
       slice={unreadSlice({ source: 'work', status: 'partial', unreadSessions: { failed: 1, timed_out: 2 } })} id="usage_project_ledger" testID="ledger" />);
     expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(
-      `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: '3' })}`);
+      `${t('usage.board.work.workPartialTitle')} · ${t('usage.board.work.workUnreadOther', { count: 3, formattedCount: '3' })}`);
     await screen.update(<UsageProjectLedgerWidget {...props}
       slice={unreadSlice({ source: 'work', status: 'partial', errorCode: 'machine_offline' })} id="usage_project_ledger" testID="ledger" />);
-    expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnreadOfflineSome'));
+    expect(screen.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnreadUnreachableSome'));
+  });
+
+  it.each([
+    { cause: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE, sourceCode: undefined },
+    { cause: 'target_unavailable', sourceCode: undefined },
+    { cause: 'machine_offline', sourceCode: 'machine_offline' },
+  ])('describes an unread Machine as unreachable ($cause)', async ({ cause, sourceCode }) => {
+    const accounting = [{ query: tokensQuery, status: 'available' as const, value: slice.accounting! }];
+    const sources = await collectUsageWorkSources({
+      queries: [tokensQuery], accounting, assertCurrent: () => {},
+      resolveSession: async sessionId => sessionId === 's1' ? { machineId: 'reachable', cwd: '/repo' } : { errorCode: cause },
+      readMachine: async () => ({ sessions: [{ sessionId: 's1', status: 'partial', pullRequestsRead: true,
+        evidence: [evidence('s1', 't1', 2493)] }] }),
+    });
+    const result = resolveUsagePageAggregation({ queries: [tokensQuery], accounting, work: sources }, bundledUsageModelPriceCatalog).results[0]!;
+    expect(result.sources.find(source => source.source === 'work')).toEqual({
+      source: 'work', status: 'partial', unreadSessions: { machine_unavailable: 1 },
+      ...(sourceCode ? { errorCode: sourceCode } : {}),
+    });
+    expect(usageWorkLinksNotice(result).cause).toBe(
+      "1 session is on a Machine that can't be reached; its links are read when that Machine can be reached again");
+  });
+
+  it('formats larger Russian Work counts separately from plural selection', async () => {
+    const previous = getPreferredLanguage();
+    const count = 1021;
+    try {
+      setPreferredLanguageFromSettings('ru');
+      await preloadTranslations();
+      const number = count.toLocaleString('ru');
+      const notice = usageWorkLinksNotice(unreadSlice({ source: 'work', status: 'partial',
+        errorCode: 'work_evidence_failed', unreadSessions: { machine_unavailable: count, timed_out: 1019, not_entitled: 1, failed: 1 } }));
+      expect(notice.cause?.split(' · ')).toEqual([
+        expect.stringContaining(number + ' сессия'),
+        'Не удалось прочитать: ' + number + ' сессия',
+      ]);
+    } finally {
+      setPreferredLanguageFromSettings(previous);
+      await preloadTranslations();
+    }
   });
 
   it.each(['outcomes', 'value', 'autopsy'] as const)('the %s widget titles a partly read Work read as incomplete, with its cause', async widget => {
@@ -2153,7 +2196,7 @@ describe('Work view when Work links are only partly read (USAGE-UI-WORK-R5)', ()
         : <UsageWorkAutopsy {...props} query={sessionQuery} slice={{ ...partial, accounting: undefined, shownQuery: sessionQuery }} testID="w" />);
     const text = screen.getTextContent();
     expect(text).toContain(t('usage.board.work.workPartialTitle'));
-    expect(text).toContain(t('usage.board.work.workUnreadOffline', { count: (1011).toLocaleString() }));
+    expect(text).toContain(t('usage.board.work.workUnreadUnreachable', { count: 1011, formattedCount: (1011).toLocaleString(getPreferredLanguage()) }));
     expect(text).not.toContain(t('usage.board.work.workUnavailableTitle'));
   });
 

@@ -9,7 +9,7 @@ import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
-import { t } from '@/text';
+import { getPreferredLanguage, t } from '@/text';
 import { UsageAgentMark, UsageShowAllRows, leadingUsageRows, useUsagePluginTheme } from './usageBodyKit';
 import { UsageWorkProviderMark, usageWorkProviderIdentities, usageWorkProviderNames } from './UsageWorkProviderMark';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
@@ -46,20 +46,19 @@ export function usageWorkRetainedChangeLine(changes: readonly UsageWorkRetainedC
   }).join(' · ');
 }
 
-/**
- * What a Work body says while Work links are not read whole, from the one Work coverage decision. A settled partial
- * read is never "not loaded yet": it says links are incomplete and gives the owner's typed cause and count (`cause`),
- * or null for a read still going or failed, whose own wording and Retry stay as they are.
- */
+/** Present the Work owner's unread counts. The same partial result can also offer a Retry. */
 export function usageWorkLinksNotice(slice: UsageQueryResultSlice): Readonly<{ title: string; cause: string | null }> {
-  if (readUsageWorkOutcomesEvidence(slice, 'work') !== 'partial') return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
   const source = slice.sources.find(row => row.source === 'work');
-  const unread = source?.unreadSessions ?? {};
+  if (source?.status !== 'partial' || readUsageWorkOutcomesEvidence(slice, 'work') === 'observed') {
+    return { title: t('usage.board.work.workUnavailableTitle'), cause: null };
+  }
+  const unread = source.unreadSessions ?? {};
   const other = (unread.not_entitled ?? 0) + (unread.timed_out ?? 0) + (unread.failed ?? 0);
+  const formatCount = (count: number) => ({ count, formattedCount: count.toLocaleString(getPreferredLanguage()) });
   const cause = [
-    unread.machine_unavailable ? t('usage.board.work.workUnreadOffline', { count: unread.machine_unavailable.toLocaleString() })
-      : source?.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadOfflineSome') : null,
-    other > 0 ? t('usage.board.work.workUnreadOther', { count: other.toLocaleString() }) : null,
+    unread.machine_unavailable ? t('usage.board.work.workUnreadUnreachable', formatCount(unread.machine_unavailable))
+      : source.errorCode === 'machine_offline' ? t('usage.board.work.workUnreadUnreachableSome') : null,
+    other > 0 ? t('usage.board.work.workUnreadOther', formatCount(other)) : null,
   ].filter(Boolean).join(' · ');
   return { title: t('usage.board.work.workPartialTitle'), cause: cause || null };
 }
