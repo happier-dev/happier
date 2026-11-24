@@ -32,11 +32,9 @@ import {
 const FOLLOW_ID = 'follow';
 const OWN_ID = 'own';
 
-function formatGroupReading(reading: WidgetSetupInheritedReading): string {
-    return t('widgetAdd.inheritedValue', {
-        value: reading.kind === 'single' ? reading.valueLabel : t('widgetAdd.severalValues'),
-        source: t('widgetFrame.followingGroup'),
-    });
+function formatGroupReading(reading: WidgetSetupInheritedReading, includeSource = true): string {
+    const value = reading.kind === 'single' ? reading.valueLabel : t('widgetAdd.severalValues');
+    return includeSource ? t('widgetAdd.inheritedValue', { value, source: t('widgetFrame.followingGroup') }) : value;
 }
 
 /** Whether the input reads the surface's value (one control) rather than its own (control + editor). */
@@ -263,9 +261,9 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
         testID: `${props.testID}.option.${index}`,
     })), [choicesOptions, props.testID]);
     const presentation = resolveHappierActionFieldPresentation(entry.field, value, selection);
-    const inherited = row.kind === 'needed' && value === undefined && entry.inherited
-        ? formatGroupReading(entry.inherited)
-        : undefined;
+    const groupReading = row.kind === 'needed' && value === undefined ? entry.inherited : undefined;
+    const inheritedSource = groupReading && entry.follow ? t('widgetFrame.followingGroup') : undefined;
+    const inherited = groupReading ? formatGroupReading(groupReading, inheritedSource === undefined) : undefined;
     const subtitleOnly = inherited !== undefined && (presentation.kind === 'toggle'
         || (presentation.kind === 'select' && entry.field.allowCustomValue !== true
             && (resolveHappierChoiceControl(presentation, options) === 'segmented'
@@ -352,7 +350,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
                 <HappierInputField<JsonValue>
                     frame="none"
                     leading={entry.follow ? <WidgetBindingControl {...props}
-                        inheritedSource={inherited === undefined ? undefined : t('widgetFrame.followingGroup')} /> : undefined}
+                        inheritedSource={inheritedSource} /> : undefined}
                     field={field}
                     value={value}
                     selection={selection as JsonValue | readonly JsonValue[] | undefined}

@@ -244,7 +244,10 @@ it('prints only label-owner answers across the five mounted group input surfaces
         expect.soft(screen.getTextContent()).toContain(`widgetFrame.groupFollowCount(following=${following},count=7)`);
         const reading = screen.findByTestId('count.field.period.input')?.props.placeholder;
         if (following === 0) expect.soft(reading).toBeUndefined();
-        else expect.soft(reading).toBe('widgetAdd.inheritedValue(value=Today,source=widgetFrame.followingGroup)');
+        else {
+            expect.soft(screen.findByTestId('count.field.period.trigger')?.props.accessibilityLabel).toBe('Period, widgetFrame.followingGroup');
+            expect.soft(reading).toBe('Today');
+        }
         await screen.unmount();
         await editor.unmount();
     }
