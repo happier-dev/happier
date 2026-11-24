@@ -138,16 +138,11 @@ async function start(tree: ReactTestRenderer, operation: 'install' | 'remove' = 
 }
 
 describe('useDaemonVoiceModelCatalogState', () => {
-    beforeEach(async () => {
-        nativeAlert.mockReset();
-        vi.useRealTimers();
-        requests.length = 0;
-        observedSignals.length = 0;
-        catalogReply();
+    async function restoreReadinessAccount(settingsOverride: Readonly<Record<string, unknown>> = {}) {
         const scope = await account.restore({
             settings: { experiments: true, featureToggles: { 'voice.agent': true, 'execution.runs': true, 'voice.daemonInference': true },
                 actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.invoke': ['ui'] } },
-                voice: { executionMachine: { mode: 'fixed', machineId: 'machine-a' } } },
+                voice: { executionMachine: { mode: 'fixed', machineId: 'machine-a' } }, ...settingsOverride },
             machines: ['machine-a', 'machine-b'].map(id => createMachineFixture({ id, activeAt: Date.now() })),
             features: createRootLayoutFeaturesResponse({ features: {
                 voice: { enabled: true },
@@ -165,6 +160,16 @@ describe('useDaemonVoiceModelCatalogState', () => {
                 custodian: machine.access!.custodian, access: machine.access, canManage: true,
                 grants: [], ownDirectGrant: false, ownAccessSources: [] } });
         }
+        return scope;
+    }
+
+    beforeEach(async () => {
+        nativeAlert.mockReset();
+        vi.useRealTimers();
+        requests.length = 0;
+        observedSignals.length = 0;
+        catalogReply();
+        await restoreReadinessAccount();
     });
     afterEach(async () => { vi.useRealTimers(); await account.reset(); vi.restoreAllMocks(); });
 
@@ -327,31 +332,40 @@ describe('useDaemonVoiceModelCatalogState', () => {
         try {
             const { VoiceSettingsIntentIndexScreen } = await import('../../VoiceSettingsIntentIndexScreen');
             const { VoiceDictationSettingsScreen } = await import('../../screens/VoiceDictationSettingsScreen');
+            const { readLocalConversationVoiceSettings, writeLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
             const current = storage.getState().settings;
-            const voice = settingsParse({ voice: { providerId: 'local_conversation',
-                executionMachine: { mode: 'fixed', machineId: 'machine-a' },
-                dictation: { sttBinding: 'same_as_local' },
-                providers: { local_conversation: { schemaVersion: 1, config: {
-                    stt: { provider: 'local_neural', localNeural: { execution: 'daemon', assetId: STT_PACK } },
-                    tts: { provider: 'device' },
-                } } },
-            } }).voice;
-            storage.setState({ settings: settingsParse({ ...current,
-                featureToggles: { ...current.featureToggles, voice: true },
-                ...normalizeVoiceSettingsLocalDelta({ voice }, current) }) });
-            const hub = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+            const local = readLocalConversationVoiceSettings(current.voice);
+            const voice = writeLocalConversationVoiceSettings({
+                ...current.voice, providerId: 'local_conversation',
+                dictation: { ...current.voice.dictation, sttBinding: 'same_as_local' },
+            }, {
+                ...local,
+                stt: { ...local.stt, provider: 'local_neural',
+                    localNeural: { ...local.stt.localNeural, execution: 'daemon', assetId: STT_PACK } },
+            });
+            // Restore the fixture after selecting web, so browser storage and the
+            // mounted surfaces share the same Home and persisted Dictation settings.
+            const delta = { featureToggles: { ...current.featureToggles, voice: true },
+                ...normalizeVoiceSettingsLocalDelta({ voice }, current) };
+            const scope = await restoreReadinessAccount(delta);
+            const incoming = storage.getState();
+            incoming.applySettingsForScope(scope, settingsParse({ ...incoming.settings, ...delta }), (incoming.settingsVersion ?? 0) + 1);
+            expect(storage.getState().settings.voice.dictation.sttBinding).toBe('same_as_local');
+            const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+            const hub = await renderScreen(<InjectedAuthProvider credentials={{ token: 'token-1', secret: 'secret-1' }}>
                 <VoiceSettingsIntentIndexScreen />
-            </AuthProvider>);
+            </InjectedAuthProvider>);
             const readiness = (tree: ReactTestRenderer, testID: string) => tree.root.findAll(node =>
                 node.props.testID === testID && node.props.pipeline)[0]?.props.pipeline.readiness;
             await settle();
+            expect(storage.getState().settings.voice.dictation.sttBinding).toBe('same_as_local');
             expect(readiness(hub.tree, 'settings.voice.intent.dictation'))
                 .toMatchObject({ status: 'unavailable', code: 'runtime_unknown' });
             expect(listingRequests()).toHaveLength(0);
             catalogReply([status(STT_PACK, { installState: 'installed' })]);
-            const page = await renderScreen(<AuthProvider initialCredentials={{ token: 'token-1', secret: 'secret-1' }}>
+            const page = await renderScreen(<InjectedAuthProvider credentials={{ token: 'token-1', secret: 'secret-1' }}>
                 <VoiceDictationSettingsScreen />
-            </AuthProvider>);
+            </InjectedAuthProvider>);
             await settle();
             expect(readiness(page.tree, 'settings.voice.dictation.pipeline')?.status).toBe('ready');
             expect(readiness(hub.tree, 'settings.voice.intent.dictation')).toEqual(readiness(page.tree, 'settings.voice.dictation.pipeline'));
