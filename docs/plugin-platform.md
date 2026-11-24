@@ -2,7 +2,8 @@
 ### Database capture development source
 
 The public Plugin UI `LogLine` owns row presentation for native service
-output and captured OTLP logs. The native viewer supplies admitted ANSI
+output and captured OTLP logs: the gutter's type, the spacing between columns
+and the rhythm between lines. The native viewer supplies admitted ANSI
 tokens, line numbers and Find ranges. The capture adapter supplies literal
 messages and structured source facts, with full bodies still read on demand.
 Each view retains its existing Action and Resource acquisition path.

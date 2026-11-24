@@ -351,7 +351,10 @@ transcript readers; it does not create a plugin-owned index.
 ### Log lines (0.3 development)
 
 Use `LogLine` from `@happier-dev/plugin-ui` to display a log message beside
-source metadata. Long messages wrap in their own column. Pass structured
+source metadata. Pass the line's number or clock as `gutter`, and any further
+columns, such as a severity or a service, as `prefix`. `LogLine` sets the gutter's
+type and spaces the columns, the message and consecutive lines, so every log
+reads alike. Long messages wrap in their own column. Pass structured
 messages as `plainText` to display them literally. For native terminal output,
 pass the log index's ANSI tokens and plain text, with any Find ranges expressed
 as half-open UTF-16 offsets into that line's plain text.
@@ -359,10 +362,11 @@ as half-open UTF-16 offsets into that line's plain text.
 ```tsx
 import { LogLine, Text } from '@happier-dev/plugin-ui';
 
-function AppLog({ service, body }: { service: string; body: string }) {
+function AppLog({ clock, service, body }: { clock: string; service: string; body: string }) {
   return (
     <LogLine
-      prefix={<Text variant="meta" value={service} />}
+      gutter={{ value: clock }}
+      prefix={<Text variant="code" tone="secondary" value={service} />}
       message={{ plainText: body }}
     />
   );

@@ -400,15 +400,10 @@ const NativeLogLine = React.memo(function NativeLogLine(
     revealed: boolean;
   }>,
 ) {
-  const { theme } = useUnistyles();
   return (
     <LogLine
       style={[styles.line, props.revealed ? styles.revealed : null]}
-      prefix={
-        <Text style={[styles.number, { minWidth: props.digits * theme.space.s8 }]}>
-          {String(props.line.number)}
-        </Text>
-      }
+      gutter={{ value: String(props.line.number), minChars: props.digits }}
       message={{ tokens: props.line.tokens, plainText: props.line.plainText, ranges: props.ranges }}
     />
   );
@@ -505,18 +500,10 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.s8,
   },
   line: {
-    gap: theme.space.s12,
     paddingHorizontal: theme.space.s12,
   },
   revealed: {
     backgroundColor: theme.colors.surface.selected,
-  },
-  number: {
-    ...Typography.variant('meta'),
-    ...Typography.mono(),
-    ...Typography.tabular(),
-    color: theme.colors.text.tertiary,
-    textAlign: 'right',
   },
   note: {
     ...Typography.variant('meta'),

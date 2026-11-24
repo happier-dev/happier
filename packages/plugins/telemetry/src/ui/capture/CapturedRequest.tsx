@@ -261,7 +261,7 @@ export function CapturedLogLines({
     );
   };
   return (
-    <Stack gap="xsmall" testID={`${testIDPrefix}.logs`} style={CAPTURE_LOG_LINES_INSET}>
+    <Stack gap="none" testID={`${testIDPrefix}.logs`} style={CAPTURE_LOG_LINES_INSET}>
       {logs.map((log) => (
         <CapturedLogLine
           key={log.id}
@@ -351,16 +351,14 @@ function CapturedLogLine({
   // under its own first word rather than back under the clock.
   const line = (
     <LogLine
+      gutter={{ value: clock }}
       prefix={
-        <Stack gap="none" testID={testID ? `${testID}.prefix` : undefined}>
-          <Text variant="code" selectable={!truncated}>
-            <Text variant="code" tone="secondary" value={`${clock}  `} />
-            <Text variant="code" tone={tone} value={severity} />
-            {service === null ? null : <Text variant="code" tone="secondary" value={`  ${service}`} />}
-            <Text variant="code" value="  " />
-          </Text>
-        </Stack>
+        <>
+          <Text variant="code" tone={tone} value={severity} selectable={!truncated} />
+          {service === null ? null : <Text variant="code" tone="secondary" value={service} selectable={!truncated} />}
+        </>
       }
+      prefixTestID={testID ? `${testID}.prefix` : undefined}
       message={message === null ? undefined : {
         selectable: !truncated,
         tone: body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral',
