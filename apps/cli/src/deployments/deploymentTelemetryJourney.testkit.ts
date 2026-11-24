@@ -203,6 +203,7 @@ export type ProductionTelemetryCollectorAppJourney = (context: Readonly<{
     machineId: string; environmentId: string;
     restart(): Promise<void>; stop(): Promise<void>; start(): Promise<void>;
     prepareEnvironment(environmentId: string): Promise<void>;
+    readCollectorActionFailures(): Promise<readonly unknown[]>;
 }>>;
 
 /** Extends the incumbent journey's real Home/daemon/approval helpers. This native
@@ -1139,6 +1140,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                             machineId: home.machineId, credentials, signal: lifetime.signal });
                         await runProductionCostsJourney({ serverId: home.serverId, serverUrl: home.baseUrl, environmentId, appUrl: movedAppUrl,
                             signal: lifetime.signal, agentSessionId, collectorMachineId: secondCollector.machineId,
+                            readCollectorActionFailures: secondCollector.readCollectorActionFailures,
                             owner: { accountId: home.accountId, accepted }, teammate, collectorAccount: collectorOperator });
                     }
                     if (process.env.HAPPIER_RUN_DBW_EXCEPTIONS_F18A === '1') {

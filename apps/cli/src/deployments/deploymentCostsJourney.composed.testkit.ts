@@ -7,6 +7,9 @@ import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFact
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { randomUUID } from 'node:crypto';
 import { ApiClient } from '@/api/api';
+import * as accountActionTransport from '@/api/externalActionExecutionAuthorization';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { configuration } from '@/configuration';
@@ -49,6 +52,7 @@ export async function runProductionCostsJourney(input: Readonly<{
     agentSessionId: string;
     owner: Viewer; teammate: Viewer;
     collectorMachineId: string;
+    readCollectorActionFailures(): Promise<readonly unknown[]>;
     collectorAccount: Viewer & { credentials: ReturnType<typeof readS0ControllerCredentials> };
 }>) {
     expect(input.owner.accountId).not.toBe(input.teammate.accountId);
@@ -115,22 +119,47 @@ export async function runProductionCostsJourney(input: Readonly<{
         expect(ownerRead.items.find(item => item.reportedCost)?.reportedCost).toEqual({ amount: 0.02, currency: 'USD' });
         expect(JSON.stringify(ownerRead)).not.toMatch(/f17-private-prompt|f17-private-completion|f17-private-tool/);
         const readSpend = async (viewer: Viewer) => {
-            const batch = UsageQueryBatchResultSchema.parse(await viewer.accepted('usage.query', { queries: [{
-                sources: [usageAppCallsSourceId(input.environmentId)],
-                period: { startMs: operands.since, endMs: operands.until }, granularity: 'hour',
-                costBasis: 'api_equivalent', metric: 'cost', includeSeries: true,
-                includeComparison: false, includeQuota: false, includeQuotaHistory: false,
-                includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
-            }] }));
-            const slice = batch.results[0]!;
-            expect(slice.sources.find(source => source.source === 'accounting')).toMatchObject({ status: 'available' });
-            expect(slice.accounting?.totals.eventCount).toBe(4);
-            expect(slice.accounting?.summary?.catalogRevision).toBeTruthy();
-            expect(slice.costFactTotals).toEqual(expect.arrayContaining([
-                expect.objectContaining({ kind: 'reported', amountUsd: 0.02, currency: 'USD' }),
-                expect.objectContaining({ kind: 'unpriced', amountUsd: null }),
-            ]));
-            return slice;
+            const transport = vi.spyOn(accountActionTransport, 'dispatchOriginalAccountAction');
+            try {
+                const batch = UsageQueryBatchResultSchema.parse(await viewer.accepted('usage.query', { queries: [{
+                    sources: [usageAppCallsSourceId(input.environmentId)],
+                    period: { startMs: operands.since, endMs: operands.until }, granularity: 'hour',
+                    costBasis: 'api_equivalent', metric: 'cost', includeSeries: true,
+                    includeComparison: false, includeQuota: false, includeQuotaHistory: false,
+                    includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
+                }] }));
+                const slice = batch.results[0]!;
+                const accounting = slice.sources.find(source => source.source === 'accounting');
+                if (accounting?.status !== 'available') {
+                    // The Usage projection only has errorCode. Keep the delivered Action's typed cause separately.
+                    const collectorRequests = await Promise.all(transport.mock.calls.flatMap(([request], index) => {
+                        const call = transport.mock.results[index];
+                        if (request.actionId !== 'action.invoke' || request.target.kind !== 'machine'
+                            || request.target.machineId !== input.collectorMachineId || call?.type !== 'return') return [];
+                        const settlement: Promise<ActionExecuteResult> = call.value;
+                        return [settlement.then(result => ({
+                            requestId: request.requestId,
+                            code: result.ok ? null : result.errorCode,
+                            details: result.ok ? null : result.details ?? null,
+                            failureCause: result.ok ? null : result.failureCause ?? null,
+                        }), () => ({ requestId: request.requestId, settlement: 'rejected' }))];
+                    }));
+                    const collectorFailures = await input.readCollectorActionFailures().catch(() => null);
+                    console.error('F17 priced accounting failure', redactBugReportSensitiveText(JSON.stringify({
+                        viewerAccountId: viewer.accountId, accounting, collectorRequests, collectorFailures,
+                    })));
+                }
+                expect(accounting).toMatchObject({ status: 'available' });
+                expect(slice.accounting?.totals.eventCount).toBe(4);
+                expect(slice.accounting?.summary?.catalogRevision).toBeTruthy();
+                expect(slice.costFactTotals).toEqual(expect.arrayContaining([
+                    expect.objectContaining({ kind: 'reported', amountUsd: 0.02, currency: 'USD' }),
+                    expect.objectContaining({ kind: 'unpriced', amountUsd: null }),
+                ]));
+                return slice;
+            } finally {
+                transport.mockRestore();
+            }
         };
         const ownerSpend = await readSpend(input.owner);
         const teammateSpend = await readSpend(input.teammate);

@@ -186,6 +186,20 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
     await assertReady();
     const domains = new Map<string, Readonly<{ id: string; revision: number; hostname: string }>>();
     return { machineId, environmentId,
+        readCollectorActionFailures: async () => {
+            const { stdout } = await nativeDocker(['exec', containerId, 'sh', '-c',
+                'for log in "$1"/logs/*.log; do [ ! -f "$log" ] || grep -F "Plugin Action failed" "$log"; done; exit 0',
+                'collector-action-diagnostics', homeDir]);
+            const fact = z.object({ pluginId: z.literal('happier.telemetry'), localId: z.literal('capture/costs/read'),
+                requestId: z.string(), code: z.string().optional(), causeClass: z.string().optional(),
+                causeCode: z.string().optional(), projectionCollapsed: z.boolean().optional() });
+            return stdout.split('\n').flatMap(line => {
+                const match = /Plugin Action failed (\{.*\})/.exec(line);
+                if (!match) return [];
+                const parsed = fact.safeParse(JSON.parse(match[1]));
+                return parsed.success ? [parsed.data] : [];
+            });
+        },
         restart: async () => { await nativeDocker(['restart', containerId]); await assertReady(); },
         stop: async () => { await nativeDocker(['stop', containerId]); },
         start: async () => { await nativeDocker(['start', containerId]); await assertReady(); },
