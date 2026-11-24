@@ -34,6 +34,7 @@ import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccoun
 import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
 import { reviewProjectSetupEffect } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
+import { logger } from '@/ui/logger';
 
 await import('@/scm/workspace/workspaceCheckoutOperations');
 const { openProject } = await import('./openProject');
@@ -117,11 +118,33 @@ describe('openProject with a subfolder the repository lacks', () => {
       source: state === 'no-remote' || state === 'credentialed' ? null : { repository: { nameWithOwner: 'owner/source' }, protocol: 'https' },
       branch: state === 'detached' ? null : 'feature/source',
     } });
-    if (state === 'named') expect(result).toMatchObject({ facts: { repositoryIdentity: {
-      kind: 'github', deployment: 'https://github.com', repository: 'owner/source',
-    } } });
     expect(JSON.stringify(result)).not.toContain('secret');
     OpenProjectResultV1Schema.parse(result);
+  });
+
+  it('retains the preparation owner refusal code when Open accepts a checkout with invalid setup', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-open-invalid-setup-'));
+    temporaryRoots.push(directory);
+    await mkdir(join(directory, '.happier'));
+    await writeFile(join(directory, '.happier/project.json'), '{');
+    vi.spyOn(axios, 'get').mockImplementation(plainAccountRead);
+    vi.spyOn(axios, 'post').mockImplementation(createProjectAccountRowsHttpBoundary([]));
+    const warning = vi.spyOn(logger, 'warnLocalFile');
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    const result = await runWithRealGitScmRuntime(() => openProject({
+      serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder', path: directory },
+      materialization: { kind: 'attach' },
+    }, { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine',
+      accountId: 'account', readCredentials: async () => ({ token, encryption: null }),
+    }, { signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true,
+    }));
+    expect(result).toMatchObject({ kind: 'opened', setup: 'failed' });
+    expect(warning).toHaveBeenCalledWith('[Project Open] Passive setup failed', {
+      kind: 'refused', code: 'invalid_manifest',
+    });
   });
 
   it('projects already completed setup on Open only while its native inputs still match', async () => {

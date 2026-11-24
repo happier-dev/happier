@@ -637,7 +637,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         } else {
           setup = prepared.kind === 'pendingApproval' ? 'approvalRequired' : prepared.kind === 'prepared' ? 'prepared' : 'failed';
         }
-        if (setup === 'failed') logger.warnLocalFile('[Project Open] Passive setup failed', { kind: prepared.kind });
+        if (setup === 'failed') logger.warnLocalFile('[Project Open] Passive setup failed', {
+          kind: prepared.kind, ...(prepared.kind === 'refused' ? { code: prepared.code } : {}),
+        });
       } catch (error) {
         logger.warnLocalFile('[Project Open] Passive setup failed', { code: codeOf(error),
           error: error instanceof Error ? error.stack ?? error.message : String(error) });
