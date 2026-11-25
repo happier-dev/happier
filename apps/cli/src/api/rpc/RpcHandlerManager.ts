@@ -1,3 +1,5 @@
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
 import { createSocketRpcContinuation, type SocketRpcContinuationHandler } from '@happier-dev/sync-client';
@@ -233,6 +235,14 @@ function readModelProbeDiagnostic(method: string, value: unknown): ModelProbeDia
     };
 }
 
+export class RpcTransportDisconnect extends Error {
+    readonly code = 'RPC_TARGET_TRANSPORT_DISCONNECTED';
+
+    constructor(readonly transportReason?: string) {
+        super('RPC target transport disconnected');
+    }
+}
+
 export class RpcHandlerManager {
     private handlers: RpcHandlerMap = new Map();
     private readonly scopePrefix: string;
@@ -261,6 +271,8 @@ export class RpcHandlerManager {
     private readonly inFlightRequestCounts = new Map<string, number>();
     private readonly pausedRequestAdmission = new Map<string, PausedRequestAdmission>();
     private activeTransportRequestControllers = new Set<AbortController>();
+    private readonly machineAdmissionSignals = new WeakMap<NonNullable<RpcHandlerContext['verifyMachineAdmissionCurrent']>, AbortSignal>();
+    private readonly retainedTransportDisconnects = new WeakMap<AbortSignal, (reason: RpcTransportDisconnect, abort: () => void) => boolean>();
     /**
      * The authenticated relay stamps this short-lived id immediately before it
      * dispatches here. It is deliberately transport-local: a caller cannot
@@ -1334,6 +1346,13 @@ export class RpcHandlerManager {
                 && targetMethod === RPC_METHODS.PROJECTS_OPEN && machineAdmission?.success
                 && request.projectOpenRequestId !== undefined
                 ? SocketRpcRequestIdSchema.safeParse(request.projectOpenRequestId) : null;
+            const verifyMachineAdmissionCurrent = async () => !controller.signal.aborted;
+            if (source === 'authenticated_home_socket' && machineAdmission?.success
+                && (targetMethod === MACHINE_SETUP_APPLY_ACTION_ID_V1 || targetMethod === MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1
+                    || callerInputAuthorization?.binding.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
+                    || callerInputAuthorization?.binding.actionId === MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1)) {
+                this.machineAdmissionSignals.set(verifyMachineAdmissionCurrent, controller.signal);
+            }
             const handlerContext: RpcHandlerContext = Object.freeze({
                 ...(localActionContext ? { localActionContext } : {}),
                 ...(retainedCheckoutTeardown ? { retainedCheckoutTeardown } : {}),
@@ -1381,7 +1400,7 @@ export class RpcHandlerManager {
                 // Both forms were admitted above; finite work retains only local cancellation.
                 ...(machineAdmission?.success || isServerOriginRequest && serverOriginFamily?.bindsManagedInstallation ? {
                     ...(machineAdmission?.success ? { machineAdmission: machineAdmission.data } : {}),
-                    verifyMachineAdmissionCurrent: async () => !controller.signal.aborted,
+                    verifyMachineAdmissionCurrent,
                 } : {}),
             });
             const result = serviceMoveChild && childFamily === 'service_move'
@@ -1683,19 +1702,34 @@ export class RpcHandlerManager {
             ?.abort(new Error('RPC request cancelled by caller'));
     }
 
-    onSocketDisconnect(): void {
+    /** The admitted native owner can consume one observed transport loss. */
+    captureOriginalTransportSignal(ingress: Pick<RpcHandlerContext, 'signal' | 'verifyMachineAdmissionCurrent'>): AbortSignal {
+        return (ingress.verifyMachineAdmissionCurrent && this.machineAdmissionSignals.get(ingress.verifyMachineAdmissionCurrent)) ?? ingress.signal;
+    }
+
+    retainTransportDisconnect(signal: AbortSignal, retain: (reason: RpcTransportDisconnect, abort: () => void) => boolean): () => void {
+        this.retainedTransportDisconnects.set(signal, retain);
+        return () => this.retainedTransportDisconnects.delete(signal);
+    }
+
+    onSocketDisconnect(transportReason?: string): void {
         this.socket = null;
         this.acknowledgedRegistrationMethods.clear();
         this.settleRegistrationReadinessWaiters('disconnected');
-        this.cancelTransportRequests();
+        this.cancelTransportRequests(transportReason);
     }
 
     /** Retire callers while their reply socket is still available during close. */
-    cancelTransportRequests(): void {
+    cancelTransportRequests(transportReason?: string): void {
         for (const controller of this.activeTransportRequestControllers) {
-            controller.abort(new Error('RPC target transport disconnected'));
+            if (controller.signal.aborted) continue;
+            const reason = new RpcTransportDisconnect(transportReason);
+            if (transportReason && this.retainedTransportDisconnects.get(controller.signal)?.(reason, () => controller.abort(reason))) continue;
+            controller.abort(reason);
         }
-        this.activeTransportRequestControllersByRequestId.clear();
+        for (const [requestId, controller] of this.activeTransportRequestControllersByRequestId) {
+            if (controller.signal.aborted) this.activeTransportRequestControllersByRequestId.delete(requestId);
+        }
     }
 
     async waitForRegisteredHandlers(

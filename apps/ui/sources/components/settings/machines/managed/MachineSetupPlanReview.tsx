@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { TailnetConnectionWarning } from '@/components/machines/TailnetConnectionWarning';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
@@ -66,6 +67,9 @@ export function MachineSetupPlanReview(
   const { theme } = useUnistyles();
   const { prepared, nameOf } = props;
   const targets = 'targets' in prepared.input ? prepared.input.targets : [prepared.input];
+  const changesTailnet = targets.some(target => 'recipePlans' in target && target.recipePlans.some(({ plan }) =>
+    plan.steps.some((step, index) => step.kind === 'command' && step.executable === 'tailscale'
+      && (step.args[0] === 'up' || step.args[0] === 'down') && plan.nativeFacts[index]?.status === 'drifted')));
   const factsOf = (machineId: string) =>
     prepared.facts.find((fact) => fact.machineId === machineId);
   const administrator = groupBy(
@@ -404,6 +408,7 @@ export function MachineSetupPlanReview(
           />
         )}
       </ItemGroup>
+      {changesTailnet ? <TailnetConnectionWarning intent="join" testID={`${props.testID}.tailnet-warning`} /> : null}
     </>
   );
 }

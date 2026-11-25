@@ -194,8 +194,13 @@ describe('Machine → Network page', () => {
     expect(onDraft).not.toHaveBeenCalled();
     expect(onApply).not.toHaveBeenCalled();
   });
-  it.each([false, true])('presents administrator prerequisites and opens Security with retained facts=%s', async retained => {
-    const failure = { ok: false as const, errorCode: 'mode_none', error: 'mode_none' };
+  it.each([
+    [false, 'mode_none'],
+    [true, 'mode_none'],
+    [false, 'not_preauthorized'],
+    [true, 'not_preauthorized'],
+  ] as const)('presents administrator prerequisites with retained facts=%s and code=%s', async (retained, code) => {
+    const failure = { ok: false as const, errorCode: code, error: code };
     const networkFacts = retained ? facts : { posture: null, selections: null, observation: null };
     const read = { kind: 'failed' as const, failure };
     const onOpenSecurity = vi.fn();
@@ -204,23 +209,16 @@ describe('Machine → Network page', () => {
     const notice = retained
       ? findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-refresh-failed' })
       : findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-unavailable' });
-    expect(notice?.props.reason).toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
-    expect(notice?.props.action?.label).toBe(t('machineDetailPage.subPages.security'));
-    notice?.props.action.onPress();
-    expect(onOpenSecurity).toHaveBeenCalledOnce();
+    if (code === 'mode_none') {
+      expect(notice?.props.reason).toBe(t('machineDetailPage.security.reasons.needsAdminToCheck'));
+      expect(notice?.props.action?.label).toBe(t('machineDetailPage.subPages.security'));
+      notice?.props.action.onPress();
+      expect(onOpenSecurity).toHaveBeenCalledOnce();
+    } else {
+      expect(notice?.props.reason).toBe(t('machineDetailPage.security.reasons.restorePasswordlessSudo'));
+      expect(notice?.props.action).toBeUndefined();
+    }
     expect(network.refresh).not.toHaveBeenCalled();
-  });
-  it.each([false, true])('shows console recovery without linking to Security with retained facts=%s', async retained => {
-    const failure = { ok: false as const, errorCode: 'not_preauthorized', error: 'not_preauthorized' };
-    const networkFacts = retained ? facts : { posture: null, selections: null, observation: null };
-    const read = { kind: 'failed' as const, failure };
-    const network = { ...model(read, true), ...presentMachineNetwork({ facts: networkFacts, read, reachable: true }) };
-    const screen = await render(network, true);
-    const notice = retained
-      ? findTestInstanceByTypeWithProps(screen, SurfaceFreshnessLine, { testID: 'machine-network-refresh-failed' })
-      : findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-unavailable' });
-    expect(notice?.props.reason).toBe(t('machineDetailPage.security.reasons.restorePasswordlessSudo'));
-    expect(notice?.props.action).toBeUndefined();
   });
   it('keeps the last-reported facts at full strength while the Machine is offline, and says so once', async () => {
     const screen = await render(model({ kind: 'settled' }, false), false);
@@ -623,7 +621,7 @@ describe('Machine → Network page', () => {
     expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'machine-network-private-join-0' })).toBeFalsy();
   });
 
-  it('offers Leave only for a network whose exact saved selection is known, and reviews that exact change', async () => {
+  it('reviews Leave for observed Tailscale membership with or without a saved selection', async () => {
     const selection = { provider: { kind: 'builtin' as const, id: 'tailscale' }, config: { profile: 'work' }, credentialRefs: [] };
     const onPrepareChange = vi.fn();
     const withSelection = await render({ ...model({ kind: 'settled' }, true), facts: { ...facts, selections: [selection] } }, true,
@@ -632,8 +630,13 @@ describe('Machine → Network page', () => {
     leave?.props.onPress();
     expect(onPrepareChange).toHaveBeenCalledWith({ kind: 'privateNetwork', intent: 'leave', selection });
 
-    const unknown = await render(model({ kind: 'settled' }, true), true);
-    expect(findTestInstanceByTypeWithProps(unknown, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-leave' })).toBeFalsy();
+    const nativeOnly = await render({ ...model({ kind: 'settled' }, true), facts: { ...facts, posture: null, selections: [] } }, true,
+      { kind: 'idle' }, { onPrepareChange });
+    const nativeLeave = findTestInstanceByTypeWithProps(nativeOnly, RoundButton, { testID: 'machine-network-private-tailscale:tail3c1-leave' });
+    expect(nativeLeave).toBeTruthy();
+    nativeLeave?.props.onPress();
+    expect(onPrepareChange).toHaveBeenLastCalledWith({ kind: 'privateNetwork', intent: 'leave',
+      selection: { provider: selection.provider, config: {}, credentialRefs: [] } });
   });
 
   it('offers Set up for a network that is not on yet, joining with its saved selection', async () => {
@@ -671,6 +674,8 @@ describe('Machine → Network page', () => {
     const screen = await render(model({ kind: 'settled' }, true), true, { kind: 'review', plan: leavePlan });
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-change-private-network' })?.props.detail)
       .toBe('machineDetailPage.network.leaveNetwork');
+    expect(findTestInstanceByTypeWithProps(screen, AttentionBanner, { testID: 'machine-network-tailnet-warning' })?.props.announce)
+      .toBe('alert');
   });
 
   it('tells a Use grantee that Network needs Manage, with no retry and no stale facts', async () => {

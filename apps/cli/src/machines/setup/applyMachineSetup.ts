@@ -95,6 +95,7 @@ export type ApplyMachineSetupInput = Readonly<{
   settleNative?: () => Promise<void>;
   /** Publish setup progress only after the complete native key set is admitted. */
   onAdmitted?: () => Promise<void>;
+  onTailnetMembershipDispatch?: () => Promise<void>;
   /** Native first-presence belongs to the executor that observed it before mutation. */
   onSetupApplied?: (plans: readonly MachineSetupEffectPlanV1[], result: MachineSetupApplyResultV1) => void;
   /** Receiving metadata publication retains these confirmed completions if a later script fails. */
@@ -317,6 +318,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       if (!input.elevation) return fail('admin_access_unavailable');
       const elevated = await runElevatedEffect({ machineId: input.machineId, operationId, signal,
         effect: { kind: 'setupOperation', plans },
+        ...(input.onTailnetMembershipDispatch ? { onTailnetMembershipDispatch: input.onTailnetMembershipDispatch } : {}),
         onSetupApplied: result => { daemonRestartRequired = result.daemonRestartRequired;
           input.onSetupApplied?.(input.plans, result); },
       }, input.elevation);

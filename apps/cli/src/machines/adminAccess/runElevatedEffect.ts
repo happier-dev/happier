@@ -57,6 +57,8 @@ export type RunElevatedEffectInput = Readonly<{
     onRebootDispatch?: () => void | Promise<void>;
     /** Successful root settlement, including an already-satisfied no-op. Host-only. */
     onSetupApplied?: (result: MachineSetupApplyResultV1) => void;
+    /** Retain the receiving transport lifetime at dispatch for an admitted tailnet effect. */
+    onTailnetMembershipDispatch?: () => Promise<void>;
 }>;
 export type MachineElevationDependencies = MachineEffectCliInvocation & Readonly<{
     installationId: string;
@@ -265,7 +267,7 @@ export async function runElevatedAdminAccessTransition(input: RunElevatedAdminAc
 }
 
 /** One target-daemon operation, using the existing task's transient prompt custody. */
-async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal' | 'onRebootDispatch' | 'onSetupApplied'>,
+async function runElevatedProcess(input: Omit<RunElevatedEffectInput, 'effect'>,
     dependencies: MachineElevationDependencies, request: ElevatedRequest,
     transitionAuthentication?: MachineAdminAccessV1, transitionObservation?: MachineAdminAccessObservationV1): Promise<ElevatedProcessResult> {
     const result = await runElevatedProcessInternal(input, dependencies, request, transitionAuthentication, transitionObservation);
@@ -279,7 +281,7 @@ async function runElevatedProcess(input: Pick<RunElevatedEffectInput, 'machineId
     return result;
 }
 
-async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'machineId' | 'operationId' | 'signal' | 'onRebootDispatch' | 'onSetupApplied'>,
+async function runElevatedProcessInternal(input: Omit<RunElevatedEffectInput, 'effect'>,
     dependencies: MachineElevationDependencies, request: ElevatedRequest,
     transitionAuthentication?: MachineAdminAccessV1, transitionObservation?: MachineAdminAccessObservationV1): Promise<ElevatedProcessResult> {
     type Refusal = Extract<MachineElevatedResultV1, { outcome: 'not_applied' }>;
@@ -514,7 +516,12 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
                         const finalRefusal = await currentRefusal(true);
                         if (finalRefusal) { await stop(finalRefusal); continue; }
                     }
-                    planSent = request.kind === 'apply' && !request.firewall || request.kind === 'nativeApply';
+                    const dispatchesPlan = request.kind === 'apply' && !request.firewall || request.kind === 'nativeApply';
+                    if (dispatchesPlan && input.onTailnetMembershipDispatch) {
+                        await input.onTailnetMembershipDispatch();
+                        if (input.signal?.aborted) { await stop('cancelled'); continue; }
+                    }
+                    planSent = dispatchesPlan;
                     try {
                         await writeFrame(child.stdin, JSON.stringify(frame) + '\n', !connectorSession && !firewall && (planSent || request.kind === 'check'));
                         if (connectorSession) {

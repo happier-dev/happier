@@ -3716,6 +3716,15 @@ editor or the complete live journey has been verified.
 
 #### Machine setup and bootstrap ownership
 
+On Linux, an admitted native Tailscale membership change can preserve its current
+request through one transport disconnect when the direct Home IPv4 endpoint is in
+`100.64.0.0/10` and the kernel routes it outside `tailscale0` at dispatch. The
+daemon's connection supervisor supplies the reconnect result. The Machine content
+key must match before the owner can publish confirmed native results through the
+refreshed metadata port and its existing revision check. Caller Stop and the
+operation deadline still apply. Network displays observed native membership and
+offers reviewed Leave even for membership established outside Happier.
+
 Bound-target Setup reports use the existing managed resource identity and controller
 installation, without an enrolled guest Machine. The existing Setup report owner
 retains lifecycle state and operation identity. Retry source facts belong to the

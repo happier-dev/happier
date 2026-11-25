@@ -99,6 +99,35 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     expect(configured).toMatchObject({ status: 'outcome_unknown', errorCode: 'native_effect_failed' });
   });
 
+  it('observes native Tailscale membership without a saved selection and leaves through the reviewed Action', async () => {
+    const selected = builtin(false);
+    const f = await journey('external', [], {
+      authoredProvider: createDockerNetworkAuthoredProvider(false, true), providerSelection: selected, builtinTailscale: true,
+    });
+    const { metadata: { reachabilityPosture: _posture, ...metadata }, metadataVersion } = f.metadata.read();
+    expect(await f.metadata.port.compareAndSwap({ expectedMetadataVersion: metadataVersion, metadata }))
+      .toMatchObject({ status: 'applied' });
+    await f.hostNative.setNativeSshPort(null);
+    const request = { serverId: 'generic-home', machineId };
+    expect(await inspectMachineReachability(request, f.dependencies(f.context()))).toMatchObject({
+      posture: null, selections: [],
+      observation: { privateNetworks: [{ provider: selected.provider, state: 'ready' }] },
+    });
+    expect(f.hostNative.calls.filter(command => command.args[0] === 'status' && command.executable.endsWith('tailscale'))).toHaveLength(1);
+    const review = parseReachabilityInspectResult(await inspectMachineReachability({ ...request,
+      change: { kind: 'privateNetwork', intent: 'leave', selection: selected },
+    }, f.dependencies(f.context())));
+    expect(review.plan?.basis.nativeProfiles).toEqual([{ provider: selected.provider,
+      profileId: 'observed-native-profile', networkIdentity: 'example.ts.net' }]);
+    const configured = await executeMachineReachabilityTransition(f.configureInput(review),
+      f.dependencies({ ...f.context(), operationAcceptance: {
+        operationId: 'native-membership-leave', actionId: 'machines.reachability.configure', accept() {},
+      } }));
+    expect(configured).toMatchObject({ status: 'applied', observation: { privateNetworks: [] } });
+    expect(f.hostNative.tailscaleMutations).toEqual([['down']]);
+    expect(f.metadata.read()).toMatchObject({ metadata: { accessProviderSelections: [] }, metadataVersion: metadataVersion + 1 });
+  });
+
   // Reuse the generic journey's Server QB87 Home-acquisition budget. The
   // observable Action bodies keep the CLI's unchanged 30-second budget.
   describe('without a selected key', () => {

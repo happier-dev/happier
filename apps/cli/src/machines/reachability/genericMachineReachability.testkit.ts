@@ -1160,7 +1160,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
         return ok(JSON.stringify([{ id: tailscaleProfileId, selected: true, nickname: 'Observed profile',
           tailnet: 'example.ts.net', account: 'fixture@example.test' }]));
       }
-      if (args[0] === 'debug') return ok(JSON.stringify({ OperatorUser: tailscaleOperator }));
+      if (args[0] === 'debug') return ok(JSON.stringify({ OperatorUser: tailscaleOperator, WantRunning: tailscaleState === 'Running' }));
       tailscaleMutations.push([...args]); networkMutations++;
       if (args[0] === 'down') tailscaleState = 'Stopped';
       else if (args[0] === 'up') {

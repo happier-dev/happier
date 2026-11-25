@@ -14,6 +14,7 @@ import {
 import { MachineReachabilityConfigureFailureDetailsV1Schema, type MachineReachabilityChangeV1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { TailnetConnectionWarning } from '@/components/machines/TailnetConnectionWarning';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -263,6 +264,7 @@ export function MachineNetworkView(
         machineName={machine}
         controls={props.controls}
         editable={editable}
+        canReview={canReview}
         onConnectAccount={props.onConnectAccount}
       />
       <PortsGroup
@@ -745,6 +747,7 @@ function PrivateNetworksGroup(
     machineName: string;
     controls: ReviewControls;
     editable: boolean;
+    canReview: boolean;
     onConnectAccount?: () => void;
   }>,
 ) {
@@ -753,7 +756,7 @@ function PrivateNetworksGroup(
   const entries = access?.privateNetworks ?? [];
   const join = access?.privateNetworkJoin;
   // Membership changes go through the same one review; never while another change is pending.
-  const canChange = props.editable && props.controls.review.kind === 'idle' && props.controls.draft === null;
+  const canChange = props.canReview && props.controls.review.kind === 'idle' && props.controls.draft === null;
   return (
     <ItemGroup
       title={t('machineDetailPage.network.privateTitle')}
@@ -778,8 +781,7 @@ function PrivateNetworksGroup(
             key={privateNetworkKey(network)}
             providerTitle={props.providerTitle}
             network={network}
-            // Only the exact saved selection can be echoed back; without it there is nothing truthful to offer.
-            onChange={canChange && selection
+            onChange={canChange && selection && (network.state === 'ready' || props.editable)
               ? () => props.controls.onPrepareChange({
                   kind: 'privateNetwork', intent: network.state === 'ready' ? 'leave' : 'join', selection,
                 })
@@ -815,7 +817,7 @@ function PrivateNetworksGroup(
 function PrivateNetworkRows(props: Readonly<{
   network: MachinePrivateNetworkObservationV1;
   providerTitle: MachineNetworkProviderTitle;
-  /** Leave when it is on, Set up when it is not; absent when no exact saved selection exists. */
+  /** Review Leave for an active network, or Set up for a retained selection. */
   onChange?: () => void;
 }>) {
   const { network } = props;
@@ -1275,6 +1277,10 @@ function NetworkReviewFoot(
           }}
         />
       </ItemGroup>
+    ) : null}
+    {review.kind === 'review' && change?.kind === 'privateNetwork'
+      && change.selection.provider.kind === 'builtin' && change.selection.provider.id === 'tailscale' ? (
+      <TailnetConnectionWarning intent={change.intent} testID="machine-network-tailnet-warning" />
     ) : null}
     {/* The decision sits after the review's sheet (SectionButtonRow contract), not inside it; a phone pins it. */}
     <NetworkDecision>

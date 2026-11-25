@@ -77,7 +77,7 @@ describe('Network admitted access facts', () => {
     expect(projectMachineNetworkAccessFacts({ posture: null, selections: null, observation: null })).toBeNull();
   });
 
-  it('joins native membership to only the retained Leave selection and keeps its actual on/auth/off states', () => {
+  it('projects the retained or native-only Leave selection and keeps ambiguous choices unavailable', () => {
     const privateNetworks = ['ready', 'needsAuth', 'stopped'].map((state, index) => ({
       provider: index === 0 ? selection.provider : { kind: 'builtin', id: `other-${index}` },
       networkIdentity: `network-${index}`, displayName: null, dnsName: null, addresses: [],
@@ -89,7 +89,9 @@ describe('Network admitted access facts', () => {
     expect(result?.privateNetworks?.[0]?.selection).toBe(selection);
     expect(result?.privateNetworks?.[0]?.network).toBe(native.privateNetworks[0]);
     expect(result?.privateNetworks?.[1]?.selection).toBeNull();
-    expect(projectMachineNetworkAccessFacts({ posture, selections: [], observation: native })?.privateNetworks?.[0]?.selection).toBeNull();
+    expect(projectMachineNetworkAccessFacts({ posture: null, selections: [], observation: native })?.privateNetworks?.[0]?.selection)
+      .toEqual({ provider: selection.provider, config: {}, credentialRefs: [] });
+    expect(projectMachineNetworkAccessFacts({ posture, selections: null, observation: native })?.privateNetworks?.[0]?.selection).toBeNull();
     expect(projectMachineNetworkAccessFacts({ posture, selections: [selection, { ...selection, config: { profileId: 'another' } }],
       observation: native })?.privateNetworks?.[0]?.selection).toBeNull();
   });

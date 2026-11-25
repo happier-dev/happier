@@ -10,6 +10,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { createReachabilityProviderHost } from './reachabilityProviderHost';
 
 /** Typed observation refusal; the host phase owns whether effects preceded it. */
@@ -26,6 +27,7 @@ export const accessProviderSelectionsField: MachineMetadataFieldDefinitionV1<Acc
   defaultValue: () => [], equal: sameStrictJsonValue,
 };
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+export const builtinTailscaleMembershipSelection = createBuiltinRelayAccessSelection('tailscale');
 
 /** The existing daemon field supplies history; no separate producer cache exists. */
 export function projectMachineReachabilityObservation(previous: MachineReachabilityObservationV1 | undefined,
@@ -80,7 +82,7 @@ export async function readMachineReachabilityMetadata(port: MachineMetadataField
   return { metadataVersion: snapshot.metadataVersion, posture: posture.policy, selections: selections.policy };
 }
 
-/** Native membership remains a demanded fact; missing metadata invents no SSH state. */
+/** Retained selections carry diagnostics; native discovery contributes active membership. */
 export async function observeMachineReachability(input: Readonly<{
   state: Awaited<ReturnType<typeof readMachineReachabilityMetadata>>;
   providers: ReturnType<typeof createReachabilityProviderHost>;
@@ -95,13 +97,18 @@ export async function observeMachineReachability(input: Readonly<{
   const retainedDemand = additional && 'kind' in additional.provider ? priorDemand.filter(selection =>
     !accessProviderRefsEqualV1(selection.provider, additional.provider)) : priorDemand;
   const demanded = [...retainedDemand,
-    ...(input.additionalSelection ? [input.additionalSelection] : [])]
+    ...(additional ? [additional] : [])]
     .filter((selection, index, all) => all.findIndex(candidate => sameStrictJsonValue(candidate, selection)) === index);
+  const nativeDiscovery = demanded.some(selection =>
+    accessProviderRefsEqualV1(selection.provider, builtinTailscaleMembershipSelection.provider))
+    ? undefined : builtinTailscaleMembershipSelection;
+  if (nativeDiscovery) demanded.push(nativeDiscovery);
   const observed = await Promise.all(demanded.map(async selection => {
+    const implicit = selection === nativeDiscovery;
     const selected = input.providers.resolve(selection);
-    const networkRequired = input.state.selections.some(candidate => sameStrictJsonValue(candidate, selection))
-      || !!input.additionalSelection && sameStrictJsonValue(input.additionalSelection, selection)
-      || selected.ok && selected.definition.capabilities.includes('privateNetwork');
+    const networkRequired = !implicit && (input.state.selections.some(candidate => sameStrictJsonValue(candidate, selection))
+      || !!additional && sameStrictJsonValue(additional, selection)
+      || selected.ok && selected.definition.capabilities.includes('privateNetwork'));
     if (!selected.ok) return { selection, networkRequired, state: 'unavailable' as const, code: selected.errorCode };
     const membership = additional && sameStrictJsonValue(additional, selection) ? input.membership : undefined;
     const outcome = await input.providers.invoke(selected.selection, 'inspect', membership ? { membershipIntent: membership.intent } : {});
@@ -121,7 +128,8 @@ export async function observeMachineReachability(input: Readonly<{
       return { selection, networkRequired, state: 'unknown' as const, code: 'invalid_action_output' };
     }
     if (membership && outcome.result.facts.membership) membership.observe(outcome.result.facts.membership);
-    return { selection, networkRequired, state: outcome.result.facts.state, ...(network ? { network } : {}) };
+    return { selection, networkRequired, state: outcome.result.facts.state,
+      ...(network && (!implicit || network.state === 'ready') ? { network } : {}) };
   }));
   if (!await input.isCurrent()) return refuse('approval_stale');
   const ingress: MachineReachabilityObservationV1['ingress'] = [];

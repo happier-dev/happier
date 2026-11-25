@@ -8,8 +8,10 @@ import { accessProviderRefsEqualV1, type AccessProviderSelectionV1 } from '@happ
 import type { MachineReachabilityChangeV1 } from '@happier-dev/protocol';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { relayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess/catalog';
+import { createBuiltinRelayAccessSelection, relayAccessProviderDescriptors } from '@happier-dev/cli-common/relayAccess/catalog';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+
+const builtinTailscaleMembershipSelection = createBuiltinRelayAccessSelection('tailscale');
 
 type NativeSshEndpoints = Extract<MachineReachabilityObservationV1['nativeFirewall'], { status: 'available' }>['retainedSshEndpoints'];
 type Input = Readonly<{
@@ -41,7 +43,7 @@ export type MachineNetworkAccessFacts = Readonly<{
   }> | null;
   privateNetworks: readonly Readonly<{
     network: MachineReachabilityObservationV1['privateNetworks'][number];
-    /** Only this retained exact selection can be echoed to reviewed Leave. */
+    /** The retained exact selection or the active native Tailscale selection for reviewed Leave. */
     selection: AccessProviderSelectionV1 | null;
   }>[] | null;
   privateNetworkJoin: MachineNetworkPrivateNetworkJoin;
@@ -79,9 +81,10 @@ export function projectMachineNetworkAccessFacts({ posture, selections, observat
     },
     privateNetworks: observation?.privateNetworks.map(network => {
       const matching = selections?.filter(candidate => accessProviderRefsEqualV1(candidate.provider, network.provider)) ?? [];
-      // Native observations identify a provider, not its config. Several retained
-      // selections for that provider cannot authorize choosing one for Leave.
-      return { network, selection: matching.length === 1 ? matching[0]! : null };
+      const nativeOnly = selections !== null && matching.length === 0 && network.state === 'ready'
+        && accessProviderRefsEqualV1(network.provider, builtinTailscaleMembershipSelection.provider);
+      return { network, selection: matching.length === 1 ? matching[0]!
+        : nativeOnly ? builtinTailscaleMembershipSelection : null };
     }) ?? null,
     privateNetworkJoin,
   };

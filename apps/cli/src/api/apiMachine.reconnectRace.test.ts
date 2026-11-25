@@ -9,7 +9,7 @@ import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol
 
 import { bindApiSessionSocketSequenceMock, createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { logger } from '@/ui/logger';
-import { ApiMachineClient } from './apiMachine';
+import { ApiMachineClient, type ApiMachineClientLifecycleDependencies } from './apiMachine';
 import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 
 const ioMock = vi.hoisted(() => vi.fn());
@@ -54,14 +54,14 @@ function createSocket(id: string): ApiSessionSocketStub {
     });
 }
 
-function createClient() {
+function createClient(dependencies?: ApiMachineClientLifecycleDependencies) {
     const client = new ApiMachineClient('token', {
         id: 'machine-1', encryptionMode: 'plain',
         metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
     }, {
         runtimeId: 'runtime-dev', cliVersion: '0.2.4-dev', publicReleaseChannel: 'dev',
         startupSource: 'manual', serviceManaged: false,
-    });
+    }, dependencies);
     clients.push(client);
     client.onConnectionStateChange(state => states.set(client, state));
     return client;
@@ -77,11 +77,11 @@ function expectTransfer(socket: ApiSessionSocketStub) {
     expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, expect.objectContaining({ targetMachineId: 'machine-2' }));
 }
 
-async function connectPair() {
+async function connectPair(dependencies?: ApiMachineClientLifecycleDependencies) {
     const first = createSocket('first');
     const second = createSocket('second');
     bindApiSessionSocketSequenceMock(ioMock, [first, second]);
-    const client = createClient();
+    const client = createClient(dependencies);
     const onConnect = vi.fn();
     const ownershipConflict = vi.fn();
     client.connect({ onConnect, onOwnershipConflict: ownershipConflict });
@@ -188,6 +188,54 @@ describe('ApiMachineClient reconnect race handling', () => {
         pair.first.disconnect();
         sendTransfer(pair.client);
         expect(pair.first.emit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE, expect.anything());
+    });
+
+    it.each(['same key', 'changed key', 'second drop', 'caller stop', 'failed reconnect'] as const)(
+        'settles admitted membership after a transport loss (%s)', async outcome => {
+        const refresh = Promise.withResolvers<void>();
+        const pair = await connectPair({ loadMachine: async () => {
+            await refresh.promise;
+            return { id: 'machine-1', encryptionMode: 'plain', dataEncryptionKey: outcome === 'changed key' ? 'replacement' : null,
+                metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 1 };
+        } });
+        const admitted = Promise.withResolvers<AbortSignal>();
+        const nativeFinished = Promise.withResolvers<void>();
+        const settled = Promise.withResolvers<unknown>();
+        pair.client.getMachineRoleRpcHandlerManager().registerHandler('neutral.membership', async (_input, context) => {
+            const recovery = pair.client.captureTailnetMembershipReconnect(context);
+            admitted.resolve(context.signal);
+            await nativeFinished.promise;
+            try {
+                context.signal.throwIfAborted();
+                settled.resolve(await recovery.currentPort(context.signal) ? 'continued' : 'no-reconnect-port');
+            } catch (error) { settled.resolve(error); }
+            finally { recovery.dispose(); }
+            return { ok: true };
+        });
+        const method = 'machine-1:neutral.membership';
+        const params = await socketRpcCodec.encodeParams({ mode: 'plain' }, {}, { method, callId: '0123456789abcdef0123456789abcdef' });
+        const requestId = 'rpc_23b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
+        pair.first.trigger(SOCKET_RPC_EVENTS.REQUEST, { method, params, requestId }, vi.fn());
+        const signal = await admitted.promise;
+        if (outcome === 'failed reconnect') probeReadiness.mockRejectedValueOnce(new Error('Home unreachable'));
+        pair.first.disconnect();
+        refresh.resolve();
+        if (outcome === 'caller stop' || outcome === 'second drop') {
+            await vi.waitFor(() => expect(pair.onConnect).toHaveBeenCalledTimes(2));
+            if (outcome === 'caller stop') pair.second.trigger(SOCKET_RPC_EVENTS.CANCEL, { requestId });
+            else pair.second.disconnect();
+        }
+        nativeFinished.resolve();
+        if (outcome === 'changed key') {
+            await expect(settled.promise).resolves.toMatchObject({ code: 'machine_setup_record_not_saved' });
+        } else if (outcome === 'caller stop') {
+            await expect(settled.promise).resolves.toMatchObject({ message: 'RPC request cancelled by caller' });
+        } else if (outcome === 'second drop' || outcome === 'failed reconnect') {
+            await expect(settled.promise).resolves.toMatchObject({ code: 'RPC_TARGET_TRANSPORT_DISCONNECTED', transportReason: 'transport close' });
+        } else {
+            await expect(settled.promise).resolves.toBe('continued');
+            expect(signal.aborted).toBe(false);
+        }
     });
 
     it('does not let queued auth failure callbacks from an older transport clear the current socket', async () => {

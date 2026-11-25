@@ -16,7 +16,9 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { isMachineSetupRecipeItemV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { machineSetupSourceOriginKeyV1, reviewMachineSetupSourceChangeV1,
   MachineSetupSourceV1Schema, type MachineSetupDesiredV1, type MachineSetupSourceV1 } from '@happier-dev/protocol';
+import { mutateMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createProjectNativeInvocationCustody, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
@@ -41,6 +43,8 @@ import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/co
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { withReachabilityJoinCredential } from '../reachability/prepareReachabilityJoinCredential';
+import { builtinTailscaleMembershipSelection } from '../reachability/readMachineReachability';
+import { accessProviderRefsEqualV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { createManagedPresetHydrator } from '../managed/presetHydration';
 import { readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { hydrateManagedOpaqueSetupSourcesV1, projectManagedOpaqueSetupSourcesV1,
@@ -373,6 +377,7 @@ type MachineSetupActionParameters = Readonly<{
   machineId: string;
   homeId: string;
   installation: MachineSetupInstallation;
+  ingress?: Pick<RpcHandlerContext, 'signal' | 'verifyMachineAdmissionCurrent'>;
 }>;
 
 export function createMachineSetupAction(params: MachineSetupActionParameters): MachineSetupTargetAction {
@@ -426,6 +431,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         (await import('@/plugins/runtime/reload/runtimeLease')).acquireAuthoritativePluginRuntimeRegistryLease)();
       let reportedRunning = false;
       let nativeStarted = false;
+      let tailnetReconnect: Awaited<ReturnType<ApiMachineClient['admitTailnetMembershipReconnect']>>;
       let receiverHostKeys: readonly MachineSetupNativeSshHostKeyV1[] = [];
       const phase = mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply';
       const report = async (state: 'running' | 'succeeded' | 'failed', errorCode?: string) => {
@@ -603,7 +609,13 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         const io = createProjectNativeIo({ ownerRemainder: params.ownerRemainder }).environmentIo.createInvocation({ signal: cancellationSignal, retainCapture: custody.retain });
         const elevation = reviewedRecipePlans.length || input.removalPlans?.length ? readElevation() : undefined;
         const completedScripts = new Set<number>();
+        const ingress = params.ingress;
+        const canRetainTailnetDispatch = ingress && credentialSelection
+          && accessProviderRefsEqualV1(credentialSelection.provider, builtinTailscaleMembershipSelection.provider);
         const nativeInput = { homeId: input.homeId, machineId: input.machineId,
+          ...(canRetainTailnetDispatch ? { onTailnetMembershipDispatch: async () => {
+            tailnetReconnect = await params.apiMachine.admitTailnetMembershipReconnect(ingress, cancellationSignal);
+          } } : {}),
           produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, processSignal: AbortSignal) => {
             processCredentials ??= params.apiMachine.prepareConnectedAccountProcessEnvironment({
               authorization, requesterAccountId, ...(context.sessionActionOrigin?.caller.sessionId ? { sessionId: context.sessionActionOrigin.caller.sessionId } : {}),
@@ -677,6 +689,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         // even when the first script failed before any completion callback.
         if (result.ok || completedScripts.size > 0 || result.errorCode === 'machine_setup_setup_failed') {
           if (cancellationSignal.aborted) return fail('cancelled');
+          const reconnectedPort = await tailnetReconnect?.currentPort(cancellationSignal);
           if (mode === 'apply' && prepared?.ok) {
             let ordinal = 0;
             for (const [sourceIndex, source] of sources.entries()) {
@@ -695,8 +708,10 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             exclusions, observedSourceFacts,
             ...(!sameStrictJsonValue(sources, originalSources) ? { pendingScriptSources: originalSources } : {}),
           };
-          let written = await desired.apply(desiredWrite, { signal: cancellationSignal });
-          if (written.status === 'locked' || written.status === 'unavailable') {
+          let written = reconnectedPort
+            ? await mutateMachineSetupDesiredV1(desiredWrite, reconnectedPort, { signal: cancellationSignal })
+            : await desired.apply(desiredWrite, { signal: cancellationSignal });
+          if (!reconnectedPort && (written.status === 'locked' || written.status === 'unavailable')) {
             // Admitted, confirmed work finishes: a reconnect with identical content keys
             // writes through the current port under the same revision CAS. A changed key
             // (rotation or revocation) leaves the effects applied and the record unsaved.
@@ -734,6 +749,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         if (reportedRunning) await report('failed', code);
         return { ok: false, ...normalizeActionExecutorThrownError(error, phase), errorCode: code };
       } finally {
+        tailnetReconnect?.dispose();
         try { await processCredentials?.then(prepared => prepared.dispose(), () => undefined); }
         finally {
           try { await recipeLease?.release(); }

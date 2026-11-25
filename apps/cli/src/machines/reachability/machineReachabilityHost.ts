@@ -40,7 +40,7 @@ import { withReachabilityJoinCredential } from './prepareReachabilityJoinCredent
 import { machineConnectorCredentialDirectory as credentialDirectory,
   machineConnectorCredentialFilePath as credentialFilePath } from '@happier-dev/cli-common/machineSetup/credentialFile';
 import { SelectedProfileRefusal, readMachineReachabilityMetadata, observeMachineReachability,
-  reachabilityPostureField, accessProviderSelectionsField } from './readMachineReachability';
+  reachabilityPostureField, accessProviderSelectionsField, builtinTailscaleMembershipSelection } from './readMachineReachability';
 
 export type MachineReachabilityHostDependencies = Readonly<{
   target: Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }>;
@@ -49,6 +49,7 @@ export type MachineReachabilityHostDependencies = Readonly<{
   context: ActionExecutorContext;
   homeRelay?: HomeRelayRoleTarget;
   readPublishedReachability?(): MachineReachabilityObservationV1 | undefined;
+  admitTailnetMembershipReconnect?(): ReturnType<ApiMachineClient['admitTailnetMembershipReconnect']> | undefined;
   isCurrent(): Promise<boolean>;
   agentIsolation: HostAgentIsolationLaunchContext;
   happyHomeDir: string;
@@ -142,6 +143,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   const recipePlans: MachineReachabilityPlanBasisV1['recipePlans'] = [];
   let credentialFileReview: MachineReachabilityPlanBasisV1['credentialFileReview'];
   let membershipEntry: MachineReachabilityPlanBasisV1['recipePlans'][number] | undefined;
+  let removeSavedSelection = false;
   const nativeProfiles: NonNullable<MachineReachabilityPlanBasisV1['nativeProfiles']> = [];
   if (change?.kind === 'posture') {
     const ingress = change.posture.defaultServiceIngress;
@@ -189,9 +191,17 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
       }
     }
     const membership = selected.definition.membership?.[change.intent];
+    const network = observation.privateNetworks.find(candidate =>
+      accessProviderRefsEqualV1(candidate.provider, selected.selection.provider));
+    if (change.intent === 'leave') {
+      const saved = state.selections.filter(selection => accessProviderRefsEqualV1(selection.provider, selected.selection.provider));
+      removeSavedSelection = saved.length > 0 && saved.every(selection => sameStrictJsonValue(selection, selected.selection));
+      const nativeOnly = saved.length === 0 && sameStrictJsonValue(selected.selection, builtinTailscaleMembershipSelection)
+        && network?.state === 'ready' && !!membershipFacts?.profileId;
+      if (!removeSavedSelection && !nativeOnly) return refuse('provider_conflict');
+    }
     if (membershipFacts) nativeProfiles.push({ provider: selected.selection.provider, profileId: membershipFacts.profileId,
-      networkIdentity: observation.privateNetworks.find(network =>
-        accessProviderRefsEqualV1(network.provider, selected.selection.provider))?.networkIdentity ?? null });
+      networkIdentity: network?.networkIdentity ?? null });
     const install = change.intent === 'join' ? selected.definition.install : undefined;
     if (install || membership || credentialPreparation) {
       const desired = await getMachineSetupDesiredV1(deps.port);
@@ -313,7 +323,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
   // that same plan, so prerequisite filtering cannot accidentally execute the
   // membership program before its protected credential is materialized.
   const reviewedMembership = membershipEntry && plan?.basis.recipePlans.find(entry => sameStrictJsonValue(entry, membershipEntry));
-  return { state, providers, observation, plan, membershipEntry: reviewedMembership };
+  return { state, providers, observation, plan, membershipEntry: reviewedMembership, removeSavedSelection };
 }
 
 async function prepareHomeRelay(input: MachineReachabilityInspectInputV1, deps: MachineReachabilityHostDependencies,
@@ -415,11 +425,12 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     const providers = providerHost(deps, 'machines.reachability.configure', current);
     let selectionRecordWritten = false;
     let metadataOutcomeUnknown = false;
+    let metadataPort = deps.port;
     const write = async (change: Exclude<MachineReachabilityChangeV1, { kind: 'homeRelay' }>, joining = false) => {
       if (!await current()) return refuse('plan_changed');
       if (change.kind === 'posture') {
         const result = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: currentState.metadataVersion,
-          expectedPolicy: currentState.posture, policy: change.posture, comparison: 'field' }, deps.port, reachabilityPostureField,
+          expectedPolicy: currentState.posture, policy: change.posture, comparison: 'field' }, metadataPort, reachabilityPostureField,
           { signal: deps.context.signal });
         if (result.status === 'applied' || result.status === 'unchanged' || result.status === 'satisfied') {
           currentState = { ...currentState, metadataVersion: result.metadataVersion, posture: result.policy };
@@ -435,7 +446,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
                 ...currentState.selections.filter(selection => !('kind' in change.selection.provider)
                   || !accessProviderRefsEqualV1(selection.provider, change.selection.provider)), change.selection]
             : currentState.selections.filter(selection => !sameStrictJsonValue(selection, change.selection)), comparison: 'field' },
-          deps.port, accessProviderSelectionsField, { signal: deps.context.signal });
+          metadataPort, accessProviderSelectionsField, { signal: deps.context.signal });
       if (result.status === 'outcomeUnknown') metadataOutcomeUnknown = true;
       if (result.status === 'applied' || result.status === 'unchanged' || result.status === 'satisfied') {
         if (joining && !prepared.state.selections.some(selection => sameStrictJsonValue(selection, change.selection))) selectionRecordWritten = true;
@@ -453,6 +464,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     let setupApplied = false;
     let roleMayHaveChangedMembership = false;
     let cleanupConfirmed = true;
+    let tailnetReconnect: Awaited<ReturnType<ApiMachineClient['admitTailnetMembershipReconnect']>>;
     const restorePriorSelection = async () => {
       if (!selectionRecordWritten) return true;
       try {
@@ -515,6 +527,10 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
         // membership must be the descriptor-owned P20 program, never a second
         // privileged plugin dispatcher or a daemon-readable secret copy.
         if (!membershipEntry) return refuse('access_provider_target_unsupported');
+        const canRetainTailnetDispatch = accessProviderRefsEqualV1(change.selection.provider, builtinTailscaleMembershipSelection.provider);
+        const tailnetDispatch = canRetainTailnetDispatch ? { onTailnetMembershipDispatch: async () => {
+          tailnetReconnect = await deps.admitTailnetMembershipReconnect?.();
+        } } : {};
         const inspectSelectedProfile = async () => {
           if (!await current()) return refuse('plan_changed');
           let outcome: Awaited<ReturnType<typeof providers.invoke>>;
@@ -589,6 +605,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
               anyNativeEffectPossible = true;
               roleMayHaveChangedMembership = true;
               return runElevatedEffect({ machineId: deps.target.machineId, operationId, signal: deps.context.signal,
+                ...tailnetDispatch,
                 onSetupApplied: result => { membershipEffectsApplied = result.completedStepIds.length > 0; },
                 effect: { kind: 'setupOperation', plans: [{ plan: refreshedMembership.plan }] } },
                 { ...deps.elevation, verifyCurrent: credentialCurrent });
@@ -636,6 +653,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
                 anyNativeEffectPossible = true;
                 roleMayHaveChangedMembership = true;
                 return runElevatedEffect({ machineId: deps.target.machineId, operationId, signal: deps.context.signal,
+                  ...tailnetDispatch,
                   effect: { kind: 'setupOperation', plans } }, elevation);
               });
               if (installed.outcome !== 'applied') {
@@ -670,11 +688,11 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           });
           }
         } else {
-          if (!currentState.selections.some(selection => sameStrictJsonValue(selection, change.selection))) return refuse('provider_conflict');
           const left = await machineNativeEffectAdmission.runStage(native, () => {
             anyNativeEffectPossible = true;
             roleMayHaveChangedMembership = true;
             return runElevatedEffect({ machineId: deps.target.machineId, operationId, signal: deps.context.signal,
+              ...tailnetDispatch,
               effect: { kind: 'setupOperation', plans: [{ plan: refreshedMembership.plan }] } }, { ...deps.elevation, verifyCurrent: current });
           });
           if (left.outcome !== 'applied') {
@@ -685,11 +703,14 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
             return refuseMembershipElevation(left);
           }
         }
+        if (tailnetReconnect && deps.context.signal) {
+          metadataPort = await tailnetReconnect.currentPort(deps.context.signal) ?? metadataPort;
+        }
         const observed = await observeMachineReachability({ state: currentState, providers,
           additionalSelection: change.selection, isCurrent: current });
         const network = observed.privateNetworks.find(network => accessProviderRefsEqualV1(network.provider, change.selection.provider));
         if (!network || network.state !== (change.intent === 'join' ? 'ready' : 'stopped')) return refuse('outcome_unknown');
-        if (change.intent === 'leave') await write(change);
+        if (change.intent === 'leave' && prepared.removeSavedSelection) await write(change);
       }
     } catch (error) {
       failureCode = errorCode(error);
@@ -706,7 +727,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
         status = 'outcome_unknown';
         if (!cleanupConfirmed || selectionRecordWritten && !anyNativeEffectPossible || metadataOutcomeUnknown) failureCode = 'recoveryRequired';
       }
-    }
+    } finally { tailnetReconnect?.dispose(); }
     const observed = await observeMachineReachability({ state: currentState, providers,
       isCurrent: deps.isCurrent }).catch(error => {
         if (isPluginError(error) && error.code === 'plugin_exec_termination_incomplete') {

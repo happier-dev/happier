@@ -1571,7 +1571,7 @@ resolveServerFeaturesSnapshot?: () =>
                   const ingress = resolveRequesterIngress(request.context);
                   const { createMachineSetupAction } = await import('@/machines/setup/machineSetupAction');
                   return createMachineSetupAction({ apiMachine: apiMachineForSessions, machineId: params.machineId,
-                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder })({ ...request, input: target,
+                    homeId: origin.serverIdentityId, installation: externalActionInstallationIdentity, ownerRemainder, ingress })({ ...request, input: target,
                       context: { ...request.context, ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
                         verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
                 },

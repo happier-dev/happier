@@ -42,7 +42,8 @@ export type DaemonMachineReachabilityRoutes = Readonly<{
   adminAccess: Pick<DaemonMachineAdminAccessRoutes, 'observer'>;
   ownerRemainder?: OwnerRemainderPort;
   getMachineClient(): Pick<ApiMachineClient, 'updateDaemonState' | 'resolveMachineSetupRuntime'
-    | 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'> & Partial<Pick<ApiMachineClient, 'getMachineReachabilitySnapshot'>> | null;
+    | 'callConnectedClientRpc' | 'isMachineControlRegistrationReady'> & Partial<Pick<ApiMachineClient,
+      'getMachineReachabilitySnapshot' | 'admitTailnetMembershipReconnect'>> | null;
 }>;
 
 /** The current daemon's existing authorities are captured on each admitted call. */
@@ -148,6 +149,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       try {
       const deps = { target, port, context, runtimeRegistry: lease.registry, isCurrent,
         ...(homeRelay ? { homeRelay } : {}),
+        admitTailnetMembershipReconnect: () => client.admitTailnetMembershipReconnect?.(ingress, signal),
         readPublishedReachability: () => client.getMachineReachabilitySnapshot?.(),
         readDaemonProof: () => observeOwnDaemonReachability({ client, custodianAccountId: target.custodianAccountId, signal }),
         happyHomeDir: configuration.happyHomeDir, agentIsolation: options.agentIsolation,

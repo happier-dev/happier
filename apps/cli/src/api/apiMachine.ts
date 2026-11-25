@@ -277,6 +277,7 @@ import { createConnectedServicesProjectionRetryScheduler } from './connectedServ
 import { isConnectedServiceGenerationReconciliationNotAcknowledgeableError } from '@/daemon/connectedServices/accountGroups/generation/reconcileConnectedServiceAuthGroupGenerations';
 import {
     RpcHandlerManager,
+    type RpcTransportDisconnect,
     type RpcHandlerRegistrationReadiness,
 } from './rpc/RpcHandlerManager';
 import type { RpcHandlerActiveExecution, RpcHandlerContext, RpcLocalActionContext } from './rpc/types';
@@ -417,6 +418,7 @@ import {
 } from '@happier-dev/connection-supervisor';
 import { createLoopbackReadinessProbe } from '@/api/connection/createLoopbackReadinessProbe';
 import { createMachineSocketTransport } from '@/api/machine/connection/createMachineSocketTransport';
+import { observeOffTailnetHomeRoute } from '@/api/machine/connection/observeOffTailnetHomeRoute';
 import {
     CURRENT_SESSION_RUNTIME_OPERATION_PROTOCOL_CAPABILITIES_V1,
     publishMachineOperationProtocolCapabilitiesOnSocket,
@@ -769,6 +771,7 @@ export class ApiMachineClient {
     private liveStreamRelayRoutes: DaemonLiveStreamRelayRoutes | null = null;
     private externalSessionStatusDemandListeners = new Set<(payload: ExternalSessionStatusDemandDaemonMessageV1) => void>();
     private connectionStateListeners = new Set<(state: ManagedConnectionState) => void>();
+    private readonly tailnetReconnectListeners = new Set<() => void>();
     private connectionSupervisor: ManagedConnectionSupervisor | null = null;
     private daemonTerminalSessionMutationOutboxes = new Map<string, DaemonSessionClientDurableMutationOutbox>();
     private readonly machineRpcWorkingDirectory: string;
@@ -1350,7 +1353,7 @@ export class ApiMachineClient {
             && this.lifecycleDependencies.isDaemonQuiescing?.() === true;
     }
 
-    private teardownActiveSocket(): void {
+    private teardownActiveSocket(transportReason?: string): void {
         this.machineAdminAccessInspectedTransport = null;
         this.startupAgentIsolation?.controller.abort();
         this.startupAgentIsolation?.settlement.resolve(false);
@@ -1368,7 +1371,7 @@ export class ApiMachineClient {
                 sessionConnectionEpoch: this.activeTransportGeneration,
                 socket: this.socket,
             });
-        this.rpcHandlerManager.onSocketDisconnect();
+        this.rpcHandlerManager.onSocketDisconnect(transportReason);
         this.machineControlReadinessRetry.cancel();
         this.stopKeepAlive();
         const wasReady = this.isMachineControlRegistrationReady();
@@ -1657,7 +1660,7 @@ export class ApiMachineClient {
         if (!this.isActiveTransportGeneration(generation) || this.socket !== socket) {
             return;
         }
-        this.teardownActiveSocket();
+        this.teardownActiveSocket(reason);
     }
 
     private normalizeMachineScopedRpcMethod(method: string): string | null {
@@ -5953,6 +5956,63 @@ export class ApiMachineClient {
         };
     }
 
+    /** Installed native owners arm this at the dispatch edge of their admitted tailnet effect. */
+    async admitTailnetMembershipReconnect(ingress: Pick<RpcHandlerContext, 'signal' | 'verifyMachineAdmissionCurrent'>, signal: AbortSignal) {
+        const socket = this.socket;
+        if (!socket?.connected || this.currentConnectionState.phase !== 'online') return undefined;
+        if (!await observeOffTailnetHomeRoute(this.machineRuntimeServerHttpBaseUrl, signal)) return undefined;
+        if (signal.aborted || socket !== this.socket || !socket.connected) return undefined;
+        return this.captureTailnetMembershipReconnect(ingress);
+    }
+
+    captureTailnetMembershipReconnect(ingress: Pick<RpcHandlerContext, 'signal' | 'verifyMachineAdmissionCurrent'>) {
+        const admittedMachine = this.machine;
+        const transportSignal = this.rpcHandlerManager.captureOriginalTransportSignal(ingress);
+        let recovery: Promise<MachineMetadataFieldPortV1> | undefined;
+        let release = () => {};
+        const forget = this.rpcHandlerManager.retainTransportDisconnect(transportSignal, (reason, abort) => {
+            if (recovery || (reason.transportReason !== 'transport close'
+                && reason.transportReason !== 'transport error' && reason.transportReason !== 'ping timeout')) return false;
+            const stateAtLoss = this.currentConnectionState;
+            const firstAttempt = stateAtLoss.attempt + (stateAtLoss.phase === 'online' ? 1 : 0);
+            const result = Promise.withResolvers<MachineMetadataFieldPortV1>();
+            recovery = result.promise;
+            // Native confirmation can arrive after the connection settles.
+            void recovery.catch(() => {});
+            const finish = (failure?: RpcTransportDisconnect) => {
+                release();
+                if (failure) result.reject(failure);
+                else if (!this.machineContentReady || !sameMachineContentKeyBasis(admittedMachine, this.machine)) {
+                    result.reject(Object.assign(new Error('machine_setup_record_not_saved'), { code: 'machine_setup_record_not_saved' }));
+                } else result.resolve(this.captureMachineMetadataFieldPort());
+            };
+            const onRefresh = () => finish();
+            const onState = (state: ManagedConnectionState) => {
+                if (state.phase === 'auth_failed' || state.phase === 'shutting_down' || state.phase === 'idle'
+                    || state.failure || state.attempt > firstAttempt) {
+                    finish(reason);
+                    abort();
+                }
+            };
+            release = () => {
+                this.tailnetReconnectListeners.delete(onRefresh);
+                this.connectionStateListeners.delete(onState);
+            };
+            this.tailnetReconnectListeners.add(onRefresh);
+            this.connectionStateListeners.add(onState);
+            onState(this.currentConnectionState);
+            return true;
+        });
+        return {
+            currentPort: async (signal: AbortSignal) => {
+                signal.throwIfAborted();
+                transportSignal.throwIfAborted();
+                return recovery ? waitForObservation(recovery, AbortSignal.any([signal, transportSignal])) : undefined;
+            },
+            dispose: () => { forget(); release(); },
+        };
+    }
+
     /** One action's read and CAS remain on its receiving transport/content basis. */
     private captureMachineMetadataFieldPort(): MachineMetadataFieldPortV1 {
         const codec = this.machineContentCodec;
@@ -6196,10 +6256,13 @@ export class ApiMachineClient {
                         if (
                             this.socket !== socket
                             || this.activeTransportGeneration !== transportGeneration
-                            || (!this.machineContentReady && failure?.retryable !== true)
                         ) return;
+                        for (const listener of this.tailnetReconnectListeners) listener();
+                        if (!this.machineContentReady && failure?.retryable !== true) return;
                         // A transient snapshot failure leaves RPC content locked.
                         // Registration can proceed and the readiness owner will recover content.
+                    } else if (isReconnect) {
+                        for (const listener of this.tailnetReconnectListeners) listener();
                     }
                     // Registration carries no execution authority. The server holds early
                     // packets through admission; request authority checks stay unchanged.
