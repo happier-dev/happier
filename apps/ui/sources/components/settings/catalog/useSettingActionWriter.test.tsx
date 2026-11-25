@@ -85,6 +85,61 @@ beforeEach(() => { previousAuth = getCurrentAuth(); });
 afterEach(() => { standardCleanup(); setCurrentAuth(previousAuth); storage.setState(originalState, true); routeParams.current = {}; native.os = 'web'; });
 
 describe('declared setting Action writer', () => {
+    it('reflects an agent’s selected public Services column and scoped reset in the mounted list', async () => {
+        const sibling = { orderedIds: ['state'], placements: {} };
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+            collectionColumnPreferencesV1: { sibling },
+        }) });
+        try {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const { DeploymentEnvironmentRows, SERVICES_APPS_COLLECTION_ID } = await import('@/components/projects/deployments/DeploymentEnvironmentRows');
+            const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+            const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
+            const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui/declarationProjection');
+            const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+            const { createServiceColumnSource } = await import('../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source');
+            const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+            const manifest = PluginManifestV2Schema.parse(createServiceColumnSource().manifest);
+            const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
+                id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+                source: { kind: 'bundled', locator: manifest.id },
+            });
+            const { serverId } = account.scope;
+            const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={{
+                pluginUiProjection: projection, accountLifetime: null, pluginBrowserProjection: null,
+                phase: 'current', interactionEnabled: false, serverId, machineId: null, platform: 'web',
+                clientExecutableActivation: { status: 'ready' }, reloadConnectedAccountProjection() {}, reloadClientExecutables() {},
+            }}>
+                <DeploymentEnvironmentRows testID="agent-column-services" accessibilityLabel="Services" serverId={serverId}
+                    lifetime={null} columns={{ collectionId: SERVICES_APPS_COLLECTION_ID }} items={[{
+                        environment: createDeploymentEnvironmentHeaderV1({ id: 'production', serverId }),
+                        title: 'Production',
+                    }]} />
+            </AppShellPluginUiProjectionValueProvider>);
+            const executor = createDefaultActionExecutor();
+            const agent = { surface: 'agent', authority: 'account_automation', serverId } as const;
+            const anchor = 'appearance.collectionColumns';
+            const fieldId = `${manifest.id}/requests`;
+            const cell = () => screen.findByTestId(`agent-column-services.row.production:column:${fieldId}`);
+            expect(cell()).toBeNull();
+            const preferences = { orderedIds: [fieldId], placements: { [fieldId]: 'pinned' } };
+            await act(async () => {
+                expect(await executor.execute('settings.set', { anchor, value: { collectionId: SERVICES_APPS_COLLECTION_ID, preferences } }, agent))
+                    .toMatchObject({ ok: true });
+            });
+            expect(cell()).not.toBeNull();
+            expect(await executor.execute('settings.get', { anchor }, agent)).toMatchObject({
+                ok: true, result: { value: { sibling, [SERVICES_APPS_COLLECTION_ID]: preferences } },
+            });
+            await act(async () => {
+                expect(await executor.execute('settings.set', { anchor, value: { collectionId: SERVICES_APPS_COLLECTION_ID, preferences: null } }, agent))
+                    .toMatchObject({ ok: true });
+            });
+            expect(cell()).toBeNull();
+            expect(account.persistedSettings.collectionColumnPreferencesV1).toEqual({ sibling });
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
     it('presents failed column writes and withdraws their preview without losing saved choices', async () => {
         const account = await createSecretSettingsTestHarness();
         const columns = [{ id: 'name', title: 'Name', primary: true }, { id: 'state', title: 'State' }];
