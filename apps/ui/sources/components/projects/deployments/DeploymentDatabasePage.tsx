@@ -399,7 +399,8 @@ export function DeploymentDatabasePage(
     const { openWorkbenchPage } = await import(
       '@happier-dev/plugins-database-workbench/happier-plugin-ui/database-workbench-native'
     );
-    const { placement, target } = workbenchTarget.value;
+    const descriptor = workbenchTarget.value;
+    const { placement } = descriptor;
     const serverId = resolvePortableServerIdentityForRoutingId(placement.serverId) ?? placement.serverId;
     const opened = await openWorkbenchPage({
       async openSurface(view, input, options) {
@@ -412,7 +413,7 @@ export function DeploymentDatabasePage(
         });
         if (!result.ok) throw new PluginError({ code: result.reason });
       },
-    }, { target, placement: { ...placement, serverId } }, { mode: 'console' });
+    }, { ...descriptor, placement: { ...placement, serverId } }, { mode: 'console' });
     return opened.status === 'opened' ? { ok: true } : { ok: false, error: 'plugin_surface_open_unavailable' };
   });
   const automationSubject = dataItem?.databaseSubjects?.[props.database];

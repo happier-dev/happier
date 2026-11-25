@@ -19,7 +19,7 @@ import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
-import { encodeWorkbenchRootSubPath, encodeWorkbenchSubPath } from './subPath.js';
+import { encodeWorkbenchSubPath, type WorkbenchTargetDisplay } from './subPath.js';
 import type { WorkbenchClient } from '../models.js';
 import { databaseOperationActions } from '../../operationActions.js';
 import { workbenchTargetKey } from '../../targetIdentity.js';
@@ -28,6 +28,7 @@ type HostOptions = Readonly<{
   /** Page mounts own a location; the services panel has none, so navigation stays local there. */
   pageLocation: boolean;
   pageTarget?: DatabaseTargetV1;
+  pageDisplay?: WorkbenchTargetDisplay;
 }>;
 
 /**
@@ -193,16 +194,16 @@ export function createHostWorkbenchClient(
     },
     async navigate(location, signal) {
       if (!options.pageLocation) return;
-      await hostApi.replacePageLocation(encodeWorkbenchSubPath(location, options.pageTarget), {
+      await hostApi.replacePageLocation(encodeWorkbenchSubPath(location, options.pageTarget, options.pageDisplay), {
         // Every place goes back to the database's root, which a phone shows as the rail (lab tablesp).
-        backLocation: encodeWorkbenchRootSubPath(options.pageTarget),
+        backLocation: encodeWorkbenchSubPath(undefined, options.pageTarget, options.pageDisplay),
         preserveUnsavedChanges: true,
         ...(signal ? { signal } : {}),
       });
     },
     async openRoot() {
       if (!options.pageLocation) return;
-      await hostApi.replacePageLocation(encodeWorkbenchRootSubPath(options.pageTarget), { preserveUnsavedChanges: true });
+      await hostApi.replacePageLocation(encodeWorkbenchSubPath(undefined, options.pageTarget, options.pageDisplay), { preserveUnsavedChanges: true });
     },
     async setUnsavedChanges(value) {
       await hostApi.setUnsavedChanges(value);

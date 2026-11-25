@@ -42,7 +42,7 @@ import {
   useWorkbenchMount,
   WORKBENCH_DISPLAY_PAGE_ROWS,
 } from './mount.js';
-import { decodeWorkbenchSubPath, type WorkbenchPlace } from './subPath.js';
+import { decodeWorkbenchSubPath, type WorkbenchPlace, type WorkbenchTargetDisplay } from './subPath.js';
 import { databaseEngineName } from './engines.js';
 import { bindMountedWorkbench } from './openWorkbench.js';
 
@@ -117,24 +117,25 @@ export function WorkbenchMain(props: Readonly<{ targetKey: string; scope: Workbe
 
 /** The workbench page: the rail beside what it opens; on a phone the rail pushes its choice. */
 function WorkbenchPage(context: RenderContext) {
-  const { target, place, root } = React.useMemo(() => decodeWorkbenchSubPath(context.subPath), [context.subPath]);
+  const { target, display, place, root } = React.useMemo(() => decodeWorkbenchSubPath(context.subPath), [context.subPath]);
   return target
-    ? <LinkedWorkbenchPage context={context} target={target} place={place} root={root} />
+    ? <LinkedWorkbenchPage context={context} target={target} display={display} place={place} root={root} />
     : <MountedWorkbenchPage context={context} launch={readWorkbenchLaunchInput(context)} place={place} root={root} />;
 }
 
-function LinkedWorkbenchPage({ context, target, place, root }: Readonly<{
+function LinkedWorkbenchPage({ context, target, display, place, root }: Readonly<{
   context: RenderContext;
   target: DatabaseTargetV1;
+  display?: WorkbenchTargetDisplay;
   place: WorkbenchPlace;
   root: boolean;
 }>) {
   const translate = usePluginTranslation();
-  const linked = useLinkedWorkbench(context, target);
+  const linked = useLinkedWorkbench(context, target, display);
   if (linked.status === 'loading') return <LoadingState layout="line" rows={1} />;
   if (linked.status === 'unavailable' && target.kind === 'managed_deployment'
     && isPluginError(linked.error) && linked.error.code === 'read_role_setup_required') {
-    return <ReadAccessSetup target={target} onConfigured={linked.retry} />;
+    return <ReadAccessSetup target={target} display={display} onConfigured={linked.retry} />;
   }
   if (linked.status === 'unavailable') return (
     <ErrorState

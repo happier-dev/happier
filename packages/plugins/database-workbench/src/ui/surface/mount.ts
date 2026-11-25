@@ -16,6 +16,7 @@ import {
 import { createConsoleDeviceStorage } from '../consoleDeviceStorage.js';
 import type { WorkbenchClient, WorkbenchLocation } from '../models.js';
 import { createHostWorkbenchClient } from './hostClient.js';
+import type { WorkbenchTargetDisplay } from './subPath.js';
 import { workbenchTargetKey } from '../workbench.js';
 
 /**
@@ -125,7 +126,9 @@ type LinkedWorkbench =
   | (LinkedWorkbenchFailure & { retry(): void })
   | LinkedWorkbenchReady;
 
-export function useLinkedWorkbench(context: RenderContext, target: DatabaseTargetV1): LinkedWorkbench {
+export function useLinkedWorkbench(
+  context: RenderContext, target: DatabaseTargetV1, display: WorkbenchTargetDisplay | undefined,
+): LinkedWorkbench {
   const { hostApi } = context;
   const targetKey = workbenchTargetKey(target);
   const [attempt, setAttempt] = React.useState(0);
@@ -137,7 +140,8 @@ export function useLinkedWorkbench(context: RenderContext, target: DatabaseTarge
     result: LinkedWorkbenchFailure | LinkedWorkbenchReady;
   }>();
   React.useEffect(() => {
-    const client = createHostWorkbenchClient(hostApi, { pageLocation: true, pageTarget: target });
+    const client = createHostWorkbenchClient(hostApi, { pageLocation: true, pageTarget: target,
+      pageDisplay: display });
     let active = true;
     const request = new AbortController();
     void client.describe(target, request.signal).then(

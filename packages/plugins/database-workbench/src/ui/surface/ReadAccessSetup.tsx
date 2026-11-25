@@ -14,12 +14,15 @@ import { Action, Button, CodeBlock, ErrorState, PageHeader, Row, ScrollArea, Sta
 import { SavedSecretChoiceList, type SavedSecretChoiceSelection } from '@happier-dev/plugin-ui/components';
 import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { translateUnverifiedServerNotice } from './connectionCopy.js';
+import { databaseEngineName } from './engines.js';
+import type { WorkbenchTargetDisplay } from './subPath.js';
 
 const attachAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
 const createAction = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
 
-export function ReadAccessSetup({ target, onConfigured }: Readonly<{
+export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
   target: DatabaseManagedDeploymentTargetV1;
+  display?: WorkbenchTargetDisplay;
   onConfigured(): void;
 }>) {
   const t = usePluginTranslation();
@@ -31,6 +34,9 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
     | Readonly<{ kind: 'failure'; execution: PluginActionExecution; recovery: SavedSecretChoiceSelection | null }>
     | null
   >(null);
+  const identity = display
+    ? [databaseEngineName(display.engine), display.label, display.origin].filter(Boolean).join(' · ')
+    : undefined;
   const title = t('plugins.database.readSetup.title', 'Set up read-only access');
   const attachTitle = t('plugins.database.readSetup.attach', 'Use existing read-only login');
   const createTitle = t('plugins.database.readSetup.create', 'Create read-only login');
@@ -86,6 +92,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
       description={editingOff
         ? t('plugins.database.readSetup.editingOff', 'Creating a login changes the database, so it needs database editing. Use a read-only login you already have, or ask an Environment manager to turn editing on.')
         : t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
+      note={identity}
       body={failure}
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
@@ -106,6 +113,7 @@ export function ReadAccessSetup({ target, onConfigured }: Readonly<{
   // One column: the header, the notice, the statements and the action that confirms them share the page's width.
   return <ScrollArea><Stack gap="medium">
     <PageHeader title={attaching ? attachTitle : t('plugins.database.readSetup.review', 'Review the read-only login')}
+      meta={identity ? [{ key: 'database', text: identity }] : undefined}
       description={attaching
         ? t('plugins.database.readSetup.savedSecret', 'Choose the connection URL for a read-only login to {database}. If it isn’t listed, save it in Saved Secrets first.', { database: target.database })
         : t('plugins.database.readSetup.reviewDescription', 'These statements will create {role} and grant it read access to {database}.', { role: review?.role ?? '', database: target.database })} />

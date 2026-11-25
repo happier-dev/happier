@@ -353,7 +353,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const descriptor = databaseTargets?.completeness.complete && databaseTargets.targets.length === 1
                     ? databaseTargets.targets[0] : undefined;
                 const workbenchTarget: DeploymentWorkbenchTargetReadV1 | undefined = selection === undefined ? undefined
-                    : descriptor ? { ok: true, value: { target: descriptor.target, placement: descriptor.placement } }
+                    : descriptor ? { ok: true, value: descriptor }
                         : { ok: false, failure: databaseSubjectFailure ?? failure('database_target_unavailable').failure };
                 // The controller can be unavailable while the saved serving receipt still identifies the native Database.
                 if (databaseSubjectFailure && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId

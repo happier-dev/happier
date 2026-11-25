@@ -39,7 +39,8 @@ import { HappierPageChromeProvider } from '@happier-dev/plugin-ui/presentation';
 import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
-import { activate, renderSurface as renderPage } from './WorkbenchPage.js';
+import { activate, openWorkbenchPage, renderSurface as renderPage } from './WorkbenchPage.js';
+import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { renderSurface as renderRail } from './DatabaseRailTab.js';
 import { WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_VIEW_ID } from './views.js';
 import { encodeWorkbenchRootSubPath } from './subPath.js';
@@ -536,15 +537,28 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it.each(['applied', 'recoverable binding failure', 'binding failure without a secret'] as const)(
-    'reviews the signed Railway preview and handles %s', async (outcome) => {
+  it.each([
+    ['postgresql', 'PostgreSQL', 'applied'],
+    ['mysql', 'MySQL', 'applied'],
+    ['postgresql', 'PostgreSQL', 'recoverable binding failure'],
+    ['postgresql', 'PostgreSQL', 'binding failure without a secret'],
+  ] as const)('identifies Railway %s (%s) through setup, review and %s settlement',
+    async (engine, engineName, outcome) => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
-        targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: 'postgresql' },
-        platformProjectId: 'project', branchId: 'branch', database: 'billing_dev' } as const;
-    const connected = { ...descriptor, target };
+        targetLinkId: 'link', contribution: { pluginId: 'happier.deploy.railway-data', contributionId: engine },
+        platformProjectId: 'project', branchId: 'branch', database: 'railway' } as const;
+    const connected = { ...descriptor, target, engine, label: 'Billing', origin: { label: 'Railway' } };
+    const identity = `${engineName} · Billing · Railway`;
+    const openSurface = vi.fn<PluginUiHostApi['openSurface']>().mockResolvedValue(undefined);
+    await openWorkbenchPage({ openSurface }, connected);
+    const [, , options] = openSurface.mock.calls[0]!;
+    const { serverId, machineId, installationId } = connected.placement;
+    const prefix = `~run-on/${serverId}/${machineId}/${installationId}/`;
+    expect(options?.subPath).toEqual(expect.stringContaining(prefix));
+    const subPath = options?.subPath?.slice(prefix.length);
     const content = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
     const digest = `sha256:${computeSha256HexDigest(content)}`;
-    const statements = ['CREATE ROLE happier_read LOGIN', 'GRANT CONNECT ON DATABASE billing_dev TO happier_read'];
+    const statements = ['CREATE ROLE happier_read LOGIN', 'GRANT SELECT ON railway.* TO happier_read'];
     const create = databaseActionLocalIdV1(DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1);
     const attach = databaseActionLocalIdV1(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1);
     const savedSecretRef = formatSharedSavedSecretRefV1('billing-reader');
@@ -596,7 +610,7 @@ describe('Database workbench surfaces', () => {
         }}>
         {renderPage(context)}
       </PluginUiHostPresentationScope>,
-      subPath: encodeWorkbenchRootSubPath(target),
+      subPath,
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
@@ -614,6 +628,7 @@ describe('Database workbench surfaces', () => {
     try {
       await settle(20);
       if (outcome === 'applied') {
+        expect(document.body.textContent).toContain(identity);
         await fixture.press(await fixture.getByRole('button', { name: attachTitle }));
         expect(await fixture.getByText('Saved secrets are unavailable on this host.')).toBeTruthy();
         await fixture.press(await fixture.getByRole('button', { name: 'Back to setup options' }));
@@ -624,6 +639,7 @@ describe('Database workbench surfaces', () => {
         .toEqual([{ action: create, input: { target, mode: 'preview' } }]);
       expect(daemon.mock.calls.map(([request]) => request.action)).not.toContain(create);
       for (const sql of statements) expect(document.body.textContent).toContain(sql);
+      expect(await fixture.getByText(identity)).toBeTruthy();
       expect(await fixture.getByText('The connection is encrypted, but the provider can’t prove this is your database server.')).toBeTruthy();
       expect(configured).toBe(false);
       await fixture.press(await fixture.getByRole('button', { name: 'Create read-only login' }));

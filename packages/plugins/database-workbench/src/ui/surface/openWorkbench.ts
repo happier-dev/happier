@@ -105,7 +105,7 @@ async function withMountedWorkbench<T>(
 /** Send a location intent through the same surface navigation port on the panel and the Action. */
 export async function openWorkbenchPage(
     ui: Pick<PluginUiHostApi, 'openSurface'>,
-    descriptor: Pick<DatabaseDescriptorV1, 'placement' | 'target'>,
+    descriptor: DatabaseDescriptorV1,
     place?: WorkbenchPlace,
     signal?: AbortSignal,
 ): Promise<ReturnType<typeof resultSchema.parse>> {

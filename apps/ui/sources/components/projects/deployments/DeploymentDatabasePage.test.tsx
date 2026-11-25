@@ -806,7 +806,11 @@ function expectOpenedDatabaseConsole(view: Awaited<ReturnType<typeof renderDatab
   expect([prefix, serverId, machineId, installationId, kind, mode]).toEqual([
     '~run-on', view.serverIdentityId, view.machineId, view.descriptor.placement.installationId, 'target', 'console',
   ]);
-  expect(JSON.parse(new TextDecoder().decode(decodeBase64(selector!, 'base64url')))).toEqual(view.descriptor.target);
+  const { target, engine, label, origin } = view.descriptor;
+  const selected = JSON.parse(new TextDecoder().decode(decodeBase64(selector!, 'base64url')));
+  expect(selected).toEqual(target.kind === 'managed_deployment'
+    ? { target, display: { engine, label, origin: origin.label } }
+    : target);
 }
 
 describe('Environment → Database → Workbench', () => {

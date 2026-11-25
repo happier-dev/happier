@@ -98,7 +98,7 @@ export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Rea
     environment: DeploymentEnvironmentHeaderV1; environmentTitle: string; projectSourceName: string | null;
 }>;
 export type DeploymentWorkbenchTargetReadV1 =
-    | Readonly<{ ok: true; value: Pick<DatabaseDescriptorV1, 'target' | 'placement'> }>
+    | Readonly<{ ok: true; value: DatabaseDescriptorV1 }>
     | Readonly<{ ok: false; failure: DeploymentReadFailureV1 & Pick<ActionExecuteFailure, 'details' | 'failureCause' | 'effectAttempted'> }>;
 export type DeploymentDataServiceReadItemV1 = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
@@ -108,7 +108,7 @@ export type DeploymentDataServiceReadItemV1 = Readonly<{
     databaseSubjects?: Readonly<Record<string, AutomationDatabaseSubjectReadV1>>;
     /** Descriptor discovery can fail independently of the Environment's database facts. */
     databaseSubjectFailure?: DeploymentReadFailureV1;
-    /** The exact descriptor operands for this selected Database page. */
+    /** The descriptor for this selected Database page. */
     workbenchTarget?: DeploymentWorkbenchTargetReadV1;
 }>;
 export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
