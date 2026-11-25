@@ -41,6 +41,9 @@ import { readReviewAttentionV1, readOneReviewAttentionV1, getReviewV1, scanRevie
 import { createRegisteredReviewSourceTestkit } from '../../../../../../packages/plugins/triage/src/reviews/attention.testkit';
 import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import type { ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 // Only HTTP, device credentials and native UI modules are substituted. Account,
 // Artifact, Action, kind-policy and cryptographic owners execute their real logic.
@@ -76,6 +79,7 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
     const requests: string[] = [];
     const artifactBatches: { artifactIds: string[]; projection?: string }[] = [];
     let publicLinkBody: Record<string, unknown> | undefined;
+    const issuedPublicLinks: ArtifactPublicLinkIssuedV1[] = [];
     const publicShare = { id: 'share-1', subject: { kind: 'artifact', id: 'document' }, expiresAt: null, maxUses: null,
         useCount: 0, isConsentRequired: false, createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
     const envelopes: ArtifactRecipientKeyEnvelopeCommitInputV1[] = [];
@@ -106,9 +110,11 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
     setRuntimeFetch(async (url, init) => {
         const target = new URL(String(url));
         if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
+        if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
         expect(target.origin).toBe(home.serverUrl);
         expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${token}`);
         requests.push(`${init?.method ?? 'GET'} ${target.pathname}`);
+        if (target.pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         if (target.pathname === '/v1/account/encryption') return Response.json({ mode, updatedAt: 0 });
         if (target.pathname === '/v1/public-shares') {
             if (init?.method === 'POST') {
@@ -200,7 +206,8 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
     else await account.workflowArtifacts.create({ artifactId: 'document', header, body });
     const context = { serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    return { account, context, executor: createDefaultActionExecutor({ presentUserActionConfirmation: async () => true }), requests, artifactBatches, envelopes, recipientSecret, fingerprint,
+    return { account, context, executor: createDefaultActionExecutor({ presentUserActionConfirmation: async () => true,
+        onPublicLinkIssued: link => { issuedPublicLinks.push(link); } }), requests, artifactBatches, envelopes, recipientSecret, fingerprint, issuedPublicLinks,
         publicLinkBody: () => publicLinkBody,
         stored: () => stored!, setAccess: (value: typeof access) => { access = value; },
         setGrantStatus: (value: number) => { grantStatus = value; }, setCensusCallerEnvelope: (value: string) => { censusCallerEnvelope = value; },
@@ -424,7 +431,7 @@ describe('UI Artifact sharing Action front door', () => {
             expect(requests).not.toContain('/v1/artifacts');
             mixedInstalledPlacement = true;
             expect(await f.executor.execute('home.hub.layout.get', {}, f.context))
-                .toEqual({ ok: false, errorCode: 'widget_catalog_unavailable', error: 'widget_catalog_unavailable' });
+                .toEqual({ ok: false, errorCode: 'widget_catalog_unavailable', error: 'widget_catalog_unavailable', requestId: expect.any(String) });
         } finally { f.account.dispose(); }
     });
     it.each(['widget-area-layout.v1', 'home-hub-layout.v1'])('refuses public publication of %s before transport', async kind => {
@@ -443,11 +450,14 @@ describe('UI Artifact sharing Action front door', () => {
                 ...f.context, presentUserConfirmation: { actionId: 'artifact.public_link.create' },
             });
             expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { publicShare: { id: 'share-1' } } });
-            const url = (created as { result: { url: string } }).result.url;
+            expect(created).not.toHaveProperty('result.url');
+            expect(f.issuedPublicLinks).toHaveLength(1);
+            const url = f.issuedPublicLinks[0]!.url;
             const parsed = new URL(url);
             const local = { url, lookupId: parsed.pathname.split('/').at(-1)!, secret: new URLSearchParams(parsed.hash.slice(1)).get('k')! };
             expect(local.url).toBe(`https://public.example.test/s/${local.lookupId}#k=${local.secret}`);
             expect(local.secret).toBeTruthy();
+            expect(JSON.stringify(created)).not.toContain(local.secret);
             expect(JSON.stringify(f.publicLinkBody())).not.toContain(local.secret);
             if (mode === 'e2ee') expect(openPublicShareDataKeyV1({ encryptedDataKey: String(f.publicLinkBody()!.encryptedDataKey), secret: local.secret })).toHaveLength(32);
             else expect(f.publicLinkBody()).not.toHaveProperty('encryptedDataKey');
