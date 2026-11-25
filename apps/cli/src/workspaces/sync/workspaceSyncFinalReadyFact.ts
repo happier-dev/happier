@@ -69,6 +69,13 @@ export async function readWorkspaceSyncFinalReadyFactAtPath(path: string): Promi
   } catch { return null; }
 }
 
+function requesterCopyBinding(custody: WorkspaceSyncRequesterCopyCustody) {
+  // The target publishes READY before Home stamps the commitment. Later
+  // updates to those timestamps do not change the admitted binding.
+  const { committedAtMs: _committedAtMs, updatedAtMs: _updatedAtMs, ...relationship } = custody.relationship;
+  return { ...custody, relationship };
+}
+
 export function matchesWorkspaceSyncFinalReadyFact(fact: WorkspaceSyncFinalReadyFact, expected: WorkspaceSyncFinalReadyBasis & Readonly<{
   requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
 }>): boolean {
@@ -80,7 +87,7 @@ export function matchesWorkspaceSyncFinalReadyFact(fact: WorkspaceSyncFinalReady
     && fact.policyDigest === expected.policyDigest
     && (expected.requesterCopyCustody === undefined
       ? fact.v === 1
-      : fact.v === 2 && isDeepStrictEqual(fact.requesterCopyCustody, expected.requesterCopyCustody));
+      : fact.v === 2 && isDeepStrictEqual(requesterCopyBinding(fact.requesterCopyCustody), requesterCopyBinding(expected.requesterCopyCustody)));
 }
 
 export async function writeWorkspaceSyncFinalReadyFact(path: string, fact: WorkspaceSyncFinalReadyFactInput): Promise<void> {

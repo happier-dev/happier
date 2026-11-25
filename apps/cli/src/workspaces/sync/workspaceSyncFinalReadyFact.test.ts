@@ -33,9 +33,18 @@ describe('Workspace Sync final READY custody matching', () => {
     expect(matchesWorkspaceSyncFinalReadyFact(requester, basis)).toBe(false);
   });
 
-  it('matches requester custody only when the caller carries the identical binding', () => {
+  it('matches requester custody across commit and resume timestamps while keeping the original binding', () => {
     const expected = { ...basis, requesterCopyCustody: custody };
     expect(matchesWorkspaceSyncFinalReadyFact(requester, expected)).toBe(true);
+    expect(matchesWorkspaceSyncFinalReadyFact(requester, {
+      ...basis, requesterCopyCustody: { ...custody, relationship: { ...custody.relationship, committedAtMs: 2, updatedAtMs: 3 } },
+    })).toBe(true);
+    expect(matchesWorkspaceSyncFinalReadyFact(requester, {
+      ...basis, requesterCopyCustody: { ...custody, relationship: { ...custody.relationship, enabled: false } },
+    })).toBe(false);
+    expect(matchesWorkspaceSyncFinalReadyFact(requester, {
+      ...basis, requesterCopyCustody: { ...custody, relationship: { ...custody.relationship, mode: 'mirror_exactly' } },
+    })).toBe(false);
     expect(matchesWorkspaceSyncFinalReadyFact(installed, expected)).toBe(false);
     expect(matchesWorkspaceSyncFinalReadyFact(requester, {
       ...basis, requesterCopyCustody: { ...custody, actorAccountId: 'requester-b' },
