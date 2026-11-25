@@ -1784,7 +1784,7 @@ describe('automationWorker', () => {
     }
   });
 
-  it('claims scheduled runs only at V3 nextClaimAt without reconciliation claims', async () => {
+  it.each([1, 12])('makes one claim at a shared deadline with %i armed schedules', async (scheduleCount) => {
     vi.useFakeTimers();
     let worker: ReturnType<typeof startAutomationWorker> | undefined;
     try {
@@ -1799,31 +1799,20 @@ describe('automationWorker', () => {
         `happier-automation-worker-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
       );
 
-      mockGet
-        .mockResolvedValueOnce({
-          data: {
-            assignments: [{
-              machineId: 'machine-1',
-              automationId: 'automation-1',
-              nextClaimAt: now + 60_000,
-              executionRecipeVersion: 2,
-            }],
-            settings: DEFAULT_WORKER_SETTINGS,
-          },
-        })
-        .mockResolvedValue({
-          data: {
-            assignments: [{
-              machineId: 'machine-1',
-              automationId: 'automation-1',
-              nextClaimAt: now + 60_000,
-              executionRecipeVersion: 2,
-            }],
-            settings: DEFAULT_WORKER_SETTINGS,
-          },
-        });
+      let assignments = Array.from({ length: scheduleCount }, (_, index) => ({
+        machineId: 'machine-1',
+        automationId: `automation-${index}`,
+        nextClaimAt: now + 60_000,
+        executionRecipeVersion: 2,
+      }));
+      mockGet.mockImplementation(async () => ({ data: { assignments, settings: DEFAULT_WORKER_SETTINGS } }));
+      const assignmentReads = () => mockGet.mock.calls.filter(([url]) => String(url).endsWith('/worker/assignments')).length;
 
-      mockPost.mockResolvedValue({ data: { run: null, automation: null, accountCurrentness: null } });
+      mockPost.mockImplementation(async () => {
+        // The Home advances all rows sharing the deadline after an empty claim.
+        assignments = assignments.map(row => ({ ...row, nextClaimAt: now + 120_000 }));
+        return { data: { run: null, automation: null, accountCurrentness: null } };
+      });
 
       const { reloadConfiguration } = await import('@/configuration');
       reloadConfiguration();
@@ -1841,14 +1830,14 @@ describe('automationWorker', () => {
       });
 
       await worker.refreshAssignments();
+      const readsAfterArming = assignmentReads();
 
-      await vi.advanceTimersByTimeAsync(44_999);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(assignmentReads()).toBe(readsAfterArming);
       expect(mockPost).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
-      expect(mockPost).not.toHaveBeenCalled();
-
-      await vi.advanceTimersByTimeAsync(16_000);
+      await settleRequestDispatch();
       expect(mockPost).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(mockPost).toHaveBeenCalledTimes(1);
