@@ -120,3 +120,25 @@ describe('resolveSessionStartFailureNotice', () => {
         expect(resolveSessionStartFailureNotice({ issue: null, sessionActive: false })).toBeNull();
     });
 });
+
+describe('one cause, one step for a reset Team model connection', () => {
+    const reset = issue({ code: 'team_credential_binding_not_current', source: 'dependency_failure' });
+
+    it('names the queued row\'s Deliver step while a queued message can be delivered, never "send again"', () => {
+        const queued = resolveSessionStartFailureNotice({ issue: reset, sessionActive: false, queuedInputDeliverable: true });
+        const alone = resolveSessionStartFailureNotice({ issue: reset, sessionActive: false });
+        expect(queued?.message).toBe(t('session.startFailure.queuedInputCause.team_credential_binding_not_current'));
+        expect(alone?.message).toBe(t('session.startFailure.cause.team_credential_binding_not_current'));
+        expect(queued?.message).not.toBe(alone?.message);
+        expect(queued?.code).toBe(alone?.code);
+    });
+
+    it('says access was removed, not "reset", when the person is no longer entitled to the Team model', () => {
+        const removed = issue({ code: 'session_team_credential_binding_rejected', source: 'dependency_failure',
+            failureCause: { phase: 'client_start' as const, failureReason: 'unknown' as const, providerErrorCode: 'access_removed' } });
+        for (const queuedInputDeliverable of [true, false]) {
+            expect(resolveSessionStartFailureNotice({ issue: removed, sessionActive: false, queuedInputDeliverable })?.message)
+                .toBe(t('session.startFailure.teamCredentialBinding.access_removed'));
+        }
+    });
+});

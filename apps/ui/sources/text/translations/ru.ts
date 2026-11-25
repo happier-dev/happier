@@ -9032,6 +9032,9 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       },
     },
     startFailure: {
+        queuedInputCause: {
+          team_credential_binding_not_current: "Подключение к модели команды на этой машине было сброшено. Доставьте сообщение из очереди ещё раз.",
+        },
         requestId: ({ id }: { id: string }) => `ID запроса: ${id}`,
       title: "Не удалось запустить эту сессию",
       modelSelectionRequired: "Этой сессии нужна модель, чтобы запуститься.",

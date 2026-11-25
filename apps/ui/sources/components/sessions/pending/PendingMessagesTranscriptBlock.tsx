@@ -358,12 +358,15 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     // Several queued updates from one source read as one notice. Presentation only: every row stays in the
     // queue, in order, with its own delivery; a folded row just paints nothing of its own.
     const pendingActivationActiveAt = session?.activeAt;
+    const sessionActive = session?.active;
+    const sessionLastRuntimeIssue = session?.lastRuntimeIssue;
     const pendingActivationAuthorization = session?.pendingActivationAuthorization;
     const pendingActivationFailureDetails = session?.pendingActivationFailureDetails;
     const pendingPresentation = React.useMemo(() => resolvePendingMessagesPresentation(pendingMessages, { materializingLocalIds, machineAccessRemoved, visibleMessageIds: visiblePendingMessageIds, queueContext,
+        // The failed start's issue lets a row the start-failure banner states keep only its state (one voice).
         session: pendingActivationActiveAt === undefined ? null : { activeAt: pendingActivationActiveAt,
-            pendingActivationAuthorization, pendingActivationFailureDetails } }),
-        [materializingLocalIds, pendingMessages, pendingActivationActiveAt, pendingActivationAuthorization, pendingActivationFailureDetails, machineAccessRemoved, visiblePendingMessageIds, queueContext]);
+            pendingActivationAuthorization, pendingActivationFailureDetails, active: sessionActive, lastRuntimeIssue: sessionLastRuntimeIssue } }),
+        [materializingLocalIds, pendingMessages, pendingActivationActiveAt, pendingActivationAuthorization, pendingActivationFailureDetails, sessionActive, sessionLastRuntimeIssue, machineAccessRemoved, visiblePendingMessageIds, queueContext]);
     const blockedPendingExcerpt = pendingPresentation.blockedMessage ? excerptPendingText(pendingPresentation.blockedMessage) : '';
     const lastShownPendingIndex = pendingPresentation.shownRows.at(-1)?.index ?? -1;
     const notifyLayoutMutation = useTranscriptRowLayoutMutation();
@@ -708,7 +711,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         const blockedDeliveryLabel = presentation.statesBlockedReason && deliveryBlockedPresentation
             ? deliveryBlockedPresentation.message ?? t(deliveryBlockedPresentation.labelKey)
             : null;
-        const deliveryStateAccessibilityLabel = [deliveryStateLabel, blockedDeliveryLabel, queuedReasonLabel]
+        // A block the start-failure banner states keeps "Blocked" on the line; assistive tech still hears that cause here.
+        const startFailureCauseLabel = deliveryBlockedPresentation?.statedByStartFailure ? deliveryBlockedPresentation.message : null;
+        const deliveryStateAccessibilityLabel = [deliveryStateLabel, blockedDeliveryLabel ?? startFailureCauseLabel, queuedReasonLabel]
             .filter((part): part is string => Boolean(part)).join('. ');
         const canUseDirectDeliveryActions = canUseDirectPendingDeliveryActions(message, visualState, session);
         const canSendAsNew = message.pendingRecovery?.canSendAsNew === true;

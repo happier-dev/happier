@@ -7880,6 +7880,9 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
           },
         },
         startFailure: {
+          queuedInputCause: {
+            team_credential_binding_not_current: "La connexió amb el model de l’equip en aquesta màquina s’ha restablert. Torna a lliurar el missatge de la cua.",
+          },
           requestId: ({ id }: { id: string }) => `ID de la sol·licitud: ${id}`,
           title: 'No s’ha pogut iniciar aquesta sessió',
           modelSelectionRequired: "Aquesta sessió necessita un model per poder iniciar-se.",

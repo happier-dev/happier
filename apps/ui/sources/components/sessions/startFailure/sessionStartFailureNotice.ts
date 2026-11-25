@@ -2,6 +2,7 @@ import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/contr
 
 import { presentSessionRuntimeIssue, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import type { ProviderConnectionReviewRecovery } from '@/providers/connection/recovery';
+import { t, type TranslationKeyNoParams } from '@/text';
 
 export type SessionStartFailureNotice = Readonly<{
     code: string;
@@ -14,6 +15,11 @@ export type SessionStartFailureNotice = Readonly<{
     issue: SessionRuntimeIssueV1;
 }>;
 
+/** The causes whose step tells the person to send the message again; with a queued message the step is its Deliver. */
+const QUEUED_INPUT_CAUSE_KEYS: Readonly<Partial<Record<string, TranslationKeyNoParams>>> = {
+    team_credential_binding_not_current: 'session.startFailure.queuedInputCause.team_credential_binding_not_current',
+};
+
 /**
  * A Session that never reached a running runtime keeps the closed startup cause on its primary issue.
  * Only those causes explain "couldn't start"; a failure after a successful start (usage limits,
@@ -23,10 +29,17 @@ export function resolveSessionStartFailureNotice(input: Readonly<{
     issue: SessionRuntimeIssueV1 | null | undefined;
     sessionActive: boolean;
     appliedProviderBinding?: NonNullable<Parameters<typeof presentSessionRuntimeIssue>[1]>['appliedProviderBinding'];
+    /**
+     * A queued message waits to be delivered (`offersPendingDeliverAndResume`): a cause whose step is "send it
+     * again" names that row's Deliver step instead, so following it never sends the message twice.
+     */
+    queuedInputDeliverable?: boolean;
 }>): SessionStartFailureNotice | null {
     const { issue } = input;
     if (input.sessionActive || !issue || issue.scope !== 'primary_session' || issue.status !== 'failed') return null;
-    const message = presentSessionStartupFailureRecovery([issue.code])?.message ?? presentSessionStartupFailureCause(issue.code, issue);
+    const queuedStepKey = input.queuedInputDeliverable ? QUEUED_INPUT_CAUSE_KEYS[issue.code] : undefined;
+    const message = queuedStepKey ? t(queuedStepKey)
+        : presentSessionStartupFailureRecovery([issue.code])?.message ?? presentSessionStartupFailureCause(issue.code, issue);
     const providerFailure = input.appliedProviderBinding
         ? presentSessionRuntimeIssue(issue, { appliedProviderBinding: input.appliedProviderBinding }).providerFailure : null;
     return message === null ? null : {

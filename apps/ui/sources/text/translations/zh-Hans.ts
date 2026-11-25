@@ -8263,6 +8263,9 @@ export const zhHans: TranslationStructure = {
       },
     },
     startFailure: {
+        queuedInputCause: {
+          team_credential_binding_not_current: "此机器上的 Team 模型连接已重置。请重新送达排队中的消息。",
+        },
         requestId: ({ id }: { id: string }) => `请求 ID：${id}`,
       title: "无法启动此会话",
       modelSelectionRequired: "此会话需要先选择模型才能启动。",

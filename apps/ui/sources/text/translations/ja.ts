@@ -8881,6 +8881,9 @@ localTailscale: {
       },
     },
     startFailure: {
+        queuedInputCause: {
+          team_credential_binding_not_current: "このマシンの Team モデルへの接続がリセットされました。キューにあるメッセージをもう一度届けてください。",
+        },
         requestId: ({ id }: { id: string }) => `リクエスト ID: ${id}`,
       title: "このセッションを開始できませんでした",
       modelSelectionRequired: "このセッションを開始するにはモデルが必要です。",

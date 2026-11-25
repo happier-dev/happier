@@ -159,7 +159,7 @@ import { createSessionCompanionPanePresentation } from "@/components/sessions/co
 import type { PaneMainColumnState } from "@/components/appShell/panes/mainColumn/usePaneMainColumn";
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
-import { offersPendingDeliverAndResume } from "@/components/sessions/pending/pendingMessageVisualState";
+import { canUseDirectPendingDeliveryActions, offersPendingDeliverAndResume } from "@/components/sessions/pending/pendingMessageVisualState";
 import { createSessionAgentSignInRoute } from "@/components/sessions/presentation/sessionAgentAuthRequiredPresentation";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
@@ -2490,7 +2490,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
           }
           : null;
       const startFailureNotice = resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true,
-          appliedProviderBinding: readSessionProviderBindingMetadataV1(ownerMetadata) });
+          appliedProviderBinding: readSessionProviderBindingMetadataV1(ownerMetadata),
+          // With a queued message to deliver, the banner's step is that row's Deliver, never "send it again".
+          queuedInputDeliverable: pendingMessages.some(message => canUseDirectPendingDeliveryActions(message, undefined, session)) });
       const startFailureProviderRecovery = startFailureNotice?.providerRecovery;
       const startFailureProviderTarget = startFailureProviderRecovery ? readMachineAdministrationTargetRouteParams({
           machineId: ownerMetadata?.machineId,

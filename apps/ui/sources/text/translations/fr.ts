@@ -8415,6 +8415,9 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       },
     },
     startFailure: {
+        queuedInputCause: {
+          team_credential_binding_not_current: "La connexion au modèle de l’équipe sur cette machine a été réinitialisée. Remettez à nouveau votre message en attente.",
+        },
         requestId: ({ id }: { id: string }) => `Identifiant de requête : ${id}`,
       title: "Impossible de démarrer cette session",
       modelSelectionRequired: "Cette session a besoin d’un modèle pour démarrer.",

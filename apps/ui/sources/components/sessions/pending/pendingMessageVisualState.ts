@@ -76,6 +76,11 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
     recovery?: 'choose_account' | 'new_session';
     /** The cause is the Session's withdrawn Machine access: the row says "Held", as a row held before any claim does. */
     heldByWithdrawal?: true;
+    /**
+     * The block is the Session's failed start: its start-failure banner states the one cause (and `message` carries
+     * that same sentence for readers without the banner); the row's line says only its state.
+     */
+    statedByStartFailure?: true;
 }>;
 
 /**
@@ -85,7 +90,8 @@ export type PendingDeliveryBlockedReasonPresentation = Readonly<{
  * Session owns (its account) is said once by the Session, never on the row.
  */
 export function pendingMessageStatesBlockedReason(visualState: PendingMessageVisualState): boolean {
-    return visualState.deliveryBlockedPresentation !== undefined && visualState.deliveryBlockedPresentation.recovery === undefined;
+    return visualState.deliveryBlockedPresentation !== undefined && visualState.deliveryBlockedPresentation.recovery === undefined
+        && visualState.deliveryBlockedPresentation.statedByStartFailure === undefined;
 }
 
 /** The actual pending paint, shared by the presenter, reorder binding and transcript measurement. */
@@ -335,9 +341,15 @@ export function getPendingDeliveryBlockedReasonPresentation(
     // and a held queued row do, instead of the generic block.
     const cause = machineAccessRemoved && (reason === 'runtime_config_blocked' || reason === 'session_input_target_unavailable')
         ? t('session.accessWithdrawn') : null;
+    // A provider that never took the message because the Session's start failed: the start-failure banner's typed
+    // cause is the one reason, with its step naming this row's Deliver (the row is the queued message).
+    const startFailure = !cause && reason === 'provider_unavailable_before_acceptance' && session
+        ? resolveSessionStartFailureNotice({ issue: session.lastRuntimeIssue, sessionActive: session.active === true,
+            queuedInputDeliverable: true }) : null;
     return {
         labelKey: blockedReasonLabelKeys[reason] ?? blockedReasonLabelKeys.unknown,
         ...(cause ? { message: cause, heldByWithdrawal: true as const } : {}),
+        ...(startFailure ? { message: startFailure.message, statedByStartFailure: true as const } : {}),
         ...(continuation ? { recovery: 'new_session' as const }
             : reason === 'runtime_config_blocked' && !machineAccessRemoved ? { recovery: 'choose_account' as const } : {}),
         isUnknown:

@@ -444,9 +444,11 @@ describe('native prompt loop non-admission recovery', () => {
     );
 });
 
-it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reopens the retained Team broker job after two turns, withdrawal and restoration (%s)', async (recoveryPath) => {
+it.each(['admission', 'runtime_event', 'clear', 'daemon_restart', 'daemon_restart_redeliver'] as const)('reopens the retained Team broker job after two turns, withdrawal and restoration (%s)', async (recoveryPath) => {
     const refusalDelivery = recoveryPath === 'runtime_event' ? 'runtime_event' : 'admission';
-    const daemonRestart = recoveryPath === 'daemon_restart';
+    const daemonRestart = recoveryPath === 'daemon_restart' || recoveryPath === 'daemon_restart_redeliver';
+    // The person delivers the refused queued message again (its row's Deliver), rather than sending a new one.
+    const redeliver = recoveryPath === 'daemon_restart_redeliver';
     // A daemon identity restart keeps access but ends the predecessor's
     // broker endpoint; its successor refuses the retained runtime typed.
     let daemonRestartedWithoutReopen = false;
@@ -566,6 +568,7 @@ it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reo
                 if (index === 3 && !daemonRestart) { revision = 6; available = true; }
                 const prompts = recoveryPath === 'clear'
                     ? ['first', 'second', 'withdrawn', '/clear', 'restored']
+                    : redeliver ? ['first', 'second', 'withdrawn', 'withdrawn']
                     : ['first', 'second', 'withdrawn', 'restored'];
                 if (index === prompts.length) { abort.abort(); return; }
                 const text = prompts[index]!;
@@ -577,7 +580,8 @@ it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reo
         if (daemonRestart) {
             // A stale endpoint is refused cleanly before any effect, read as its
             // own cause; the next input reopens through a fresh binding.
-            expect(completed).toEqual(['first', 'second', 'restored']);
+            // Delivering the refused message again goes through the same fresh-binding admission as a new send.
+            expect(completed).toEqual(['first', 'second', redeliver ? 'withdrawn' : 'restored']);
             expect(failures).toHaveLength(1);
             const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failures[0], startupPhase: 'turn_start' });
             expect(issue.code).toBe('team_credential_binding_not_current');

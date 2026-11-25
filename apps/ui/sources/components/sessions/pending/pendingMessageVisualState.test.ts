@@ -67,6 +67,24 @@ describe('getPendingMessageVisualState', () => {
             expect(pendingMessageStatesBlockedReason(state)).toBe(false);
         }
     });
+    it('lets a row blocked by the failed start read the banner\'s one cause instead of its own provider reason', () => {
+        const session = { activeAt: 0, active: false, pendingActivationAuthorization: undefined, pendingActivationFailureDetails: undefined,
+            lastRuntimeIssue: { v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
+                code: 'team_credential_binding_not_current', source: 'dependency_failure' as const, occurredAt: 1 } };
+        const blocked = pendingMessage({ pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'provider_unavailable_before_acceptance' });
+        const state = getPendingMessageVisualState(blocked, { session });
+        expect(state.kind).toBe('blocked');
+        // The banner says it once; the row's line says only "Blocked", and its own reader hears the banner's words.
+        expect(pendingMessageStatesBlockedReason(state)).toBe(false);
+        expect(state.deliveryBlockedPresentation?.message).toBe(t('session.startFailure.queuedInputCause.team_credential_binding_not_current'));
+        // A person no longer entitled reads the access-removed cause from that same one notice.
+        const removed = getPendingMessageVisualState(blocked, { session: { ...session, lastRuntimeIssue: { ...session.lastRuntimeIssue,
+            code: 'session_team_credential_binding_rejected', failureCause: { phase: 'client_start' as const, failureReason: 'unknown' as const, providerErrorCode: 'access_removed' } } } });
+        expect(pendingMessageStatesBlockedReason(removed)).toBe(false);
+        expect(removed.deliveryBlockedPresentation?.message).toBe(t('session.startFailure.teamCredentialBinding.access_removed'));
+        // A running Session, or one without that start failure, keeps the row's own reason.
+        expect(pendingMessageStatesBlockedReason(getPendingMessageVisualState(blocked, { session: { ...session, active: true } }))).toBe(true);
+    });
     it('paints a launch-owned first message as starting, then as a launch refusal with its typed reason', () => {
         const starting = pendingMessage({ source: 'local_outbound', pendingLaunch: { state: 'starting' } });
         expect(getPendingMessageVisualState(starting)).toEqual({ kind: 'starting', showSpinner: true, iconName: 'cloud-arrow-up' });
