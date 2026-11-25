@@ -1,11 +1,15 @@
 import type { ReviewGetResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import type { ReviewHumanActionStateV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import type { ReviewArtifactV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { retainDeep, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 
-export type ReviewDetailData = Omit<ReviewGetResponseV1, 'human'> & Readonly<{ human: ReviewHumanActionStateV1 }>;
+export type ReviewDetailData = Omit<ReviewGetResponseV1, 'human'> & Readonly<{
+    human: ReviewHumanActionStateV1;
+    partialRound?: ReviewArtifactV1['rounds'][number];
+}>;
 
 export type ReviewDetailSnapshot = Readonly<{
     data: ReviewDetailData | null;

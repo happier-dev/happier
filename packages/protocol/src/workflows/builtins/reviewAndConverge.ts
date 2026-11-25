@@ -115,12 +115,14 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
   blocks.push({ kind: 'action', id: 'settle', name: 'Settle the Review coverage', actionId: 'review.settle_round', input: {
     reviewRound: result('prepare', ['reviewRound']), reviewerResults: { kind: 'list', items: stageIds.map(id => result(id)) },
   } });
-  if (reviewInput.then === 'fix') blocks.push({ kind: 'action', id: 'fix', name: 'Fix accepted findings once', actionId: 'review.apply', input: {
-    reviewId: result('prepare', ['reviewRound', 'reviewId']),
-    sessionId: reviewInput.sessionId ? literal(reviewInput.sessionId) : { kind: 'origin_session_id' },
-  } });
   blocks.push({ kind: 'action', id: 'review-result', name: 'Read the persisted Review result', actionId: 'review.get',
     input: { reviewId: result('prepare', ['reviewRound', 'reviewId']) } });
+  if (reviewInput.then === 'fix') blocks.push({ kind: 'action', id: 'fix', name: 'Fix accepted findings once', actionId: 'review.apply',
+    onlyWhen: { kind: 'compare', operator: 'gt', left: result('review-result', ['review', 'counts', 'total']), right: literal(0) },
+    input: {
+      reviewId: result('prepare', ['reviewRound', 'reviewId']),
+      sessionId: reviewInput.sessionId ? literal(reviewInput.sessionId) : { kind: 'origin_session_id' },
+    } });
   return { definition: { version: 1, defaults: {}, inputs: declarations, blocks, finalOutput: result('review-result') }, inputs };
 }
 

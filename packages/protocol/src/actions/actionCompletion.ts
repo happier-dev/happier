@@ -37,7 +37,7 @@ export type ExecutionRunTerminalObservation =
     reviewOutcome?: ReviewReviewerOutcomeV1['reviewOutcome'];
     quality?: ReviewReviewerOutcomeV1['quality'];
   }>
-  | Readonly<{ kind: 'failed'; code: string; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
+  | Readonly<{ kind: 'failed'; code: string; inputDispatch?: 'not_attempted'; runtimeIssueV1?: SessionRuntimeIssueV1; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'cancelled'; code?: string; reviewedRuns?: readonly ScmDiffSummaryReviewRun[] }>
   | Readonly<{ kind: 'outcome_uncertain'; code: string }>;
 /** A settled run carries its own start and finish from the run record, in epoch ms. */
@@ -93,7 +93,9 @@ function readNativeRunTerminalObservation(native: NativeRunSnapshot, observation
     return { kind: 'outcome_uncertain', code: 'execution_run_output_not_settled' };
   }
   if (native.run.status === 'failed' || native.run.status === 'timeout') {
-    return { kind: 'failed', code: native.run.error?.code ?? 'execution_run_failed', ...runtimeEvidence };
+    const inputDispatch = native.run.error?.inputDispatch;
+    return { kind: 'failed', code: native.run.error?.code ?? 'execution_run_failed',
+      ...(inputDispatch ? { inputDispatch } : {}), ...runtimeEvidence };
   }
   if (native.run.status === 'cancelled') return { kind: 'cancelled' };
   if (native.run.status !== 'succeeded') return { kind: 'outcome_uncertain', code: 'execution_run_not_terminal' };

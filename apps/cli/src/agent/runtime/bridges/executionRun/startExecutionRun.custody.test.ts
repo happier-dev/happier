@@ -24,6 +24,7 @@ import { ExecutionRunConnectedServicesError } from './runtime/connectedServicesE
 import { observeWorkflowDetachedExecutionRunInput } from '@/daemon/workflows/stepExecution';
 import { projectExecutionRunPublicState } from './publicState';
 import { ExecutionRunGetResponseSchema, isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { readActionCompletionRunObservationV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { createExecutionRunOccurrenceWitnessRegistry, projectExecutionRunInputTurns } from './runOccurrenceWitness';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { createDeferred } from '@/testkit/async/deferred';
@@ -203,6 +204,37 @@ describe('execution run start transcript custody', () => {
       expect(await observeWorkflowDetachedExecutionRunInput({ runId: started.runId, localInputId: 'workflow-initial',
         get: async () => response })).toEqual({ kind: 'failed', code: 'connected_service_run_materialization_blocked',
           message: 'Execution-run connected services runner identity is not current' });
+    } finally { await voiceAgentManager.dispose(); }
+  });
+  it('retains a typed pre-dispatch refusal on an acknowledged bounded Run', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const runtime = createTestExecutionRunHostRuntime({ onProvisionRuntime: async () => {
+      throw new ExecutionRunConnectedServicesError('Reviewer profile is unavailable', 'connected_service_run_materialization_blocked');
+    } });
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => runtime });
+    const executeBoundedRun = vi.fn(async () => {});
+    try {
+      const { runId } = await startExecutionRun({
+        params: { sessionId: 'session-1', intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          instructions: 'Review the changes', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+          runClass: 'bounded', ioMode: 'request_response' },
+        parentProvider: 'claude', sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime: () => runtime, getNowMs: () => 100, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async (_id, write) => { await write(); }, writeActivityMarker: async () => {},
+        finishRun: async (runId, next, toolResult) => { await finishExecutionRun({ runId, next, toolResult,
+          runs, controllers, budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+          enqueueMarkerWrite: async (_id, write) => { await write(); }, terminalMarkerWritePromises: new Map() });
+        },
+        executeBoundedRun, send: async () => { throw new Error('Refused launch must not send'); }, voiceAgentManager,
+      });
+      const controller = controllers.get(runId);
+      if (controller?.kind === 'backend') await controller.provisioningPromise;
+      expect(executeBoundedRun).not.toHaveBeenCalled();
+      const response = ExecutionRunGetResponseSchema.parse({ run: projectExecutionRunPublicState(runs.get(runId)!) });
+      expect(readActionCompletionRunObservationV1(response)).toMatchObject({
+        kind: 'failed', code: 'connected_service_run_materialization_blocked', inputDispatch: 'not_attempted',
+      });
     } finally { await voiceAgentManager.dispose(); }
   });
   it.each(['terminal', 'terminal_or_needs_attention'] as const)(

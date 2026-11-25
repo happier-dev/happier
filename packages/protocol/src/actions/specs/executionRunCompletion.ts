@@ -230,6 +230,8 @@ export const reviewStartExecutionRunCompletion: ExecutionRunCompletionDeclaratio
             : run.outcome.kind === 'completed' ? run.outcome.reviewOutcome : undefined;
           return {
             ...perRunOutcome(run),
+            ...(run.outcome.kind === 'failed' && run.outcome.inputDispatch === 'not_attempted'
+              ? { outcome: 'launch_failed' as const } : {}),
             ...(reviewOutcome ? { reviewOutcome } : {}),
             ...(run.outcome.kind === 'completed' ? {
               ...(run.outcome.quality ? { quality: run.outcome.quality } : {}),

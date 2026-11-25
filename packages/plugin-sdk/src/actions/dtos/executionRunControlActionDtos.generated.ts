@@ -1915,6 +1915,7 @@ export type ExecutionRunControlActionInputById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: unknown;
                             uxDiagnostic?: unknown;
                         };
@@ -1937,6 +1938,7 @@ export type ExecutionRunControlActionInputById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: unknown;
                             uxDiagnostic?: unknown;
                         };
@@ -2082,6 +2084,7 @@ export type ExecutionRunControlActionInputById = {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
+                    inputDispatch?: 'not_attempted' | undefined;
                     runtimeIssueV1?: unknown;
                     uxDiagnostic?: unknown;
                 };
@@ -2481,6 +2484,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -2626,6 +2630,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -2915,6 +2920,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -3341,6 +3347,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -3486,6 +3493,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -3775,6 +3783,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -4200,6 +4209,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -4345,6 +4355,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -4634,6 +4645,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -5060,6 +5072,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -5205,6 +5218,7 @@ export type ExecutionRunControlActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -5494,6 +5508,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -5972,6 +5987,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -6117,6 +6133,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -6406,6 +6423,7 @@ export type ExecutionRunControlActionResultById = {
                 [x: string]: unknown;
                 code: string;
                 message?: string | undefined;
+                inputDispatch?: 'not_attempted' | undefined;
                 runtimeIssueV1?: Readonly<{
                     v: 1;
                     scope: 'primary_session';
@@ -6702,6 +6720,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -6847,6 +6866,7 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -7136,6 +7156,7 @@ export type ExecutionRunControlActionResultById = {
                 [x: string]: unknown;
                 code: string;
                 message?: string | undefined;
+                inputDispatch?: 'not_attempted' | undefined;
                 runtimeIssueV1?: Readonly<{
                     v: 1;
                     scope: 'primary_session';
@@ -7804,6 +7825,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -7949,6 +7971,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -8238,6 +8261,7 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
+                    inputDispatch?: 'not_attempted' | undefined;
                     runtimeIssueV1?: Readonly<{
                         v: 1;
                         scope: 'primary_session';
@@ -8664,6 +8688,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -8809,6 +8834,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -9098,6 +9124,7 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
+                    inputDispatch?: 'not_attempted' | undefined;
                     runtimeIssueV1?: Readonly<{
                         v: 1;
                         scope: 'primary_session';
@@ -9523,6 +9550,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -9668,6 +9696,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -9957,6 +9986,7 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
+                    inputDispatch?: 'not_attempted' | undefined;
                     runtimeIssueV1?: Readonly<{
                         v: 1;
                         scope: 'primary_session';
@@ -10383,6 +10413,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -10528,6 +10559,7 @@ export type ExecutionRunControlActionResultById = {
                             [x: string]: unknown;
                             code: string;
                             message?: string | undefined;
+                            inputDispatch?: 'not_attempted' | undefined;
                             runtimeIssueV1?: Readonly<{
                                 v: 1;
                                 scope: 'primary_session';
@@ -10817,6 +10849,7 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
+                    inputDispatch?: 'not_attempted' | undefined;
                     runtimeIssueV1?: Readonly<{
                         v: 1;
                         scope: 'primary_session';

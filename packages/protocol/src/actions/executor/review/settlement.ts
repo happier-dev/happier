@@ -44,12 +44,12 @@ export async function dispatchReviewSettlementAction(input: Readonly<{
   const round = await records.settle({ ...parsed.reviewRound, outcome: 'completed',
     reviewerOutcomes: collectReviewRoundOutcomes(parsed), finishedAt: Date.now(),
     runs: [{ kind: 'workflow', runId: caller.runId }], signal: input.ctx.signal });
-  const outcomes = round.reviewerOutcomes;
-  const firstErrorCode = outcomes?.[0]?.reason?.errorCode;
-  if (round.state === 'failed' && firstErrorCode && outcomes?.every(outcome =>
-    outcome.reason?.errorCode === 'resource_forbidden'
-    || (outcome.reason?.run === 'launch_failed' && outcome.reason.errorCode !== undefined))) {
-    return { ok: false, errorCode: firstErrorCode, error: firstErrorCode };
+  // The settled round owns coverage. Zero usable results must stop the Workflow even
+  // when a native Run was acknowledged, or when the reviewer provided no typed cause.
+  if (round.state === 'failed') {
+    const errorCode = round.reviewerOutcomes?.find(outcome => outcome.reason?.errorCode)?.reason?.errorCode
+      ?? 'review_output_unavailable';
+    return { ok: false, errorCode, error: errorCode };
   }
   return { ok: true, result: parsed.reviewRound };
 }

@@ -165,6 +165,8 @@ export type ExecutionRunListRequest = ExecutionRunListRequestBase;
 export const ExecutionRunErrorSchema = lazyZodSchema(() => z.looseObject({
   code: z.string().check(z.minLength(1)),
   message: z.optional(z.string()),
+  /** Present only when the Run owner knows it never dispatched the initial input. */
+  inputDispatch: z.optional(z.literal('not_attempted')),
   runtimeIssueV1: z.optional(SessionRuntimeIssueV1Schema),
   uxDiagnostic: z.optional(ConnectedServiceUxDiagnosticV1Schema),
 }));

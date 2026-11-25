@@ -7169,11 +7169,12 @@ The daemon's input binder checks occurrence evidence, constants and defaults
 against those choices before launching leaves. Review & converge accepts only
 `fix` or `report` for its `apply` input.
 
-In 0.3 development, when every admitted reviewer is definitively refused at
-launch or returns `resource_forbidden`, Review & converge settles the Review
-as failed and retains the typed cause for each reviewer. The child Workflow
-fails with the first refusal in roster order, so the parent interrupts before
-the optional Fix step. An unconfirmed launch still requires its native outcome.
+In 0.3 development, Review & converge settles a round with no usable reviewer
+result as failed. The Review retains the typed causes for each reviewer and
+the child Workflow carries the first available cause in reviewer order. The
+parent interrupts before Fix. A review with usable results and no findings
+skips Fix. A partial round with findings can continue and names the reviewers
+who did not finish. An unconfirmed launch still requires its native outcome.
 
 `reviews.comments.list` retains its paged default. Callers needing the complete
 read can request `allPages: true`: the shared Action executor drains the existing

@@ -247,6 +247,35 @@ it.each([
   } finally { await screen.unmount(); }
 });
 
+it('names the reviewer who could not start alongside findings from the partial Review', async () => {
+  homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+    id: reviewId, title: 'Security sweep', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Security sweep' },
+    body: JSON.stringify({ v: 1, rounds: [{
+      ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 3, reviewerIds: ['first', 'second'], runs: [],
+      reviewerOutcomes: [
+        { reviewerId: 'first', displayName: 'First reviewer', outcome: 'completed' },
+        { reviewerId: 'second', displayName: 'Unavailable reviewer', outcome: 'failed',
+          reason: { run: 'launch_failed', errorCode: 'connected_service_run_materialization_blocked' } },
+      ],
+    }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
+  }, 'alice'));
+  homes.answer(serverId, 'POST /v1/reviews/get', { body: {
+    review: { ...review, state: 'partial', finishedAt: 3 },
+    human: { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+      needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+        requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+  } });
+  const screen = await renderScreen(<WorkflowRunReview runId="hunt-run" scope={{ serverId, accountId: 'alice' }} enabled />);
+  try {
+    await waitForHomeGovernance(() => {
+      expect(screen.getTextContent()).toContain('Session token written to the daemon log');
+      expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.reviewersDidntFinish', { names: 'Unavailable reviewer', count: 1 }));
+    });
+  } finally { await screen.unmount(); }
+});
+
 it('finds a Review by its workflowRunId when a contributed PR action produced it', async () => {
   function Result() {
     const result = useWorkflowRunResultReview({ runId: 'hunt-run', scope: { serverId, accountId: 'alice' },

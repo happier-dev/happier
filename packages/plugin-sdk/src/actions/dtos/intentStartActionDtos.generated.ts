@@ -3395,6 +3395,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -3540,6 +3541,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -3829,6 +3831,7 @@ export type IntentStartActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -4255,6 +4258,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -4400,6 +4404,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -4689,6 +4694,7 @@ export type IntentStartActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -5114,6 +5120,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -5259,6 +5266,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -5548,6 +5556,7 @@ export type IntentStartActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';
@@ -5974,6 +5983,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -6119,6 +6129,7 @@ export type IntentStartActionResultById = {
                                 [x: string]: unknown;
                                 code: string;
                                 message?: string | undefined;
+                                inputDispatch?: 'not_attempted' | undefined;
                                 runtimeIssueV1?: Readonly<{
                                     v: 1;
                                     scope: 'primary_session';
@@ -6408,6 +6419,7 @@ export type IntentStartActionResultById = {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
+                        inputDispatch?: 'not_attempted' | undefined;
                         runtimeIssueV1?: Readonly<{
                             v: 1;
                             scope: 'primary_session';

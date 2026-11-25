@@ -1375,7 +1375,7 @@ async function startAdmittedExecutionRunInWorkspace(
               await settleExecutionRunController({ runId, controller: ctrl, controllers: args.controllers });
             });
         } catch (e: unknown) {
-          const error = projectExecutionRunError(e, { runId });
+          const error = { ...projectExecutionRunError(e, { runId }), inputDispatch: 'not_attempted' as const };
           const message = error.message;
           const finishedAtMs = args.getNowMs();
           try {
