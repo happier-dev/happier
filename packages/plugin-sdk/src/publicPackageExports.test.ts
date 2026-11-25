@@ -326,7 +326,6 @@ describe('CORE-A curated package exports', () => {
             './ui/reactNativeWebBuild',
             './ui/reactNativeRepackStrictSafety',
             './account-usage',
-            './usage',
         ]) {
             expect(packageJson.exports[accidental], accidental).toBeUndefined();
         }

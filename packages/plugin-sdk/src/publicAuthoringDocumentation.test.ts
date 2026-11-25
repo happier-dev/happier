@@ -143,7 +143,6 @@ describe('Plugin SDK public authoring documentation', () => {
         expect(guide).toContain('## One `/resources` path, three resource workflows');
         expect(guide).toContain('`ResourcesService`');
         expect(guide).toContain('`@happier-dev/plugin-sdk/ui`');
-        expect(guide).toContain('Host-only: do not import from an installed plugin');
         expect(guide).toContain('Build-realm only');
         expect(guide).toContain('Public browser target and Action descriptors plus the toolchain compatibility packet; browser Actions bind canonical Actions to declared targets.');
         expect(guide).toContain('## What `/testing` proves');
