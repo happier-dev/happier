@@ -159,6 +159,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     /** A supplied Home address the connect step starts with, and who learns that it was reached. */
     connectHomeInitialAddress?: string;
     onConnectHomeReached?: () => void;
+    onConnectHomeFocused?: () => void;
     onOpenRelaySelectionFromAuth: () => void;
     onCreatePersonalHome?: () => void;
     preparedHome?: React.ComponentProps<typeof ConnectedHomePane>;
@@ -217,6 +218,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 onClose={params.onBackToWelcome}
                 onBackChange={params.onWizardBackChange}
                 onHomeConnected={params.onConnectHomeReached}
+                onFocusedHome={params.onConnectHomeFocused}
             />
         );
     }

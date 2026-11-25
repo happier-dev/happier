@@ -89,6 +89,15 @@ async function typeAndConnect(screen: Awaited<ReturnType<typeof renderScreen>>, 
     await flushHookEffects({ cycles: 3, turns: 3 });
 }
 
+function omitDefaultHome() {
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '{}');
+    vi.stubEnv('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', '');
+    vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', '');
+    vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_URL', '');
+    vi.stubEnv('EXPO_PUBLIC_SERVER_URL', '');
+    vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', 'stack');
+}
+
 function withoutSyntheticTimestamps(items: readonly import('@/sync/domains/server/serverProfiles').ServerProfile[]) {
     return items.map(({ createdAt, updatedAt, ...profile }) => profile);
 }
@@ -118,12 +127,7 @@ describe('first-run custom Home address connection', () => {
     });
 
     it('opens the existing Home address step if recovery-key sign-in has no Home', async () => {
-        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', '{}');
-        vi.stubEnv('EXPO_PUBLIC_HAPPY_PRECONFIGURED_SERVERS', '');
-        vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_URL', '');
-        vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_URL', '');
-        vi.stubEnv('EXPO_PUBLIC_SERVER_URL', '');
-        vi.stubEnv('EXPO_PUBLIC_HAPPY_SERVER_CONTEXT', 'stack');
+        omitDefaultHome();
         const { getActiveServerSnapshot, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
         resetServerProfilesRuntimeForTests();
         expect(getActiveServerSnapshot().serverUrl).toBe('');
@@ -135,6 +139,68 @@ describe('first-run custom Home address connection', () => {
             await screen.pressByTestIdAsync('restore-open-manual');
             expect(screen.findByTestId('already-use-happier.home-address')).not.toBeNull();
             expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
+        } finally {
+            await screen.unmount();
+            vi.unstubAllEnvs();
+        }
+    });
+
+    it('keeps the onboarding return after signing in to the first Home', async () => {
+        omitDefaultHome();
+        const homeUrl = 'https://first-home.example.test';
+        const homeId = 'srv_first_home';
+        const features = createRootLayoutFeaturesResponse({
+            capabilities: {
+                server: { canonicalServerUrl: homeUrl },
+                serverIdentity: { serverIdentityId: homeId },
+                auth: {
+                    keyChallenge: { v2: true },
+                    methods: [{ id: 'key_challenge', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] }],
+                },
+            },
+        });
+        const token = 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature';
+        runtimeFetchMock.mockImplementation(async (input) => {
+            const url = new URL(String(input));
+            if (url.origin !== homeUrl) return new Response(null, { status: 404 });
+            switch (url.pathname) {
+                case '/health': return Response.json({ status: 'ok' });
+                case '/v1/features': return Response.json(features);
+                case '/v1/auth/challenge': return Response.json({
+                    challengeId: 'first-home-challenge',
+                    nonce: 'nonce',
+                    issuedAt: new Date().toISOString(),
+                    expiresAt: new Date(Date.now() + 60_000).toISOString(),
+                    audience: { origin: homeUrl, serverIdentityId: homeId },
+                });
+                case '/v1/auth': return Response.json({ token });
+                case '/v1/auth/ping': return Response.json({});
+                case '/v1/account/encryption': return Response.json({ mode: 'e2ee', updatedAt: 0 });
+                default: return new Response(null, { status: 404 });
+            }
+        });
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
+        const { getActiveServerSnapshot, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
+        const { readUsableHomeServerIds } = await import('@/sync/domains/scope/usableHomeServerIds');
+        resetServerProfilesRuntimeForTests();
+        expect(getActiveServerSnapshot().serverUrl).toBe('');
+        await vi.waitFor(() => expect(readUsableHomeServerIds()).toEqual([]));
+        const abandon = vi.fn();
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><OnboardingWizardSurface
+            layout="portrait" initialStepId="connect_home" initialServerUrl={homeUrl}
+            authEntryOptions={authEntryOptions} onAbandonAuthentication={abandon} /></AuthProvider>);
+        try {
+            await typeAndConnect(screen);
+            await vi.waitFor(() => expect(screen.findByTestId('welcome-scan-existing-home')).not.toBeNull());
+            await screen.pressByTestIdAsync('welcome-scan-existing-home');
+            await screen.pressByTestIdAsync('welcome-home-key');
+            await act(async () => { screen.findByTestId('restore-manual-secret-input')?.props.onChangeText('A'.repeat(43)); });
+            await screen.pressByTestIdAsync('restore-manual-submit');
+            await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.map(([url]) => String(url))).toContain(homeUrl + '/v1/auth'));
+            await vi.waitFor(() => expect(getActiveServerSnapshot().serverId).toBe(homeId));
+            await flushHookEffects({ cycles: 3, turns: 3 });
+            expect(abandon).not.toHaveBeenCalled();
         } finally {
             await screen.unmount();
             vi.unstubAllEnvs();

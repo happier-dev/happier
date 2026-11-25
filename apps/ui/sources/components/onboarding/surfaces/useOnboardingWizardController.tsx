@@ -766,6 +766,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         dispatch({ type: 'wizard/goToStep', stepId: 'welcome' }, 'back');
     }, []);
 
+    const handleConnectHomeFocused = React.useCallback(() => {
+        // The root gate completes a pending destination after the Home is focused.
+        if (!onAbandonAuthentication) handleBackToWelcome();
+    }, [handleBackToWelcome, onAbandonAuthentication]);
+
     const handleOpenConnectHome = React.useCallback(() => {
         dispatch({ type: 'wizard/goToStep', stepId: 'connect_home' });
     }, []);
@@ -1470,6 +1475,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onBackToWelcome: handleBackToWelcome,
         connectHomeInitialAddress: props.initialServerUrl,
         onConnectHomeReached: props.onInitialServerUrlConnected,
+        onConnectHomeFocused: handleConnectHomeFocused,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
         onCreatePersonalHome: canCreatePersonalHome ? startPersonalHome : undefined,
         preparedHome: selectedProfile && firstRunPersonalHome ? { profile: selectedProfile, onOpened: firstRunPersonalHome.finish } : undefined,
