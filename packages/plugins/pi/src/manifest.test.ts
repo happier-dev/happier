@@ -1,13 +1,8 @@
 import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import { PI_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
-import {
-  PI_ANTHROPIC_API_KEY_PURPOSE_ID,
-  PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-  PI_OPENAI_API_KEY_PURPOSE_ID,
-  PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-  PLUGIN_MANIFEST,
-} from './manifest.js';
+import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from './agent/auth/services/qualifiedPurposes.js';
+import { PLUGIN_MANIFEST } from './manifest.js';
 
 describe('Pi plugin manifest', () => {
   it('uses the strict target families and keeps settings out of the retired agentSettings family', () => {
@@ -22,39 +17,11 @@ describe('Pi plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.agents).toEqual([
       expect.objectContaining({
         id: 'pi',
-        connectedAccounts: [{
-          purpose: PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.agent.claude',
-            localId: 'claude-subscription',
-          },
-          credentialKinds: ['oauth', 'token'],
-          materializationKinds: ['httpHeaders', 'environment'],
-        }, {
-          purpose: PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.agent.codex',
-            localId: 'openai-codex',
-          },
-          credentialKinds: ['oauth'],
-          materializationKinds: ['httpHeaders'],
-        }, {
-          purpose: PI_OPENAI_API_KEY_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.voice.openai',
-            localId: 'openai',
-          },
-          credentialKinds: ['token'],
-          materializationKinds: ['environment'],
-        }, {
-          purpose: PI_ANTHROPIC_API_KEY_PURPOSE_ID,
-          service: {
-            pluginId: 'happier.agent.claude',
-            localId: 'anthropic',
-          },
-          credentialKinds: ['token'],
-          materializationKinds: ['environment'],
-        }],
+        connectedAccounts: PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES.map(
+          ({ purpose, service, materializationKinds, credentialKinds }) => ({
+            purpose, service, materializationKinds, credentialKinds,
+          }),
+        ),
         capabilities: expect.objectContaining({
           surfaces: ['externalSessions'],
         }),

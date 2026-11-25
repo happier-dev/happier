@@ -12,8 +12,9 @@ code. A missing admitted runner source names
 In 0.3 development, Pi RPC uses an explicit directory under the existing Pi
 `sessions` root on Linux when its default working-directory encoding exceeds the
 filesystem's 255-byte component limit. The directory name is derived from the
-checkout path so the same checkout reopens the same native storage. Explicit Pi
-storage configuration keeps precedence. Pi's structured startup-exit record uses
+checkout path. RPC launch and cwd-based file lookup share that naming rule so
+the same checkout reopens the same native storage. Explicit Pi storage
+configuration keeps precedence for launch. Pi's structured startup-exit record uses
 the existing plugin invocation log. For a daemon-hosted launch, look in the
 daemon log for `Pi RPC exited during Session startup` near the failed launch.
 The record uses the invocation correlation ID and carries the redacted stderr

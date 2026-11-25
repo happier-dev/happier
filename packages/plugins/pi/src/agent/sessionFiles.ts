@@ -9,7 +9,7 @@ import {
   sessionFileNameMatchesSessionId,
 } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
-import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from './sessionFileStoreDescriptor.js';
+import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1, resolvePiSessionDirectoryName } from './sessionFileStoreDescriptor.js';
 
 const LEGACY_PI_WORKDIR_SEGMENT = '--workdir--';
 
@@ -27,7 +27,7 @@ export function encodePiSessionDirectoryCwd(cwd: string): string {
 }
 
 export function formatPiSessionDirectoryForCwd(cwd: string): string {
-  return PI_SESSION_FILE_STORE_DESCRIPTOR_V1.encodeCwdSubdir?.(cwd) ?? `--${encodePiSessionDirectoryCwd(cwd)}--`;
+  return resolvePiSessionDirectoryName(cwd).name;
 }
 
 export function resolvePiSessionIdFromResumeReference(value: string): string | null {

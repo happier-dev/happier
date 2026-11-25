@@ -1,5 +1,5 @@
 import { PI_PROVIDER_BINDING_ADAPTER, PI_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding.js';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/plugin-sdk';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 

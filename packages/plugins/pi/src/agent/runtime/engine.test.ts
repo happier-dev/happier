@@ -20,7 +20,12 @@ import { createPiAgentRuntime } from './engine.js';
 import { PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID } from '../auth/services/requestAuth/purposes.js';
 import { PI_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '../auth/services/requestAuth/index.js';
 import { PI_PROVIDER_SECRET_ENV_KEY } from '../launchEnvironment.js';
-import { formatPiSessionDirectoryForCwd } from '../sessionFiles.js';
+import {
+  buildPiResumeSearchRoots,
+  encodePiSessionDirectoryCwd,
+  findPiSessionFileForId,
+  formatPiSessionDirectoryForCwd,
+} from '../sessionFiles.js';
 
 const openedSessions: AgentSessionRuntime[] = [];
 
@@ -45,15 +50,19 @@ describe('Pi Agent runtime', () => {
           mkdirSync(join(cwd, '.pi'));
           writeFileSync(join(cwd, '.pi', 'settings.json'), JSON.stringify({ sessionDir: configuredSessionDir }));
         }
-        const boundary = hostBoundaries();
+        const nativeSessionId = '019e461b-24e2-73a9-acf4-19bc50210729';
+        const fileName = `2026-05-20T15-57-24-578Z_${nativeSessionId}.jsonl`;
+        const transcript = JSON.stringify({ type: 'session', version: 3, id: nativeSessionId, cwd }) + '\n';
+        const boundary = hostBoundaries(undefined, { sessionId: nativeSessionId });
         const spawn = boundary.spawn.getMockImplementation()!;
         boundary.spawn.mockImplementation(async (spec) => {
           // Match Pi 1.6.0's mkdir at the process boundary, using the real filesystem.
           const flag = spec.launch.args.indexOf('--session-dir');
           const sessionDir = flag === -1
-            ? configuredSessionDir ?? join(sessionsRoot, formatPiSessionDirectoryForCwd(cwd))
+            ? configuredSessionDir ?? join(sessionsRoot, `--${encodePiSessionDirectoryCwd(cwd)}--`)
             : spec.launch.args[flag + 1]!;
           mkdirSync(sessionDir, { recursive: true });
+          writeFileSync(join(sessionDir, fileName), transcript);
           return spawn(spec);
         });
         const session = await createPiAgentRuntime().sessions.open({
@@ -67,6 +76,14 @@ describe('Pi Agent runtime', () => {
           } else if (storage === 'ordinary') {
             expect(existsSync(join(sessionsRoot, formatPiSessionDirectoryForCwd(cwd)))).toBe(true);
           } else {
+            const roots = buildPiResumeSearchRoots({
+              cwd,
+              env: { PI_CODING_AGENT_DIR: agentDir },
+              targetStrict: true,
+            });
+            const found = await findPiSessionFileForId({ sessionId: nativeSessionId, roots });
+            expect(found).not.toBeNull();
+            expect(readFileSync(found!, 'utf8')).toBe(transcript);
             expect(readdirSync(sessionsRoot, { withFileTypes: true }).filter(entry => entry.isDirectory())).toHaveLength(1);
           }
         } finally {

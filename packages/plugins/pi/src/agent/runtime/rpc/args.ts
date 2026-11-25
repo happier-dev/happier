@@ -1,11 +1,10 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 
 import { PI_PROVIDER_ID, PI_PROVIDER_MODELS_FILE } from '../../providerBinding.js';
-import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../sessionFileStoreDescriptor.js';
+import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1, resolvePiSessionDirectoryName } from '../../sessionFileStoreDescriptor.js';
 import { PI_QUALIFIED_CONNECTED_ACCOUNT_PURPOSES } from '../../auth/services/qualifiedPurposes.js';
 import { PI_CONNECTED_ACCOUNT_MODEL_ENV } from '../../launchEnvironment.js';
 import { normalizePiThinkingLevel } from '../../../protocol/thinking.js';
@@ -26,10 +25,8 @@ export async function resolvePiRpcSessionDirectory(params: Readonly<{
   readEnvironment?: (keys: readonly string[]) => Readonly<Record<string, string>>;
 }>): Promise<string | undefined> {
   const product = PI_SESSION_FILE_STORE_DESCRIPTOR_V1;
-  const encoded = product.encodeCwdSubdir(params.cwd);
-  // Pi flattens the entire cwd into one filename. Linux filesystems such as
-  // ext4 limit each component to 255 bytes, even when the full cwd fits.
-  if (process.platform !== 'linux' || Buffer.byteLength(encoded) <= 255) return undefined;
+  const directory = resolvePiSessionDirectoryName(params.cwd);
+  if (!directory.requiresOverride) return undefined;
 
   const keys = [product.agentDirEnvVar, ...product.legacySessionDirEnvVars, 'HOME'];
   const env = { ...params.readEnvironment?.(keys), ...params.env };
@@ -54,8 +51,7 @@ export async function resolvePiRpcSessionDirectory(params: Readonly<{
       // A missing or invalid settings file supplies no storage override.
     }
   }
-  const projectKey = createHash('sha256').update(resolve(params.cwd)).digest('hex');
-  return join(agentDir, 'sessions', `happier-${projectKey}`);
+  return join(agentDir, 'sessions', directory.name);
 }
 
 type PiConnectedServiceLaunchSelection = Readonly<{
