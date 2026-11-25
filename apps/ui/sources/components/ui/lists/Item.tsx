@@ -1283,7 +1283,8 @@ function ItemRow(props: ItemProps & Readonly<{
     // A page row's detail is the phone rule's "short value": it stays on its label's line while the
     // label keeps its column, and moves beneath the title (unclamped, where a description sits) once
     // its natural width would squeeze the label below that column. Only a narrow row measures it: on
-    // a wider row the label always keeps its column beside a detail held to half the row.
+    // a wider row the label always keeps its column beside a detail held to half the row (a middle-ellipsized
+    // identifier instead takes what the label's title floor leaves, see `middleDetail`).
     // The label's column is the smaller of the shared column and what a short text label really
     // needs (its natural width plus the trailing chevron), so "Role · Orchestrator" stays on one line
     // in a narrow pane instead of stacking beside 160px of empty label column.
@@ -1309,7 +1310,12 @@ function ItemRow(props: ItemProps & Readonly<{
     );
     // A passive end (facts that only draw: a folded Project's "2 environments", a state word) gives way to the name:
     // the content column holds the title floor, so the end facts ellipsize first. Controls never yield this way.
-    const passiveFactsFloor = rightElementPassive && rightElement != null && (typeof title === 'string' || typeof title === 'number');
+    // An identifier detail (a path or address that gives up its middle) is a passive end too: it takes the room its
+    // label leaves rather than half the row, shows whole whenever it fits, and cuts its middle only past the title
+    // floor (QA cut 46: "github.com/mic… /Windows-classic-samples" beside ~250px of free row).
+    const middleDetail = detailEllipsizeMode === 'middle' && Boolean(detail) && !wrapDetail;
+    const passiveFactsFloor = ((rightElementPassive && rightElement != null) || middleDetail)
+        && (typeof title === 'string' || typeof title === 'number');
     const centerContentStyle = React.useMemo(
         () => (passiveFactsFloor && titleFloorStyle !== null ? [styles.centerContent, titleFloorStyle] : styles.centerContent),
         [passiveFactsFloor, styles.centerContent, titleFloorStyle],
@@ -1741,6 +1747,13 @@ function ItemRow(props: ItemProps & Readonly<{
         () => (passiveFactsFloor && titleFloorPx !== null ? { minWidth: rowTextStartPx + titleFloorPx } : null),
         [passiveFactsFloor, rowTextStartPx, titleFloorPx],
     );
+    // The label band (leading mark and name) is the identifier detail's flex sibling: it holds the mark plus the title
+    // floor, so the detail takes the rest of the line and gives up its middle only past that floor.
+    const middleDetailFloorStyle = React.useMemo(
+        () => (middleDetail && titleFloorPx !== null
+            ? { minWidth: (hasLeading ? (iconBoxSize ?? resolvedIconBoxSize) + resolvedIconMarginRight : 0) + titleFloorPx } : null),
+        [hasLeading, iconBoxSize, middleDetail, resolvedIconBoxSize, resolvedIconMarginRight, titleFloorPx],
+    );
     // A row whose control stands outside its press target draws its rule outside the press target's fill too (beside it,
     // not inside it): the rule then steps in by that fill's own margins, so every row's line starts and ends alike.
     const ruleOutsideFill = listRuleShown && isInteractive && (
@@ -1857,7 +1870,8 @@ function ItemRow(props: ItemProps & Readonly<{
         );
         return (
         <>
-            <View style={[styles.labelBand, alignsToFirstLine ? styles.containerAlignStart : null, stackContentAccessory ? styles.labelBandStacked : null]}>
+            <View style={[styles.labelBand, alignsToFirstLine ? styles.containerAlignStart : null, stackContentAccessory ? styles.labelBandStacked : null,
+                detailBeneath ? null : middleDetailFloorStyle]}>
             {/* Left Section */}
             {includeLeftAccessory && (leftAccessory || (isPageRow && reservesLeadingColumn)) ? (
                 <View
@@ -2042,7 +2056,8 @@ function ItemRow(props: ItemProps & Readonly<{
                 // narrow-row and half-row rules decided that), so the box is not held to half the
                 // content width as well: that second cap clipped a 240px field in a ~490px dialog row
                 // past the sheet's trailing inset.
-                !stackContentAccessory && (adaptiveAccessory || fieldMaxWidthPx !== null || accessoryMaxWidth === 'row') ? styles.rightSectionField : null,
+                !stackContentAccessory && (adaptiveAccessory || fieldMaxWidthPx !== null || accessoryMaxWidth === 'row'
+                    || (middleDetail && !detailBeneath)) ? styles.rightSectionField : null,
                 detailInlineMaxWidthPx !== null ? { maxWidth: detailInlineMaxWidthPx } : null,
                 isMenuRow && !stackContentAccessory ? MENU_ROW_TRAILING : null,
                 // An empty trailing cell takes no gap, so a directory row's own end stands on its section's edge.
@@ -2185,6 +2200,8 @@ function ItemRow(props: ItemProps & Readonly<{
         handleTitleFloorMeasureLayout,
         passiveFactsFloor,
         centerContentStyle,
+        middleDetail,
+        middleDetailFloorStyle,
         subtitleEllipsizeMode,
         subtitleLines,
         subtitleSizeStyle,
