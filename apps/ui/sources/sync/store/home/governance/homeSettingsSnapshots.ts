@@ -2,6 +2,7 @@ import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/govern
 
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 
 export type HomeSettingsSnapshot = Readonly<{
@@ -37,8 +38,20 @@ export function beginHomeSettingsLoad(scope: ServerAccountScope): HomeSettingsSn
     return publish({ scope, settings: previous?.settings ?? null, loading: true, failure: null, stale: previous?.stale ?? false });
 }
 
+function retainEqualSettingsProjection(previous: HomeSettingsProjectionV1, incoming: HomeSettingsProjectionV1): HomeSettingsProjectionV1 {
+    const entries = retainKeyedRows(previous.entries, incoming.entries, entry => entry.key, { freeze: false });
+    const featureDecisions = incoming.featureDecisions
+        ? retainKeyedRows(previous.featureDecisions, incoming.featureDecisions, decision => decision.featureId, { freeze: false })
+        : undefined;
+    return retainShallow(previous, { ...incoming, entries, ...(featureDecisions && { featureDecisions }) });
+}
+
 export function applyHomeSettingsProjection(scope: ServerAccountScope, settings: HomeSettingsProjectionV1, current = true): void {
-    publish({ scope, settings, loading: false, failure: null, stale: !current });
+    const previous = getHomeSettingsSnapshot(scope);
+    // A parsed response allocates every entry again, even when only one value changed.
+    const retained = previous?.settings ? retainEqualSettingsProjection(previous.settings, settings) : settings;
+    if (previous?.settings === retained && !previous.loading && previous.failure === null && previous.stale === !current) return;
+    publish({ scope, settings: retained, loading: false, failure: null, stale: !current });
 }
 
 /** Accepted writes refresh only the companion reads currently demanded on this exact scope. */

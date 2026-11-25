@@ -22,6 +22,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { useHomeSettings } from '@/hooks/home/useHomeSettings';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
 import type { HomeActionFailure as HomeDomainFailure } from '@/sync/ops/home/homeActionOutcome';
 import {
@@ -163,8 +164,7 @@ const RetentionSwitchRow = React.memo(function RetentionSwitchRow(props: Readonl
  * One retention domain: Keep | Delete after, with the days inline and the rule in words. Choosing
  * "Delete after" writes once the days are known, mode and days together.
  */
-const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonly<{
-    domain: HomeRetentionDomain;
+const RetentionDomainRow = React.memo(function RetentionDomainRow(domain: HomeRetentionDomain & Readonly<{
     result: HomeRetentionDryRunDomainResultV1 | undefined;
     readOnly: boolean;
     disabled: boolean;
@@ -172,7 +172,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
     onWrite: WriteValues;
     showDivider?: boolean;
 }>) {
-    const { domain, onWrite } = props;
+    const { onWrite, result, readOnly, disabled, serverError, showDivider } = domain;
     const deletes = homeRetentionDomainDeletes(domain);
     const storedDays = homeRetentionDomainDays(domain);
     const [mode, setMode] = React.useState<'keep' | 'delete' | undefined>(undefined);
@@ -182,7 +182,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
         setMode(undefined);
         setDaysText(undefined);
         setError(null);
-    }, [domain]);
+    }, [domain.mode, domain.days]);
 
     const title = domainTitle(domain);
     const expires = domain.metadata?.expiresAutomatically === true;
@@ -191,13 +191,13 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
     const subtitle = [
         expires ? t('homeGovernance.data.expiresAutomatically') : domainEffect(domain),
         domain.metadata?.runsWhenDeletionOff ? t('homeGovernance.data.alwaysRuns') : null,
-        dryRunLine(props.result),
+        dryRunLine(result),
     ].filter(Boolean).join('\n');
     const testID = `home-retention:${domain.id}`;
     const selected = mode ?? (deletes ? 'delete' : 'keep');
-    const shownError = error ?? props.serverError;
+    const shownError = error ?? serverError;
 
-    const submit = React.useCallback((choice: HomeRetentionChoice) => {
+    const submit = useEventCallback((choice: HomeRetentionChoice) => {
         const write = buildHomeRetentionWrite(domain, choice);
         if (!write.ok) {
             setError(write.error);
@@ -210,7 +210,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
             return;
         }
         void onWrite(write.values);
-    }, [domain, onWrite]);
+    });
 
     const selectMode = React.useCallback((next: 'keep' | 'delete') => {
         setMode(next);
@@ -229,7 +229,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
         submit({ mode: 'delete', daysText });
     }, [daysText, selected, submit]);
 
-    const writable = !props.readOnly && !expires && domain.deleteMode !== null && isHomeRetentionDomainWritable(domain);
+    const writable = !readOnly && !expires && domain.deleteMode !== null && isHomeRetentionDomainWritable(domain);
     const item = (
         <Item
             testID={testID}
@@ -238,7 +238,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
             subtitleLines={0}
             subtitleAccessory={fixedEntry ? <HomeDeploymentFixedNote keys={[fixedEntry.key]} testID={testID} /> : undefined}
             showChevron={false}
-            showDivider={props.showDivider}
+            showDivider={showDivider}
             mode="info"
             accessoryLayout="adaptive"
             rightElement={writable ? (
@@ -252,7 +252,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
                         activeTabId={selected}
                         onSelectTab={selectMode}
                         segmentSizing="content"
-                        disabled={props.disabled}
+                        disabled={disabled}
                         accessibilityLabel={title}
                         testIDPrefix={`${testID}.mode`}
                     />
@@ -263,7 +263,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
                                 testID={`${testID}.days`}
                                 accessibilityLabel={t('homeGovernance.data.daysFor', { domain: title })}
                                 value={daysText ?? (storedDays === null ? '' : String(storedDays))}
-                                editable={!props.disabled}
+                                editable={!disabled}
                                 keyboardType="number-pad"
                                 autoFocus={mode === 'delete' && storedDays === null}
                                 error={shownError ? t(`homeGovernance.data.${shownError}`) : null}
@@ -279,7 +279,7 @@ const RetentionDomainRow = React.memo(function RetentionDomainRow(props: Readonl
         />
     );
     const setting = domainSetting(domain.id);
-    return setting ? <SettingAnchor setting={setting} showDivider={props.showDivider}>{item}</SettingAnchor> : item;
+    return setting ? <SettingAnchor setting={setting} showDivider={showDivider}>{item}</SettingAnchor> : item;
 });
 
 /** The Home's own records: closed until opened, searched for, or a dry run reports on them. */
@@ -318,7 +318,7 @@ const SystemRecordsDisclosure = React.memo(function SystemRecordsDisclosure(prop
             {expanded ? props.domains.map((domain) => (
                 <RetentionDomainRow
                     key={domain.id}
-                    domain={domain}
+                    {...domain}
                     result={props.dryRun?.byDomain[domain.id]}
                     readOnly={props.readOnly}
                     disabled={props.disabled}
@@ -413,7 +413,7 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
     const retention = React.useMemo(() => (settings ? selectHomeRetentionSettings(settings) : null), [settings]);
     const disabled = !context.mutationsAvailable || saving;
 
-    const write = React.useCallback<WriteValues>(async (values) => {
+    const write: WriteValues = useEventCallback(async (values: Parameters<WriteValues>[0]) => {
         if (!settings || !retention) return false;
         setSaving(true);
         try {
@@ -446,7 +446,7 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
         } finally {
             setSaving(false);
         }
-    }, [context, home, retention, settings]);
+    });
 
     const runDryRun = React.useCallback(async () => {
         setDryRun((current) => ({ kind: 'running', last: lastDryRun(current) }));
@@ -530,7 +530,7 @@ const DataPage = React.memo(function DataPage(props: Readonly<{ context: HomeAdm
                 {retention.user.map((domain) => (
                     <RetentionDomainRow
                         key={domain.id}
-                        domain={domain}
+                        {...domain}
                         result={results?.byDomain[domain.id]}
                         readOnly={readOnly}
                         disabled={disabled}

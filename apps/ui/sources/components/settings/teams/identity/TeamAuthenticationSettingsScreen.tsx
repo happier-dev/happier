@@ -3,6 +3,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import type {
   IdentityConnectionV1,
+  TeamDirectorySourceSummaryV1,
   TeamIdentityEligibleProviderV1,
 } from '@happier-dev/protocol/teams';
 import { useUnistyles } from 'react-native-unistyles';
@@ -38,7 +39,7 @@ import {
   subscribeHomeAccountChange,
 } from '@/sync/runtime/orchestration/homeAccountChange';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
-import { t } from '@/text';
+import { t, usePreferredLanguage } from '@/text';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
@@ -244,6 +245,9 @@ const AuthorizedAuthenticationContent = React.memo(
       announceAccessibilityMessage(message);
     }, []);
 
+    const openConnection = useEventCallback((connectionId: string) => {
+      router.push(teamIdentityConnectionPath(props.address, connectionId));
+    });
     const finishConnectionCreation = React.useCallback(
       (connectionId: string) => {
         refresh();
@@ -439,11 +443,7 @@ const AuthorizedAuthenticationContent = React.memo(
                 <ConnectionRow
                   key={connection.id}
                   connection={connection}
-                  onPress={() =>
-                    router.push(
-                      teamIdentityConnectionPath(props.address, connection.id),
-                    )
-                  }
+                  onOpen={openConnection}
                 />
               ))
             )}
@@ -485,9 +485,10 @@ const AuthorizedAuthenticationContent = React.memo(
 const ConnectionRow = React.memo(function ConnectionRow(
   props: Readonly<{
     connection: IdentityConnectionV1;
-    onPress: () => void;
+    onOpen: (connectionId: string) => void;
   }>,
 ) {
+  usePreferredLanguage();
   const { theme } = useUnistyles();
   const { connection } = props;
   const status = teamIdentityConnectionStatus(connection.state);
@@ -521,7 +522,33 @@ const ConnectionRow = React.memo(function ConnectionRow(
           />
         )
       }
-      onPress={props.onPress}
+      onPress={() => props.onOpen(connection.id)}
+    />
+  );
+});
+
+const DirectorySourceRow = React.memo(function DirectorySourceRow(
+  props: Readonly<{
+    source: TeamDirectorySourceSummaryV1;
+    onOpen: (sourceId: string) => void;
+  }>,
+) {
+  usePreferredLanguage();
+  const { source } = props;
+  return (
+    <Item
+      testID={`team-authentication-directory-source:${source.id}`}
+      icon={identityProviderKindMark(
+        source.kind === 'workos_directory' ? 'workos_sso' : 'github_app_identity',
+      )}
+      title={source.displayName}
+      subtitle={[
+        source.kind === 'workos_directory'
+          ? t('teams.authentication.directory.kind.workos')
+          : t('teams.authentication.directory.kind.github'),
+        directorySourceStateLabel(directorySourcePresentationState(source)),
+      ].join(' · ')}
+      onPress={() => props.onOpen(source.id)}
     />
   );
 });
@@ -547,6 +574,9 @@ const DirectorySection = React.memo(function DirectorySection(
     true,
   );
   const openDirectory = () => router.push(teamDirectoryPath(props.address));
+  const openSource = useEventCallback((sourceId: string) => {
+    router.push(teamDirectorySourcePath(props.address, sourceId));
+  });
   return (
     <ItemGroup
       title={t('teams.authentication.directory.section')}
@@ -588,25 +618,7 @@ const DirectorySection = React.memo(function DirectorySection(
         ) : (
           <>
             {state.items.map((source) => (
-              <Item
-                key={source.id}
-                testID={`team-authentication-directory-source:${source.id}`}
-                icon={identityProviderKindMark(
-                  source.kind === 'workos_directory' ? 'workos_sso' : 'github_app_identity',
-                )}
-                title={source.displayName}
-                subtitle={[
-                  source.kind === 'workos_directory'
-                    ? t('teams.authentication.directory.kind.workos')
-                    : t('teams.authentication.directory.kind.github'),
-                  directorySourceStateLabel(
-                    directorySourcePresentationState(source),
-                  ),
-                ].join(' · ')}
-                onPress={() =>
-                  router.push(teamDirectorySourcePath(props.address, source.id))
-                }
-              />
+              <DirectorySourceRow key={source.id} source={source} onOpen={openSource} />
             ))}
           </>
         )}

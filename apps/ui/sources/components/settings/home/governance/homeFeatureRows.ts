@@ -54,9 +54,12 @@ export type HomeFeatureRowState =
 
 export type HomeFeatureSwitchRow = Readonly<{
     featureId: FeatureId;
-    family: string;
     entry: HomeSettingEntryV1 | null;
     decision: FeatureDecision | null;
+}>;
+
+type HomeFeatureRowStatus = Readonly<{
+    entry: HomeSettingEntryV1 | null;
     state: HomeFeatureRowState;
 }>;
 
@@ -115,14 +118,14 @@ export function homeFeatureRowState(entry: HomeSettingEntryV1 | null, decision: 
  * differs from what it started with: `true`/`false` until the next start, else `null`. Until then the
  * Home's decisions still describe the running value, so the row shows the saved one as pending.
  */
-export function homeFeaturePendingRestartValue(row: HomeFeatureSwitchRow): boolean | null {
+export function homeFeaturePendingRestartValue(row: HomeFeatureRowStatus): boolean | null {
     const entry = row.entry;
     if (!entry || entry.fixed || entry.apply !== 'restart' || entry.applied?.pending !== true) return null;
     return entry.value === true;
 }
 
 /** Whether the owner can flip this row's switch now. */
-export function isHomeFeatureToggleable(row: HomeFeatureSwitchRow): boolean {
+export function isHomeFeatureToggleable(row: HomeFeatureRowStatus): boolean {
     if (!isHomeSettingWritable(row.entry ?? undefined)) return false;
     if (homeFeaturePendingRestartValue(row) !== null) return true;
     return row.state.kind === 'on' || row.state.kind === 'off' || row.state.kind === 'offHome'
@@ -130,7 +133,7 @@ export function isHomeFeatureToggleable(row: HomeFeatureSwitchRow): boolean {
 }
 
 /** Whether the row's switch shows as on: a saved value pending a restart, else the Home's decision. */
-export function isHomeFeatureShownOn(row: HomeFeatureSwitchRow): boolean {
+export function isHomeFeatureShownOn(row: HomeFeatureRowStatus): boolean {
     const pending = homeFeaturePendingRestartValue(row);
     if (pending !== null) return pending;
     if (row.state.kind === 'on') return true;
@@ -169,13 +172,7 @@ export function selectHomeFeatureRows(settings: HomeSettingsProjectionV1): HomeF
         const entry = switches.get(featureId) ?? null;
         const decision = decisionsById.get(featureId) ?? null;
         if (!entry && !decision) continue;
-        rows.push(Object.freeze({
-            featureId,
-            family: familyOf(featureId),
-            entry,
-            decision,
-            state: homeFeatureRowState(entry, decision),
-        }));
+        rows.push(Object.freeze({ featureId, entry, decision }));
     }
 
     const commonById = new Map(rows.filter((row) => COMMON.has(row.featureId)).map((row) => [row.featureId, row]));
@@ -184,9 +181,10 @@ export function selectHomeFeatureRows(settings: HomeSettingsProjectionV1): HomeF
     const byFamily = new Map<string, HomeFeatureSwitchRow[]>();
     for (const row of rows) {
         if (COMMON.has(row.featureId)) continue;
-        const list = byFamily.get(row.family) ?? [];
+        const family = familyOf(row.featureId);
+        const list = byFamily.get(family) ?? [];
         list.push(row);
-        byFamily.set(row.family, list);
+        byFamily.set(family, list);
     }
     for (const family of limitsByFamily.keys()) {
         if (!byFamily.has(family)) byFamily.set(family, []);

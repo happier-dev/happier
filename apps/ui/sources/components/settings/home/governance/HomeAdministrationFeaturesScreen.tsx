@@ -21,6 +21,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { useHomeSettings } from '@/hooks/home/useHomeSettings';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
 import { readHomeSettingsInvalidFailure, setHomeSettings } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
@@ -42,6 +43,7 @@ import {
     HOME_OTHER_FEATURE_FAMILY,
     homeFeatureDependentsTurningOff,
     homeFeaturePendingRestartValue,
+    homeFeatureRowState,
     isHomeFeatureShownOn,
     isHomeFeatureToggleable,
     selectHomeFeatureRows,
@@ -80,7 +82,7 @@ function ignoredReasonLabel(reason: HomeSettingIgnoredReasonV1): string {
  * start whose saved value is not running yet says what it will be after the restart, because the
  * Home's decision still describes the running value.
  */
-function stateLine(row: HomeFeatureSwitchRow, staged: boolean | undefined): string | null {
+function stateLine(row: Parameters<typeof isHomeFeatureShownOn>[0], staged: boolean | undefined): string | null {
     const restart = row.entry?.apply === 'restart' && !row.entry.fixed;
     if (staged !== undefined && staged !== isHomeFeatureShownOn(row)) {
         // A staged change speaks for itself; a switch read only at start says when it lands.
@@ -159,19 +161,19 @@ const FeatureDependentsNotice = React.memo(function FeatureDependentsNotice(prop
  * words with no control; a feature waiting on another names it and opens that row. Flipping the
  * switch stages the value; turning a parent off names the enabled features that follow it.
  */
-const FeatureSwitchRow = React.memo(function FeatureSwitchRow(props: Readonly<{
-    row: HomeFeatureSwitchRow;
+const FeatureSwitchRow = React.memo(function FeatureSwitchRow(props: HomeFeatureSwitchRow & Readonly<{
     staged: boolean | undefined;
-    decisionsById: ReadonlyMap<FeatureId, FeatureDecision>;
+    decisionsById: ReadonlyMap<FeatureId, FeatureDecision> | null;
     readOnly: boolean;
     disabled: boolean;
     onStage: StageValue;
     onOpenFeature: (featureId: FeatureId) => void;
     showDivider?: boolean;
 }>) {
-    const { row, staged, decisionsById, onStage, onOpenFeature } = props;
-    const title = homeFeatureTitle(row.featureId);
-    const description = homeFeatureDescription(row.featureId);
+    const { featureId, entry, decision, staged, decisionsById, onStage, onOpenFeature } = props;
+    const row = { entry, state: homeFeatureRowState(entry, decision) };
+    const title = homeFeatureTitle(featureId);
+    const description = homeFeatureDescription(featureId);
     const line = stateLine(row, staged);
     const restart = row.entry?.apply === 'restart' && !row.entry.fixed;
     const ignoredReason = row.entry?.applied?.ignoredReason;
@@ -181,7 +183,7 @@ const FeatureSwitchRow = React.memo(function FeatureSwitchRow(props: Readonly<{
         line,
         ignoredReason ? t('homeGovernance.features.ignoredAtLastStart', { reason: ignoredReasonLabel(ignoredReason) }) : null,
     ].filter(Boolean).join('\n');
-    const testID = `${FEATURE_ROW_TESTID}:${row.featureId}`;
+    const testID = `${FEATURE_ROW_TESTID}:${featureId}`;
     const current = isHomeFeatureShownOn(row);
     const on = staged ?? current;
     const entryKey = row.entry?.key ?? null;
@@ -194,8 +196,8 @@ const FeatureSwitchRow = React.memo(function FeatureSwitchRow(props: Readonly<{
         if (dependencyId) onOpenFeature(dependencyId);
     }, [dependencyId, onOpenFeature]);
     const dependents = React.useMemo(
-        () => (current && staged === false ? homeFeatureDependentsTurningOff(row.featureId, decisionsById) : NO_DEPENDENTS),
-        [current, decisionsById, row.featureId, staged],
+        () => (current && decisionsById ? homeFeatureDependentsTurningOff(featureId, decisionsById) : NO_DEPENDENTS),
+        [current, decisionsById, featureId],
     );
     const showNotice = dependents.length > 0;
 
@@ -235,7 +237,7 @@ const FeatureSwitchRow = React.memo(function FeatureSwitchRow(props: Readonly<{
             )}
         />
     );
-    const setting = featureSetting(row.featureId);
+    const setting = featureSetting(featureId);
     const anchored = setting ? <SettingAnchor setting={setting} showDivider={showNotice || props.showDivider}>{item}</SettingAnchor> : item;
     if (!showNotice) return anchored;
     return (
@@ -243,7 +245,7 @@ const FeatureSwitchRow = React.memo(function FeatureSwitchRow(props: Readonly<{
             {anchored}
             <FeatureDependentsNotice
                 testID={`${testID}.dependents`}
-                featureId={row.featureId}
+                featureId={featureId}
                 dependents={dependents}
                 afterRestart={restart}
                 showDivider={props.showDivider}
@@ -335,9 +337,8 @@ const FeatureFamilyDisclosure = React.memo(function FeatureFamilyDisclosure(prop
                     {family.switches.map((row) => (
                         <FeatureSwitchRow
                             key={row.featureId}
-                            row={row}
-                            staged={stagedSwitch(draft, row)}
-                            decisionsById={props.decisionsById}
+                            {...row}
+                            {...featureSwitchDraft(draft, row, props.decisionsById)}
                             readOnly={props.readOnly}
                             disabled={props.disabled}
                             onStage={props.onStage}
@@ -361,9 +362,14 @@ const FeatureFamilyDisclosure = React.memo(function FeatureFamilyDisclosure(prop
     );
 });
 
-function stagedSwitch(draft: HomeSettingDraft, row: HomeFeatureSwitchRow): boolean | undefined {
-    const staged = row.entry ? draft[row.entry.key] : undefined;
-    return staged?.kind === 'value' && typeof staged.value === 'boolean' ? staged.value : undefined;
+function featureSwitchDraft(
+    draft: HomeSettingDraft,
+    row: HomeFeatureSwitchRow,
+    decisionsById: ReadonlyMap<FeatureId, FeatureDecision>,
+) {
+    const change = row.entry ? draft[row.entry.key] : undefined;
+    const staged = change?.kind === 'value' && typeof change.value === 'boolean' ? change.value : undefined;
+    return { staged, decisionsById: staged === false ? decisionsById : null };
 }
 
 /**
@@ -476,12 +482,12 @@ const FeaturesPage = React.memo(function FeaturesPage(props: Readonly<{ context:
         }
     }, [context, home, settings, write]);
 
-    const openFeature = React.useCallback((featureId: FeatureId) => {
+    const openFeature = useEventCallback((featureId: FeatureId) => {
         const family = rows?.familyByFeature.get(featureId);
         if (family) setOpenRequests((current) => ({ ...current, [family]: (current[family] ?? 0) + 1 }));
         const setting = featureSetting(featureId);
         if (setting) router.setParams({ [SETTING_ANCHOR_QUERY_PARAM]: setting.anchor });
-    }, [router, rows]);
+    });
 
     // Known from the Home's answer, so it stands above the Common section before the settings arrive.
     const readOnlyNote = readOnly ? (
@@ -529,9 +535,8 @@ const FeaturesPage = React.memo(function FeaturesPage(props: Readonly<{ context:
                 {rows.common.map((row) => (
                     <FeatureSwitchRow
                         key={row.featureId}
-                        row={row}
-                        staged={stagedSwitch(draft, row)}
-                        decisionsById={rows.decisionsById}
+                        {...row}
+                        {...featureSwitchDraft(draft, row, rows.decisionsById)}
                         readOnly={readOnly}
                         disabled={disabled}
                         onStage={stage}

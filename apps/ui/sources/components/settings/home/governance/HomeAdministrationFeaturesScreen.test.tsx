@@ -1,6 +1,8 @@
 import * as React from 'react';
+
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 /**
@@ -17,11 +19,13 @@ import {
     homeSettingEntryFixture,
     homeSettingsProjectionFixture,
 } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createNativeViewRenderCounts } from '@/dev/testkit/performance/nativeViewRenderCounts';
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
@@ -34,8 +38,11 @@ vi.mock('@react-navigation/native', async () => {
     return createReactNavigationNativeMock();
 });
 
+const rowRenders = createNativeViewRenderCounts('home-feature:workflows', 'home-feature:voice', 'home-feature:search');
+
 installSettingsViewCommonModuleMocks({
     storage: 'real',
+    reactNative: rowRenders.reactNative,
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -52,6 +59,7 @@ const { HomeAdministrationFeaturesScreen } = await import('./HomeAdministrationF
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/governance/homeSettingsEngine');
 const { resetHomeSettingsSnapshotsForTests } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 const SETTINGS_GET = '/v1/home/settings/get';
@@ -128,6 +136,7 @@ async function renderFeatures(serverId: string) {
 }
 
 beforeEach(async () => {
+    rowRenders.reset();
     resetHomeSettingsEngineForTests();
     resetHomeSettingsSnapshotsForTests();
     const { resetHomeGovernanceSnapshotsForTests } = await import('@/sync/store/home/governance/homeGovernanceSnapshots');
@@ -250,6 +259,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
                 .toContain('homeGovernance.features.needs(feature=homeFeatures.teams.title)');
         });
         expect(screen.findByTestId('home-feature:teams.dependents')).toBeNull();
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
     });
 
     it('reverts every staged change on Discard without writing', async () => {
@@ -375,6 +385,59 @@ describe('HomeAdministrationFeaturesScreen', () => {
         await act(async () => { answerSettings(); });
         await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-feature:workflows'));
         expect(reserved()).toEqual([]);
+    });
+
+    it('reads the registry once across a cold open and return within the Home console', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, SETTINGS_GET, { body: featuresProjection() });
+        const { HomeSettingsLifetime } = await import('@/hooks/home/homeSettingsLifetime');
+        const frame = (page: React.ReactNode) => <HomeSettingsLifetime serverId={serverId}>{page}</HomeSettingsLifetime>;
+        const page = frame(<HomeAdministrationFeaturesScreen serverId={serverId} />);
+        await expectHomePageReadCosts({
+            home: harness,
+            mount: () => renderScreen(page),
+            leave: frame(null), returnTo: page,
+            settled: screen => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-feature:workflows'),
+            cold: { [GOVERNANCE_PATH]: 1, [SETTINGS_GET]: 1 },
+            returning: { [GOVERNANCE_PATH]: 1, [SETTINGS_GET]: 0 },
+        });
+    });
+
+    it('renders only the feature whose decision changed after a Home settings event', async () => {
+        const home = await addHome();
+        const otherHome = await harness.addHome({ name: 'Home B', serverUrl: 'https://home-b.example' });
+        const initial = featuresProjection();
+        harness.answer(home, SETTINGS_GET, { body: initial });
+        const screen = await renderFeatures(home);
+        await act(async () => {});
+        expect(screen.findByTestId('home-feature:workflows.switch')?.props.value).toBe(true);
+        expect(Object.values(rowRenders.read()).every(count => count > 0)).toBe(true);
+        rowRenders.reset();
+
+        const { adoptHomeSettingsProjection } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
+        await act(async () => {
+            adoptHomeSettingsProjection({ serverId: otherHome, accountId: `account-${otherHome}` }, featuresProjection());
+        });
+        expect(rowRenders.read()).toEqual({ 'home-feature:workflows': 0, 'home-feature:voice': 0, 'home-feature:search': 0 });
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
+
+        harness.answer(home, SETTINGS_GET, {
+            body: featuresProjection({
+                revision: 8,
+                entries: initial.entries.map(entry => entry.key === homeFeatureSwitchKey('workflows')
+                    ? { ...entry, value: false, source: 'home' }
+                    : entry),
+                featureDecisions: initial.featureDecisions?.map(decision => decision.featureId === 'workflows'
+                    ? featureDecisionFixture('workflows', { state: 'disabled', blockedBy: 'server', blockerCode: 'feature_disabled' })
+                    : decision),
+            }),
+        });
+        await act(async () => {
+            publishHomeAccountChange(home, [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-feature:workflows.switch')?.props.value).toBe(false));
+        expect(rowRenders.read()).toEqual({ 'home-feature:workflows': 1, 'home-feature:voice': 0, 'home-feature:search': 0 });
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(2);
     });
 
     it('commits the last-known rows on the first frame of a return visit', async () => {

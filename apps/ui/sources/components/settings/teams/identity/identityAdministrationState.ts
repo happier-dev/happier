@@ -3,6 +3,8 @@ import type {
     TeamIdentityEligibleProviderV1,
 } from '@happier-dev/protocol/teams';
 
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+
 import { sortIdentityConnectionsForAdministration } from './identityAdministrationPresentation';
 import type { ScopedIdentityConnectionV1 } from './identityAdministrationClient';
 
@@ -63,11 +65,12 @@ export function settleIdentityAdministrationRefresh(
         }
         return Object.freeze({ kind: 'unavailable' as const, failure: result.failure });
     }
+    const previous = state.kind === 'ready' ? state : undefined;
     return Object.freeze({
         kind: 'ready' as const,
-        items: sortIdentityConnectionsForAdministration(result.items),
-        eligibleProviders: Object.freeze([...result.eligibleProviders]),
-        admissionModeApplicability: result.admissionModeApplicability,
+        items: retainKeyedRows(previous?.items, sortIdentityConnectionsForAdministration(result.items), row => row.id),
+        eligibleProviders: retainDeep(previous?.eligibleProviders, Object.freeze([...result.eligibleProviders]), { freeze: true }),
+        admissionModeApplicability: retainDeep(previous?.admissionModeApplicability, result.admissionModeApplicability),
         memberSignInUrl: result.memberSignInUrl,
         refreshing: false,
         stale: false,

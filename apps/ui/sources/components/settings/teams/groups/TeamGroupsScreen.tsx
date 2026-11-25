@@ -15,7 +15,8 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { useTeamGroupDisplayNames } from '@/hooks/teams/useTeamGroupDisplayNames';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
-import { t } from '@/text';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
+import { t, usePreferredLanguage } from '@/text';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
@@ -34,16 +35,34 @@ type GroupVirtualizedRow = Readonly<{
 
 type GroupPresentation = TeamGroupPresentation<TeamGroupV1>;
 
+const GroupRow = React.memo(function GroupRow(props: GroupPresentation & Readonly<{
+    testIdPrefix: string;
+    onOpen: (groupId: string) => void;
+}>) {
+    usePreferredLanguage();
+    const { group } = props;
+    const managedBy = groupManagementLabel(group);
+    return (
+        <Item
+            testID={`${props.testIdPrefix}:${group.id}`}
+            title={props.name ?? t('common.unavailable')}
+            subtitle={[t('teams.groups.memberCount', { count: group.memberCount }), managedBy]
+                .filter((part): part is string => part !== null)
+                .join(' · ')}
+            onPress={() => props.onOpen(group.id)}
+        />
+    );
+});
+
 const GroupRows = React.memo(function GroupRows(props: Readonly<{
-    context: TeamSectionContext;
     groups: readonly GroupPresentation[];
     /** Only a second list on the page (archived) is titled; the page's own list is not. */
     title?: string;
     testIdPrefix: string;
     first: boolean;
     last: boolean;
+    onOpen: (groupId: string) => void;
 }>) {
-    const router = useRouter();
     if (props.groups.length === 0) return null;
     return (
         <ItemGroup
@@ -53,21 +72,9 @@ const GroupRows = React.memo(function GroupRows(props: Readonly<{
         >
             {/* A browse list lies flat, its rows parted by the one list-row rule (LISTS-BUILD). */}
             <CollectionRows continued={!props.last}>
-            {props.groups.map((row) => {
-                const { group } = row;
-                const managedBy = groupManagementLabel(group);
-                return (
-                    <Item
-                        key={group.id}
-                        testID={`${props.testIdPrefix}:${group.id}`}
-                        title={row.name ?? t('common.unavailable')}
-                        subtitle={[t('teams.groups.memberCount', { count: group.memberCount }), managedBy]
-                            .filter((part): part is string => part !== null)
-                            .join(' · ')}
-                        onPress={() => router.push(teamGroupDetailPath(props.context.address, group.id))}
-                    />
-                );
-            })}
+                {props.groups.map(({ group, name }) => (
+                    <GroupRow key={group.id} group={group} name={name} testIdPrefix={props.testIdPrefix} onOpen={props.onOpen} />
+                ))}
             </CollectionRows>
         </ItemGroup>
     );
@@ -80,6 +87,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const { context } = props;
+    const openGroup = useEventCallback((groupId: string) => router.push(teamGroupDetailPath(context.address, groupId)));
     const [showArchived, setShowArchived] = React.useState(false);
     const [query, setQuery] = React.useState('');
 
@@ -141,12 +149,12 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
                 const last = start + GROUP_CHUNK_SIZE >= groups.length;
                 add(`${keyPrefix}:${chunk[0]!.group.id}`, () => (
                     <GroupRows
-                        context={context}
                         groups={chunk}
                         title={title}
                         testIdPrefix={testIdPrefix}
                         first={first}
                         last={last}
+                        onOpen={openGroup}
                     />
                 ));
             }
@@ -308,7 +316,7 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
         }
 
         return result;
-    }, [active, activeRows, archived, archivedCount, archivedRows, canCreate, canRead, context, knownNoGroups, moreRowsMayMatch, offerArchived, queryHasNoVisibleRows, reservedGroups, router, showArchived]);
+    }, [active, activeRows, archived, archivedCount, archivedRows, canCreate, canRead, context, knownNoGroups, moreRowsMayMatch, offerArchived, openGroup, queryHasNoVisibleRows, reservedGroups, router, showArchived]);
 
     const renderRow = React.useCallback(
         ({ item }: Readonly<{ item: GroupVirtualizedRow }>) => item.render(),

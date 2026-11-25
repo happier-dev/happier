@@ -1,4 +1,5 @@
 import type { TeamDirectorySourceSummaryV1 } from '@happier-dev/protocol/teams';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 import type { IdentityAdministrationFailure } from './identityAdministrationState';
 
@@ -70,9 +71,11 @@ export function settleDirectoryAdministrationRefresh(
     }
     return Object.freeze({
         kind: 'ready' as const,
-        items: Object.freeze([...result.items].sort((left, right) => (
-            left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)
-        ))),
+        items: retainKeyedRows(
+            state.kind === 'ready' ? state.items : undefined,
+            [...result.items].sort((left, right) => left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)),
+            row => row.id,
+        ),
         nextCursor: result.nextCursor,
         refreshing: false,
         loadingMore: false,
@@ -98,17 +101,7 @@ export function settleDirectoryAdministrationContinuation(
     }
     const byId = new Map(state.items.map((item) => [item.id, item]));
     for (const item of result.items) byId.set(item.id, item);
-    return Object.freeze({
-        kind: 'ready' as const,
-        items: Object.freeze([...byId.values()].sort((left, right) => (
-            left.displayName.localeCompare(right.displayName) || left.id.localeCompare(right.id)
-        ))),
-        nextCursor: result.nextCursor,
-        refreshing: false,
-        loadingMore: false,
-        stale: false,
-        failure: null,
-    });
+    return settleDirectoryAdministrationRefresh(state, { ok: true, items: [...byId.values()], nextCursor: result.nextCursor });
 }
 
 export function beginDirectorySourceAdministrationRefresh(

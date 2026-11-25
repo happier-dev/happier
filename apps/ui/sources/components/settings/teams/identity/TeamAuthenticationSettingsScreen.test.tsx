@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
 import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
-import { TeamDirectorySourcePageV1Schema, TeamIdentityConnectionListResultV1Schema, TeamIdentityConnectionCreateInputV1Schema } from '@happier-dev/protocol/teams';
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
+import { TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_DEFAULT_V1, TeamDirectorySourcePageV1Schema, TeamIdentityConnectionListResultV1Schema, TeamIdentityConnectionCreateInputV1Schema } from '@happier-dev/protocol/teams';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { teamCapabilitiesFixture, teamSummaryFixture, teamIdentityConnectionFixture, teamDirectorySourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -72,9 +73,18 @@ let serverId: string;
 const connectionsPath = '/v1/teams/identity/connections/list';
 const createPath = '/v1/teams/identity/connections/create';
 const sourcesPath = '/v1/teams/team-1/directory-sources';
+const githubAppsPath = '/v1/identity/github-apps/list';
+const entryPath = '/v1/auth/entry';
 let directoryPage: unknown;
 let createResponseId = 'connection-1';
 let githubApps = ManagedGitHubAppsListOutputV1Schema.parse({ registrations: [], installations: [] });
+
+function answerConnections(items = identityFixture.current.items) {
+    harness.answer(serverId, connectionsPath, { body: TeamIdentityConnectionListResultV1Schema.parse({
+        items, eligibleProviders: identityFixture.current.eligibleProviders,
+        admissionModeApplicability: identityFixture.current.admissionModeApplicability, memberSignInUrl: null,
+    }) });
+}
 
 async function renderAuthentication() {
     harness.answer(serverId, '/v1/teams/get', { body: teamSummaryFixture({
@@ -82,13 +92,10 @@ async function renderAuthentication() {
         capabilities: teamCapabilitiesFixture({ manageAuthentication: teamFixture.manageAuthentication }),
         ...(teamFixture.directoryMembership !== undefined ? { directoryMembership: teamFixture.directoryMembership } : {}),
     }) });
-    harness.answer(serverId, connectionsPath, { body: TeamIdentityConnectionListResultV1Schema.parse({
-        items: identityFixture.current.items, eligibleProviders: identityFixture.current.eligibleProviders,
-        admissionModeApplicability: identityFixture.current.admissionModeApplicability, memberSignInUrl: null,
-    }) });
+    answerConnections();
     harness.answer(serverId, sourcesPath, { body: TeamDirectorySourcePageV1Schema.parse(directoryPage) });
-    harness.answer(serverId, '/v1/identity/github-apps/list', { body: githubApps });
-    harness.answer(serverId, '/v1/auth/entry', { body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }) });
+    harness.answer(serverId, githubAppsPath, { body: githubApps });
+    harness.answer(serverId, entryPath, { body: AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'ready', actions: [], autoRedirect: null }) });
     harness.answer(serverId, createPath, { select: input => {
         const request = TeamIdentityConnectionCreateInputV1Schema.parse(input);
         return { body: { connection: teamIdentityConnectionFixture({
@@ -128,6 +135,12 @@ function addMenu(screen: Awaited<ReturnType<typeof renderScreen>>): AddMenu {
 
 function menuChoice(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
     return addMenu(screen).items.find((item) => item.testID === testID);
+}
+
+function mountedRows(screen: Awaited<ReturnType<typeof renderScreen>>, prefix: string) {
+    return new Map(screen.findAllByType(Item)
+        .filter(node => node.props.testID?.startsWith(prefix))
+        .map(node => [node.props.testID, node.props] as const));
 }
 
 async function choose(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
@@ -182,6 +195,16 @@ beforeEach(async () => {
 });
 
 describe('TeamAuthenticationSettingsScreen', () => {
+    it('reads each Authentication section once on cold open and return', async () => {
+        const page = <TeamAuthenticationSettingsScreen serverId={serverId} teamId="team-1" />;
+        const reads = { '/v1/teams/get': 1, [connectionsPath]: 1, [sourcesPath]: 1, [githubAppsPath]: 1, [entryPath]: 1 };
+        await expectHomePageReadCosts({
+            home: harness, mount: renderAuthentication, leave: <></>, returnTo: page,
+            settled: screen => expect(menuChoice(screen, 'team-eligible-provider:provider-1')).toBeDefined(),
+            cold: reads, returning: reads,
+        });
+    });
+
     it.each([
         ['syncing', 'syncing'],
         ['healthy', 'active'],
@@ -231,7 +254,7 @@ describe('TeamAuthenticationSettingsScreen', () => {
         expect(menuChoice(screen, 'team-eligible-provider:provider-1')?.title)
             .toBe('identityAdministration.providerOidc');
     });
-    it('keeps every connection and eligible provider mounted beyond 100 rows', async () => {
+    it('keeps every connection and eligible provider beyond 100 rows and updates only the edited connection', async () => {
         identityFixture.current.items = Array.from({ length: 101 }, (_, index) => ({
             v: 1,
             id: `connection-${index}`,
@@ -292,6 +315,21 @@ describe('TeamAuthenticationSettingsScreen', () => {
         // The ways to add another are the section's own "+" menu, closed until asked for.
         expect(addMenu(screen).open).toBe(false);
         expect(menuChoice(screen, 'team-eligible-provider:eligible-provider-100')).toBeTruthy();
+
+        const rows = () => mountedRows(screen, 'team-authentication-connection-');
+        const baseline = rows();
+        expect(baseline.size).toBe(101);
+        const changedId = 'team-authentication-connection-connection-0';
+        const next = identityFixture.current.items.map((row, index) => index === 0 ? {
+            ...row, state: 'disabled', enabled: false, revision: 2,
+        } : row);
+        answerConnections(next);
+        await React.act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await waitForHomeGovernance(() => expect(rows().get(changedId)?.subtitle).not.toBe(baseline.get(changedId)?.subtitle));
+        const updated = rows();
+        expect(updated.size).toBe(baseline.size);
+        expect([...updated].filter(([id, props]) => props !== baseline.get(id)).map(([id]) => id)).toEqual([changedId]);
+        expect(harness.requestsFor(connectionsPath)).toHaveLength(2);
     });
 
     it('keeps provider setup visible but disables it for a read-only Team', async () => {
@@ -456,19 +494,27 @@ describe('TeamAuthenticationSettingsScreen', () => {
         expect(screen.findByTestId('home-github-app-add')?.props.disabled).toBe(false);
     });
 
-    it('names the Team\'s directory and where its sync stands, and opens that source', async () => {
-        directoryPage = {
-                items: [teamDirectorySourceFixture({ id: 'source-acme', displayName: 'Acme directory' })],
-                nextCursor: null,
-        };
+    it('opens the exact directory source and updates only its row on a Team change', async () => {
+        const items = Array.from({ length: TEAM_DIRECTORY_SOURCE_PAGE_LIMIT_DEFAULT_V1 }, (_, index) =>
+            teamDirectorySourceFixture({ id: `source-${index}`, displayName: `Directory ${String(index).padStart(2, '0')}` }));
+        directoryPage = { items, nextCursor: null };
         const screen = await renderAuthentication();
+        const rows = () => mountedRows(screen, 'team-authentication-directory-source:');
+        const changedId = 'team-authentication-directory-source:source-0';
+        await waitForHomeGovernance(() => expect(rows().size).toBe(items.length));
+        const baseline = rows();
+        expect(findTestInstanceByTypeContainingText(screen.findByTestId(changedId)!, 'Text', 'Directory 00')).toBeDefined();
+        await screen.pressByTestIdAsync(changedId);
+        expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/source-0`);
 
-        await vi.waitFor(() => {
-            expect(screen.findByTestId('team-authentication-directory-source:source-acme')).toBeTruthy();
-        });
-        expect(findTestInstanceByTypeContainingText(screen.findByTestId('team-authentication-directory-source:source-acme')!, 'Text', 'Acme directory')).toBeDefined();
-        await screen.pressByTestIdAsync('team-authentication-directory-source:source-acme');
-        expect(routerPushMock).toHaveBeenCalledWith(`/settings/teams/${serverId}/team-1/authentication/directory/source-acme`);
+        const next = items.map((row, index) => index === 0 ? { ...row, displayName: 'Directory 00 renamed' } : row);
+        harness.answer(serverId, sourcesPath, { body: TeamDirectorySourcePageV1Schema.parse({ items: next, nextCursor: null }) });
+        await React.act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await waitForHomeGovernance(() => expect(rows().get(changedId)?.title).toBe('Directory 00 renamed'));
+        const updated = rows();
+        expect(updated.size).toBe(baseline.size);
+        expect([...updated].filter(([id, props]) => props !== baseline.get(id)).map(([id]) => id)).toEqual([changedId]);
+        expect(harness.requestsFor(sourcesPath)).toHaveLength(2);
     });
 
     it('says a Team without a directory in one quiet line and offers "Add source" as the section action', async () => {

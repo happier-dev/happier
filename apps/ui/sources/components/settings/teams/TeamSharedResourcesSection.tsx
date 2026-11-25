@@ -15,7 +15,8 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { ReservedShape } from '@/components/ui/lists/ReservedShape';
 import type { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
-import { t } from '@/text';
+import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { usePreferredLanguage, t } from '@/text';
 
 import { credentialFailureMessage } from './credentials/teamCredentialPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
@@ -33,14 +34,14 @@ const LOADING_ROWS = 1;
 /** Sessions and Credentials keep their shipped Team pages; every other listed kind opens its own Team list. */
 function kindDestination(
   row: TeamSharedResourceSummaryRowV1,
-  context: TeamSectionContext,
+  address: TeamAddress,
 ) {
   const { kind } = row;
-  if (kind === 'sessions') return teamSessionsPath(context.address);
-  if (kind === 'credentials') return teamCredentialsPath(context.address);
-  if (row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1) return teamSharedCollectionPath(context.address, row.collection);
+  if (kind === 'sessions') return teamSessionsPath(address);
+  if (kind === 'credentials') return teamCredentialsPath(address);
+  if (row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1) return teamSharedCollectionPath(address, row.collection);
   const listKind = readTeamSharedListKind(kind);
-  return listKind ? teamSharedKindPath(context.address, listKind) : null;
+  return listKind ? teamSharedKindPath(address, listKind) : null;
 }
 
 /** A kind is listed when someone shared one, or when its owner could not count it (unknown is never 0). */
@@ -69,9 +70,10 @@ export const TeamSharedResourcesSection = React.memo(
     }>,
   ) {
     const { context, besidePage, summary } = props;
-    const router = useRouter();
-    const destinationOf = React.useCallback((row: TeamSharedResourceSummaryRowV1) => kindDestination(row, context), [context]);
-    const open = React.useCallback((destination: NonNullable<ReturnType<typeof kindDestination>>) => router.push(destination), [router]);
+    const { push } = useRouter();
+    const { address } = context;
+    const destinationOf = React.useCallback((row: TeamSharedResourceSummaryRowV1) => kindDestination(row, address), [address]);
+    const open = React.useCallback((destination: KindDestination) => push(destination), [push]);
     const openBeside = besidePage?.onOpen;
     const onOpenRow = React.useMemo(() => openBeside ? (row: TeamSharedResourceSummaryRowV1) => {
       if (!opensTeamSharedKindList(row)) return false;
@@ -108,6 +110,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
     selectedKey?: string | null;
   }>,
 ) {
+    const language = usePreferredLanguage();
     const rows = React.useMemo(
       () =>
         props.summary.kinds
@@ -164,62 +167,89 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
           <SharedEmptyRow teamName={props.teamName} />
         ) : null}
         {rows.map((row) => {
-          const presentation = TEAM_SHARED_KIND_PRESENTATION[row.kind];
-          const collection = row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? row.collection : null;
-          const label = collection ? `${collection.collectionId} · ${collection.pluginId}` : t(presentation.title);
-          const title = collection?.collectionId ?? label;
-          const destination = props.destinationOf(row);
           const key = teamSharedResourceSummaryRowKeyV1(row);
-          if (row.status === 'unavailable') {
-            const failure = homeDomainFailureFromActionFailure({ errorCode: row.reason });
-            const reason = (row.kind === 'credentials' ? credentialFailureMessage(failure) : null)
-              ?? teamReadFailureLabel(failure);
-            return (
-              <Item
-                key={key}
-                testID={`team-overview-shared:${key}`}
-                icon={<Icon name={presentation.icon} />}
-                title={title}
-                subtitle={collection ? `${collection.pluginId} · ${reason}` : reason}
-                subtitleLines={0}
-                accessibilityLabel={`${t('teams.overview.shared.unknownA11y', { kind: label })}. ${reason}`}
-                detail={t('teams.overview.shared.unknown')}
-                rightElement={
-                  <TextLinkButton
-                    testID={`team-overview-shared-retry:${key}`}
-                    label={t('common.retry')}
-                    onPress={props.summary.reload}
-                  />
-                }
-                mode="info"
-                showChevron={false}
-              />
-            );
-          }
           return (
-            <Item
+            <TeamSharedResourceRow
               key={key}
-              testID={`team-overview-shared:${key}`}
-              icon={<Icon name={presentation.icon} />}
-              title={title}
-              subtitle={collection?.pluginId}
-              accessibilityLabel={t('teams.overview.shared.countA11y', {
-                kind: label,
-                count: row.count,
-              })}
-              detail={String(row.count)}
-              mode={destination ? 'interactive' : 'info'}
-              showChevron={destination !== null}
+              rowKey={key}
+              row={row}
+              language={language}
+              destinationOf={props.destinationOf}
+              onOpen={props.onOpen}
+              onOpenRow={props.onOpenRow}
+              onRetry={props.summary.reload}
               selected={props.selectedKey === key}
-              onPress={destination ? () => {
-                if (props.onOpenRow?.(row)) return;
-                props.onOpen(destination);
-              } : undefined}
             />
           );
         })}
       </ItemGroup>
     );
+});
+
+const TeamSharedResourceRow = React.memo(function TeamSharedResourceRow(props: Readonly<{
+  rowKey: string;
+  row: TeamSharedResourceSummaryRowV1;
+  language: ReturnType<typeof usePreferredLanguage>;
+  destinationOf: (row: TeamSharedResourceSummaryRowV1) => KindDestination | null;
+  onOpen: (destination: KindDestination) => void;
+  onOpenRow?: (row: TeamSharedResourceSummaryRowV1) => boolean;
+  onRetry: () => Promise<void>;
+  selected: boolean;
+  showDivider?: boolean;
+}>) {
+  const { row, rowKey, showDivider } = props;
+  const presentation = TEAM_SHARED_KIND_PRESENTATION[row.kind];
+  const collection = row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? row.collection : null;
+  const label = collection ? `${collection.collectionId} · ${collection.pluginId}` : t(presentation.title);
+  const title = collection?.collectionId ?? label;
+  const destination = props.destinationOf(row);
+  if (row.status === 'unavailable') {
+    const failure = homeDomainFailureFromActionFailure({ errorCode: row.reason });
+    const reason = (row.kind === 'credentials' ? credentialFailureMessage(failure) : null)
+      ?? teamReadFailureLabel(failure);
+    return (
+      <Item
+        testID={`team-overview-shared:${rowKey}`}
+        showDivider={showDivider}
+        icon={<Icon name={presentation.icon} />}
+        title={title}
+        subtitle={collection ? `${collection.pluginId} · ${reason}` : reason}
+        subtitleLines={0}
+        accessibilityLabel={`${t('teams.overview.shared.unknownA11y', { kind: label })}. ${reason}`}
+        detail={t('teams.overview.shared.unknown')}
+        rightElement={
+          <TextLinkButton
+            testID={`team-overview-shared-retry:${rowKey}`}
+            label={t('common.retry')}
+            onPress={props.onRetry}
+          />
+        }
+        mode="info"
+        showChevron={false}
+      />
+    );
+  }
+  return (
+    <Item
+      testID={`team-overview-shared:${rowKey}`}
+      showDivider={showDivider}
+      icon={<Icon name={presentation.icon} />}
+      title={title}
+      subtitle={collection?.pluginId}
+      accessibilityLabel={t('teams.overview.shared.countA11y', {
+        kind: label,
+        count: row.count,
+      })}
+      detail={String(row.count)}
+      mode={destination ? 'interactive' : 'info'}
+      showChevron={destination !== null}
+      selected={props.selected}
+      onPress={destination ? () => {
+        if (props.onOpenRow?.(row)) return;
+        props.onOpen(destination);
+      } : undefined}
+    />
+  );
 });
 
 /** The invitation to share, as one row of the section; the never-seen reserve draws it unseen for its box. */

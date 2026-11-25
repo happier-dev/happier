@@ -1,6 +1,8 @@
 import * as React from 'react';
+
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 /**
@@ -15,11 +17,13 @@ import {
     homeRetentionGlobalEntriesFixture,
     homeSettingsProjectionFixture,
 } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
     waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createNativeViewRenderCounts } from '@/dev/testkit/performance/nativeViewRenderCounts';
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 
@@ -32,8 +36,11 @@ vi.mock('@react-navigation/native', async () => {
     return createReactNavigationNativeMock();
 });
 
+const rowRenders = createNativeViewRenderCounts('home-retention:sessions', 'home-retention:usageEvents');
+
 installSettingsViewCommonModuleMocks({
     storage: 'real',
+    reactNative: rowRenders.reactNative,
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -50,6 +57,7 @@ const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/gov
 const { resetHomeSettingsSnapshotsForTests } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
 const { HomeAdministrationDataScreen } = await import('./HomeAdministrationDataScreen');
 const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 const SETTINGS_GET = '/v1/home/settings/get';
@@ -57,6 +65,7 @@ const SETTINGS_SET = '/v1/home/settings/set';
 const DRY_RUN = '/v1/home/retention/dry-run';
 const SESSIONS_MODE = 'HAPPIER_SERVER_RETENTION__SESSIONS__MODE';
 const SESSIONS_DAYS = 'HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS';
+const USAGE_DAYS = 'HAPPIER_SERVER_RETENTION__USAGE_EVENTS__DAYS';
 
 type RenderedNode = Readonly<{ children: ReadonlyArray<RenderedNode | string> }>;
 
@@ -110,6 +119,7 @@ async function renderData(serverId: string) {
 }
 
 beforeEach(async () => {
+    rowRenders.reset();
     resetHomeSettingsEngineForTests();
     resetHomeSettingsSnapshotsForTests();
     const { resetHomeGovernanceSnapshotsForTests } = await import('@/sync/store/home/governance/homeGovernanceSnapshots');
@@ -123,6 +133,74 @@ afterEach(() => {
 });
 
 describe('HomeAdministrationDataScreen', () => {
+    it('reads the registry once across a cold open and return within the Home console', async () => {
+        const serverId = await addHome();
+        harness.answer(serverId, SETTINGS_GET, { body: dataProjection() });
+        const { HomeSettingsLifetime } = await import('@/hooks/home/homeSettingsLifetime');
+        const frame = (page: React.ReactNode) => <HomeSettingsLifetime serverId={serverId}>{page}</HomeSettingsLifetime>;
+        const page = frame(<HomeAdministrationDataScreen serverId={serverId} />);
+        await expectHomePageReadCosts({
+            home: harness,
+            mount: () => renderScreen(page),
+            leave: frame(null), returnTo: page,
+            settled: screen => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-retention:sessions'),
+            cold: { [GOVERNANCE_PATH]: 1, [SETTINGS_GET]: 1 },
+            returning: { [GOVERNANCE_PATH]: 1, [SETTINGS_GET]: 0 },
+        });
+    });
+
+    it('renders only the changed retention rule and preserves the draft in a sibling row', async () => {
+        const home = await addHome();
+        const initial = dataProjection();
+        harness.answer(home, SETTINGS_GET, { body: initial });
+        const screen = await renderData(home);
+        const sessionsDays = 'home-retention:sessions.days';
+        const usageDays = 'home-retention:usageEvents.days';
+        expect(screen.findByTestId(usageDays)?.props.value).toBe('365');
+        expect(Object.values(rowRenders.read()).every(count => count > 0)).toBe(true);
+        await act(async () => { screen.pressByTestId('home-retention:sessions.mode:delete'); });
+        await act(async () => { screen.changeTextByTestId(sessionsDays, '90'); });
+        rowRenders.reset();
+
+        harness.answer(home, SETTINGS_GET, {
+            body: dataProjection({
+                revision: 6,
+                entries: initial.entries.map(entry => entry.key === USAGE_DAYS
+                    ? { ...entry, value: 180 }
+                    : entry),
+            }),
+        });
+        await act(async () => {
+            publishHomeAccountChange(home, [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+        });
+        await waitForHomeGovernance(() => expect(screen.findByTestId(usageDays)?.props.value).toBe('180'));
+        expect(rowRenders.read()).toEqual({ 'home-retention:sessions': 0, 'home-retention:usageEvents': 1 });
+        expect(screen.findByTestId(sessionsDays)?.props.value).toBe('90');
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(2);
+        expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(0);
+
+        harness.answer(home, SETTINGS_SET, {
+            body: dataProjection({
+                revision: 7,
+                entries: initial.entries.map(entry => {
+                    if (entry.key === SESSIONS_MODE) return { ...entry, value: 'delete_inactive', source: 'home' };
+                    if (entry.key === SESSIONS_DAYS) return { ...entry, value: 90, source: 'home' };
+                    if (entry.key === USAGE_DAYS) return { ...entry, value: 180 };
+                    return entry;
+                }),
+            }),
+        });
+        await act(async () => { screen.findByTestId(sessionsDays)?.props.onSubmitEditing(); });
+        await waitForHomeGovernance(() => {
+            expect(harness.requestsFor(SETTINGS_SET).map(request => request.input)).toEqual([{
+                expectedRevision: 6,
+                values: { [SESSIONS_MODE]: 'delete_inactive', [SESSIONS_DAYS]: 90 },
+            }]);
+            expect(screen.findByTestId(sessionsDays)?.props.editable).toBe(true);
+        });
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(2);
+    });
+
     it('waits for the days before deleting, then writes the mode and the days together', async () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: dataProjection() });
@@ -150,6 +228,7 @@ describe('HomeAdministrationDataScreen', () => {
             expectedRevision: 5,
             values: { [SESSIONS_MODE]: 'delete_inactive', [SESSIONS_DAYS]: 90 },
         });
+        expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
     });
 
     it('keeps System records closed until opened, and shows each dry-run count under its row', async () => {

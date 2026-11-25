@@ -114,7 +114,7 @@ describe('useHomeSettingsWithCompanion', () => {
         await act(async () => { hook.getCurrent().writer.adoptSettings(accepted); });
         expect(harness.requestsFor(reachPath)).toHaveLength(2);
         await waitForHomeGovernance(() => expect(hook.getCurrent().companion.companion?.publicAddress.url).toBe('https://after.example'));
-        expect(hook.getCurrent().companion.settings).toBe(accepted);
+        expect(hook.getCurrent().companion.settings).toEqual(accepted);
         expect(hook.getCurrent().disabled.companion).toBeNull();
         expect(harness.requestsFor(SETTINGS_GET)).toHaveLength(1);
         expect(harness.requestsFor(reachPath)).toHaveLength(2);

@@ -1,8 +1,12 @@
 import * as React from 'react';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import { TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1 } from '@happier-dev/protocol/teams';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamSummaryFixture } from '@/dev/testkit';
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -37,6 +41,7 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 // Load the real screen after its boundaries are installed, outside any case's deadline.
 const { TeamGroupsScreen } = await import('./TeamGroupsScreen');
+const { Item } = await import('@/components/ui/lists/Item');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const GROUPS_LIST_PATH = '/v1/teams/groups/list';
@@ -45,7 +50,7 @@ async function renderGroups(serverId: string) {
     return renderScreen(<TeamGroupsScreen serverId={serverId} teamId="team-1" />);
 }
 
-async function addManagedHome(archivedGroups = 1): Promise<string> {
+async function addManagedHome(archivedGroups = 1, groups = 1): Promise<string> {
     const serverId = await harness.addHome({
         name: 'Home A',
         serverUrl: 'https://home-a.example',
@@ -56,7 +61,7 @@ async function addManagedHome(archivedGroups = 1): Promise<string> {
     harness.answer(serverId, TEAM_GET_PATH, {
         body: teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageGroups: true }),
-            counts: { members: 1, suspendedMembers: 0, groups: 1, archivedGroups, waitingInvitations: 0 },
+            counts: { members: 1, suspendedMembers: 0, groups, archivedGroups, waitingInvitations: 0 },
         }),
     });
     return serverId;
@@ -88,6 +93,20 @@ afterEach(() => {
 });
 
 describe('TeamGroupsScreen', () => {
+    it('reads one Team and the active Groups sequence per cold open and return', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, GROUPS_LIST_PATH, {
+            body: { items: [teamGroupFixture()], nextCursor: null },
+        });
+        const page = <TeamGroupsScreen serverId={serverId} teamId="team-1" />;
+        const reads = { [TEAM_GET_PATH]: 1, [GROUPS_LIST_PATH]: 1 };
+        await expectHomePageReadCosts({
+            home: harness, mount: () => renderGroups(serverId), leave: <></>, returnTo: page,
+            settled: screen => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('team-groups-row:group-1'),
+            cold: reads, returning: reads,
+        });
+    });
+
     it('offers the archived sequence only when the Team summary reports archived Groups', async () => {
         const serverId = await addManagedHome(0);
         harness.answer(serverId, GROUPS_LIST_PATH, {
@@ -135,33 +154,36 @@ describe('TeamGroupsScreen', () => {
             .some((call) => (call.input as { archived?: string }).archived === 'archived')).toBe(false);
     });
 
-    it('renders a large Group directory as stable chunks in the canonical virtualized list', async () => {
+    it('bounds a full Groups page and updates only the affected mounted row on a Team change', async () => {
         virtualizedBoundary.mountLimit = 2;
-        const serverId = await addManagedHome();
-        harness.answer(serverId, GROUPS_LIST_PATH, {
-            body: {
-                items: Array.from({ length: 25 }, (_, index) => teamGroupFixture({
-                    id: `group-${index}`,
-                    name: `Group ${String(index).padStart(2, '0')}`,
-                })),
-                nextCursor: null,
-            },
-        });
+        const serverId = await addManagedHome(1, TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1);
+        const items = Array.from({ length: TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1 }, (_, index) => teamGroupFixture({
+            id: `group-${index}`,
+            name: `Group ${String(index).padStart(2, '0')}`,
+        }));
+        harness.answer(serverId, GROUPS_LIST_PATH, { body: { items, nextCursor: null } });
 
         const screen = await renderGroups(serverId);
-        await waitForTestId(screen, 'team-groups-row:group-0');
+        const mountedRows = () => new Map(screen.findAllByType(Item)
+            .filter(node => node.props.testID?.startsWith('team-groups-row:'))
+            .map(node => [node.props.testID, node.props] as const));
+        const changedId = 'team-groups-row:group-0';
+        await vi.waitFor(() => expect(mountedRows().get(changedId)?.title).toBe('Group 00'));
 
         expect(virtualizedBoundary.props?.['data-testid']).toBe('team-groups-virtualized-list');
         expect(virtualizedBoundary.props?.maintainVisibleContentPosition).toBe(true);
-        const data = virtualizedBoundary.props?.data as readonly unknown[];
-        expect(data.length).toBeLessThan(25);
-        const keyExtractor = virtualizedBoundary.props?.keyExtractor as (item: unknown) => string;
-        expect(data.map(keyExtractor)).toEqual(expect.arrayContaining([
-            'active:group-0',
-            'active:group-12',
-            'active:group-24',
-        ]));
-        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('team-groups-row:group-24');
+        const baseline = mountedRows();
+        expect(baseline.size).toBe(24);
+        expect(baseline.has('team-groups-row:group-24')).toBe(false);
+
+        const next = items.map((row, index) => index === 0 ? { ...row, memberCount: 2 } : row);
+        harness.answer(serverId, GROUPS_LIST_PATH, { body: { items: next, nextCursor: null } });
+        await React.act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await vi.waitFor(() => expect(mountedRows().get(changedId)?.subtitle).toBe('teams.groups.memberCount(count=2)'));
+        const updated = mountedRows();
+        expect(updated.size).toBe(baseline.size);
+        expect([...updated].filter(([id, props]) => props !== baseline.get(id)).map(([id]) => id)).toEqual([changedId]);
+        expect(harness.requestsFor(GROUPS_LIST_PATH)).toHaveLength(2);
     });
 
     it('asks its own Home for active Groups and opens one by its exact address', async () => {

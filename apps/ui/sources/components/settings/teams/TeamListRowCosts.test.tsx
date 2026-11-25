@@ -1,4 +1,7 @@
 import * as React from 'react';
+
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
+import { TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1, TeamMembersListInputV1Schema } from '@happier-dev/protocol/teams';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -58,6 +61,27 @@ function changedRows(before: ReturnType<typeof rowProps>, after: ReturnType<type
 }
 
 describe('Team mounted-row costs', () => {
+    it('reads one Team and roster per cold Members open and return', async () => {
+        const { address } = await setup();
+        const items = Array.from({ length: 400 }, (_, index) => teamMembershipFixture({
+            id: `member-${index}`, accountId: `account-${index}`,
+        }));
+        const rosterPath = '/v1/teams/members/list';
+        home.answer(address.serverId, rosterPath, { select: input => {
+            const { cursor } = TeamMembersListInputV1Schema.parse(input);
+            const offset = typeof cursor === 'string' ? Number(cursor) : 0;
+            const nextOffset = offset + TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1;
+            return { body: { items: items.slice(offset, nextOffset), nextCursor: nextOffset < items.length ? String(nextOffset) : null } };
+        } });
+        const page = <TeamMembersScreen serverId={address.serverId} teamId={address.teamId} />;
+        const reads = { '/v1/teams/get': 1, [rosterPath]: 1 };
+        await expectHomePageReadCosts({
+            home, mount: () => renderScreen(page, { wrapper: NativeRoute }), leave: <></>, returnTo: page,
+            settled: screen => expect(rowProps(screen, 'team-members-row:').size).toBeGreaterThan(3),
+            cold: reads, returning: reads,
+        });
+    });
+
     it.each(['page', 'rail'] as const)('invalidates only one mounted member %s row for one changed row on a 400-member arrival', async surface => {
         const { scope, address } = await setup();
         const items = Array.from({ length: 400 }, (_, i) => teamMembershipFixture({ id: `member-${i}`, accountId: `account-${i}` }));
@@ -84,7 +108,7 @@ describe('Team mounted-row costs', () => {
         expect(surface === 'rail' ? router.spies.replace : router.spies.push).toHaveBeenCalledWith(expect.stringContaining('member-1'));
     });
 
-    it('keeps all 400 credential rows mounted without invalidating them for an unrelated Team body edit', async () => {
+    it('isolates credential edits and divider changes across 400 mounted rows', async () => {
         const { scope, address, team } = await setup();
         const resources = Array.from({ length: 400 }, (_, i) => teamCredentialResourceFixture({ id: `resource-${i}`, displayName: `Resource ${String(i).padStart(3, '0')}` }));
         const viewer = teamCredentialViewerFixture({ manageCredentials: true });
@@ -102,13 +126,40 @@ describe('Team mounted-row costs', () => {
         expect(changedRows(baseline, rowProps(screen, 'team-credentials-row:'))).toBe(0);
         const admitted = getTeamCredentialResourcesSnapshot(scope, address);
         if (!admitted?.data) throw new Error('Expected admitted credential rows');
-        const admittedRows = admitted.data;
-        await act(async () => applyTeamCredentialResourcesPage({ scope, address, resources: admittedRows.map((row, i) => i === 0 ? { ...row, displayName: teamCredentialDisplayNameFixture('Edited resource') } : { ...row }), viewer, nextCursor: null, observedAt: Date.now() }));
-        await vi.waitFor(() => expect(rowProps(screen, 'team-credentials-row:').get('team-credentials-row:resource-0')?.title).toBe('Edited resource'));
+        const editedKey = 'team-credentials-row:resource-0';
+        const applyRows = (rows: NonNullable<typeof admitted.data>) => act(async () => {
+            applyTeamCredentialResourcesPage({ scope, address, resources: rows, viewer, nextCursor: null, observedAt: Date.now() });
+        });
+        const editedAudience = admitted.data.map((row, index) => index === 0
+            ? { ...row, allMembersAllowedRoutes: ['brokered' as const] } : { ...row });
+        await applyRows(editedAudience);
+        const beforeRename = rowProps(screen, 'team-credentials-row:');
+        expect(beforeRename.get(editedKey)?.subtitle).not.toBe(baseline.get(editedKey)?.subtitle);
+        expect([...beforeRename].filter(([key, props]) => props !== baseline.get(key)).map(([key]) => key))
+            .toEqual([editedKey]);
+
+        // A replacement label can sort through its unopened state. Only the
+        // edited row and rows whose divider boundary changed may invalidate.
+        const previousLast = [...beforeRename.keys()].at(-1);
+        const dividerRows = new Set<string>();
+        const unsubscribe = screen.tree.subscribe(() => {
+            const last = [...rowProps(screen, 'team-credentials-row:').keys()].at(-1);
+            if (last !== previousLast) {
+                if (previousLast) dividerRows.add(previousLast);
+                if (last) dividerRows.add(last);
+            }
+        });
+        try {
+            await applyRows(editedAudience.map((row, index) => index === 0
+                ? { ...row, displayName: teamCredentialDisplayNameFixture('Edited resource') } : row));
+            await vi.waitFor(() => expect(rowProps(screen, 'team-credentials-row:').get(editedKey)?.title).toBe('Edited resource'));
+        } finally {
+            unsubscribe();
+        }
         const updated = rowProps(screen, 'team-credentials-row:');
-        const changed = [...updated].filter(([id, props]) => props !== baseline.get(id))
-            .map(([id, props]) => ({ id, keys: Object.keys(props).filter(key => props[key] !== baseline.get(id)?.[key]) }));
-        expect(changedRows(baseline, updated), JSON.stringify(changed)).toBe(1);
+        const changed = [...updated].filter(([key, props]) => props !== beforeRename.get(key)).map(([key]) => key);
+        expect(changed).toContain(editedKey);
+        expect(changed.filter(key => key !== editedKey && !dividerRows.has(key))).toEqual([]);
         await screen.pressByTestIdAsync('team-credentials-row:resource-1');
         expect(router.spies.push).toHaveBeenCalledWith(expect.stringContaining('resource-1'));
     });

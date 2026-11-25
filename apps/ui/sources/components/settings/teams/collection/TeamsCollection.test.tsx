@@ -1,4 +1,7 @@
 import * as React from 'react';
+
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
+import { TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1, TeamsListInputV1Schema } from '@happier-dev/protocol/teams';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -323,6 +326,27 @@ async function remountRecording(screen: Awaited<ReturnType<typeof renderScreen>>
 }
 
 describe('Team collection return', () => {
+    it('reads just the demanded Team directory on cold open and return', async () => {
+        const home = await addHome('directory-cost-home');
+        await harness.selectHomes([home]);
+        const items = Array.from({ length: 120 }, (_, index) => teamSummaryFixture({ id: `cost-team-${index}` }));
+        harness.answer(home, LIST_PATH, { select: input => {
+            const { cursor } = TeamsListInputV1Schema.parse(input);
+            const offset = typeof cursor === 'string' ? Number(cursor) : 0;
+            const nextOffset = offset + TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1;
+            return { body: { items: items.slice(offset, nextOffset), nextCursor: nextOffset < items.length ? String(nextOffset) : null } };
+        } });
+        const { TeamsDirectoryScreen } = await import('../TeamsDirectoryScreen');
+        const page = <TeamsDirectoryScreen />;
+        const eligibilityPath = '/v1/home/governance/eligibility/get';
+        await expectHomePageReadCosts({
+            home: harness, mount: () => renderScreen(page), leave: <></>, returnTo: page,
+            settled: screen => expect(screen.findHostByTestId(`teams-row:${home}:cost-team-0`)).not.toBeNull(),
+            cold: { [LIST_PATH]: 1, [eligibilityPath]: 1 },
+            returning: { [LIST_PATH]: 0, [eligibilityPath]: 1 },
+        });
+    });
+
     it.each(['rail', 'page'] as const)('paints the %s from the last-known directory in its first frame, never "Loading Teams…"', async (surface) => {
         const home = await addHome('return-home');
         await harness.selectHomes([home]);

@@ -124,6 +124,18 @@ export function retainShallow<T extends object>(previous: T | undefined, next: T
  * change. Rows are reconciled deeply, so a changed row still shares its unchanged members.
  */
 export function retainKeyedRows<TRow>(
+    previous: TRow[] | null | undefined,
+    incoming: TRow[],
+    keyOf: (row: TRow) => string,
+    options: Readonly<{ freeze: false }>,
+): TRow[];
+export function retainKeyedRows<TRow>(
+    previous: readonly TRow[] | null | undefined,
+    incoming: readonly TRow[],
+    keyOf: (row: TRow) => string,
+    options?: Readonly<{ freeze: false }>,
+): readonly TRow[];
+export function retainKeyedRows<TRow>(
     previous: readonly TRow[] | null | undefined,
     incoming: readonly TRow[],
     keyOf: (row: TRow) => string,

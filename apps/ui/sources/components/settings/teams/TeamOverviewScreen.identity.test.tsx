@@ -1,9 +1,14 @@
 import * as React from 'react';
+
+import { expectHomePageReadCosts } from '@/dev/testkit/harness/expectHomePageReadCosts';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1, TeamMembersListInputV1Schema } from '@happier-dev/protocol/teams';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
-import { collectRenderedTestIds, flushHookEffects, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
+import { collectRenderedTestIds, flushHookEffects, renderScreen, standardCleanup, teamCapabilitiesFixture, teamMembershipFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -81,6 +86,66 @@ afterEach(() => {
 });
 
 describe('TeamOverviewScreen Team identity', () => {
+    it('reads each demanded Team projection once per cold open and return', async () => {
+        const serverId = await addHome({
+            viewerRole: 'member',
+            capabilities: teamCapabilitiesFixture({ viewTeam: true, viewRoster: true }),
+            counts: { members: 400, suspendedMembers: 0, waitingInvitations: 0, groups: 0 },
+        }, { credentialResourcesEnabled: true });
+        const rosterPath = '/v1/teams/members/list';
+        const members = Array.from({ length: 400 }, (_, index) => teamMembershipFixture({
+            id: `member-${index}`, accountId: `account-${index}`, role: index < 2 ? 'admin' : 'member',
+        }));
+        harness.answer(serverId, rosterPath, { select: input => {
+            const { filter, cursor } = TeamMembersListInputV1Schema.parse(input);
+            if (filter === 'owners_admins') return { body: { items: members.slice(0, 2), nextCursor: null } };
+            const offset = typeof cursor === 'string' ? Number(cursor) : 0;
+            const nextOffset = offset + TEAM_MEMBERS_PAGE_LIMIT_DEFAULT_V1;
+            return { body: { items: members.slice(offset, nextOffset), nextCursor: nextOffset < members.length ? String(nextOffset) : null } };
+        } });
+        const shared = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
+        harness.answer(serverId, shared.path, {
+            body: { teamId: 'team-1', kinds: [
+                { kind: 'sessions', status: 'available', count: 2 },
+                { kind: 'credentials', status: 'available', count: 3 },
+            ] },
+        });
+        const page = <InPanes serverId={serverId} teamId="team-1" />;
+        const reads = { [TEAM_GET_PATH]: 1, [rosterPath]: 2, [shared.path]: 1, '/v1/teams/credential-resources/list': 0 };
+        const screen = await expectHomePageReadCosts({
+            home: harness, mount: () => renderScreen(page), leave: <></>, returnTo: page,
+            settled: screen => expect(screen.findByTestId('team-overview-shared:sessions')).not.toBeNull(),
+            cold: reads, returning: reads,
+        });
+        expect(harness.requestsFor(rosterPath).map(({ input }) => TeamMembersListInputV1Schema.parse(input).filter).sort())
+            .toEqual(['all', 'all', 'owners_admins', 'owners_admins']);
+
+        const { Item } = await import('@/components/ui/lists/Item');
+        const { applyTeamProjection } = await import('@/sync/store/teams/teamsSnapshots');
+        const rows = () => new Map(screen.tree.findAllByType(Item)
+            .filter(item => String(item.props.testID).startsWith('team-overview-shared:'))
+            .map(item => [String(item.props.testID), item.props]));
+        const before = rows();
+        expect(before.size).toBe(2);
+        await act(async () => applyTeamProjection({
+            scope: { serverId, accountId: 'account-ada' }, address: { serverId, teamId: 'another-team' },
+            team: teamSummaryFixture({ id: 'another-team', name: 'Updated elsewhere' }), observedAt: Date.now(),
+        }));
+        expect([...rows()].filter(([id, row]) => row !== before.get(id))).toHaveLength(0);
+
+        harness.answer(serverId, shared.path, {
+            body: { teamId: 'team-1', kinds: [
+                { kind: 'sessions', status: 'available', count: 4 },
+                { kind: 'credentials', status: 'available', count: 3 },
+            ] },
+        });
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        await act(async () => publishHomeAccountChange(serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+        await vi.waitFor(() => expect(rows().get('team-overview-shared:sessions')?.detail).toBe('4'));
+        expect([...rows()].filter(([id, row]) => row !== before.get(id)).map(([id]) => id))
+            .toEqual(['team-overview-shared:sessions']);
+    });
+
     it('offers Invite only in the setup step while the Team is new', async () => {
         const serverId = await addHome({
             capabilities: teamCapabilitiesFixture({ manageInvitations: true, manageAuthentication: true }),
