@@ -1596,6 +1596,25 @@ describe('resolveUsagePageAggregation', () => {
     expect(slice.sources).toContainEqual({ source: 'work', status: 'pending' });
   });
 
+  it('keeps an equal unknown Work observation until accounting admits a Work read', () => {
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 250 }, includeWorkEvidence: true });
+    const project = (input: Parameters<typeof resolveUsagePageAggregation>[0]) =>
+      resolveUsagePageAggregation(input, bundledUsageModelPriceCatalog);
+    const read = { query, value: accounting, status: 'available' as const };
+    const previous = project({ queries: [query], accounting: [read], work: [{ query, status: 'unknown', asOfMs: 225 }] });
+    const pending = [{ query, status: 'pending' as const }];
+    const replacing = project({ queries: [query], accounting: [{ ...read, status: 'pending' }], work: pending, previous });
+    const work = (batch: typeof previous) => batch.results[0]?.sources.find(source => source.source === 'work');
+    expect(work(replacing)).toBe(work(previous));
+
+    const admitted = project({ queries: [query], previous, work: pending, accounting: [{ ...read, value: { ...accounting,
+      contributions: [{ id: 'accounting-event', sessionId: 'work-session', turnId: 'work-turn', observedAtMs: 200,
+        agentId: null, modelId: null, machineId: null, projectKey: null, workspaceId: null, source: null, tokens,
+        cost: { reportedUsd: 0.02, estimatedUsd: 0, currency: 'USD' } }],
+    } }] });
+    expect(work(admitted)).toEqual({ source: 'work', status: 'pending' });
+  });
+
   it('composes Work only from the exact admitted accounting query and witnessed turns', () => {
     const query = normalizeUsageQuery({ session: 'session', period: { startMs: 100, endMs: 200 } });
     const other = normalizeUsageQuery({ ...query, agents: ['other'] });

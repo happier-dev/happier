@@ -99,7 +99,7 @@ export async function collectUsageWorkSources(input: Readonly<{
     assertCurrent: () => void | Promise<void>;
     now: () => number;
 }>): Promise<readonly UsageWorkSourceSnapshot[]> {
-    const { queries, accounting } = input;
+    const { queries, accounting, now } = input;
     const sessionReads = input.sessionReads ?? new Map<string, Promise<SessionWorkSourceResult>>();
     const byQuery = new Map(accounting.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot.value]));
     const turnsByQuery = new Map(queries.map(query => {
@@ -188,7 +188,7 @@ export async function collectUsageWorkSources(input: Readonly<{
         for (const sessionId of missing) sessionReads.set(readKeys.get(sessionId)!, acquisition.then(results => results.get(sessionId)!));
     }
     const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => [sessionId, await sessionReads.get(readKeys.get(sessionId)!)!] as const)));
-    const asOfMs = input.now();
+    const asOfMs = now();
     return queries.map((query): UsageWorkSourceSnapshot => {
         const key = getUsageQueryKey(query);
         const admittedTurns = turnsByQuery.get(key);

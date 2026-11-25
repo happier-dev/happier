@@ -914,9 +914,14 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         || prior?.work?.branchAllocations.some(row => row.evidence.length > 0)));
     const workAsOfMs = retainWork ? (priorWorkReadable ? priorWorkSource?.asOfMs : undefined) : workSnapshot?.asOfMs;
     const unreadWorkSessions = pendingWork ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
+    // Accounting admits the Work turns. With no turns to read, an equal
+    // unknown answer stays admitted until accounting supplies new membership.
+    const awaitingWorkMembership = pendingWork && priorWorkSource?.status === 'unknown'
+      && priorWorkSource.errorCode === undefined && priorWorkSource.unreadSessions === undefined
+      && snapshot?.value !== undefined && !readUsageWorkSessionTurns(snapshot.value)?.length;
     // A reread has not replaced observed Work facts. Keep their currentness
     // until its answer changes them, including a completed retained failure.
-    const workSource: UsageQuerySourceState = priorWorkSource?.errorCode === 'work_evidence_failed'
+    const workSource: UsageQuerySourceState = awaitingWorkMembership || priorWorkSource?.errorCode === 'work_evidence_failed'
       && (pendingWork && priorWorkReadable || failedWork && priorWorkSource.status === 'stale'
         && workSnapshot.errorCode === priorWorkSource.errorCode
         && workSnapshot.updateRequired === priorWorkSource.updateRequired
