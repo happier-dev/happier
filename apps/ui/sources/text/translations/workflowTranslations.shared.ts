@@ -101,7 +101,7 @@ export const workflowReferenceScopeTranslations = {
     scopeCurrent: 'This scope',
     scopePreviousIteration: 'Previous round',
     scopeOuter: ({ levels }: { levels: number }) => levels === 1 ? 'Parent scope' : `${levels} scopes out`,
-} as const;
+};
 
 
 

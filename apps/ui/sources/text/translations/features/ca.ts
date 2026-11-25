@@ -4087,46 +4087,37 @@ return { automationPageTranslations };
 })();
 
 const Domain_automationTriggerSetTranslations = (() => {
-const expandedLifecycleEnglish = {
-    lifecycleTitle: 'When a Session event occurs',
-    lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
-        `${session} · Session event trigger ${ordinal}`,
-    lifecycleSourceTitle: 'Source session',
-    changeLifecycleSource: 'Choose a different Session',
-    lifecycleEventsTitle: 'Events',
-    lifecycleEvent: {
-        parentTurnCompleted: 'Turn completed successfully',
-        parentTurnFailed: 'Turn failed',
-        parentTurnCancelled: 'Turn was cancelled or stopped',
-        userActionRequired: 'Needs your attention',
-        sessionStarted: 'When the session starts',
-        sessionArchived: 'When the session is archived',
-    },
-    lifecycleAttentionPrivacy: 'Uses only the request identity and turn—not its private contents.',
-    lifecyclePolicyTitle: 'Occurrence',
-    lifecyclePolicy: {
-        currentTurn: 'Current turn only',
-        firstMatch: 'First matching event',
-        nextMatches: 'Next matching events',
-        everyMatch: 'Every matching event',
-    },
-    lifecyclePolicyDescription: {
-        currentTurn: 'Runs at most once for the exact active parent turn.',
-        firstMatch: 'Runs once for the first selected event after this trigger is saved.',
-        nextMatches: 'Runs for a fixed number of future selected events.',
-        everyMatch: 'Runs for every future selected event while enabled.',
-    },
-    lifecycleMatchCount: 'Number of matches',
-} as const;
-
 const automationTriggerSetTranslations = { ca: {
         pluralEditor: {
-            ...expandedLifecycleEnglish,
+            lifecycleTitle: "Quan es produeix un esdeveniment de sessió",
+            lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
+                `${session} · Activador d’esdeveniment de sessió ${ordinal}`,
+            lifecycleSourceTitle: "Sessió d’origen",
+            changeLifecycleSource: "Tria una altra sessió",
+            lifecycleEventsTitle: "Esdeveniments",
             lifecycleEvent: {
-                ...expandedLifecycleEnglish.lifecycleEvent,
+                parentTurnCompleted: "Torn acabat correctament",
+                parentTurnFailed: "El torn ha fallat",
+                parentTurnCancelled: "Torn cancel·lat o aturat",
+                userActionRequired: "Requereix la teva atenció",
                 sessionStarted: 'Quan comença la sessió',
                 sessionArchived: 'Quan s’arxiva la sessió',
             },
+            lifecycleAttentionPrivacy: "Només fa servir l’identificador de la sol·licitud i el torn. El contingut privat no es fa servir.",
+            lifecyclePolicyTitle: "Freqüència",
+            lifecyclePolicy: {
+                currentTurn: "Només el torn actual",
+                firstMatch: "Primer esdeveniment coincident",
+                nextMatches: "Pròxims esdeveniments coincidents",
+                everyMatch: "Cada esdeveniment coincident",
+            },
+            lifecyclePolicyDescription: {
+                currentTurn: "S’executa com a màxim una vegada per a aquest torn pare actiu.",
+                firstMatch: "S’executa una vegada amb el primer esdeveniment seleccionat després de desar l’activador.",
+                nextMatches: "S’executa per a un nombre fix d’esdeveniments futurs seleccionats.",
+                everyMatch: "S’executa amb cada esdeveniment futur seleccionat mentre l’activador estigui actiu.",
+            },
+            lifecycleMatchCount: "Nombre de coincidències",
             triggersTitle: 'Activadors',
             emptyBody: 'No hi ha activadors automàtics. Encara pots executar aquest flux de treball manualment.',
             orSemantics: 'Afegeix tants activadors com vulguis. Funcionen independentment: el flux de treball s’executa quan qualsevol coincideix.',
@@ -19733,7 +19724,15 @@ const ca: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Continua fins acabar', description: 'Continua fins que s’assoleix l’objectiu' },
     reviewAndConverge: { title: 'Revisa i convergeix', description: 'Revisa fins que els revisors hi estiguin d’acord', apply: 'Aplica', verifyAndFix: 'Verifica i corregeix', verifyOnly: 'Només verifica', rounds: 'Rondes abans d’aturar-se', inputs: { engines: "Revisors", reviewSession: "Sessió a revisar", useJudge: "Deixa que un jutge resolgui les disputes", focus: "En què centrar-se", then: "Després de la revisió", thenReport: "Informa de les troballes", thenFix: "Corregeix les troballes acceptades" } },
     planWithAPanel: { title: "Panell", description: 'Diversos agents planifiquen en paral·lel i el pla espera la teva revisió.', inputs: { request: 'Petició', requestPlaceholder: 'Què ha de planificar el panell?', engines: 'Planificadors' } },
-    parallelImplementations: en.parallelImplementations,
+    parallelImplementations: {
+        title: "Implementacions en paral·lel",
+        description: "Implementa en arbres de treball separats, compara els canvis i tria un resultat.",
+        inputs: {
+            first: "Primer model",
+            second: "Segon model",
+            third: "Tercer model",
+        },
+    },
     freshOpinions: { title: 'Opinions independents', description: 'Respostes independents a la mateixa pregunta, amb un resum opcional.' },
     answerAndReview: { title: 'Resposta + revisió', description: 'Un agent respon i un altre revisa aquella mateixa resposta.' },
     debate: { title: 'Debat', description: 'Compara punts de vista durant les rondes que triïs, amb un resum després de cadascuna.' },
@@ -20150,6 +20149,7 @@ const ca: WorkflowsDestinationTranslations = {
         importSubtitle: 'Un fitxer JSON de flux de treball',
     },
     sections: {
+        noProject: "Sense projecte",
         needsYou: 'Et necessita',
         running: 'En curs',
         library: 'Biblioteca',
@@ -20158,6 +20158,25 @@ const ca: WorkflowsDestinationTranslations = {
         history: 'Historial',
     },
     allRuns: 'Totes les execucions',
+    display: {
+        groupBy: "Agrupa per",
+        source: "Origen",
+        project: "Projecte",
+        rowDetails: "Detalls de la fila",
+        runSpaces: "Espais d’execució",
+        date: "Data",
+        workflow: "Flux de treball",
+        result: "Resultat",
+        startedBy: "Iniciat per",
+        noWorkflow: "Cap flux de treball desat",
+        unknownDate: "Data desconeguda",
+        searchRuns: "Cerca execucions",
+        starter: {
+            user: "Usuari",
+            agent: "Agent",
+            trigger: "Activador",
+        },
+    },
     ranAgo: ({ age }) => `Executat ${age}`,
     runsWhenItHappens: 'S’executa quan passa',
     lastRunStandalone: ({ age }) => `Darrera execució ${age}`,
@@ -20288,6 +20307,14 @@ const ca: WorkflowTriggersCopy = {
         loadFailed: "No s'han pogut carregar les pull requests",
     },
     summary: {
+        eventClause: {
+            machineOnline: "Quan una màquina torna a estar en línia",
+            machineOffline: "Quan una màquina es desconnecta",
+            backupFailed: "Quan falla una còpia de seguretat",
+            backupSucceeded: "Quan es completa una còpia de seguretat",
+            databaseFindingObserved: "Quan es detecta una incidència a la base de dades",
+            deploymentChanged: "Quan canvia un desplegament o un domini",
+        },
         offlineHealthFailed: "Quan falla una comprovació d’estat",
         offlineHealthRecovered: "Quan es recupera una comprovació d’estat",
         offlineHealthStatus: "Quan canvia l’estat d’una comprovació",
@@ -20321,6 +20348,7 @@ const ca: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · ${count} més`,
     },
     kind: {
+        turnStarts: "Quan comença un torn",
         pluginEvent: "Esdeveniment del complement",
         sessionStarts: 'Quan comença la sessió',
         sessionArchived: "Quan s'arxiva la sessió",
@@ -20416,12 +20444,15 @@ const ca: WorkflowTriggersCopy = {
         deny: "Denega",
         refused: ({ workflow }: { workflow: string }) => `Rebutjat per ${workflow}`,
         couldNotRun: ({ workflow }: { workflow: string }) => `${workflow} no s’ha pogut executar`,
+        startRefused: ({ workflow }: { workflow: string }) => `No s’ha pogut iniciar ${workflow}.`,
         startRefusedRemoved: 'La comprovació que s’executava abans d’això s’ha eliminat. Torna-ho a demanar per executar-ho sense la comprovació.',
+        startRefusedAskOwner: ({ name }: { name: string }) => `Demana a ${name} que corregeixi o desactivi aquesta comprovació, o que la deixi de compartir.`,
         passed: ({ workflow }: { workflow: string }) => `${workflow} superat`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} omès · es tornarà a preguntar`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} omès`,
         checking: "S’estan comprovant les automatitzacions…",
         notChecked: "Les automatitzacions no s’han comprovat: no s’han pogut carregar.",
+        notCheckedMatchingUnavailable: "Les automatitzacions no s’han comprovat perquè aquí no es poden executar comprovacions.",
         notCheckedHomeUnavailable: "Les automatitzacions no s’han comprovat: la Home encara no està a punt.",
         notCheckedUnreachable: "Les automatitzacions no s’han comprovat: no es pot accedir a la Home.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `S’ha omès ${workflow} · necessita una màquina per executar-se`,
@@ -20584,6 +20615,7 @@ const ca: WorkflowTriggersCopy = {
         },
     },
     kindDescription: {
+        turnStarts: "Quan comença un torn teu o d’un agent amb qui treballes.",
         pluginEvent: "Executa quan un complement observa un esdeveniment.",
         turnEnds: "Després d'un torn teu o d'un agent amb qui treballes.",
         needsYou: "Sempre que aquesta sessió t'espera, també mentre la guia un flux o Continua fins acabar.",
@@ -20663,7 +20695,7 @@ const ca: WorkflowTriggersCopy = {
     card: {
         when: "Quan",
         schedule: "Segons un horari",
-        sessionStart: { turnEnds: "Una sessió acaba un torn", needsYou: "Una sessió et necessita", sessionArchived: "Una sessió s’arxiva", sessionStarts: "Una sessió comença" },
+        sessionStart: { turnStarts: "Una sessió comença un torn", turnEnds: "Una sessió acaba un torn", needsYou: "Una sessió et necessita", sessionArchived: "Una sessió s’arxiva", sessionStarts: "Una sessió comença" },
         groupTime: "Hora",
         groupSessions: "Sessions",
         groupDeployments: "Desplegaments",
@@ -20733,6 +20765,8 @@ const ca: WorkflowTriggersCopy = {
         askNote: "Una execució fallida converteix l’acció en una aprovació que mostra el motiu. S’aprova o es denega com qualsevol sol·licitud; l’agent que l’ha demanada no la pot aprovar.",
         startedFromHappier: "S’executa abans de les accions iniciades des de Happier",
         startedFromHappierOwn: "S’executa abans de les teves pròpies accions iniciades des de Happier",
+        viewOnlyReach: ({ subject }: { subject: string }) => `Només s’executa amb les teves accions. Pots veure ${subject}, però no gestionar-lo. Per això, l’activador no s’executa amb les accions d’altres persones.`,
+        viewOnlyReachUnnamed: "Només s’executa amb les teves accions. Pots veure aquest element, però no gestionar-lo. Per això, l’activador no s’executa amb les accions d’altres persones.",
         decides: ({ action }: { action: string }) => `Decideix «${action}»: si l’execució passa, continua; si falla, es rebutja i aquesta resposta n’és el motiu.`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `Abans de «${action}», espera aquest flux`,
@@ -21006,6 +21040,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         events: 'Esdeveniments',
     },
     events: {
+        whenASessionStarts: "Quan comença una sessió",
+        eventProject: "Projecte",
         whenMachineOnline: ({ machine }: { machine: string }) => `quan ${machine} es connecta`,
         whenMachineOffline: ({ machine }: { machine: string }) => `quan ${machine} es desconnecta`,
         listeningSince: ({ time }: { time: string }) => `Escoltant des de les ${time}`,
@@ -21202,6 +21238,14 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
     },
 
     input: {
+        stepResults: "Resultats dels passos",
+        notAvailableHere: "No està disponible aquí",
+        scopeRunsLater: "S’executa després d’aquest pas",
+        scopeAnotherLane: "S’executa en una altra branca",
+        scopeUnavailable: "Fora de l’àmbit d’aquest pas",
+        scopeCurrent: "Aquest àmbit",
+        scopePreviousIteration: "Ronda anterior",
+        scopeOuter: ({ levels }) => levels === 1 ? "Àmbit superior" : `Àmbit ${levels} nivells més amunt`,
         label: 'Entrada',
         result: 'Resultat',
         change: 'Canvia',
@@ -21477,6 +21521,12 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         resultItem: ({ n }) => `Element ${n}`,
         interruptedStepSentence: ({ step }) => `${step} s’ha interromput. La feina acabada es conserva.`,
         interruptedSentence: 'La feina acabada es conserva.',
+        occurrenceTechnical: {
+            admitted: "Admesa",
+            updated: "Actualitzada",
+            claimed: "Assignada",
+            lease: "Venciment de l’assignació",
+        },
         inspectSteps: 'Inspecciona els passos',
         seeFailures: 'Mostra els errors',
         saveAsWorkflow: 'Desa com a flux de treball',
@@ -21673,6 +21723,17 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
     },
 
     problem: {
+        preExecution: {
+            machineCheckFailed: "Happier no ha pogut comprovar la màquina que fa servir aquest flux de treball.",
+            agentProbeFailed: "Happier no ha pogut comprovar si l’agent seleccionat es pot iniciar.",
+            selectionUnavailable: "La destinació seleccionada per al flux de treball no està disponible.",
+            actionUnavailable: "Aquesta acció no està disponible per a la destinació del flux de treball.",
+            sessionCreationUnavailable: "L’agent seleccionat no pot iniciar una sessió per a aquest flux de treball.",
+            detachedExecutionUnavailable: "L’agent seleccionat no pot executar aquest pas del flux de treball en segon pla.",
+            materializationUnavailable: "Happier no ha pogut preparar l’inici d’aquest flux de treball.",
+            profileUnavailable: "El perfil d’inici seleccionat per a aquest flux de treball no està disponible.",
+            engineUnavailable: "L’agent seleccionat per a aquest rol no està disponible.",
+        },
         commandFailed: 'L’ordre ha fallat.',
         title: 'Això no ha funcionat',
         waitingTitle: 'Encara no és possible',

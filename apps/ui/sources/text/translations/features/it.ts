@@ -4094,46 +4094,37 @@ return { automationPageTranslations };
 })();
 
 const Domain_automationTriggerSetTranslations = (() => {
-const expandedLifecycleEnglish = {
-    lifecycleTitle: 'When a Session event occurs',
-    lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
-        `${session} · Session event trigger ${ordinal}`,
-    lifecycleSourceTitle: 'Source session',
-    changeLifecycleSource: 'Choose a different Session',
-    lifecycleEventsTitle: 'Events',
-    lifecycleEvent: {
-        parentTurnCompleted: 'Turn completed successfully',
-        parentTurnFailed: 'Turn failed',
-        parentTurnCancelled: 'Turn was cancelled or stopped',
-        userActionRequired: 'Needs your attention',
-        sessionStarted: 'When the session starts',
-        sessionArchived: 'When the session is archived',
-    },
-    lifecycleAttentionPrivacy: 'Uses only the request identity and turn—not its private contents.',
-    lifecyclePolicyTitle: 'Occurrence',
-    lifecyclePolicy: {
-        currentTurn: 'Current turn only',
-        firstMatch: 'First matching event',
-        nextMatches: 'Next matching events',
-        everyMatch: 'Every matching event',
-    },
-    lifecyclePolicyDescription: {
-        currentTurn: 'Runs at most once for the exact active parent turn.',
-        firstMatch: 'Runs once for the first selected event after this trigger is saved.',
-        nextMatches: 'Runs for a fixed number of future selected events.',
-        everyMatch: 'Runs for every future selected event while enabled.',
-    },
-    lifecycleMatchCount: 'Number of matches',
-} as const;
-
 const automationTriggerSetTranslations = { it: {
         pluralEditor: {
-            ...expandedLifecycleEnglish,
+            lifecycleTitle: "Quando si verifica un evento della sessione",
+            lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
+                `${session} · Attivatore di evento della sessione ${ordinal}`,
+            lifecycleSourceTitle: "Sessione di origine",
+            changeLifecycleSource: "Scegli un’altra sessione",
+            lifecycleEventsTitle: "Eventi",
             lifecycleEvent: {
-                ...expandedLifecycleEnglish.lifecycleEvent,
+                parentTurnCompleted: "Turno completato con successo",
+                parentTurnFailed: "Il turno non è riuscito",
+                parentTurnCancelled: "Turno annullato o interrotto",
+                userActionRequired: "Richiede la tua attenzione",
                 sessionStarted: 'Quando inizia la sessione',
                 sessionArchived: 'Quando la sessione viene archiviata',
             },
+            lifecycleAttentionPrivacy: "Usa solo l’identificativo della richiesta e il turno. I contenuti privati non vengono usati.",
+            lifecyclePolicyTitle: "Frequenza",
+            lifecyclePolicy: {
+                currentTurn: "Solo il turno corrente",
+                firstMatch: "Primo evento corrispondente",
+                nextMatches: "Prossimi eventi corrispondenti",
+                everyMatch: "Ogni evento corrispondente",
+            },
+            lifecyclePolicyDescription: {
+                currentTurn: "Si esegue al massimo una volta per questo turno padre attivo.",
+                firstMatch: "Si esegue una volta al primo evento selezionato dopo il salvataggio del trigger.",
+                nextMatches: "Si esegue per un numero definito di eventi futuri selezionati.",
+                everyMatch: "Si esegue a ogni evento futuro selezionato finché il trigger è attivo.",
+            },
+            lifecycleMatchCount: "Numero di corrispondenze",
             triggersTitle: 'Trigger',
             emptyBody: 'Nessun trigger automatico. Puoi comunque avviare questo flusso di lavoro manualmente.',
             orSemantics: 'Aggiungi tutti i trigger che vuoi. Funzionano in modo indipendente: il flusso di lavoro parte quando ne corrisponde uno qualsiasi.',
@@ -19713,13 +19704,19 @@ return { repeatable, workflowAgentAuthoringTranslations };
 const Domain_workflowBuiltinTranslations = (() => {
 type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBuiltinTranslations;
 
-const en = Shared_workflowBuiltinTranslations.en;
-
 const it: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Continua fino alla fine', description: 'Continua finché l’obiettivo non è raggiunto' },
     reviewAndConverge: { title: 'Revisiona e converge', description: 'Rivedi finché i revisori non sono d’accordo', apply: 'Applica', verifyAndFix: 'Verifica e correggi', verifyOnly: 'Solo verifica', rounds: 'Cicli prima di fermarsi', inputs: { engines: "Revisori", reviewSession: "Sessione da revisionare", useJudge: "Lascia che un giudice risolva i disaccordi", focus: "Su cosa concentrarsi", then: "Dopo la revisione", thenReport: "Segnala i rilievi", thenFix: "Correggi i rilievi accettati" } },
     planWithAPanel: { title: "Panel", description: 'Più agenti pianificano affiancati, poi il piano attende la tua revisione.', inputs: { request: 'Richiesta', requestPlaceholder: 'Cosa deve pianificare il panel?', engines: 'Pianificatori' } },
-    parallelImplementations: en.parallelImplementations,
+    parallelImplementations: {
+        title: "Implementazioni parallele",
+        description: "Implementa in alberi di lavoro separati, confronta le modifiche e scegli un risultato.",
+        inputs: {
+            first: "Primo modello",
+            second: "Secondo modello",
+            third: "Terzo modello",
+        },
+    },
     freshOpinions: { title: 'Opinioni indipendenti', description: 'Risposte indipendenti alla stessa domanda, con un riepilogo facoltativo.' },
     answerAndReview: { title: 'Risposta + revisione', description: 'Un agente risponde, poi un altro revisiona quella stessa risposta.' },
     debate: { title: 'Dibattito', description: 'Confronta i punti di vista per i cicli che scegli, con un riepilogo dopo ciascuno.' },
@@ -20124,8 +20121,6 @@ return { workflowStartTranslations };
 const Domain_workflowsDestinationTranslations = (() => {
 type WorkflowsDestinationTranslations = Shared_workflowsDestinationTranslations.WorkflowsDestinationTranslations;
 
-const en = Shared_workflowsDestinationTranslations.en;
-
 const it: WorkflowsDestinationTranslations = {
     description: 'Ricette che i tuoi agenti eseguono sulle tue macchine: quando vuoi tu, secondo una pianificazione o quando succede qualcosa.',
     import: 'Importa',
@@ -20136,6 +20131,7 @@ const it: WorkflowsDestinationTranslations = {
         importSubtitle: 'Un file JSON di flusso di lavoro',
     },
     sections: {
+        noProject: "Senza progetto",
         needsYou: 'Ti aspetta',
         running: 'In esecuzione',
         library: 'Libreria',
@@ -20144,6 +20140,25 @@ const it: WorkflowsDestinationTranslations = {
         history: 'Cronologia',
     },
     allRuns: 'Tutte le esecuzioni',
+    display: {
+        groupBy: "Raggruppa per",
+        source: "Origine",
+        project: "Progetto",
+        rowDetails: "Dettagli della riga",
+        runSpaces: "Spazi di esecuzione",
+        date: "Data",
+        workflow: "Workflow",
+        result: "Risultato",
+        startedBy: "Avviato da",
+        noWorkflow: "Nessun workflow salvato",
+        unknownDate: "Data sconosciuta",
+        searchRuns: "Cerca esecuzioni",
+        starter: {
+            user: "Utente",
+            agent: "Agente",
+            trigger: "Attivatore",
+        },
+    },
     ranAgo: ({ age }) => `Eseguito ${age}`,
     runsWhenItHappens: 'Si esegue quando succede',
     lastRunStandalone: ({ age }) => `Ultima esecuzione ${age}`,
@@ -20274,6 +20289,14 @@ const it: WorkflowTriggersCopy = {
         loadFailed: "Impossibile caricare le pull request",
     },
     summary: {
+        eventClause: {
+            machineOnline: "Quando una macchina torna online",
+            machineOffline: "Quando una macchina va offline",
+            backupFailed: "Quando un backup non riesce",
+            backupSucceeded: "Quando un backup riesce",
+            databaseFindingObserved: "Quando viene rilevato un problema nel database",
+            deploymentChanged: "Quando cambia un deployment o un dominio",
+        },
         offlineHealthFailed: "Quando un controllo di integrità non riesce",
         offlineHealthRecovered: "Quando un controllo di integrità torna a riuscire",
         offlineHealthStatus: "Quando cambia lo stato di un controllo di integrità",
@@ -20307,6 +20330,7 @@ const it: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · altri ${count}`,
     },
     kind: {
+        turnStarts: "Quando inizia un turno",
         pluginEvent: "Evento del plugin",
         sessionStarts: 'Quando la sessione inizia',
         sessionArchived: 'Quando la sessione viene archiviata',
@@ -20402,12 +20426,15 @@ const it: WorkflowTriggersCopy = {
         deny: "Nega",
         refused: ({ workflow }: { workflow: string }) => `Rifiutato da ${workflow}`,
         couldNotRun: ({ workflow }: { workflow: string }) => `${workflow} non è riuscito a partire`,
+        startRefused: ({ workflow }: { workflow: string }) => `Non è stato possibile avviare ${workflow}.`,
         startRefusedRemoved: 'Il controllo che veniva eseguito prima è stato rimosso. Chiedi di nuovo per eseguirlo senza il controllo.',
+        startRefusedAskOwner: ({ name }: { name: string }) => `Chiedi a ${name} di correggere o disattivare questo controllo oppure di smettere di condividerlo.`,
         passed: ({ workflow }: { workflow: string }) => `${workflow} superato`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} saltato · verrà richiesto di nuovo`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} saltato`,
         checking: "Verifica delle automazioni…",
         notChecked: "Le automazioni non sono state verificate: non è stato possibile caricarle.",
+        notCheckedMatchingUnavailable: "Le automazioni non sono state verificate perché qui non è possibile eseguire i controlli.",
         notCheckedHomeUnavailable: "Le automazioni non sono state verificate: la Home non è pronta in questo momento.",
         notCheckedUnreachable: "Le automazioni non sono state verificate: la Home non è raggiungibile.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} saltato · serve una macchina per eseguirlo`,
@@ -20570,6 +20597,7 @@ const it: WorkflowTriggersCopy = {
         },
     },
     kindDescription: {
+        turnStarts: "Quando inizia un tuo turno o quello di un agente con cui lavori.",
         pluginEvent: "Esegui quando un plugin osserva un evento.",
         turnEnds: 'Dopo un turno tuo o di un agente con cui lavori.',
         needsYou: 'Ogni volta che questa sessione ti aspetta, anche mentre la guida un workflow o Continua fino alla fine.',
@@ -20649,7 +20677,7 @@ const it: WorkflowTriggersCopy = {
     card: {
         when: "Quando",
         schedule: "Secondo una pianificazione",
-        sessionStart: { turnEnds: "Una sessione termina un turno", needsYou: "Una sessione ha bisogno di te", sessionArchived: "Una sessione viene archiviata", sessionStarts: "Una sessione inizia" },
+        sessionStart: { turnStarts: "Una sessione inizia un turno", turnEnds: "Una sessione termina un turno", needsYou: "Una sessione ha bisogno di te", sessionArchived: "Una sessione viene archiviata", sessionStarts: "Una sessione inizia" },
         groupTime: "Orario",
         groupSessions: "Sessioni",
         groupDeployments: "Deployment",
@@ -20719,6 +20747,8 @@ const it: WorkflowTriggersCopy = {
         askNote: "Un’esecuzione fallita trasforma l’azione in un’approvazione che ne mostra il motivo. Si approva o nega come ogni richiesta; l’agente che l’ha chiesta non può approvarla.",
         startedFromHappier: "Viene eseguito prima delle azioni avviate da Happier",
         startedFromHappierOwn: "Viene eseguito prima delle tue azioni avviate da Happier",
+        viewOnlyReach: ({ subject }: { subject: string }) => `Si esegue solo per le tue azioni. Puoi visualizzare ${subject} ma non gestirlo, quindi questo trigger non si esegue per le azioni altrui.`,
+        viewOnlyReachUnnamed: "Si esegue solo per le tue azioni. Puoi visualizzare questo elemento ma non gestirlo, quindi questo trigger non si esegue per le azioni altrui.",
         decides: ({ action }: { action: string }) => `Decide «${action}»: se l’esecuzione riesce, procede; se fallisce, viene rifiutata e questa risposta è il motivo.`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `Prima di «${action}», attendi questo workflow`,
@@ -20992,6 +21022,8 @@ const it = translated(workflowValueReferenceTranslations.it, {
         events: 'Eventi',
     },
     events: {
+        whenASessionStarts: "Quando inizia una sessione",
+        eventProject: "Progetto",
         whenMachineOnline: ({ machine }: { machine: string }) => `quando ${machine} passa online`,
         whenMachineOffline: ({ machine }: { machine: string }) => `quando ${machine} passa offline`,
         listeningSince: ({ time }: { time: string }) => `In ascolto dalle ${time}`,
@@ -21188,6 +21220,14 @@ const it = translated(workflowValueReferenceTranslations.it, {
     },
 
     input: {
+        stepResults: "Risultati dei passaggi",
+        notAvailableHere: "Non disponibile qui",
+        scopeRunsLater: "Si esegue dopo questo passaggio",
+        scopeAnotherLane: "Si esegue in un altro ramo",
+        scopeUnavailable: "Fuori dall’ambito di questo passaggio",
+        scopeCurrent: "Questo ambito",
+        scopePreviousIteration: "Turno precedente",
+        scopeOuter: ({ levels }) => levels === 1 ? "Ambito padre" : `Ambito ${levels} livelli sopra`,
         label: 'Ingresso',
         result: 'Risultato',
         change: 'Cambia',
@@ -21463,6 +21503,12 @@ const it = translated(workflowValueReferenceTranslations.it, {
         resultItem: ({ n }) => `Elemento ${n}`,
         interruptedStepSentence: ({ step }) => `${step} è stato interrotto. Il lavoro completato è conservato.`,
         interruptedSentence: 'Il lavoro completato è conservato.',
+        occurrenceTechnical: {
+            admitted: "Ammessa",
+            updated: "Aggiornata",
+            claimed: "Presa in carico",
+            lease: "Scadenza della presa in carico",
+        },
         inspectSteps: 'Esamina i passaggi',
         seeFailures: 'Vedi gli errori',
         saveAsWorkflow: 'Salva come flusso di lavoro',
@@ -21659,6 +21705,17 @@ const it = translated(workflowValueReferenceTranslations.it, {
     },
 
     problem: {
+        preExecution: {
+            machineCheckFailed: "Happier non ha potuto verificare la macchina usata da questo flusso di lavoro.",
+            agentProbeFailed: "Happier non ha potuto verificare se l’agente selezionato può avviarsi.",
+            selectionUnavailable: "La destinazione selezionata per il flusso di lavoro non è disponibile.",
+            actionUnavailable: "Questa azione non è disponibile per la destinazione del flusso di lavoro.",
+            sessionCreationUnavailable: "L’agente selezionato non può avviare una sessione per questo flusso di lavoro.",
+            detachedExecutionUnavailable: "L’agente selezionato non può eseguire questo passaggio del flusso di lavoro in background.",
+            materializationUnavailable: "Happier non ha potuto preparare l’avvio di questo flusso di lavoro.",
+            profileUnavailable: "Il profilo di avvio selezionato per questo flusso di lavoro non è disponibile.",
+            engineUnavailable: "L’agente selezionato per questo ruolo non è disponibile.",
+        },
         commandFailed: 'Il comando non è riuscito.',
         title: 'Non ha funzionato',
         waitingTitle: 'Non ancora possibile',

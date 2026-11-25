@@ -3991,46 +3991,37 @@ return { automationPageTranslations };
 })();
 
 const Domain_automationTriggerSetTranslations = (() => {
-const expandedLifecycleEnglish = {
-    lifecycleTitle: 'When a Session event occurs',
-    lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
-        `${session} · Session event trigger ${ordinal}`,
-    lifecycleSourceTitle: 'Source session',
-    changeLifecycleSource: 'Choose a different Session',
-    lifecycleEventsTitle: 'Events',
-    lifecycleEvent: {
-        parentTurnCompleted: 'Turn completed successfully',
-        parentTurnFailed: 'Turn failed',
-        parentTurnCancelled: 'Turn was cancelled or stopped',
-        userActionRequired: 'Needs your attention',
-        sessionStarted: 'When the session starts',
-        sessionArchived: 'When the session is archived',
-    },
-    lifecycleAttentionPrivacy: 'Uses only the request identity and turn—not its private contents.',
-    lifecyclePolicyTitle: 'Occurrence',
-    lifecyclePolicy: {
-        currentTurn: 'Current turn only',
-        firstMatch: 'First matching event',
-        nextMatches: 'Next matching events',
-        everyMatch: 'Every matching event',
-    },
-    lifecyclePolicyDescription: {
-        currentTurn: 'Runs at most once for the exact active parent turn.',
-        firstMatch: 'Runs once for the first selected event after this trigger is saved.',
-        nextMatches: 'Runs for a fixed number of future selected events.',
-        everyMatch: 'Runs for every future selected event while enabled.',
-    },
-    lifecycleMatchCount: 'Number of matches',
-} as const;
-
 const automationTriggerSetTranslations = { 'zh-Hant': {
         pluralEditor: {
-            ...expandedLifecycleEnglish,
+            lifecycleTitle: "工作階段事件發生時",
+            lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
+                `${session} · 工作階段事件觸發器 ${ordinal}`,
+            lifecycleSourceTitle: "來源工作階段",
+            changeLifecycleSource: "選擇其他工作階段",
+            lifecycleEventsTitle: "事件",
             lifecycleEvent: {
-                ...expandedLifecycleEnglish.lifecycleEvent,
+                parentTurnCompleted: "回合順利完成",
+                parentTurnFailed: "回合失敗",
+                parentTurnCancelled: "回合已取消或停止",
+                userActionRequired: "需要你的注意",
                 sessionStarted: '工作階段開始時',
                 sessionArchived: '工作階段封存時',
             },
+            lifecycleAttentionPrivacy: "只使用請求識別碼和回合，不會使用私人內容。",
+            lifecyclePolicyTitle: "觸發頻率",
+            lifecyclePolicy: {
+                currentTurn: "只限目前回合",
+                firstMatch: "第一個符合的事件",
+                nextMatches: "接下來符合的事件",
+                everyMatch: "每個符合的事件",
+            },
+            lifecyclePolicyDescription: {
+                currentTurn: "針對這個作用中的上層回合最多執行一次。",
+                firstMatch: "儲存觸發條件後，在第一個選取的事件發生時執行一次。",
+                nextMatches: "針對固定數量的後續選取事件執行。",
+                everyMatch: "啟用期間，在每個後續選取的事件發生時執行。",
+            },
+            lifecycleMatchCount: "符合次數",
             triggersTitle: '觸發器',
             emptyBody: '沒有自動觸發器。你仍可手動執行此工作流程。', orSemantics: '可新增任意數量的觸發器。它們彼此獨立，任意一個符合條件時都會執行工作流程。',
             enabledSubtitle: '暫停整個工作流程，而不變更任何觸發器。', addTrigger: '新增觸發器', addTriggerSubtitle: '設定排程、連接事件，或等待某個指定輪次結束。',
@@ -19589,13 +19580,19 @@ return { repeatable, workflowAgentAuthoringTranslations };
 const Domain_workflowBuiltinTranslations = (() => {
 type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBuiltinTranslations;
 
-const en = Shared_workflowBuiltinTranslations.en;
-
 const zhHant: WorkflowBuiltinTranslations = {
     keepGoing: { title: '持續直到完成', description: '持續進行，直到達成目標' },
     reviewAndConverge: { title: '審查並收斂', description: '審查直到審閱者達成共識', apply: '套用', verifyAndFix: '驗證並修復', verifyOnly: '僅驗證', rounds: '停止前的輪數', inputs: { engines: "審閱者", reviewSession: "要審查的工作階段", useJudge: "由裁判解決分歧", focus: "關注重點", then: "審查之後", thenReport: "回報發現", thenFix: "修復已接受的發現" } },
     planWithAPanel: { title: "規劃小組", description: '多個代理並行規劃，然後計畫等待你的審查。', inputs: { request: '請求', requestPlaceholder: '小組應規劃什麼？', engines: '規劃者' } },
-    parallelImplementations: en.parallelImplementations,
+    parallelImplementations: {
+        title: "平行實作",
+        description: "在不同的工作樹中實作，比較差異後選擇一個結果。",
+        inputs: {
+            first: "第一個模型",
+            second: "第二個模型",
+            third: "第三個模型",
+        },
+    },
     freshOpinions: { title: '獨立意見', description: '針對同一問題獨立作答，也可彙整各方回答。' },
     answerAndReview: { title: '回答 + 審閱', description: '由一個代理回答，再由另一個代理審閱該回答。' },
     debate: { title: '辯論', description: '按你選擇的輪數比較觀點，並在每輪結束後彙整。' },
@@ -20000,8 +19997,6 @@ return { workflowStartTranslations };
 const Domain_workflowsDestinationTranslations = (() => {
 type WorkflowsDestinationTranslations = Shared_workflowsDestinationTranslations.WorkflowsDestinationTranslations;
 
-const en = Shared_workflowsDestinationTranslations.en;
-
 const zhHant: WorkflowsDestinationTranslations = {
     description: '你的代理在你的機器上執行的流程——在你需要時、依排程或在某件事發生時。',
     import: '匯入',
@@ -20012,6 +20007,7 @@ const zhHant: WorkflowsDestinationTranslations = {
         importSubtitle: '工作流程 JSON 檔案',
     },
     sections: {
+        noProject: "無專案",
         needsYou: '需要你處理',
         running: '執行中',
         library: '資料庫',
@@ -20020,6 +20016,25 @@ const zhHant: WorkflowsDestinationTranslations = {
         history: '歷史',
     },
     allRuns: '所有執行',
+    display: {
+        groupBy: "分組依據",
+        source: "來源",
+        project: "專案",
+        rowDetails: "列詳細資料",
+        runSpaces: "執行空間",
+        date: "日期",
+        workflow: "工作流程",
+        result: "結果",
+        startedBy: "啟動者",
+        noWorkflow: "沒有已儲存的工作流程",
+        unknownDate: "日期不明",
+        searchRuns: "搜尋執行",
+        starter: {
+            user: "使用者",
+            agent: "代理",
+            trigger: "觸發器",
+        },
+    },
     ranAgo: ({ age }) => `上次執行 ${age}`,
     runsWhenItHappens: '事件發生時執行',
     lastRunStandalone: ({ age }) => `上次執行 ${age}`,
@@ -20150,6 +20165,14 @@ const zhHant: WorkflowTriggersCopy = {
         loadFailed: "無法載入提取要求",
     },
     summary: {
+        eventClause: {
+            machineOnline: "當機器重新上線時",
+            machineOffline: "當機器離線時",
+            backupFailed: "當備份失敗時",
+            backupSucceeded: "當備份成功時",
+            databaseFindingObserved: "當發現資料庫問題時",
+            deploymentChanged: "當部署或網域變更時",
+        },
         offlineHealthFailed: "健康檢查失敗時",
         offlineHealthRecovered: "健康檢查恢復時",
         offlineHealthStatus: "健康檢查狀態變化時",
@@ -20183,6 +20206,7 @@ const zhHant: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · 另有 ${count} 個`,
     },
     kind: {
+        turnStarts: "當一輪開始時",
         pluginEvent: "外掛程式事件",
         sessionStarts: '當工作階段開始時',
         sessionArchived: '當工作階段被封存時',
@@ -20278,12 +20302,15 @@ const zhHant: WorkflowTriggersCopy = {
         deny: "拒絕",
         refused: ({ workflow }: { workflow: string }) => `被 ${workflow} 拒絕`,
         couldNotRun: ({ workflow }: { workflow: string }) => `${workflow} 無法執行`,
+        startRefused: ({ workflow }: { workflow: string }) => `無法啟動 ${workflow}。`,
         startRefusedRemoved: '在此之前執行的檢查已被刪除。請重新請求，以在沒有該檢查的情況下執行。',
+        startRefusedAskOwner: ({ name }: { name: string }) => `請 ${name} 修正或關閉這項檢查，或停止共用。`,
         passed: ({ workflow }: { workflow: string }) => `${workflow} 已通過`,
         skipped: ({ workflow }: { workflow: string }) => `已略過 ${workflow} · 下次會再詢問`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `已略過 ${workflow}`,
         checking: "正在檢查自動化…",
         notChecked: "未檢查自動化：無法載入它們。",
+        notCheckedMatchingUnavailable: "由於此處無法執行檢查，未檢查自動化。",
         notCheckedHomeUnavailable: "未檢查自動化：Home 目前尚未就緒。",
         notCheckedUnreachable: "未檢查自動化：無法連線到 Home。",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `已略過 ${workflow} · 需要一台機器才能執行`,
@@ -20446,6 +20473,7 @@ const zhHant: WorkflowTriggersCopy = {
         },
     },
     kindDescription: {
+        turnStarts: "當你或與你協作的代理開始一輪時。",
         pluginEvent: "在外掛程式觀察到事件時執行。",
         turnEnds: '在你或與你協作的代理完成一輪之後。',
         needsYou: '每當此工作階段等待你時，包括由工作流程或「持續到完成」驅動時。',
@@ -20525,7 +20553,7 @@ const zhHant: WorkflowTriggersCopy = {
     card: {
         when: "時機",
         schedule: "依排程",
-        sessionStart: { turnEnds: "工作階段完成一輪", needsYou: "工作階段需要你", sessionArchived: "工作階段被封存", sessionStarts: "工作階段開始" },
+        sessionStart: { turnStarts: "工作階段開始一輪", turnEnds: "工作階段完成一輪", needsYou: "工作階段需要你", sessionArchived: "工作階段被封存", sessionStarts: "工作階段開始" },
         groupTime: "時間",
         groupSessions: "工作階段",
         groupDeployments: "部署",
@@ -20595,6 +20623,8 @@ const zhHant: WorkflowTriggersCopy = {
         askNote: "失敗的執行會把該動作變成一個顯示原因的核准。它與其他核准請求一樣被核准或拒絕；提出請求的代理無法核准自己的請求。",
         startedFromHappier: "在從 Happier 發起的動作之前執行",
         startedFromHappierOwn: "在你從 Happier 發起的動作之前執行",
+        viewOnlyReach: ({ subject }: { subject: string }) => `只會在你自己的動作中執行。 你可以查看${subject}，但無法管理，因此這個觸發條件不會在他人的動作中執行。`,
+        viewOnlyReachUnnamed: "只會在你自己的動作中執行。 你可以查看這個項目，但無法管理，因此這個觸發條件不會在他人的動作中執行。",
         decides: ({ action }: { action: string }) => `決定「${action}」：執行通過則繼續；執行失敗則拒絕，並以此回覆作為原因。`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `在「${action}」之前，等待此工作流程`,
@@ -20868,6 +20898,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         events: '事件',
     },
     events: {
+        whenASessionStarts: "當工作階段開始時",
+        eventProject: "專案",
         whenMachineOnline: ({ machine }: { machine: string }) => `${machine} 上線時`,
         whenMachineOffline: ({ machine }: { machine: string }) => `${machine} 離線時`,
         listeningSince: ({ time }: { time: string }) => `自 ${time} 起監聽中`,
@@ -21064,6 +21096,14 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
     },
 
     input: {
+        stepResults: "步驟結果",
+        notAvailableHere: "此處無法使用",
+        scopeRunsLater: "在此步驟之後執行",
+        scopeAnotherLane: "在另一條分支中執行",
+        scopeUnavailable: "超出此步驟的範圍",
+        scopeCurrent: "目前範圍",
+        scopePreviousIteration: "上一輪",
+        scopeOuter: ({ levels }) => levels === 1 ? "上層範圍" : `往上 ${levels} 層的範圍`,
         label: '輸入',
         result: '結果',
         change: '變更',
@@ -21339,6 +21379,12 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         resultItem: ({ n }) => `第 ${n} 項`,
         interruptedStepSentence: ({ step }) => `${step} 已中斷。已完成的工作會保留。`,
         interruptedSentence: '已完成的工作會保留。',
+        occurrenceTechnical: {
+            admitted: "已接受",
+            updated: "已更新",
+            claimed: "已領取",
+            lease: "領取有效期限",
+        },
         inspectSteps: '查看步驟',
         seeFailures: '查看失敗',
         saveAsWorkflow: '儲存為工作流程',
@@ -21535,6 +21581,17 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
     },
 
     problem: {
+        preExecution: {
+            machineCheckFailed: "Happier 無法檢查此工作流程使用的機器。",
+            agentProbeFailed: "Happier 無法檢查選取的代理程式能否啟動。",
+            selectionUnavailable: "工作流程選取的目標無法使用。",
+            actionUnavailable: "此動作不適用於工作流程的目標。",
+            sessionCreationUnavailable: "選取的代理程式無法為此工作流程啟動工作階段。",
+            detachedExecutionUnavailable: "選取的代理程式無法在背景執行此工作流程步驟。",
+            materializationUnavailable: "Happier 無法準備啟動此工作流程。",
+            profileUnavailable: "此工作流程選取的啟動設定檔無法使用。",
+            engineUnavailable: "為此角色選取的代理程式無法使用。",
+        },
         commandFailed: '命令執行失敗。',
         title: '操作沒有成功',
         waitingTitle: '暫時還不行',

@@ -4045,46 +4045,37 @@ return { automationPageTranslations };
 })();
 
 const Domain_automationTriggerSetTranslations = (() => {
-const expandedLifecycleEnglish = {
-    lifecycleTitle: 'When a Session event occurs',
-    lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
-        `${session} · Session event trigger ${ordinal}`,
-    lifecycleSourceTitle: 'Source session',
-    changeLifecycleSource: 'Choose a different Session',
-    lifecycleEventsTitle: 'Events',
-    lifecycleEvent: {
-        parentTurnCompleted: 'Turn completed successfully',
-        parentTurnFailed: 'Turn failed',
-        parentTurnCancelled: 'Turn was cancelled or stopped',
-        userActionRequired: 'Needs your attention',
-        sessionStarted: 'When the session starts',
-        sessionArchived: 'When the session is archived',
-    },
-    lifecycleAttentionPrivacy: 'Uses only the request identity and turn—not its private contents.',
-    lifecyclePolicyTitle: 'Occurrence',
-    lifecyclePolicy: {
-        currentTurn: 'Current turn only',
-        firstMatch: 'First matching event',
-        nextMatches: 'Next matching events',
-        everyMatch: 'Every matching event',
-    },
-    lifecyclePolicyDescription: {
-        currentTurn: 'Runs at most once for the exact active parent turn.',
-        firstMatch: 'Runs once for the first selected event after this trigger is saved.',
-        nextMatches: 'Runs for a fixed number of future selected events.',
-        everyMatch: 'Runs for every future selected event while enabled.',
-    },
-    lifecycleMatchCount: 'Number of matches',
-} as const;
-
 const automationTriggerSetTranslations = { ja: {
         pluralEditor: {
-            ...expandedLifecycleEnglish,
+            lifecycleTitle: "セッションイベントの発生時",
+            lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
+                `${session} · セッションイベントトリガー ${ordinal}`,
+            lifecycleSourceTitle: "元のセッション",
+            changeLifecycleSource: "別のセッションを選択",
+            lifecycleEventsTitle: "イベント",
             lifecycleEvent: {
-                ...expandedLifecycleEnglish.lifecycleEvent,
+                parentTurnCompleted: "ターンが正常に完了",
+                parentTurnFailed: "ターンに失敗",
+                parentTurnCancelled: "ターンがキャンセルまたは停止",
+                userActionRequired: "対応が必要",
                 sessionStarted: 'セッションの開始時',
                 sessionArchived: 'セッションのアーカイブ時',
             },
+            lifecycleAttentionPrivacy: "リクエストの識別子とターンだけを使います。非公開の内容は使いません。",
+            lifecyclePolicyTitle: "実行頻度",
+            lifecyclePolicy: {
+                currentTurn: "現在のターンのみ",
+                firstMatch: "最初に一致するイベント",
+                nextMatches: "次に一致するイベント",
+                everyMatch: "一致するすべてのイベント",
+            },
+            lifecyclePolicyDescription: {
+                currentTurn: "現在アクティブなこの親ターンで最大 1 回実行します。",
+                firstMatch: "トリガーの保存後、選択したイベントの最初の発生時に 1 回実行します。",
+                nextMatches: "今後発生する選択済みイベントのうち、指定した回数だけ実行します。",
+                everyMatch: "有効な間は、選択したイベントが今後発生するたびに実行します。",
+            },
+            lifecycleMatchCount: "一致回数",
             triggersTitle: 'トリガー',
             emptyBody: '自動トリガーはありません。このワークフローは引き続き手動で実行できます。',
             orSemantics: 'トリガーはいくつでも追加できます。それぞれが独立して動作し、どれか一つが一致するとワークフローが実行されます。',
@@ -19649,13 +19640,19 @@ return { repeatable, workflowAgentAuthoringTranslations };
 const Domain_workflowBuiltinTranslations = (() => {
 type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBuiltinTranslations;
 
-const en = Shared_workflowBuiltinTranslations.en;
-
 const ja: WorkflowBuiltinTranslations = {
     keepGoing: { title: '完了まで続ける', description: '目標を達成するまで続けます' },
     reviewAndConverge: { title: 'レビューして収束', description: 'レビュアーが合意するまでレビュー', apply: '適用', verifyAndFix: '検証して修正', verifyOnly: '検証のみ', rounds: '停止までのラウンド数', inputs: { engines: "レビュアー", reviewSession: "レビューするセッション", useJudge: "意見が割れたら審判に判定してもらう", focus: "重点を置く点", then: "レビューの後", thenReport: "指摘を報告", thenFix: "承認された指摘を修正" } },
     planWithAPanel: { title: "パネル", description: '複数のエージェントが並行して計画し、計画はあなたのレビューを待ちます。', inputs: { request: '依頼内容', requestPlaceholder: 'パネルに何を計画させますか？', engines: '計画するエージェント' } },
-    parallelImplementations: en.parallelImplementations,
+    parallelImplementations: {
+        title: "並行実装",
+        description: "別々の作業ツリーで実装し、差分を比較して結果を選びます。",
+        inputs: {
+            first: "1 つ目のモデル",
+            second: "2 つ目のモデル",
+            third: "3 つ目のモデル",
+        },
+    },
     freshOpinions: { title: '独立した意見', description: '同じ質問にそれぞれ独立して回答します。必要に応じて要約も作成します。' },
     answerAndReview: { title: '回答 + レビュー', description: '1人のエージェントが回答し、別のエージェントがその回答をレビューします。' },
     debate: { title: '討論', description: '選んだラウンド数で意見を比較し、各ラウンドの後に要約します。' },
@@ -20060,8 +20057,6 @@ return { workflowStartTranslations };
 const Domain_workflowsDestinationTranslations = (() => {
 type WorkflowsDestinationTranslations = Shared_workflowsDestinationTranslations.WorkflowsDestinationTranslations;
 
-const en = Shared_workflowsDestinationTranslations.en;
-
 const ja: WorkflowsDestinationTranslations = {
     description: 'エージェントがあなたのマシンで実行するレシピ。好きなときに、スケジュールで、または何かが起きたときに。',
     import: 'インポート',
@@ -20072,6 +20067,7 @@ const ja: WorkflowsDestinationTranslations = {
         importSubtitle: 'ワークフローの JSON ファイル',
     },
     sections: {
+        noProject: "プロジェクトなし",
         needsYou: 'あなたの対応待ち',
         running: '実行中',
         library: 'ライブラリ',
@@ -20080,6 +20076,25 @@ const ja: WorkflowsDestinationTranslations = {
         history: '履歴',
     },
     allRuns: 'すべての実行',
+    display: {
+        groupBy: "グループ化",
+        source: "ソース",
+        project: "プロジェクト",
+        rowDetails: "行の詳細",
+        runSpaces: "実行スペース",
+        date: "日付",
+        workflow: "ワークフロー",
+        result: "結果",
+        startedBy: "開始者",
+        noWorkflow: "保存済みのワークフローなし",
+        unknownDate: "日付不明",
+        searchRuns: "実行を検索",
+        starter: {
+            user: "ユーザー",
+            agent: "エージェント",
+            trigger: "トリガー",
+        },
+    },
     ranAgo: ({ age }) => `最終実行 ${age}`,
     runsWhenItHappens: '発生時に実行',
     lastRunStandalone: ({ age }) => `最終実行 ${age}`,
@@ -20210,6 +20225,14 @@ const ja: WorkflowTriggersCopy = {
         loadFailed: "プルリクエストを読み込めませんでした",
     },
     summary: {
+        eventClause: {
+            machineOnline: "マシンがオンラインに復帰したとき",
+            machineOffline: "マシンがオフラインになったとき",
+            backupFailed: "バックアップに失敗したとき",
+            backupSucceeded: "バックアップに成功したとき",
+            databaseFindingObserved: "データベースで問題が検出されたとき",
+            deploymentChanged: "デプロイまたはドメインが変更されたとき",
+        },
         offlineHealthFailed: "ヘルスチェックが失敗したとき",
         offlineHealthRecovered: "ヘルスチェックが回復したとき",
         offlineHealthStatus: "ヘルスチェックの状態が変わったとき",
@@ -20243,6 +20266,7 @@ const ja: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · ほか ${count} 件`,
     },
     kind: {
+        turnStarts: "ターンの開始時",
         pluginEvent: "プラグインイベント",
         sessionStarts: 'セッションが始まったとき',
         sessionArchived: 'セッションがアーカイブされたとき',
@@ -20338,12 +20362,15 @@ const ja: WorkflowTriggersCopy = {
         deny: "拒否",
         refused: ({ workflow }: { workflow: string }) => `${workflow} により拒否`,
         couldNotRun: ({ workflow }: { workflow: string }) => `${workflow} を実行できませんでした`,
+        startRefused: ({ workflow }: { workflow: string }) => `「${workflow}」を開始できませんでした。`,
         startRefusedRemoved: 'これより前に実行されていたチェックは削除されました。チェックなしで実行するには、もう一度依頼してください。',
+        startRefusedAskOwner: ({ name }: { name: string }) => `このチェックを修正するか、無効にするか、共有を停止するよう ${name} に依頼してください。`,
         passed: ({ workflow }: { workflow: string }) => `${workflow} に合格`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} をスキップ · 次回また確認します`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} をスキップ`,
         checking: "自動化を確認しています…",
         notChecked: "自動化は確認されませんでした: 読み込めませんでした。",
+        notCheckedMatchingUnavailable: "ここではチェックを実行できないため、自動化は確認されませんでした。",
         notCheckedHomeUnavailable: "自動化は確認されませんでした: Home の準備ができていません。",
         notCheckedUnreachable: "自動化は確認されませんでした: Home に接続できません。",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} をスキップしました · 実行にはマシンが必要です`,
@@ -20506,6 +20533,7 @@ const ja: WorkflowTriggersCopy = {
         },
     },
     kindDescription: {
+        turnStarts: "自分または共同作業中のエージェントのターンが始まったとき。",
         pluginEvent: "プラグインがイベントを観測したときに実行します。",
         turnEnds: 'あなた、または一緒に作業するエージェントのターンの後。',
         needsYou: 'このセッションがあなたを待つたび。ワークフローや「完了まで続ける」が動かしている間も含みます。',
@@ -20585,7 +20613,7 @@ const ja: WorkflowTriggersCopy = {
     card: {
         when: "条件",
         schedule: "スケジュール",
-        sessionStart: { turnEnds: "セッションのターンが終わる", needsYou: "セッションが対応を求める", sessionArchived: "セッションがアーカイブされる", sessionStarts: "セッションが始まる" },
+        sessionStart: { turnStarts: "セッションがターンを開始", turnEnds: "セッションのターンが終わる", needsYou: "セッションが対応を求める", sessionArchived: "セッションがアーカイブされる", sessionStarts: "セッションが始まる" },
         groupTime: "時間",
         groupSessions: "セッション",
         groupDeployments: "デプロイ",
@@ -20655,6 +20683,8 @@ const ja: WorkflowTriggersCopy = {
         askNote: "失敗した実行はアクションを理由付きの承認リクエストに変えます。通常の承認リクエストと同じく承認または拒否され、依頼したエージェント自身は承認できません。",
         startedFromHappier: "Happier から開始されたアクションの前に実行されます",
         startedFromHappierOwn: "Happier から開始した自分のアクションの前に実行されます",
+        viewOnlyReach: ({ subject }: { subject: string }) => `自分のアクションでのみ実行されます。 ${subject}の表示はできますが管理はできないため、他の人のアクションではこのトリガーは実行されません。`,
+        viewOnlyReachUnnamed: "自分のアクションでのみ実行されます。 この項目の表示はできますが管理はできないため、他の人のアクションではこのトリガーは実行されません。",
         decides: ({ action }: { action: string }) => `「${action}」を判断します: 実行が成功すれば続行し、失敗すれば拒否され、この返答が理由になります。`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `「${action}」の前に、このワークフローを待つ`,
@@ -20928,6 +20958,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         events: 'イベント',
     },
     events: {
+        whenASessionStarts: "セッションの開始時",
+        eventProject: "プロジェクト",
         whenMachineOnline: ({ machine }: { machine: string }) => `${machine} がオンラインになったとき`,
         whenMachineOffline: ({ machine }: { machine: string }) => `${machine} がオフラインになったとき`,
         listeningSince: ({ time }: { time: string }) => `${time} から受信中`,
@@ -21124,6 +21156,14 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
     },
 
     input: {
+        stepResults: "ステップの結果",
+        notAvailableHere: "ここでは利用できません",
+        scopeRunsLater: "このステップの後に実行",
+        scopeAnotherLane: "別の分岐で実行",
+        scopeUnavailable: "このステップのスコープ外",
+        scopeCurrent: "現在のスコープ",
+        scopePreviousIteration: "前のラウンド",
+        scopeOuter: ({ levels }) => levels === 1 ? "親スコープ" : `${levels} 階層上のスコープ`,
         label: '入力',
         result: '結果',
         change: '変更',
@@ -21399,6 +21439,12 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         resultItem: ({ n }) => `項目 ${n}`,
         interruptedStepSentence: ({ step }) => `${step} が中断されました。完了した作業は保持されます。`,
         interruptedSentence: '完了した作業は保持されます。',
+        occurrenceTechnical: {
+            admitted: "受理",
+            updated: "更新",
+            claimed: "取得",
+            lease: "取得リースの期限",
+        },
         inspectSteps: 'ステップを確認',
         seeFailures: '失敗を見る',
         saveAsWorkflow: 'ワークフローとして保存',
@@ -21595,6 +21641,17 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
     },
 
     problem: {
+        preExecution: {
+            machineCheckFailed: "Happier はこのワークフローで使うマシンを確認できませんでした。",
+            agentProbeFailed: "Happier は選択したエージェントを起動できるか確認できませんでした。",
+            selectionUnavailable: "ワークフローで選択したターゲットは利用できません。",
+            actionUnavailable: "ワークフローのターゲットではこのアクションを利用できません。",
+            sessionCreationUnavailable: "選択したエージェントは、このワークフローのセッションを開始できません。",
+            detachedExecutionUnavailable: "選択したエージェントは、このステップをバックグラウンドで実行できません。",
+            materializationUnavailable: "Happier はこのワークフローを開始する準備ができませんでした。",
+            profileUnavailable: "このワークフローで選択した起動プロファイルは利用できません。",
+            engineUnavailable: "このロールに選択したエージェントは利用できません。",
+        },
         commandFailed: 'コマンドが失敗しました。',
         title: 'うまくいきませんでした',
         waitingTitle: 'まだできません',

@@ -4091,46 +4091,37 @@ return { automationPageTranslations };
 })();
 
 const Domain_automationTriggerSetTranslations = (() => {
-const expandedLifecycleEnglish = {
-    lifecycleTitle: 'When a Session event occurs',
-    lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
-        `${session} · Session event trigger ${ordinal}`,
-    lifecycleSourceTitle: 'Source session',
-    changeLifecycleSource: 'Choose a different Session',
-    lifecycleEventsTitle: 'Events',
-    lifecycleEvent: {
-        parentTurnCompleted: 'Turn completed successfully',
-        parentTurnFailed: 'Turn failed',
-        parentTurnCancelled: 'Turn was cancelled or stopped',
-        userActionRequired: 'Needs your attention',
-        sessionStarted: 'When the session starts',
-        sessionArchived: 'When the session is archived',
-    },
-    lifecycleAttentionPrivacy: 'Uses only the request identity and turn—not its private contents.',
-    lifecyclePolicyTitle: 'Occurrence',
-    lifecyclePolicy: {
-        currentTurn: 'Current turn only',
-        firstMatch: 'First matching event',
-        nextMatches: 'Next matching events',
-        everyMatch: 'Every matching event',
-    },
-    lifecyclePolicyDescription: {
-        currentTurn: 'Runs at most once for the exact active parent turn.',
-        firstMatch: 'Runs once for the first selected event after this trigger is saved.',
-        nextMatches: 'Runs for a fixed number of future selected events.',
-        everyMatch: 'Runs for every future selected event while enabled.',
-    },
-    lifecycleMatchCount: 'Number of matches',
-} as const;
-
 const automationTriggerSetTranslations = { ru: {
         pluralEditor: {
-            ...expandedLifecycleEnglish,
+            lifecycleTitle: "При событии сессии",
+            lifecycleSource: ({ session, ordinal }: { session: string; ordinal: number }) =>
+                `${session} · Триггер события сессии ${ordinal}`,
+            lifecycleSourceTitle: "Исходная сессия",
+            changeLifecycleSource: "Выбрать другую сессию",
+            lifecycleEventsTitle: "События",
             lifecycleEvent: {
-                ...expandedLifecycleEnglish.lifecycleEvent,
+                parentTurnCompleted: "Ход завершился успешно",
+                parentTurnFailed: "Ход завершился ошибкой",
+                parentTurnCancelled: "Ход отменён или остановлен",
+                userActionRequired: "Требуется ваше внимание",
                 sessionStarted: 'Когда начинается сессия',
                 sessionArchived: 'Когда сессия архивируется',
             },
+            lifecycleAttentionPrivacy: "Используются только идентификатор запроса и ход. Приватное содержимое запроса не используется.",
+            lifecyclePolicyTitle: "Частота запуска",
+            lifecyclePolicy: {
+                currentTurn: "Только текущий ход",
+                firstMatch: "Первое подходящее событие",
+                nextMatches: "Следующие подходящие события",
+                everyMatch: "Каждое подходящее событие",
+            },
+            lifecyclePolicyDescription: {
+                currentTurn: "Запускается не более одного раза для этого активного родительского хода.",
+                firstMatch: "Запускается один раз при первом выбранном событии после сохранения триггера.",
+                nextMatches: "Запускается при заданном числе будущих выбранных событий.",
+                everyMatch: "Пока триггер включён, запускается при каждом будущем выбранном событии.",
+            },
+            lifecycleMatchCount: "Число совпадений",
             triggersTitle: 'Триггеры',
             emptyBody: 'Автоматических триггеров нет. Автоматизацию всё равно можно запустить вручную.',
             orSemantics: 'Добавьте любое количество триггеров. Они работают независимо: рабочий процесс запускается при совпадении любого из них.',
@@ -19738,13 +19729,19 @@ return { repeatable, workflowAgentAuthoringTranslations };
 const Domain_workflowBuiltinTranslations = (() => {
 type WorkflowBuiltinTranslations = Shared_workflowBuiltinTranslations.WorkflowBuiltinTranslations;
 
-const en = Shared_workflowBuiltinTranslations.en;
-
 const ru: WorkflowBuiltinTranslations = {
     keepGoing: { title: 'Продолжать до готовности', description: 'Продолжает, пока цель не достигнута' },
     reviewAndConverge: { title: 'Проверить и свести', description: 'Проверять, пока рецензенты не согласятся', apply: 'Применить', verifyAndFix: 'Проверить и исправить', verifyOnly: 'Только проверить', rounds: 'Раунды до остановки', inputs: { engines: "Рецензенты", reviewSession: "Сессия для проверки", useJudge: "Пусть судья разрешает споры", focus: "На чём сосредоточиться", then: "После проверки", thenReport: "Передать замечания", thenFix: "Исправить принятые замечания" } },
     planWithAPanel: { title: "Панель", description: 'Несколько агентов планируют параллельно, затем план ждёт вашей проверки.', inputs: { request: 'Запрос', requestPlaceholder: 'Что должна спланировать панель?', engines: 'Планировщики' } },
-    parallelImplementations: en.parallelImplementations,
+    parallelImplementations: {
+        title: "Параллельные реализации",
+        description: "Реализуйте в отдельных рабочих деревьях, сравните изменения и выберите результат.",
+        inputs: {
+            first: "Первая модель",
+            second: "Вторая модель",
+            third: "Третья модель",
+        },
+    },
     freshOpinions: { title: 'Независимые мнения', description: 'Независимые ответы на один вопрос с необязательным обобщением.' },
     answerAndReview: { title: 'Ответ + рецензия', description: 'Один агент отвечает, а другой рецензирует именно этот ответ.' },
     debate: { title: 'Дебаты', description: 'Сравните мнения за выбранное число раундов с обобщением после каждого раунда.' },
@@ -20149,8 +20146,6 @@ return { workflowStartTranslations };
 const Domain_workflowsDestinationTranslations = (() => {
 type WorkflowsDestinationTranslations = Shared_workflowsDestinationTranslations.WorkflowsDestinationTranslations;
 
-const en = Shared_workflowsDestinationTranslations.en;
-
 const ru: WorkflowsDestinationTranslations = {
     description: 'Рабочие процессы, которые ваши агенты выполняют на ваших машинах — когда вы решите, по расписанию или когда что-то происходит.',
     import: 'Импортировать',
@@ -20161,6 +20156,7 @@ const ru: WorkflowsDestinationTranslations = {
         importSubtitle: 'JSON-файл рабочего процесса',
     },
     sections: {
+        noProject: "Без проекта",
         needsYou: 'Ждёт вас',
         running: 'Выполняются',
         library: 'Библиотека',
@@ -20169,6 +20165,25 @@ const ru: WorkflowsDestinationTranslations = {
         history: 'История',
     },
     allRuns: 'Все запуски',
+    display: {
+        groupBy: "Группировать по",
+        source: "Источник",
+        project: "Проект",
+        rowDetails: "Сведения о строке",
+        runSpaces: "Пространства запусков",
+        date: "Дата",
+        workflow: "Рабочий процесс",
+        result: "Результат",
+        startedBy: "Кто запустил",
+        noWorkflow: "Нет сохранённого рабочего процесса",
+        unknownDate: "Дата неизвестна",
+        searchRuns: "Поиск запусков",
+        starter: {
+            user: "Пользователь",
+            agent: "Агент",
+            trigger: "Триггер",
+        },
+    },
     ranAgo: ({ age }) => `Запущен ${age}`,
     runsWhenItHappens: 'Запускается, когда это происходит',
     lastRunStandalone: ({ age }) => `Последний запуск ${age}`,
@@ -20299,6 +20314,14 @@ const ru: WorkflowTriggersCopy = {
         loadFailed: "Не удалось загрузить pull request",
     },
     summary: {
+        eventClause: {
+            machineOnline: "Когда машина снова в сети",
+            machineOffline: "Когда машина выходит из сети",
+            backupFailed: "Когда резервное копирование завершается ошибкой",
+            backupSucceeded: "Когда резервное копирование проходит успешно",
+            databaseFindingObserved: "Когда обнаружена проблема с базой данных",
+            deploymentChanged: "Когда меняется развёртывание или домен",
+        },
         offlineHealthFailed: "Когда проверка состояния завершается ошибкой",
         offlineHealthRecovered: "Когда проверка состояния снова проходит",
         offlineHealthStatus: "Когда состояние проверки меняется",
@@ -20332,6 +20355,7 @@ const ru: WorkflowTriggersCopy = {
         more: ({ first, count }) => `${first} · ещё ${count}`,
     },
     kind: {
+        turnStarts: "Когда начинается ход",
         pluginEvent: "Событие плагина",
         sessionStarts: 'Когда сессия начинается',
         sessionArchived: 'Когда сессия архивируется',
@@ -20427,12 +20451,15 @@ const ru: WorkflowTriggersCopy = {
         deny: "Отклонить",
         refused: ({ workflow }: { workflow: string }) => `Отклонено проверкой ${workflow}`,
         couldNotRun: ({ workflow }: { workflow: string }) => `${workflow} не удалось запустить`,
+        startRefused: ({ workflow }: { workflow: string }) => `Не удалось запустить ${workflow}.`,
         startRefusedRemoved: 'Проверка, которая выполнялась перед этим, удалена. Запросите снова, чтобы выполнить без проверки.',
+        startRefusedAskOwner: ({ name }: { name: string }) => `Попросите ${name} исправить или отключить эту проверку либо закрыть к ней общий доступ.`,
         passed: ({ workflow }: { workflow: string }) => `${workflow} пройден`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} пропущен · в следующий раз спросим снова`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} пропущен`,
         checking: "Проверка автоматизаций…",
         notChecked: "Автоматизации не проверены: их не удалось загрузить.",
+        notCheckedMatchingUnavailable: "Автоматизации не проверены: здесь нельзя выполнить проверки.",
         notCheckedHomeUnavailable: "Автоматизации не проверены: Home сейчас не готов.",
         notCheckedUnreachable: "Автоматизации не проверены: Home недоступен.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} пропущен · для запуска нужна машина`,
@@ -20595,6 +20622,7 @@ const ru: WorkflowTriggersCopy = {
         },
     },
     kindDescription: {
+        turnStarts: "Когда начинается ваш ход или ход агента, с которым вы работаете.",
         pluginEvent: "Запускать, когда плагин наблюдает событие.",
         turnEnds: 'После хода — вашего или агента, с которым вы работаете.',
         needsYou: 'Каждый раз, когда сессия ждёт вас, в том числе пока её ведёт процесс или «Продолжать до конца».',
@@ -20674,7 +20702,7 @@ const ru: WorkflowTriggersCopy = {
     card: {
         when: "Когда",
         schedule: "По расписанию",
-        sessionStart: { turnEnds: "Сессия завершает ход", needsYou: "Сессии нужна ваша помощь", sessionArchived: "Сессия архивирована", sessionStarts: "Сессия начинается" },
+        sessionStart: { turnStarts: "Сессия начинает ход", turnEnds: "Сессия завершает ход", needsYou: "Сессии нужна ваша помощь", sessionArchived: "Сессия архивирована", sessionStarts: "Сессия начинается" },
         groupTime: "Время",
         groupSessions: "Сессии",
         groupDeployments: "Развёртывания",
@@ -20744,6 +20772,8 @@ const ru: WorkflowTriggersCopy = {
         askNote: "Неудачный запуск превращает действие в запрос на одобрение с причиной. Его одобряют или отклоняют как любой запрос; запросивший агент не может одобрить его сам.",
         startedFromHappier: "Выполняется перед действиями, запущенными из Happier",
         startedFromHappierOwn: "Выполняется перед вашими собственными действиями, запущенными из Happier",
+        viewOnlyReach: ({ subject }: { subject: string }) => `Запускается только для ваших действий. Вы можете посмотреть ${subject}, но не управлять им, поэтому этот триггер не запускается для действий других людей.`,
+        viewOnlyReachUnnamed: "Запускается только для ваших действий. Вы можете посмотреть это, но не управлять им, поэтому этот триггер не запускается для действий других людей.",
         decides: ({ action }: { action: string }) => `Решает «${action}»: если запуск успешен, действие выполняется; если нет — оно отклоняется, и этот ответ становится причиной.`,
         actionSentence: {
             beforeWait: ({ action }: { action: string }) => `Перед «${action}» ждать этот процесс`,
@@ -21017,6 +21047,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         events: 'События',
     },
     events: {
+        whenASessionStarts: "Когда начинается сессия",
+        eventProject: "Проект",
         whenMachineOnline: ({ machine }: { machine: string }) => `когда ${machine} подключается`,
         whenMachineOffline: ({ machine }: { machine: string }) => `когда ${machine} отключается`,
         listeningSince: ({ time }: { time: string }) => `Слушает с ${time}`,
@@ -21213,6 +21245,14 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
     },
 
     input: {
+        stepResults: "Результаты шагов",
+        notAvailableHere: "Здесь недоступно",
+        scopeRunsLater: "Выполняется после этого шага",
+        scopeAnotherLane: "Выполняется в другой ветви",
+        scopeUnavailable: "Вне области видимости этого шага",
+        scopeCurrent: "Текущая область видимости",
+        scopePreviousIteration: "Предыдущий раунд",
+        scopeOuter: ({ levels }) => levels === 1 ? "Родительская область видимости" : `Внешняя область · уровней вверх: ${levels}`,
         label: 'Вход',
         result: 'Результат',
         change: 'Изменить',
@@ -21488,6 +21528,12 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         resultItem: ({ n }) => `Элемент ${n}`,
         interruptedStepSentence: ({ step }) => `${step}: прервано. Завершённая работа сохранена.`,
         interruptedSentence: 'Завершённая работа сохранена.',
+        occurrenceTechnical: {
+            admitted: "Допущен",
+            updated: "Обновлён",
+            claimed: "Взят в работу",
+            lease: "Срок удержания задания истекает",
+        },
         inspectSteps: 'Посмотреть шаги',
         seeFailures: 'Посмотреть ошибки',
         saveAsWorkflow: 'Сохранить как рабочий процесс',
@@ -21684,6 +21730,17 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
     },
 
     problem: {
+        preExecution: {
+            machineCheckFailed: "Happier не смог проверить машину, которую использует этот рабочий процесс.",
+            agentProbeFailed: "Happier не смог проверить, может ли запуститься выбранный агент.",
+            selectionUnavailable: "Выбранная цель рабочего процесса недоступна.",
+            actionUnavailable: "Это действие недоступно для цели рабочего процесса.",
+            sessionCreationUnavailable: "Выбранный агент не может начать сессию для этого рабочего процесса.",
+            detachedExecutionUnavailable: "Выбранный агент не может выполнить этот шаг в фоновом режиме.",
+            materializationUnavailable: "Happier не смог подготовить этот рабочий процесс к запуску.",
+            profileUnavailable: "Выбранный для этого рабочего процесса профиль запуска недоступен.",
+            engineUnavailable: "Агент, выбранный для этой роли, недоступен.",
+        },
         commandFailed: 'Команда завершилась с ошибкой.',
         title: 'Не получилось',
         waitingTitle: 'Пока невозможно',
