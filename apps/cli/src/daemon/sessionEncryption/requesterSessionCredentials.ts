@@ -15,6 +15,7 @@ import { openSessionRequesterBootstrapRpcRequestV1, type SessionRequesterBootstr
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { SessionPendingRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { configuration } from '@/configuration';
 import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, preserveStoredCredentialsHostContext, sameStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -734,10 +735,17 @@ export async function verifyWorkspaceSyncRelationshipMachineAdmissionCurrent(
 /** SOURCE has no captured native member. A fresh boundary must still permit
  * this exact requester to execute through the installed daemon. */
 export async function verifyWorkspaceSyncSourceMachineAdmissionCurrent(
-  input: Parameters<typeof readRequesterSessionMachineAdmissionCurrent>[0],
+  input: Parameters<typeof readRequesterSessionMachineAdmissionCurrent>[0]
+    & Readonly<{ sourceAdmission?: WorkspaceSyncSourceStandingAdmission }>,
 ): Promise<boolean> {
   const current = await readWorkspaceSyncMachineAdmissionCurrent(input);
-  return current != null && (isCustodianMachineAdmission(current) || current.role === 'manage');
+  if (!current) return false;
+  if (isCustodianMachineAdmission(current) || current.role === 'manage') return true;
+  // Only a link originally admitted with Use can reconnect with Use.
+  const admitted = input.sourceAdmission;
+  return admitted?.authorization.binding.admittedMachineRole === 'use'
+    && admitted.routing.sourceContext?.machineAdmission.role === 'use'
+    && admitted.routing.sourceContext.machineAdmission.custodianAccountId === current.custodianAccountId;
 }
 
 /** Reconstructs Account ports for this exact Session; protected custody is data, never an authority witness. */
@@ -1290,16 +1298,23 @@ async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyB
         return null;
       }
     }
+    const standing = input.endpointRole === 'source' ? stored.sourceAdmission : undefined;
+    const sourceAdmission = standing
+      && deriveWorkspaceSyncRelationshipId(standing.routing.operationId) === input.sessionId
+      && standing.routing.sourceMachineId === input.attribution.machineId
+      && standing.authorization.binding.machineId === input.attribution.machineId
+      && standing.authorization.binding.installationId === input.attribution.installationId
+      && standing.authorization.binding.accountId === input.attribution.accountId ? standing : undefined;
     const callerVerifier = input.scope === 'workspace_sync_relationship' ? undefined : input.verifyMachineAdmissionCurrent;
     const verifyMachineAdmissionCurrent = callerVerifier ?? ((signal?: AbortSignal) =>
       (input.endpointRole === 'source' ? verifyWorkspaceSyncSourceMachineAdmissionCurrent
         : input.scope === 'workspace_sync_relationship' ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent
           : verifyRequesterSessionMachineAdmissionCurrent)({
         credentials: stored.credentials, sessionId: input.sessionId, attribution: input.attribution,
-        serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: boundary!, signal }));
+        serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: boundary!, signal, sourceAdmission }));
     const current = await readRequesterSessionCredentialBinding({ ...input, credentials: stored.credentials,
       verifyMachineAdmissionCurrent }, readMachineAdmissionCurrent && (signal => readMachineAdmissionCurrent(stored, signal)), 'custody_recovery');
-    if (current === true) return stored;
+    if (current === true) return { ...stored, sourceAdmission };
     // Missing live Home evidence is not missing private custody. Preserve the
     // worker's existing retry/parking disposition instead of failing the Run.
     if (input.scope === 'workflow_trigger' && current === undefined && !input.signal?.aborted) {

@@ -5,6 +5,7 @@ import axios from 'axios';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { createWorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
@@ -14,6 +15,7 @@ import { createWorkspaceRootOwnershipManager } from '@/workspaces/sync/workspace
 import { createWorkspaceSyncSourceCredentialCustody, listRequesterSessionCredentialBindings,
   type RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
 import { replacePrivateBearerFile } from '../privateBearerFile';
+import type { WorkspaceSyncSourceStandingAdmission } from '../sessionEncryption/requesterSessionCustody';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 
 // Network/socket and native engine transports are the only mocked boundaries.
@@ -25,6 +27,7 @@ async function fixture() {
   const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
   const rowsByBearer = new Map<string, unknown[]>();
   const accountsByBearer = new Map<string, string>();
+  const useAccounts = new Set<string>();
   vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
     const accountId = accountsByBearer.get(String(config?.headers?.Authorization));
     if (!accountId) throw new Error('Unknown requester bearer');
@@ -35,7 +38,8 @@ async function fixture() {
     if (url.endsWith('/v1/machines/machine')) return { status: 200, data: { machine: {
       id: 'machine', metadata: 'opaque', metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
       installationId: 'installation', revokedAt: null, replacedByMachineId: null,
-      access: { custodian: { accountId, displayName: accountId }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+      access: { custodian: { accountId: useAccounts.has(accountId) ? 'custodian' : accountId, displayName: 'Machine owner' },
+        role: useAccounts.has(accountId) ? 'use' : 'manage', resourceMode: 'plain', accessState: 'ready' },
     } } };
     throw new Error(`Unexpected HTTP read: ${url}`);
   });
@@ -56,12 +60,12 @@ async function fixture() {
   onTestFinished(async () => { await adapter.releaseAllPrivateExecutions?.(); });
   const boundary: RequesterSessionMachineAdmissionBoundary = { machineId: 'machine', daemonToken: 'custodian-token',
     isHomeCurrent: () => true, readInstallation: () => ({ installationId: 'installation', privateKey: new Uint8Array(64) }) };
-  const add = async (accountId: string, relationshipId: string) => {
+  const add = async (accountId: string, relationshipId: string, sourceAdmission?: WorkspaceSyncSourceStandingAdmission) => {
     const credentials = { token: `requester-${accountId}`, encryption: null };
     const bearer = `Bearer ${credentials.token}`;
     accountsByBearer.set(bearer, accountId);
     const attribution = { serverId: 'home', accountId, machineId: 'machine', installationId: 'installation' };
-    const custody = await createWorkspaceSyncSourceCredentialCustody({ happyHomeDir, relationshipId, attribution, credentials });
+    const custody = await createWorkspaceSyncSourceCredentialCustody({ happyHomeDir, relationshipId, attribution, credentials, sourceAdmission });
     const refs = ['source', 'target'].map(role => ({ id: `${relationshipId}-${role}`, serverId: 'home',
       machineId: role === 'source' ? 'machine' : 'target-machine', rootPath: `/${accountId}/${role}`, createdAtMs: 1 }));
     const rows = rowsByBearer.get(bearer) ?? [];
@@ -84,8 +88,37 @@ async function fixture() {
   const recover = (relationshipId?: string) => recoverPrivateWorkspaceSyncExecutions({ happyHomeDir,
     localProfileId: 'home', serverId: 'home', serverHttpBaseUrl: 'https://sync-home.test', boundary, adapter,
     readProjectRows: readProjectAccountRows, ...(relationshipId ? { relationshipId } : {}) });
-  return { happyHomeDir, add, recover, adapter, httpReads };
+  return { happyHomeDir, add, recover, adapter, httpReads, useAccounts };
 }
+
+it('recovers a shared Source under its exact Use admission and refuses a changed link or a Manage downgrade', async () => {
+  const f = await fixture();
+  f.useAccounts.add('guest');
+  const admission = (operationId: string, role: 'use' | 'manage'): WorkspaceSyncSourceStandingAdmission => ({
+    authorization: { v: 1, token: 'standing-fixture', binding: { accountId: 'guest', custodianAccountId: 'custodian',
+      authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: 'home',
+      machineId: 'machine', installationId: 'installation', actionId: 'workspace.sync.relationship.create',
+      requestId: operationId, requestEnvelopeDigest: 'a'.repeat(43), admittedMachineRole: role,
+      target: { kind: 'machine', machineId: 'machine' } } },
+    routing: { v: 1, phase: 'prepare', operationId, accountServerId: 'home', sourceMachineId: 'machine',
+      sourceRootPath: '/guest/source', sourceContext: { callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId: 'guest', custodianAccountId: 'custodian', machineId: 'machine',
+          installationId: 'installation', role, encryptionMode: 'plain' } } },
+  });
+  const relationshipId = deriveWorkspaceSyncRelationshipId('admitted-use');
+  const changedLink = deriveWorkspaceSyncRelationshipId('other-link');
+  const downgraded = deriveWorkspaceSyncRelationshipId('admitted-manage');
+  await f.add('guest', relationshipId, admission('admitted-use', 'use'));
+  await f.add('guest', changedLink, admission('admitted-use', 'use'));
+  await f.add('guest', downgraded, admission('admitted-manage', 'manage'));
+
+  await f.recover();
+  const retained = f.adapter.resolvePrivateExecution?.({ relationshipId });
+  expect(retained?.execution.credentials.token).toBe('requester-guest');
+  await expect(retained?.execution.assertTransferCurrent()).resolves.toBeUndefined();
+  expect(f.adapter.resolvePrivateExecution?.({ relationshipId: changedLink })).toBeNull();
+  expect(f.adapter.resolvePrivateExecution?.({ relationshipId: downgraded })).toBeNull();
+});
 
 it('recovers an exact private Sync relationship with zero directory scans and refuses only its own unreadable custody', async () => {
   const f = await fixture();

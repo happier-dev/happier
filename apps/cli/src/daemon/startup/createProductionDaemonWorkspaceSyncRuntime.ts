@@ -3050,7 +3050,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
             attribution: { ...executionIdentity.requester, serverId: localProfileId }, credentials: requester.credentials,
             homeServerIdentityId: semanticServerId,
             machineAdmission: { custodianAccountId: admission.custodianAccountId, role: admission.role },
-            ...(projectRequesterStandingAdmission(targetPhaseContext) ? { sourceAdmission: projectRequesterStandingAdmission(targetPhaseContext)! } : {}) });
+            sourceAdmission: projectRequesterStandingAdmission(targetPhaseContext) });
           bindRetainedRelationship(id);
         },
         release: async () => { try { await native?.release(); } finally { await custody.release(); } },
@@ -3077,15 +3077,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         // Create's target preparation and settlement use its ingress admission.
         // Later requests use the retained relationship's SOURCE custody.
         const boundary = input.requesterMachineAdmissionBoundary;
-        // Machine ingress already admitted this exact direct Use Replica.
-        // Its reconnect needs current access to that Machine, like a captured link.
-        const verifyCurrent = checkout || (directRequester && admission.role === 'use')
+        const sourceAdmission = projectRequesterStandingAdmission(targetPhaseContext);
+        const verifyCurrent = checkout
           ? verifyWorkspaceSyncRelationshipMachineAdmissionCurrent : verifyWorkspaceSyncSourceMachineAdmissionCurrent;
         targetPhaseContext = { ...targetPhaseContext, verifyMachineAdmissionCurrent: async () => {
           if (!boundary) return false;
           return await verifyCurrent({ credentials: requester.credentials,
             sessionId: id, attribution: executionIdentity.requester, serverHttpBaseUrl: requester.serverHttpBaseUrl,
-            boundary });
+            boundary, sourceAdmission });
         } };
       } else {
         if (captured) await runtime!.handoffAdapter.releasePrivateExecution?.(request.operationId);

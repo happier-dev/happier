@@ -13,7 +13,6 @@ import { listRequesterSessionCredentialBindings, resolveWorkspaceSyncRelationshi
   verifyWorkspaceSyncSourceMachineAdmissionCurrent, type RequesterSessionMachineAdmissionBoundary } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import type { ProductionDaemonWorkspaceSyncFactories } from './createProductionDaemonWorkspaceSyncRuntime';
 import type { WorkspaceSyncSourceStandingAdmission } from '@/daemon/sessionEncryption/requesterSessionCustody';
-import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 
 /** Recovery feeds the existing operation/relationship owner, never a parallel registry. */
 export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
@@ -62,12 +61,7 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
       } else if (endpointRole === 'source') {
         const source = await resolveWorkspaceSyncSourceCredentialCustody(scope);
         recovered = source ? { credentials: source.credentials } : null;
-        // Standing admission serves only the relationship, SOURCE Machine and Account it was signed for.
-        const admission = source?.sourceAdmission;
-        if (admission && deriveWorkspaceSyncRelationshipId(admission.routing.operationId) === relationshipId
-          && admission.routing.sourceMachineId === input.boundary.machineId
-          && admission.authorization.binding.machineId === input.boundary.machineId
-          && admission.authorization.binding.accountId === binding.attribution.accountId) sourceAdmission = admission;
+        sourceAdmission = source?.sourceAdmission;
       } else recovered = await resolveWorkspaceSyncRelationshipCredentialCustody(scope);
       if (!recovered) continue;
       const { credentials } = recovered;
@@ -102,10 +96,11 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
         sourceMachineId: resolveWorkspaceSyncExecutionMachineIdV1(source), targetMachineId: resolveWorkspaceSyncExecutionMachineIdV1(target),
         sourceWorkspaceRefId: source.id, targetWorkspaceRefId: target.id,
         sourceRootPath: source.rootPath, targetRootPath: target.rootPath };
+      const verifySourceAdmissionCurrent = () => verifyWorkspaceSyncSourceMachineAdmissionCurrent({
+        credentials, sessionId: relationshipId, attribution: binding.attribution, sourceAdmission,
+        serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: input.boundary });
       const assertTransferCurrent = async () => {
-        if (!await custody.isCurrent() || endpointRole === 'source' && !await verifyWorkspaceSyncSourceMachineAdmissionCurrent({
-          credentials, sessionId: relationshipId, attribution: binding.attribution,
-          serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: input.boundary })) {
+        if (!await custody.isCurrent() || endpointRole === 'source' && !await verifySourceAdmissionCurrent()) {
           throw Object.assign(new Error('Requester Sync custody is unavailable'), { code: 'project_requester_authority_unavailable' });
         }
       };
@@ -119,9 +114,7 @@ export async function recoverPrivateWorkspaceSyncExecutions(input: Readonly<{
         execution = { credentials, accountRowsCustody: custody, assertTransferCurrent,
           getSnapshot: () => snapshot, replaceSnapshot: async next => { snapshot = next; },
           ...(sourceAdmission && input.createSourceTargetPhaseCaller ? { callTargetPhase: input.createSourceTargetPhaseCaller({
-            admission: sourceAdmission, verifyMachineAdmissionCurrent: () => verifyWorkspaceSyncSourceMachineAdmissionCurrent({
-              credentials, sessionId: relationshipId, attribution: binding.attribution,
-              serverHttpBaseUrl: input.serverHttpBaseUrl, boundary: input.boundary }) }) } : {}),
+            admission: sourceAdmission, verifyMachineAdmissionCurrent: verifySourceAdmissionCurrent }) } : {}),
           release: async () => { active = false; } };
       } else {
         const executionIdentity = recovered.executionIdentity;
