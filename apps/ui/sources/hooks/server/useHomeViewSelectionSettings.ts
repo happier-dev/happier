@@ -83,7 +83,7 @@ export function useHomeViewSelectionSettingsMutable(): HomeViewSelectionSettings
         update: HomeViewSelectionSettings | ((current: HomeViewSelectionSettings) => HomeViewSelectionSettings),
         options?: Readonly<{ targetScope?: 'tab' | 'device' }>,
     ) => {
-        const saved = await updateEffectiveHomeViewState((current) => {
+        await updateEffectiveHomeViewState((current) => {
             const currentSettings: HomeViewSelectionSettings = {
                 serverSelectionGroups: normalizeServerSelectionGroupsForSettings(current.groups),
                 serverSelectionActiveTargetKind: current.activeTargetKind,
@@ -97,14 +97,6 @@ export function useHomeViewSelectionSettingsMutable(): HomeViewSelectionSettings
                 activeTargetId: requested.serverSelectionActiveTargetId,
             };
         }, { scope: options?.targetScope ?? 'device' });
-        const projected: HomeViewSelectionSettings = {
-            serverSelectionGroups: normalizeServerSelectionGroupsForSettings(saved.groups),
-            serverSelectionActiveTargetKind: saved.activeTargetKind,
-            serverSelectionActiveTargetId: saved.activeTargetId,
-        };
-        // Compatibility projection for existing Settings readers only. The Account-scoped
-        // settings transport must never become a writer for device-global Home selection.
-        getStorage().getState().applySettingsLocal(projected);
     }, []);
     return React.useMemo(() => ({
         ...settings,

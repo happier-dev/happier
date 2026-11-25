@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { MMKV } from 'react-native-mmkv';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import * as profiles from '@/sync/domains/server/serverProfiles';
@@ -24,6 +25,8 @@ describe('useHomeViewSelectionSettings', () => {
     });
     afterEach(async () => {
         standardCleanup();
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
         await homes.reset();
         locks.restore();
         resetRuntimeFetch();
@@ -95,32 +98,130 @@ describe('useHomeViewSelectionSettings', () => {
         });
     });
 
-    it('keeps Home selection device-local instead of entering the Account-settings writer', async () => {
+    it.each(['profile adoption', 'descriptor refresh'] as const)('measures mounted Settings costs for %s', async (path) => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
+        const serverUrl = 'https://descriptor-home.example.test';
+        const descriptor = {
+            v: 1 as const,
+            homeServerIdentityId: 'srv_descriptor_home',
+            canonicalServerUrl: serverUrl,
+            revision: 7,
+            endpoints: [{ kind: 'https' as const, url: serverUrl }],
+        };
+        const profile = await profiles.adoptHomeProfile({ descriptor, source: 'qr' });
+        const storage = getStorage();
+        const scope = { serverId: profile.id, accountId: 'account-a' };
+        storage.setState({ settingsScope: scope, settingsVersion: 1 });
+        saveAccountSettings(scope, storage.getState().settings, 1);
+        let renders = 0;
+        await renderHook(() => {
+            renders++;
+            return storage(state => state.settings);
+        });
+        const initialRenders = renders;
+        const settingsWriter = vi.spyOn(storage.getState(), 'applySettingsLocal');
+        const disk = vi.spyOn(MMKV.prototype, 'set');
+        const next = { ...descriptor, revision: 8 };
+        await act(async () => {
+            if (path === 'profile adoption') {
+                // This is the writer the old refresh delegated to for this established Home.
+                await profiles.adoptHomeProfile({
+                    descriptor: next, source: 'qr', preserveUserLabel: true, preserveProfileSource: true,
+                    descriptorAuthority: 'current_connection_observation',
+                });
+            } else {
+                await profiles.reconcileServerProfileHomeConnectionDescriptor({
+                    serverUrl, observedServerIdentityId: next.homeServerIdentityId, descriptor: next,
+                });
+            }
+        });
+        expect(profiles.getServerProfileById(profile.id)?.homeConnectionDescriptor).toEqual(next);
+        const storageKeys = disk.mock.calls.map(([key]) => key);
+        expect({
+            settingsWriter: settingsWriter.mock.calls.length,
+            settingsWrites: storageKeys.filter(key => key === 'settings' || key.startsWith('account-settings:v2:')).length,
+            settingsRenders: renders - initialRenders,
+            syncPushes: homes.requests.filter(request => request.path.includes('/account/settings') && request.method !== 'GET').length,
+            profileWrites: storageKeys.filter(key => key === 'server-state-v1').length,
+            cacheWrites: storageKeys.filter(key => key === 'home-descriptor-cache-v1').length,
+        }).toEqual({
+            settingsWriter: 0, settingsWrites: 0, settingsRenders: 0, syncPushes: 0,
+            profileWrites: path === 'profile adoption' ? 1 : 0,
+            cacheWrites: path === 'descriptor refresh' ? 1 : 0,
+        });
+    });
+
+    it.each(['device', 'tab'] as const)('remembers a %s selection without writing Account Settings', async (targetScope) => {
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const { saveAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
         const { useHomeViewSelectionSettingsMutable } = await import('./useHomeViewSelectionSettings');
+        const device = new Map<string, string>();
+        const tab = new Map<string, string>();
+        const setDevice = vi.fn((key: string, value: string) => { device.set(key, value); });
+        const setTab = vi.fn((key: string, value: string) => { tab.set(key, value); });
+        vi.stubGlobal('window', {
+            location: { origin: 'https://app.example.test', hostname: 'app.example.test' },
+            addEventListener: () => {}, removeEventListener: () => {},
+            localStorage: { getItem: (key: string) => device.get(key) ?? null, setItem: setDevice },
+        });
+        vi.stubGlobal('document', {});
+        vi.stubGlobal('sessionStorage', {
+            getItem: (key: string) => tab.get(key) ?? null,
+            setItem: setTab,
+            removeItem: (key: string) => tab.delete(key),
+        });
 
         const original = await profiles.upsertServerProfile({ name: 'Original', serverUrl: 'https://original-home.example.test' });
         const target = await profiles.upsertServerProfile({ name: 'Target', serverUrl: 'https://target-home.example.test' });
         await profiles.saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: original.id });
+        const storage = getStorage();
+        const scope = { serverId: original.id, accountId: 'account-a' };
+        storage.setState({ settingsScope: scope, settingsVersion: 1, settings: {
+            ...storage.getState().settings, serverSelectionActiveTargetKind: 'server', serverSelectionActiveTargetId: original.id,
+        } });
+        saveAccountSettings(scope, storage.getState().settings, 1);
 
-        const hook = await renderHook(() => useHomeViewSelectionSettingsMutable());
-        expect(hook.getCurrent().serverSelectionActiveTargetId).toBe(original.id);
-        await act(async () => {
+        let settingsRenders = 0;
+        await renderHook(() => {
+            settingsRenders++;
+            return storage(state => state.settings);
+        });
+        const hook = await renderHook(useHomeViewSelectionSettingsMutable);
+        const mountedSettingsRenders = settingsRenders;
+        const settingsWriter = vi.spyOn(storage.getState(), 'applySettingsLocal');
+        const persistence = vi.spyOn(getPersistenceStorage(), 'set');
+        setDevice.mockClear();
+        setTab.mockClear();
+        const select = async (id: string) => await act(async () => {
             await hook.getCurrent().setHomeViewSelectionSettings({
                 serverSelectionGroups: [],
                 serverSelectionActiveTargetKind: 'server',
-                serverSelectionActiveTargetId: target.id,
-            });
+                serverSelectionActiveTargetId: id,
+            }, { targetScope });
         });
 
-        // The device-global owner saved it, and the Settings projection exists only so existing
-        // readers keep working. This is the one catalogued local-only exception: it must never
-        // reach the scoped Account-settings writer, which would seal, queue and sync it to a
-        // Home (Lane 07.6 §2, completion evidence 9).
-        expect(profiles.loadHomeViewState()).toMatchObject({ activeTargetKind: 'server', activeTargetId: target.id });
-        expect(loadEffectiveHomeViewState()).toMatchObject({ activeTargetKind: 'server', activeTargetId: target.id });
+        const selectTarget = () => select(target.id);
+        await selectTarget();
+        expect(profiles.loadHomeViewState()?.activeTargetId).toBe(targetScope === 'device' ? target.id : original.id);
         expect(hook.getCurrent().serverSelectionActiveTargetId).toBe(target.id);
-        expect(getStorage().getState().settings.serverSelectionActiveTargetId).toBe(target.id);
-        expect(homes.requests.filter(request => request.path.includes('/account/settings') && request.method !== 'GET')).toEqual([]);
+        profiles.resetServerProfilesRuntimeForTests({ preserveGenerations: true });
+        expect(loadEffectiveHomeViewState()?.activeTargetId).toBe(target.id);
+
+        const measured = () => ({
+            settingsWriter: settingsWriter.mock.calls.length,
+            settingsWrites: persistence.mock.calls.filter(([key]) => key === 'settings' || key.startsWith('account-settings:v2:')).length,
+            settingsRenders: settingsRenders - mountedSettingsRenders,
+            syncPushes: homes.requests.filter(request => request.path.includes('/account/settings') && request.method !== 'GET').length,
+            homeViewWrites: setDevice.mock.calls.length + setTab.mock.calls.length,
+        });
+        const changed = measured();
+        await selectTarget();
+        const repeated = measured();
+        expect({ changed, repeated }, 'cost for one changed selection and an equal replay').toEqual({
+            changed: { settingsWriter: 0, settingsWrites: 0, settingsRenders: 0, syncPushes: 0, homeViewWrites: 1 },
+            repeated: { settingsWriter: 0, settingsWrites: 0, settingsRenders: 0, syncPushes: 0, homeViewWrites: 1 },
+        });
     });
 });

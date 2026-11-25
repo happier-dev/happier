@@ -140,6 +140,7 @@ type PreconfiguredServer = Readonly<{
 
 const SESSION_STORAGE_ACTIVE_ID_KEY = 'activeServerId';
 const STATE_KEY = 'server-state-v1';
+const HOME_DESCRIPTOR_CACHE_KEY = 'home-descriptor-cache-v1';
 
 let activeServerGeneration = 0;
 // Profile mutations advance this only when the material focused snapshot changes;
@@ -219,11 +220,10 @@ function ensureWebPersistedStateObserver(): void {
     if (!eventTarget || typeof eventTarget.addEventListener !== 'function') return;
     webPersistedStateObserverInstalled = true;
     eventTarget.addEventListener('storage', (event: StorageEvent) => {
-        if (event.key !== `${storageId()}:${STATE_KEY}`) return;
+        if (event.key !== `${storageId()}:${STATE_KEY}` && event.key !== `${storageId()}:${HOME_DESCRIPTOR_CACHE_KEY}`) return;
 
         const previousState = persistedStateParseCache?.state ?? null;
         const previousSnapshot = activeServerSnapshotCache;
-        persistedStateParseCache = null;
         const nextState = readPersistedState();
 
         const serversChanged = !previousState
@@ -1139,7 +1139,18 @@ function dedupeIdentityProfiles(params: Readonly<{
 // paths and re-parsing the whole blob per call costs CPU and breaks referential stability.
 // Keying by the raw value (re-read every call) stays correct for cross-tab and self-heal
 // writes without invalidation wiring; local writes clear it explicitly.
-let persistedStateParseCache: { raw: string; state: Required<PersistedServerState> } | null = null;
+type HomeDescriptorObservation = Readonly<{
+    profileCreatedAt: number;
+    descriptor: HomeConnectionDescriptorV1;
+}>;
+
+let persistedStateParseCache: {
+    raw: string;
+    base: Required<PersistedServerState>;
+    observationsRaw: string | undefined;
+    observations: ReadonlyMap<string, HomeDescriptorObservation>;
+    state: Required<PersistedServerState>;
+} | null = null;
 let homeViewStateProjectionCache: {
     storage: PersistedStateStorage;
     serialized: string;
@@ -1292,8 +1303,63 @@ function addProfileScopeIdentityRewrites(
     }
 }
 
+function readHomeDescriptorObservations(raw: string | undefined): ReadonlyMap<string, HomeDescriptorObservation> {
+    const observations = new Map<string, HomeDescriptorObservation>();
+    if (!raw) return observations;
+    try {
+        const entries: unknown = JSON.parse(raw);
+        if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return observations;
+        for (const [id, value] of Object.entries(entries as Record<string, unknown>)) {
+            if (!value || typeof value !== 'object' || !('profileCreatedAt' in value)
+                || typeof value.profileCreatedAt !== 'number' || !('descriptor' in value)) continue;
+            const descriptor = StoredHomeConnectionDescriptorV1Schema.safeParse(value.descriptor);
+            if (descriptor.success) observations.set(id, { profileCreatedAt: value.profileCreatedAt, descriptor: descriptor.data });
+        }
+    } catch {
+        console.warn('[serverProfiles] Could not read the Home descriptor cache');
+    }
+    return observations;
+}
+
+function cacheProfileState(
+    raw: string,
+    base: Required<PersistedServerState>,
+    observationsRaw: string | undefined,
+): Required<PersistedServerState> {
+    const previous = persistedStateParseCache;
+    const observations = previous && previous.observationsRaw === observationsRaw
+        ? previous.observations
+        : readHomeDescriptorObservations(observationsRaw);
+    let servers = base.servers;
+    for (const [id, { profileCreatedAt, descriptor }] of observations) {
+        const profile = base.servers[id];
+        if (!profile?.homeConnectionDescriptor
+            || profile.descriptorProvenance === 'advisory-only'
+            || profile.createdAt !== profileCreatedAt
+            || profile.serverIdentityId !== descriptor.homeServerIdentityId
+            || profile.canonicalServerUrl !== normalizeUrl(descriptor.canonicalServerUrl)
+            || descriptor.revision <= profile.homeConnectionDescriptor.revision) continue;
+
+        const prior = previous?.base.servers[id] === profile ? previous.state.servers[id] : undefined;
+        const publicUrl = descriptor.endpoints.find(endpoint => endpoint.kind === 'https')?.url;
+        const projected = prior && descriptorSnapshotMatchesProfile(descriptor, prior)
+            ? prior
+            : {
+                ...profile,
+                homeConnectionDescriptor: descriptor,
+                publicServerUrl: publicUrl ? normalizeUrl(publicUrl) : null,
+            };
+        if (servers === base.servers) servers = { ...servers };
+        servers[id] = projected;
+    }
+    const state = servers === base.servers ? base : { ...base, servers };
+    persistedStateParseCache = { raw, base, observationsRaw, observations, state };
+    return state;
+}
+
 function readPersistedState(): Required<PersistedServerState> {
-    const raw = getPersistedStateStorage().getString(STATE_KEY);
+    const storage = getPersistedStateStorage();
+    const raw = storage.getString(STATE_KEY);
     if (!raw) {
         const seeded = applyRuntimeSeedPolicy({});
         return {
@@ -1305,8 +1371,10 @@ function readPersistedState(): Required<PersistedServerState> {
             homeViewStateInitialized: false,
         };
     }
-    if (persistedStateParseCache && persistedStateParseCache.raw === raw) {
-        return persistedStateParseCache.state;
+    const observationsRaw = storage.getString(HOME_DESCRIPTOR_CACHE_KEY);
+    if (persistedStateParseCache?.raw === raw) {
+        if (persistedStateParseCache.observationsRaw === observationsRaw) return persistedStateParseCache.state;
+        return cacheProfileState(raw, persistedStateParseCache.base, observationsRaw);
     }
 
     try {
@@ -1391,8 +1459,7 @@ function readPersistedState(): Required<PersistedServerState> {
         // Cache even a not-yet-persisted canonical projection: mounted external-store
         // readers require stable identity for unchanged bytes. Reads stay side-effect
         // free; the next explicit mutation persists it under the existing write lock.
-        persistedStateParseCache = { raw, state };
-        return state;
+        return cacheProfileState(raw, state, observationsRaw);
     } catch (error) {
         if (error instanceof ServerProfilesPersistenceError) throw error;
         const seeded = applyRuntimeSeedPolicy({});
@@ -1415,7 +1482,18 @@ class ServerProfilesPersistenceError extends Error {
 }
 
 function serializePersistedState(state: Required<PersistedServerState>): string {
-    const servers = Object.fromEntries(Object.entries(state.servers).map(([id, profile]) => {
+    const cache = persistedStateParseCache;
+    const servers = Object.fromEntries(Object.entries(state.servers).map(([id, effectiveProfile]) => {
+        const base = cache?.base.servers[id];
+        const projected = cache?.state.servers[id];
+        // An unrelated choice or rename must not copy the observed transport snapshot into the profile.
+        const profile = base && projected && base !== projected
+            && effectiveProfile.homeConnectionDescriptor === projected.homeConnectionDescriptor
+            && effectiveProfile.createdAt === base.createdAt
+            && effectiveProfile.serverIdentityId === base.serverIdentityId
+            && effectiveProfile.canonicalServerUrl === base.canonicalServerUrl
+            ? { ...effectiveProfile, homeConnectionDescriptor: base.homeConnectionDescriptor, publicServerUrl: base.publicServerUrl }
+            : effectiveProfile;
         if (profile.source !== 'legacy' || !profile.legacySource) return [id, profile];
         const { legacySource, ...persisted } = profile;
         return [id, { ...persisted, source: legacySource }];
@@ -1445,10 +1523,7 @@ function writePersistedState(state: Required<PersistedServerState>): void {
  */
 function persistCanonicalStateAfterNoop(state: Required<PersistedServerState>): void {
     const serialized = serializePersistedState(state);
-    if (getPersistedStateStorage().getString(STATE_KEY) === serialized) {
-        persistedStateParseCache = { raw: serialized, state };
-        return;
-    }
+    if (getPersistedStateStorage().getString(STATE_KEY) === serialized) return;
     writePersistedState(state);
 }
 
@@ -2146,7 +2221,7 @@ function reconcileServerProfileHomeConnectionDescriptorUnlocked(params: Readonly
                 useCanonical: false,
             },
         } : {}),
-    });
+    }, { cacheObservedDescriptor: true });
     return { kind: 'applied', profile: updated };
 }
 
@@ -2156,13 +2231,7 @@ export async function reconcileServerProfileHomeConnectionDescriptor(params: Rea
     descriptor: HomeConnectionDescriptorV1;
     observation?: 'exact' | 'public';
 }>): Promise<HomeConnectionDescriptorReconciliationResult> {
-    return await withPersistedStateMutation(() => {
-        const result = reconcileServerProfileHomeConnectionDescriptorUnlocked(params);
-        if (result.kind === 'unchanged' || result.kind === 'stale') {
-            persistCanonicalStateAfterNoop(readPersistedState());
-        }
-        return result;
-    });
+    return await withPersistedStateMutation(() => reconcileServerProfileHomeConnectionDescriptorUnlocked(params));
 }
 
 type ResolvedHomeProfileAdoption = Readonly<{
@@ -2306,7 +2375,7 @@ export function preflightHomeProfileAdoption(
 
 function adoptHomeProfileWithOptionsUnlocked(
     params: HomeProfileAdoptionParams,
-    options: Readonly<{ completePersonalHomeBootstrap?: true }> = {},
+    options: Readonly<{ completePersonalHomeBootstrap?: true; cacheObservedDescriptor?: true }> = {},
 ): ServerProfile {
     const {
         descriptor,
@@ -2316,6 +2385,26 @@ function adoptHomeProfileWithOptionsUnlocked(
         existing,
         descriptorAdjudication,
     } = resolveHomeProfileAdoption(params);
+    // A refresh of an established address only advances observed transport facts.
+    // Initial authority and address changes still commit to the saved profile.
+    if (options.cacheObservedDescriptor && descriptorAdjudication === 'apply' && 'endpoints' in descriptor
+        && existing?.homeConnectionDescriptor && existing.descriptorProvenance !== 'advisory-only'
+        && existing.canonicalServerUrl === url && existing.serverUrl === url) {
+        const previousSnapshot = getActiveServerSnapshot();
+        const observations = new Map(persistedStateParseCache?.observations);
+        for (const [id, entry] of observations) {
+            if (state.servers[id]?.createdAt !== entry.profileCreatedAt) observations.delete(id);
+        }
+        observations.set(existing.id, { profileCreatedAt: existing.createdAt, descriptor });
+        const stored = JSON.stringify(Object.fromEntries(observations));
+        if (!getPersistedStateStorage().set(HOME_DESCRIPTOR_CACHE_KEY, stored)) {
+            throw new ServerProfilesPersistenceError();
+        }
+        const observedProfile = readPersistedState().servers[existing.id]!;
+        emitServerProfilesChanged();
+        emitActiveServerChanged(previousSnapshot);
+        return observedProfile;
+    }
     const displayNameRaw = ('displayName' in descriptor ? descriptor.displayName : undefined)
         ?? params.suggestedName;
     const displayName = typeof displayNameRaw === 'string' && displayNameRaw.trim()

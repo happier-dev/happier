@@ -14245,12 +14245,17 @@ continuity. Each consumer publishes and restarts from its own private history;
 it neither reads nor writes the shared continuity row. Earlier undeployed 0.3
 storage selections do not establish a compatibility transition or revision floor.
 
-The UI's existing `server-state-v1` profile owner retains one exact
-`homeConnectionDescriptor` for descriptor-backed Homes. Endpoint and revision
-decisions read that snapshot; duplicate-profile merges keep its canonical URL and
-public ingress together. The active runtime snapshot's revision is a derived,
-non-persisted projection. The development-only `irohEndpoint` and
-`connectionDescriptorRevision` profile fields are ignored and are not written.
+The UI reads exact `homeConnectionDescriptor` snapshots from existing
+`server-state-v1` profiles. Once a Home is established, an authenticated refresh
+with the same canonical address writes its newer exact snapshot to the device's
+`home-descriptor-cache-v1` under the same Home mutation lock. The profile owner
+projects it for endpoint and revision decisions only while the saved Home
+identity, canonical address, and profile lifetime still match. An equal or stale
+refresh writes nothing. Explicit adoption still owns establishing a Home and
+moving its canonical address. Older clients can read the profile and its retained
+adoption snapshot. The active runtime snapshot's revision is derived. The
+development-only `irohEndpoint` and `connectionDescriptorRevision` fields are
+ignored.
 
 In 0.3 development, `addressSelection` on that same device-local profile remembers
 the address choice for one Home identity and entered/canonical address pair.

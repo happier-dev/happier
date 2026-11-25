@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, renderHook, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -13,7 +13,7 @@ installSettingsViewCommonModuleMocks({ storage: 'real' });
 const account = createProviderSettingsAccountHarness();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
-const { useHomeViewSelectionSettingsMutable } = await import('@/hooks/server/useHomeViewSelectionSettings');
+const { loadEffectiveHomeViewState } = await import('@/sync/domains/server/selection/homeViewSelectionState');
 const { MachineThisMachineSection } = await import('./MachineThisMachineSection');
 const { MachineWindowsLaunchSection } = await import('../windows/MachineWindowsLaunchSection');
 const { MachineTerminalSettingsSection } = await import('../terminal/MachineTerminalSettingsSection');
@@ -130,11 +130,6 @@ describe('Machine settings subscriptions', () => {
             computerUseByMachineId: { [machine.id]: { enabledProviders: ['cua'], defaultProvider: 'cua' } },
             installablesPolicyByMachineId: { [machine.id]: { [tool.key]: { autoUpdateMode: 'off' } } },
         } });
-        // Account restoration selects its Home after hydration. Publish that selection's
-        // compatibility projection through the same owner as the Home picker before measurement.
-        const homeView = await renderHook(useHomeViewSelectionSettingsMutable);
-        await act(async () => { await homeView.getCurrent().setHomeViewSelectionSettings(current => current); });
-        await homeView.unmount();
         expect(storage.getState().settings.sessionTerminalHostByMachineId[machine.id]).toBe('zellij');
         let commits = 0;
         const screen = await renderScreen(<React.Profiler id={kind} onRender={() => { commits++; }}>
@@ -150,7 +145,7 @@ describe('Machine settings subscriptions', () => {
             await waitForTestEvent(screen.subscribe, () => screen.findAllByType(HappierSwitchNative).length, count => count > 0);
         }
         commits = 0;
-        const initialSettings = storage.getState().settings;
+        const initialHomeView = loadEffectiveHomeViewState();
         for (let index = 0; index < 3; index++) {
             await act(async () => {
                 const settings = storage.getState().settings;
@@ -165,9 +160,7 @@ describe('Machine settings subscriptions', () => {
                 });
             });
         }
-        expect(storage.getState().settings.serverSelectionGroups).toBe(initialSettings.serverSelectionGroups);
-        expect(storage.getState().settings.serverSelectionActiveTargetKind).toBe(initialSettings.serverSelectionActiveTargetKind);
-        expect(storage.getState().settings.serverSelectionActiveTargetId).toBe(initialSettings.serverSelectionActiveTargetId);
+        expect(loadEffectiveHomeViewState()).toBe(initialHomeView);
         expect(commits).toBe(0);
         await act(async () => {
             const settings = storage.getState().settings;

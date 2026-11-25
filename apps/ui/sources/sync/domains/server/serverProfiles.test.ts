@@ -1284,7 +1284,12 @@ describe('serverProfiles', () => {
             descriptor: { ...descriptor, v: 1, revision: 3, endpoints: [{ kind: 'https', url: descriptor.canonicalServerUrl }] },
         });
         expect(result.kind).toBe('applied');
-        const persisted = new MMKV({ id: scopedStorageId('server-profiles', scope) }).getString('server-state-v1')!;
+        expect(profiles.getActiveServerSnapshot().connectionDescriptorRevision).toBe(3);
+        const disk = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        expect(disk.getString('server-state-v1')).toContain('connectionDescriptorRevision');
+
+        await profiles.saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: 'exact' });
+        const persisted = disk.getString('server-state-v1')!;
         expect(persisted).not.toContain('connectionDescriptorRevision');
         expect(persisted).not.toContain('irohEndpoint');
     });
@@ -2798,6 +2803,42 @@ describe('serverProfiles', () => {
         expect(profiles.getActiveServerSnapshot()).toBe(activeBeforeRename);
         expect(profiles.getActiveServerId()).toBe(tab.id);
         for (const unsubscribe of unsubscribers) unsubscribe();
+    });
+
+    it('publishes a changed descriptor from another tab without publishing a Home view change', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        const web = stubWebRuntime('https://origin.example.test');
+        const observingTab = await importSeparateInstance();
+        const serverUrl = 'https://descriptor-home.example.test';
+        const descriptor = {
+            v: 1 as const, homeServerIdentityId: 'srv_cross_tab_descriptor', canonicalServerUrl: serverUrl, revision: 7,
+            endpoints: [{ kind: 'https' as const, url: serverUrl }],
+        };
+        const profile = await observingTab.adoptHomeProfile({ source: 'qr', descriptor });
+        await observingTab.setActiveServerId(profile.id, { scope: 'tab' });
+        const active = vi.fn();
+        const view = vi.fn();
+        const unsubscribeActive = observingTab.subscribeActiveServer(active);
+        const unsubscribeView = observingTab.subscribeHomeViewState(view);
+        try {
+            const changed = { ...descriptor, revision: 8 };
+            const writingTab = await importSeparateInstance();
+            await writingTab.reconcileServerProfileHomeConnectionDescriptor({
+                serverUrl, observedServerIdentityId: descriptor.homeServerIdentityId, descriptor: changed,
+            });
+
+            const key = `${scopedStorageId('server-profiles', scope)}:home-descriptor-cache-v1`;
+            web.emitStorage(key);
+            web.emitStorage(key);
+            expect(active).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                serverId: descriptor.homeServerIdentityId, connectionDescriptorRevision: 8,
+            }));
+            expect(view).not.toHaveBeenCalled();
+        } finally {
+            unsubscribeActive();
+            unsubscribeView();
+        }
     });
 
     it('does not publish an unrelated first cross-tab write when subscribed before reading the active snapshot', async () => {

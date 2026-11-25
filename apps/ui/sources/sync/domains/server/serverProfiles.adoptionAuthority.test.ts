@@ -61,6 +61,60 @@ describe('serverProfiles adoption authority', () => {
         expect(profiles.getServerProfileById('saved')).toEqual(saved);
     });
 
+    it('retains a newer observed connection in the descriptor cache without rewriting saved Home choices', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        const canonicalServerUrl = 'https://saved-home.example.test';
+        const original = await profiles.adoptHomeProfile({
+            source: 'qr',
+            descriptor: {
+                v: 1, homeServerIdentityId: 'srv_retained_refresh', canonicalServerUrl, revision: 7,
+                endpoints: [{ kind: 'https', url: 'https://edge-a.example.test' }],
+            },
+        });
+        await profiles.setActiveServerId(original.id, { scope: 'device' });
+        const stored = new MMKV({ id: scopedStorageId('server-profiles', scope) });
+        const savedChoices = stored.getString('server-state-v1');
+        const writes = vi.spyOn(MMKV.prototype, 'set');
+        const previous = profiles.getActiveServerSnapshot();
+        const notify = vi.fn();
+        const unsubscribe = profiles.subscribeActiveServer(notify);
+        const next = {
+            v: 1 as const, homeServerIdentityId: 'srv_retained_refresh', canonicalServerUrl, revision: 8,
+            endpoints: [{ kind: 'https' as const, url: 'https://edge-b.example.test' }],
+        };
+        const refresh = (descriptor: typeof next) => profiles.reconcileServerProfileHomeConnectionDescriptor({
+            serverUrl: canonicalServerUrl, observedServerIdentityId: 'srv_retained_refresh', descriptor,
+        });
+        try {
+            await expect(refresh(next)).resolves.toMatchObject({ kind: 'applied', profile: {
+                id: original.id, name: original.name, homeConnectionDescriptor: next, publicServerUrl: 'https://edge-b.example.test',
+            } });
+            const updated = profiles.getActiveServerSnapshot();
+            expect(updated.connectionDescriptorRevision).toBe(8);
+            expect(updated.generation).toBeGreaterThan(previous.generation);
+            await expect(refresh(next)).resolves.toMatchObject({ kind: 'unchanged' });
+            await expect(refresh({ ...next, revision: 7 })).resolves.toMatchObject({ kind: 'stale' });
+            expect(notify).toHaveBeenCalledTimes(1);
+            expect(writes.mock.calls.map(([key]) => key)).toEqual(['home-descriptor-cache-v1']);
+            expect(stored.getString('server-state-v1')).toBe(savedChoices);
+
+            profiles.resetServerProfilesRuntimeForTests();
+            expect(profiles.getServerProfileById(original.id)?.homeConnectionDescriptor).toEqual(next);
+            expect(profiles.getActiveServerSnapshot().connectionDescriptorRevision).toBe(8);
+            await profiles.saveHomeViewState({
+                version: 1, groups: [], activeTargetKind: 'server', activeTargetId: original.id,
+            });
+            const saved = JSON.parse(stored.getString('server-state-v1')!);
+            expect(saved.servers[original.id]).toMatchObject({
+                homeConnectionDescriptor: { revision: 7 },
+            });
+            expect(profiles.getServerProfileById(original.id)?.homeConnectionDescriptor).toEqual(next);
+        } finally {
+            unsubscribe();
+        }
+    });
+
     it('fails direct adoption closed on divergent facts at an equal descriptor revision', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         const original = await profiles.adoptHomeProfile({
