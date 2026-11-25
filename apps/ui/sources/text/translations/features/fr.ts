@@ -16339,6 +16339,7 @@ const fr = {
     errors: {
         probeResponseInvalidTitle: "La réponse du provider est invalide",
         agentRuntimeUnsupportedTitle: "L’environnement de l’agent n’est pas pris en charge",
+        runnerEntrypointUnavailableDescription: "Happier n’a pas pu vérifier l’exécutable de la session au premier plan. Vérifiez l’installation de Happier sur cette machine, puis rouvrez la session.",
         materializationFailedTitle: "Impossible de préparer le provider",
         connectionConfigurationInvalidTitle: "La connexion au provider est invalide",
 

@@ -1,6 +1,10 @@
+import { lstatSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+
 import type { HappyCliSubprocessLaunchSpec } from '../../utils/spawnHappyCLI';
 import { buildHappyCliSubprocessLaunchSpec } from '../../utils/spawnHappyCLI';
 import { normalizeProcessCommandPathValue } from '../../subprocess/processCommandPathMatch';
+import { isAgentIsolationMemberCliRuntimeRoot, resolveAgentIsolationMemberCliVersionRoot } from '../agentIsolation/memberCliRuntime';
 import type { TrackedSession } from '../types';
 
 import type {
@@ -117,6 +121,25 @@ function resolveEntrypointPathIdentity(
 ): SessionRunnerEntrypointIdentity {
   const normalized = normalizePathLike(pathLike);
   if (!normalized) return unknownIdentity('entrypoint_not_found');
+  const runtimeRoot = dirname(normalized);
+  if (isCliBinaryPath(normalized) && isAgentIsolationMemberCliRuntimeRoot(runtimeRoot)) {
+    const version = resolveAgentIsolationMemberCliVersionRoot(runtimeRoot);
+    if (!version) return unknownIdentity('entrypoint_not_found');
+    try {
+      const executable = lstatSync(join(version.root, basename(normalized)));
+      if (!executable.isFile() || executable.uid !== 0 || (executable.mode & 0o022) !== 0 || (executable.mode & 0o111) === 0) {
+        return unknownIdentity('entrypoint_not_found');
+      }
+    } catch {
+      return unknownIdentity('entrypoint_not_found');
+    }
+    return {
+      status: 'known',
+      source,
+      comparableId: `version:${version.versionRootId}`,
+      entrypointVersion: version.versionRootId,
+    };
+  }
   if (isMutableEntrypointPointer(normalized)) return unknownIdentity('mutable_entrypoint_pointer');
 
   const snapshotFingerprint = resolveSnapshotFingerprint(normalized);

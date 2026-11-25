@@ -16166,6 +16166,7 @@ const it = {
     errors: {
         probeResponseInvalidTitle: "La risposta del provider non è valida",
         agentRuntimeUnsupportedTitle: "L’ambiente dell’agente non è supportato",
+        runnerEntrypointUnavailableDescription: "Happier non ha potuto verificare l’eseguibile della sessione in primo piano. Controlla l’installazione di Happier su questo computer e riapri la sessione.",
         materializationFailedTitle: "Impossibile preparare il provider",
         connectionConfigurationInvalidTitle: "La connessione al provider non è valida",
 

@@ -16175,6 +16175,7 @@ const ca = {
     errors: {
         probeResponseInvalidTitle: "La resposta del proveïdor no és vàlida",
         agentRuntimeUnsupportedTitle: "L’entorn de l’agent no és compatible",
+        runnerEntrypointUnavailableDescription: "Happier no ha pogut verificar l’executable de la sessió en primer pla. Comprova la instal·lació de Happier en aquest ordinador i torna a obrir la sessió.",
         materializationFailedTitle: "No s’ha pogut preparar el proveïdor",
         connectionConfigurationInvalidTitle: "La connexió del proveïdor no és vàlida",
 

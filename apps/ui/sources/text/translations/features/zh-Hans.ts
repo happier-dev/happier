@@ -16042,6 +16042,7 @@ const zhHans = {
     errors: {
         probeResponseInvalidTitle: "提供商响应无效",
         agentRuntimeUnsupportedTitle: "不支持此代理运行环境",
+        runnerEntrypointUnavailableDescription: "Happier 无法验证前台会话的可执行文件。请检查此机器上的 Happier 安装，然后重新打开会话。",
         materializationFailedTitle: "无法准备提供商",
         connectionConfigurationInvalidTitle: "提供商连接无效",
 

@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, readlink, stat, writeFile } from 'node:fs/promises';
+import { lstatSync, readlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createProviderErrorV1, redactBugReportSensitiveText, ProviderBoundModelRefSchema, projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol';
 
 import { createAgentRuntimeDaemonServiceAuthorityFixture as createTestAuthority } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthority.testkit';
@@ -25,17 +26,157 @@ import { executeSpawnSessionRequest } from '@/daemon/startup/executeSpawnSession
 import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
-import { ForegroundAgentRuntimeAdmissionResponseV1Schema } from './foregroundAdmissionContract';
+import { FOREGROUND_AGENT_RUNTIME_CLAIM_PATH, ForegroundAgentRuntimeAdmissionResponseV1Schema, ForegroundAgentRuntimeClaimResponseV1Schema } from './foregroundAdmissionContract';
 import { createForegroundAdmissionError } from '@/cli/foregroundAdmissionFailure';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { resolveReleaseRingScopedBasename } from '@/cli/runtime/publicReleaseChannel';
 import { createForegroundAgentRuntimeAdmissionOwner } from './foregroundAdmission';
 import { createDaemonControlApp } from '../controlServer';
 import { admitDaemonForegroundAgentRuntime } from '../controlClient';
+import { resolveAgentIsolationMemberCliRuntime } from '@/daemon/agentIsolation/memberCliRuntime';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { readLinuxProcFile } from '@/processes/census/linuxProcfs';
+import { resolveDaemonTerminalLaunch } from '@/terminal/pty/launch';
+import * as processIdentity from '../processIdentity';
+import { resolveSessionRunnerEntrypointIdentityFromProcessCommand } from '../sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, lstatSync: vi.fn(fs.lstatSync), readlinkSync: vi.fn(fs.readlinkSync) };
+});
+
+const memberCli = resolveAgentIsolationMemberCliRuntime('/fixture/install/cli/current/happier');
+const memberCliGeneration = 'a'.repeat(64);
+const immutableMemberCli = join(memberCli.root, memberCliGeneration, 'happier');
+const memberRequester = {
+  serverId: 'fixture-member-home', machineId: 'machine-1', installationId: 'fixture-installation', accountId: 'fixture-member',
+};
+
+async function simulatePublishedMemberCli(installed = true) {
+  const { lstatSync: stat, readlinkSync: link } = await vi.importActual<typeof import('node:fs')>('node:fs');
+  vi.mocked(lstatSync).mockImplementation((path, options) => {
+    if (path === '/' || path === '/opt' || path === memberCli.root || path === dirname(immutableMemberCli)) {
+      return Object.assign(stat('/'), { uid: 0, mode: 0o40755 });
+    }
+    if (path === immutableMemberCli && installed) {
+      return Object.assign(stat(process.execPath), { uid: 0, mode: 0o100755 });
+    }
+    return stat(path, options);
+  });
+  vi.mocked(readlinkSync).mockImplementation((path, options) =>
+    path === dirname(memberCli.executable) ? memberCliGeneration : link(path, options));
+  return () => {
+    vi.mocked(lstatSync).mockImplementation(stat);
+    vi.mocked(readlinkSync).mockImplementation(link);
+  };
+}
+
+function readMemberCliProcess(pid: number, file: string, args: readonly string[]) {
+  return processIdentity.readProcessIdentityByPid(pid, { linuxBoundary: {
+    readdir, readlink,
+    readFile: (path, encoding) => path === `/proc/${pid}/cmdline`
+      ? Promise.resolve([file, ...args, ''].join('\0'))
+      : readLinuxProcFile(path, encoding),
+  } });
+}
+
+function launchMemberCli() {
+  return resolveDaemonTerminalLaunch({ kind: 'happier_cli', args: ['codex'] }, {
+    memberLaunch: {
+      memberIdentity: { ...deriveAgentIsolationMemberIdentity({ requester: memberRequester, homeServerIdentityId: 'fixture-member-home' }),
+        agentUid: 41001, agentGid: 41001 },
+      managedHappierBinaryPath: memberCli.executable,
+      runtimeHome: '/member/runtime',
+      homeApplicationUrl: 'https://member-home.example.test',
+    },
+  });
+}
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('foreground admission composed real Provider authorization seam', () => {
+  it.skipIf(process.platform !== 'linux')('identifies the installed generation from the member terminal argv read by Linux census', async () => {
+    const restore = await simulatePublishedMemberCli();
+    try {
+      const launch = await launchMemberCli();
+      const launched = await readMemberCliProcess(process.pid, launch.file, launch.args);
+      expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(launched?.command))
+        .toMatchObject({ status: 'known', comparableId: `version:${memberCliGeneration}` });
+      expect(launch).toEqual({
+        file: memberCli.executable, args: ['--server-url', 'https://member-home.example.test', 'codex'],
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it.skipIf(process.platform !== 'linux').each(['installed pointer', 'non-installed pointer', 'unknown'] as const)(
+    'checks the %s member process identity during foreground claim', async entrypoint => {
+      await withForegroundProviderFixture({ configFileAgent: true }, async fixture => {
+        const request = fixture.request({ selection: undefined });
+        const owner = createForegroundAgentRuntimeAdmissionOwner({
+          prepare: (input, signal) => fixture.prepare(input, { signal }),
+          getHttpPort: () => 43127,
+        });
+        const app = createDaemonControlApp({
+          machineId: request.machineId, controlToken: 'control-token', foregroundAgentRuntimeAdmission: owner,
+          getChildren: () => [], stopSession: async () => ({ status: 'not_found' }),
+          spawnSession: async () => { throw new Error('Foreground control must not spawn a Session'); },
+          requestShutdown: () => undefined, onHappySessionWebhook: () => undefined,
+        });
+        const restore = await simulatePublishedMemberCli(entrypoint !== 'non-installed pointer');
+        try {
+          const admitted = await owner.admit(request);
+          if (!admitted.ok) throw new Error(admitted.error.code);
+          const launch = await launchMemberCli();
+          const observed = await readMemberCliProcess(fixture.foregroundPid,
+            entrypoint === 'unknown' ? '/usr/bin/unrecognized' : launch.file, launch.args);
+          expect(observed?.pid).toBe(fixture.foregroundPid);
+          const readProcess = processIdentity.readProcessIdentityByPid;
+          const processBoundary = vi.spyOn(processIdentity, 'readProcessIdentityByPid')
+            .mockImplementation((pid, deps) => pid === fixture.foregroundPid ? Promise.resolve(observed) : readProcess(pid, deps));
+          try {
+            const { descriptor, admissionFilePath } = admitted.capability;
+            const { capability } = JSON.parse(await readFile(admissionFilePath, 'utf8'));
+            const canonicalSessionId = 'canonical-member-session';
+            const claim = await app.inject({
+              method: 'POST', url: FOREGROUND_AGENT_RUNTIME_CLAIM_PATH,
+              headers: { 'x-happier-daemon-token': capability },
+              payload: {
+                v: 1, attemptId: request.attemptId, provisionalSessionId: request.sessionId,
+                canonicalSessionId, foregroundPid: fixture.foregroundPid, capability,
+                pluginId: descriptor.pluginId, agentId: descriptor.agentId,
+                occurrenceId: descriptor.occurrenceId, sourceCustody: descriptor.sourceCustody,
+                foregroundSatisfiedProfileSecretRequirementNames: [],
+              },
+            });
+            expect(claim.statusCode, claim.body).toBe(200);
+            const response = ForegroundAgentRuntimeClaimResponseV1Schema.parse(claim.json());
+            if (entrypoint === 'installed pointer') {
+              expect(response).toMatchObject({ ok: true });
+              expect(owner.isSessionCurrent(canonicalSessionId)).toBe(true);
+            } else {
+              expect(response).toMatchObject({ ok: false, error: {
+                code: 'runner_entrypoint_unavailable', failureCause: { phase: 'foreground.claim' },
+              } });
+              expect(owner.isSessionCurrent(canonicalSessionId)).toBe(false);
+              if (response.ok) throw new Error('Expected a foreground claim refusal');
+              const presentation = presentProviderCliRefusal(response.error).join('\n');
+              expect(presentation).toContain('could not verify the foreground runner executable');
+              expect(presentation).not.toContain('Provider binding');
+            }
+          } finally {
+            processBoundary.mockRestore();
+          }
+        } finally {
+          restore();
+          await owner.dispose();
+          await app.close();
+        }
+      });
+    },
+  );
+
   it('preserves the selected Profile refusal in runner and terminal output', async () => {
     await withForegroundProviderFixture({}, async fixture => {
       const response = ForegroundAgentRuntimeAdmissionResponseV1Schema.parse(

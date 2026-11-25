@@ -16191,6 +16191,7 @@ const ru = {
     errors: {
         probeResponseInvalidTitle: "Ответ провайдера некорректен",
         agentRuntimeUnsupportedTitle: "Среда выполнения агента не поддерживается",
+        runnerEntrypointUnavailableDescription: "Happier не удалось проверить исполняемый файл сеанса переднего плана. Проверьте установку Happier на этом компьютере и откройте сеанс заново.",
         materializationFailedTitle: "Не удалось подготовить провайдера",
         connectionConfigurationInvalidTitle: "Подключение к провайдеру некорректно",
 

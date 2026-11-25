@@ -16042,6 +16042,7 @@ const zhHant = {
     errors: {
         probeResponseInvalidTitle: "供應商回應無效",
         agentRuntimeUnsupportedTitle: "不支援此代理執行環境",
+        runnerEntrypointUnavailableDescription: "Happier 無法驗證前景工作階段的執行檔。請檢查此電腦上的 Happier 安裝，然後重新開啟工作階段。",
         materializationFailedTitle: "無法準備供應商",
         connectionConfigurationInvalidTitle: "供應商連線無效",
 

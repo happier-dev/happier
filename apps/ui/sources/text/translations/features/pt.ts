@@ -16152,6 +16152,7 @@ const pt = {
     errors: {
         probeResponseInvalidTitle: "A resposta do provedor é inválida",
         agentRuntimeUnsupportedTitle: "O ambiente do agente não é compatível",
+        runnerEntrypointUnavailableDescription: "O Happier não conseguiu verificar o executável da sessão em primeiro plano. Verifique a instalação do Happier nesta máquina e abra novamente a sessão.",
         materializationFailedTitle: "Não foi possível preparar o provedor",
         connectionConfigurationInvalidTitle: "A conexão do provedor é inválida",
 

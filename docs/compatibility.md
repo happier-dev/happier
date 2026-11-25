@@ -5115,6 +5115,14 @@ current-development launch projections; they add no persisted binding format or
 historical attribution. The moving 0.2 predecessor has no foreground claim seam and retains its direct
 Connected Service launch path.
 
+In unreleased 0.3, the Linux member CLI can retain the publisher's `current`
+path in its process command. Runner identity resolves that path through the
+protected member CLI store and uses the installed generation. If foreground
+claim cannot establish the process entrypoint, the existing refusal envelope
+carries `runner_entrypoint_unavailable` and the CLI directs the person to check
+the Happier installation. Use matching development CLI and daemon sources for
+the closed refusal code.
+
 The optional `usageAccountScope` materialization result and launch carrier are
 additive 0.3 development evidence: older service results omit it and remain
 unknown, and older hosts may ignore it without changing authentication. Only a

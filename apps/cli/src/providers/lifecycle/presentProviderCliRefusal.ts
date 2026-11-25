@@ -46,6 +46,7 @@ const ERROR_SUMMARIES = {
   provider_binding_changed: 'The persisted Provider binding no longer matches.',
   provider_switch_unsupported: 'The running session cannot switch Provider bindings.',
   provider_agent_runtime_unsupported: 'The Agent runtime cannot use this Provider binding.',
+  runner_entrypoint_unavailable: 'Happier could not verify the foreground runner executable.',
   provider_managed_requires_daemon: 'This managed Provider must be launched through the Happier daemon.',
   provider_machine_unavailable: 'The selected machine is unavailable.',
   machine_offline: 'The selected machine is offline or unreachable.',
@@ -143,7 +144,9 @@ export function presentProviderCliRefusal(error: ProviderErrorV1): readonly stri
     `${ERROR_SUMMARIES[error.code]} (${error.code})`,
     error.code === 'provider_run_credential_selection_required'
       ? 'Select a Team credential explicitly for this Run.'
-      : RECOVERY_GUIDANCE[error.action],
+      : error.code === 'runner_entrypoint_unavailable'
+        ? 'Check the Happier installation on this machine, then reopen the Session.'
+        : RECOVERY_GUIDANCE[error.action],
     ...(error.savedSecretReason ? [`Saved Secret: ${SAVED_SECRET_REASON_DETAILS[error.savedSecretReason]}`] : []),
     ...(error.reason ? [presentBoundedCliContext('Reason', error.reason)] : []),
     ...(error.failureCause ? [presentBoundedCliContext('Cause',

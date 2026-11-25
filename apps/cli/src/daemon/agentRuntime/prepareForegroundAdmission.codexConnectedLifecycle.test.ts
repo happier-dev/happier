@@ -350,7 +350,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
               throw error;
             });
             if (claimed !== null) expect(claimed).toMatchObject({
-              ok: false, error: { code: 'provider_agent_runtime_unsupported' },
+              ok: false, error: { code: 'runner_entrypoint_unavailable' },
             });
           };
           process.kill(fixture.foregroundPid);

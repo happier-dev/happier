@@ -29,14 +29,24 @@ function isProtectedDirectory(path: string): boolean {
   return stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o022) === 0;
 }
 
-/** Read the publisher's root-owned generation store, using its relative pointers. */
-export function resolveAgentIsolationMemberCliVersionRoot(
-  runtimeRoot: string, retainedVersionRootId?: string,
-): FirstPartyVersionRootIdentity | null {
+function readMemberCliStore(runtimeRoot: string): string | null {
   const store = dirname(runtimeRoot);
   const storeName = basename(store);
   if (process.platform !== 'linux' || dirname(store) !== memberCliParent
     || !storeName.startsWith(memberCliPrefix) || !generationPattern.test(storeName.slice(memberCliPrefix.length))) return null;
+  return store;
+}
+
+export function isAgentIsolationMemberCliRuntimeRoot(runtimeRoot: string): boolean {
+  return readMemberCliStore(runtimeRoot) !== null;
+}
+
+/** Read the publisher's root-owned generation store, using its relative pointers. */
+export function resolveAgentIsolationMemberCliVersionRoot(
+  runtimeRoot: string, retainedVersionRootId?: string,
+): FirstPartyVersionRootIdentity | null {
+  const store = readMemberCliStore(runtimeRoot);
+  if (!store) return null;
   try {
     if (!['/', memberCliParent, store].every(isProtectedDirectory)) return null;
     const executingName = basename(runtimeRoot);

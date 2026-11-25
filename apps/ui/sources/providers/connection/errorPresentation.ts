@@ -202,6 +202,10 @@ const PRESENTATIONS = Object.freeze({
         titleKey: 'settingsProviders.errors.agentRuntimeUnsupportedTitle',
         descriptionKey: 'settingsProviders.errors.incompatibleDescription',
     },
+    runner_entrypoint_unavailable: {
+        titleKey: 'common.unavailable',
+        descriptionKey: 'settingsProviders.errors.runnerEntrypointUnavailableDescription',
+    },
     provider_managed_requires_daemon: {
         titleKey: 'settingsProviders.errors.managedRequiresDaemonTitle',
         descriptionKey: 'settingsProviders.errors.managedRequiresDaemonDescription',

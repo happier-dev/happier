@@ -7377,6 +7377,7 @@ const enSettingsProviders = {
       'Review this connection and choose a credential format supported by the selected agent.',
     probeResponseInvalidTitle: "Provider response is invalid",
     agentRuntimeUnsupportedTitle: "Agent runtime is not supported",
+    runnerEntrypointUnavailableDescription: "Happier could not verify the foreground runner executable. Check the Happier installation on this machine, then reopen the session.",
     materializationFailedTitle: "Couldn’t prepare the Provider",
     connectionConfigurationInvalidTitle: "Provider connection is invalid",
     connectionInvalidTitle: 'Provider settings are invalid',

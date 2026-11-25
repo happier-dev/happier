@@ -16190,6 +16190,7 @@ const pl = {
     errors: {
         probeResponseInvalidTitle: "Odpowiedź dostawcy jest nieprawidłowa",
         agentRuntimeUnsupportedTitle: "Środowisko agenta nie jest obsługiwane",
+        runnerEntrypointUnavailableDescription: "Happier nie mógł zweryfikować pliku wykonywalnego sesji na pierwszym planie. Sprawdź instalację Happier na tym komputerze i otwórz ponownie sesję.",
         materializationFailedTitle: "Nie udało się przygotować dostawcy",
         connectionConfigurationInvalidTitle: "Połączenie z dostawcą jest nieprawidłowe",
 

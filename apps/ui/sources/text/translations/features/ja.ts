@@ -16102,6 +16102,7 @@ const ja = {
     errors: {
         probeResponseInvalidTitle: "プロバイダーの応答が無効です",
         agentRuntimeUnsupportedTitle: "エージェントの実行環境はサポートされていません",
+        runnerEntrypointUnavailableDescription: "Happier はフォアグラウンドセッションの実行ファイルを確認できませんでした。このマシンの Happier のインストールを確認し、セッションを開き直してください。",
         materializationFailedTitle: "プロバイダーを準備できませんでした",
         connectionConfigurationInvalidTitle: "プロバイダーの接続が無効です",
 

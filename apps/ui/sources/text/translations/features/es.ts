@@ -16091,6 +16091,7 @@ const es = {
     errors: {
         probeResponseInvalidTitle: "La respuesta del proveedor no es válida",
         agentRuntimeUnsupportedTitle: "El entorno del agente no es compatible",
+        runnerEntrypointUnavailableDescription: "Happier no pudo verificar el ejecutable de la sesión en primer plano. Revisa la instalación de Happier en este equipo y vuelve a abrir la sesión.",
         materializationFailedTitle: "No se pudo preparar el proveedor",
         connectionConfigurationInvalidTitle: "La conexión del proveedor no es válida",
 

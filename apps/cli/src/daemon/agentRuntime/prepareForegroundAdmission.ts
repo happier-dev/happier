@@ -1743,13 +1743,28 @@ export async function prepareForegroundAgentRuntimeAdmission(
                 )
               : null;
             if (
-              !canonicalSessionId.trim()
-              || !Number.isInteger(httpPort)
-              || httpPort <= 0
-              || !currentIdentity
+              !currentIdentity
               || currentIdentity.pid !== request.foregroundPid
               || typeof processStartTimeMs !== 'number'
               || snapshot?.status !== 'known'
+            ) {
+              return {
+                ok: false as const,
+                error: createProviderErrorV1('runner_entrypoint_unavailable', {
+                  machineId: request.machineId,
+                  failureCause: {
+                    phase: 'foreground.claim',
+                    errorClass: 'Error',
+                    errorCode: null,
+                    httpStatus: null,
+                  },
+                }),
+              };
+            }
+            if (
+              !canonicalSessionId.trim()
+              || !Number.isInteger(httpPort)
+              || httpPort <= 0
               || registration.retirementSignal.aborted
               || !registration.isCurrent()
               || !connectedAccountLaunchCurrent
@@ -1763,7 +1778,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
               )
             ) {
               throw new Error(
-                'Foreground Agent runtime process authority is unavailable',
+                'Foreground Agent runtime claim authority is unavailable',
               );
             }
             const runner = Object.freeze({
