@@ -1,7 +1,7 @@
 import { readDeploymentMoveEligibility, showDeploymentMoveSheet, type DeploymentMoveEligibility } from './DeploymentMoveSheet';
 import * as React from 'react';
 import { isDeploymentRollbackSourceEligibleV1, resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
-import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
+import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { isSameDeploymentName } from './DeploymentEnvironmentCollection';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
@@ -19,7 +19,6 @@ import type {
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
-import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { formatElapsedDuration } from '@/components/machines/durationWords';
@@ -547,13 +546,6 @@ export const DeploymentEnvironmentDetail = React.memo(
       && historyPage.items.every(receipt => receipt.operation === 'teardown' || receipt.id === activeId);
     // Declared edges only (#23): the page's one Domains read and the stored template, never a per-resource read.
     const connections = projectDeploymentConnections(detail, domains.result).items;
-    const primaryService = detail.content.definition.kind === 'stored'
-      ? detail.content.definition.primaryService : detail.content.definition.compose?.primaryService;
-    const adminDomain = primaryService ? domains.result.items.find(item =>
-      isDeploymentDomainAttachedV1(item.domain, detail.environment)
-      && (item.domain.state === 'active' || item.domain.state === 'warning')
-      && item.content.target.service === primaryService) : undefined;
-    const adminServingUrl = adminDomain ? readDeploymentDomainServingUrlV1(adminDomain.content) : null;
     // Where a name is only a fact or a clause, an unknown Machine drops out instead of reading "a machine".
     const knownMachine = (machineId: string | undefined) => (machineId ? machineNames[machineId] ?? null : null);
     const definition = deploymentDefinitionLabel(detail.content);
@@ -1324,7 +1316,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                     bindings={detail.content.bindings}
                     scope={props.lifetime.scope}
                     active={props.demand.mounted && props.demand.visible}
-                    servingUrl={adminServingUrl}
+                    servingUrl={liveAddress?.domain && activeReceipt?.deployment.targetLinkId === detail.environment.runtimeTargetLinkId ? liveUrl : null}
                     onOpenDomains={() => openTab('domains')}
                     onOpenServing={openAdminAddress}
                   />

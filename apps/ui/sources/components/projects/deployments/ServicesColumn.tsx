@@ -94,12 +94,10 @@ const selectDeploymentColumnParams = (params: Readonly<Record<string, string | s
   selectedServerId: readProjectRouteStringParam(params.serverId),
 });
 
-// The column is mounted only while Services is open, so it demands its read for exactly that long.
-const COLUMN_DEMAND: DeploymentReadDemandV1 = Object.freeze({
-  mounted: true,
-  visible: true,
-  focused: true,
-});
+function useServicesColumnDemand(): DeploymentReadDemandV1 {
+  const presented = useLayoutPresentationActive();
+  return React.useMemo(() => ({ mounted: true, visible: presented, focused: presented }), [presented]);
+}
 const NO_KEYS: ReadonlySet<string> = new Set();
 
 /** A Services column row as the tree reads it, with what a press (or Enter) opens and the Project it discloses. */
@@ -112,7 +110,8 @@ type ServicesTreeRow = CollectionTreeRow & Readonly<{ href: string | null; group
  */
 export const ServicesColumn = React.memo(function ServicesColumn() {
   const lifetime = useActiveServerAccountScopeLifetime();
-  const read = useDeploymentInventory(lifetime, COLUMN_DEMAND, {}, true);
+  const demand = useServicesColumnDemand();
+  const read = useDeploymentInventory(lifetime, demand, {}, true);
   const pathname = usePathname();
   const { deploymentEnvironment, selectedServerId } = useCurrentRouteParamsSelector(selectDeploymentColumnParams);
   const selection = React.useMemo(
@@ -143,8 +142,7 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
   }, [serverId]);
   // Saved views and filters (owner D5, agreed with PFC-SERVICES 11:15Z): the column header places the one Services
   // header (title menu, funnel, strip); the Apps page beside it adds none, and both narrow through the same draft.
-  const presented = useLayoutPresentationActive();
-  const servicesView = useServicesListView(read.snapshot.value?.items, presented);
+  const servicesView = useServicesListView(read.snapshot.value?.items, demand.visible);
   const spaceHeader = useServicesSpaceHeader(servicesView, 'services-column-space');
   const space: ServicesColumnSpace = {
     isVisible: servicesView.isVisible,
@@ -200,6 +198,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
   }>,
 ) {
   const { read, serverId, selection, onNavigate } = props;
+  const demand = useServicesColumnDemand();
   const items = read.snapshot.value?.items ?? NO_ITEMS;
   const rows = useDeploymentEnvironmentRowParts(
     items,
@@ -563,7 +562,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         })}
         </CollectionRows>
         {props.grouping === 'type' ? (
-          <ServicesColumnTypeSections controller={props.controller} demand={COLUMN_DEMAND} scope={props.lifetime?.scope ?? null}
+          <ServicesColumnTypeSections controller={props.controller} demand={demand} scope={props.lifetime?.scope ?? null}
             serverId={serverId} needle={needle} onNavigate={onNavigate} />
         ) : null}
       </CollectionList>

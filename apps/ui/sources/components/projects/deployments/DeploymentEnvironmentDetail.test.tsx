@@ -874,22 +874,28 @@ beforeEach(async () => {
   scope.serverId = resolution.scope.serverId;
 });
 
-it.each(['current', 'predecessor-only', 'unlinked'] as const)('uses only an attached Domain for the admin address (%s)', async selection => {
+it.each(['current', 'predecessor-only', 'unlinked', 'edited-primary'] as const)('uses the serving receipt address for first sign-in (%s)', async selection => {
   const base = environmentDetailForHome();
   const detail = { ...base, environment: { ...base.environment,
     runtimeTargetLinkId: selection === 'unlinked' ? undefined : base.environment.runtimeTargetLinkId },
-    content: { ...base.content, template: { templateRef: { sourceId: 'catalog', itemId: 'app', version: '1',
+    content: { ...base.content,
+      definition: selection === 'edited-primary' && base.content.definition.kind === 'repository' && base.content.definition.compose
+        ? { ...base.content.definition, compose: { ...base.content.definition.compose, primaryService: 'draft' } } : base.content.definition,
+      template: { templateRef: { sourceId: 'catalog', itemId: 'app', version: '1',
       ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } },
       definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
       services: ['app'], firstRunSetup: true } } };
-  const address = (id: string, targetLinkId: string, hostname: string) => ({
+  const address = (id: string, targetLinkId: string, hostname: string, service = 'app') => ({
     domain: { v: 1 as const, id, environmentId: detail.environment.id, targetLinkId, revision: 1, state: 'active' as const,
       contentArtifactId: `content-${id}`, contentHeaderVersion: 1, contentBodyVersion: 1,
       createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1 },
-    title: hostname, content: { hostname, target: { service: 'app', containerPort: 3000 } },
+    title: hostname, content: { hostname, target: { service, containerPort: 3000 } },
   });
+  const serves = selection === 'current' || selection === 'edited-primary';
+  const runtimeLinkId = base.environment.runtimeTargetLinkId!;
   const items = [address('previous', 'previous-link', 'previous.example.test'),
-    ...(selection === 'current' ? [address('current', base.environment.runtimeTargetLinkId!, 'current.example.test')] : [])];
+    ...(selection === 'edited-primary' ? [address('draft', runtimeLinkId, 'draft.example.test', 'draft')] : []),
+    ...(serves ? [address('current', runtimeLinkId, 'current.example.test')] : [])];
   const { controller } = controllerFor({ detail, listDomains: async () => ({ ok: true, value: { items, nextCursor: null } }) });
   const observedDomains = controller.acquireDomains(detail.environment.id, {}, { mounted: false, visible: false, focused: false });
   const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
@@ -901,9 +907,9 @@ it.each(['current', 'predecessor-only', 'unlinked'] as const)('uses only an atta
     await waitForHomeGovernance(() => {
       expect(observedDomains.getSnapshot().status).toBe('ready');
       expect(screen.findAllByType(DeploymentAdminLogin)[0]?.props.servingUrl ?? null)
-        .toBe(selection === 'current' ? 'https://current.example.test/' : null);
+        .toBe(serves ? 'https://current.example.test/' : null);
     });
-    expect(screen.findByTestId('project-deployments.environment.services.firstRun.open') !== null).toBe(selection === 'current');
+    expect(screen.findByTestId('project-deployments.environment.services.firstRun.open') !== null).toBe(serves);
   } finally { await screen.unmount(); observedDomains.release(); controller.retire(); }
 });
 

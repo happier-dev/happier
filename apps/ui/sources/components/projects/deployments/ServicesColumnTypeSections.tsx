@@ -67,7 +67,7 @@ export function ServicesColumnTypeSections(props: TypeSectionsProps) {
     props.demand,
   );
   const domains = useDeploymentDomainPage(props.controller, props.demand);
-  const checks = useAccountConfiguredChecks(props.scope, true);
+  const checks = useAccountConfiguredChecks(props.scope, props.demand.mounted && props.demand.visible && props.demand.focused);
   const databaseItems = databases.snapshot.value?.items;
   const domainItems = domains.snapshot.value?.items;
   const sections = React.useMemo(() => {

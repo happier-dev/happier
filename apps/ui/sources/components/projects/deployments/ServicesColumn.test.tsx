@@ -17,6 +17,7 @@ import {
 } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
@@ -630,6 +631,34 @@ describe('Services column grouping (owner 2026-11-16 10:20Z: All Â· By project Â
     expect(database.props.row).toMatchObject({ kind: 'database', title: 'shop-db', fact: 'PostgreSQL' });
     controller.retire();
   });
+});
+
+it('makes no type inventory reads while covered and loads once when shown', async () => {
+  let dataReads = 0;
+  let domainReads = 0;
+  const controller = controllerFor(ITEMS, null, {
+    listDataServicePage: async () => {
+      dataReads++;
+      return { ok: true, value: { items: [], nextCursor: null } };
+    },
+    listDomainPage: async () => {
+      domainReads++;
+      return { ok: true, value: { items: [], nextCursor: null } };
+    },
+  });
+  const column = (active: boolean) => (
+    <PluginSurfaceFocusEligibilityProvider active={active}>
+      <Column controller={controller} selection={{ kind: 'all' }} onNavigate={() => {}} grouping="type" />
+    </PluginSurfaceFocusEligibilityProvider>
+  );
+  const screen = await renderScreen(column(false));
+  try {
+    await waitForTestEvent(screen.subscribe, () => screen.findByTestId('services-column:project:source-shop'),
+      (node) => node !== null);
+    expect([dataReads, domainReads]).toEqual([0, 0]);
+    await screen.update(column(true));
+    await vi.waitFor(() => expect([dataReads, domainReads]).toEqual([1, 1]));
+  } finally { await screen.unmount(); controller.retire(); }
 });
 
 describe('Services column saved view (owner D5: one Services header, the column places it)', () => {
