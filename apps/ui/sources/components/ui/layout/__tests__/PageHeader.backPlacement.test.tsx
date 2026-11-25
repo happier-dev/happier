@@ -106,7 +106,7 @@ describe('PageHeader back control placement', () => {
 
     it.each([
         { content: 'free', splitWidth: 1440, frameWidth: PAGE_LIST_METRICS.columnMaxWidthPx.reading - 2 * PAGE_LIST_METRICS.sheetInsetPx },
-        { content: 'sections', splitWidth: 1056, frameWidth: 1056 - 272 - 2 * PAGE_LIST_METRICS.detailSideInsetPx },
+        { content: 'sections', splitWidth: 1007, frameWidth: 1007 - 272 - 2 * PAGE_LIST_METRICS.detailSideInsetPx },
     ] as const)('keeps the first title offset when the $content page is narrower than the split detail', async ({ content, splitWidth, frameWidth }) => {
         const { PageFrame } = await import('@/components/ui/layout/PageFrame');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');

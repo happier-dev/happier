@@ -237,7 +237,7 @@ function usePageHeaderBack(options: Readonly<{ alwaysShowTitle?: boolean; always
 
 export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps) {
     const maxWidth = useLayoutMaxWidth();
-    const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.frame;
+    const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.outer;
     const chromeShowsTitle = useNavigationTitleChromeShowsTitle();
     const largeTitle = useNavigationLeavesLargeTitle();
     const publisher = useNavigationTitleChromePublisher();
@@ -382,7 +382,7 @@ export const PageHeaderPlaceholder = React.memo(function PageHeaderPlaceholder(p
     const largeTitle = useNavigationLeavesLargeTitle();
     const reducedMotion = useReducedMotionPreference();
     const renderBack = usePageHeaderBack({ alwaysShowTitle: props.alwaysShowTitle });
-    const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.frame;
+    const initialFrameWidthPx = React.useContext(PageFrameWidthsContext)?.outer;
     return (
         <HappierPageHeaderPlaceholder
             renderBack={renderBack}

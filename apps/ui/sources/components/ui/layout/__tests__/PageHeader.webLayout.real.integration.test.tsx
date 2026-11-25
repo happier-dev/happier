@@ -4,11 +4,13 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Text, View } from 'react-native';
 import { expect, it, vi } from 'vitest';
-import { HappierPageHeader } from '@happier-dev/plugin-ui/presentation';
+import { HappierListDetailLayout, HappierPageHeader, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
+import { NavigationBackChromeProvider } from '../NavigationBackChrome';
 import { NavigationTitleChromeProvider, PageHeader } from '../PageHeader';
 import { PageHeaderMenu } from '../PageHeaderEntityParts';
 
@@ -17,6 +19,63 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 installWebLayoutBridge();
+
+it.each([
+    { paneWidth: 783, gutter: true },
+    { paneWidth: 735, gutter: false },
+])('places Back consistently across list owners in a $paneWidth px collection detail', async ({ paneWidth, gutter }) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const railWidth = 272;
+    const title = 'Collection detail';
+    const Back = () => <View testID="detail-back" style={{ width: HAPPIER_PAGE_METRICS.backControlSizePx, height: HAPPIER_PAGE_METRICS.backControlSizePx }} />;
+    const header = <PageHeader title={title} />;
+    try {
+        const positions = [];
+        for (const page of [
+            <VirtualizedItemList data={[]} renderItem={() => null} ListHeaderComponent={header} />,
+            <ItemList>{header}</ItemList>,
+        ]) {
+            await act(async () => root.render(
+                <HappierListDetailLayout
+                    testID="collection"
+                    detailTestID="detail-pane"
+                    style={{ width: railWidth + paneWidth, height: 700 }}
+                    minListWidth={railWidth}
+                    minDetailWidth={480}
+                    preferredListRatio={0}
+                    list={<Text>Collection rail</Text>}
+                    detail={<NavigationBackChromeProvider control={Back}>{page}</NavigationBackChromeProvider>}
+                />,
+            ));
+            const layout = await measureWebLayout(host, {
+                viewport: { width: 1440, height: 900 },
+                texts: [title],
+                settle: replay => act(replay),
+            });
+            const pane = layout.rect('detail-pane');
+            const back = layout.rect('detail-back');
+            const titleBox = layout.textRects(title)[0]!;
+            expect(pane.width).toBeCloseTo(paneWidth);
+            expect(back.left).toBeGreaterThanOrEqual(pane.left);
+            positions.push({ titleX: titleBox.left, verticalOffset: titleBox.top - back.top });
+            if (gutter) {
+                expect(back.right).toBeLessThanOrEqual(titleBox.left);
+                expect(back.bottom).toBeGreaterThan(titleBox.top);
+            } else {
+                expect(back.bottom).toBeLessThanOrEqual(titleBox.top);
+            }
+        }
+        if (gutter) {
+            expect(positions[0]!.titleX).toBeCloseTo(positions[1]!.titleX);
+        }
+        expect(positions[0]!.verticalOffset).toBeCloseTo(positions[1]!.verticalOffset);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
 
 it('centers a wrapped editable title at 375px and keeps the rename button with the last line', async () => {
     const host = document.createElement('div');

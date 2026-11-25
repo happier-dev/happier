@@ -42,17 +42,17 @@ export const PageFrame = React.memo(function PageFrame(props: PageFrameProps) {
         ?? Dimensions.get('window').width;
     const frameMaxWidth = maxWidth + 2 * side;
     const inset = content === 'free' ? HAPPIER_PAGE_METRICS.sheetInsetPx + side : side;
-    const frameWidth = (content === 'sections' ? containerWidth : Math.min(containerWidth, frameMaxWidth)) - 2 * inset;
-    const columnWidth = Math.min(frameWidth, content === 'sections' && !contained ? maxWidth : Infinity);
-    const widths = React.useMemo(() => frameWidth > 0 && columnWidth > 0
-        ? { frame: frameWidth, column: columnWidth } : null, [frameWidth, columnWidth]);
+    const outerWidth = content === 'sections' ? containerWidth : Math.min(containerWidth, frameMaxWidth);
+    const innerWidth = outerWidth - 2 * inset;
+    const columnWidth = Math.min(innerWidth, content === 'sections' && !contained ? maxWidth : Infinity);
+    const widths = React.useMemo(() => outerWidth > 0 && columnWidth > 0
+        ? { outer: outerWidth, column: columnWidth } : null, [outerWidth, columnWidth]);
     const frame = (
         <View
             testID={props.testID}
             style={[
                 { width: '100%', alignSelf: 'center' },
-                // A section header measures the whole pane before placing Back in its gutter.
-                // The sections cap their inner content through the same named-column context.
+                // Sections cap their inner content through the same named-column context.
                 content === 'sections' ? (side > 0 ? { paddingHorizontal: side } : null) : { maxWidth: frameMaxWidth },
                 content === 'free' ? {
                     paddingHorizontal: inset,

@@ -134,7 +134,7 @@ export type HappierPageHeaderProps = Readonly<{
    * Absent, the column is the pane.
    */
   columnMaxWidthPx?: number;
-  /** Width published by the containing page frame before this header measures its own box. */
+  /** The containing page frame's outer width, including its inset, for Back placement. */
   initialFrameWidthPx?: number;
   /**
    * How a string slot is drawn. Happier core supplies its own text owner (its
@@ -246,14 +246,13 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const flushTop = useContext(HappierPageHeaderFlushTopContext);
   const collectionMode = collectionLayout?.mode ?? null;
   const detailWidthPx = useHappierCollectionDetailWidth();
-  // The pane's width decides whether back fits in the gutter left of the
-  // column. Every header measures it: a back control often arrives after the
-  // pane's one mount layout (it follows the route), and a handler attached
-  // late never hears that layout, which left back hidden while "measuring".
-  const [paneWidthPx, setPaneWidthPx] = useState<number | null>(null);
+  // The header's own width decides compact identity layout. For an unframed
+  // header outside a split, the box also spans the available pane. Measure it
+  // even before a route supplies its Back control.
+  const [measuredWidthPx, setMeasuredWidthPx] = useState<number | null>(null);
   const handleLayout = useCallback((event: HappierLayoutChangeEvent) => {
     const widthPx = event.nativeEvent.layout.width;
-    setPaneWidthPx((current) => (current === widthPx ? current : widthPx));
+    setMeasuredWidthPx((current) => (current === widthPx ? current : widthPx));
   }, []);
 
   // An entity header whose actions cannot share the title's line moves them, as one group, after the
@@ -347,7 +346,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !meta && !hasCount) return null;
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
-  const centered = props.compactPresentation === 'centered' && paneWidthPx !== null && paneWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
+  const centered = props.compactPresentation === 'centered' && measuredWidthPx !== null && measuredWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
   // Hanging keeps the controls on the name's line only while the name keeps its column; past that they
   // take the wrap rule's place after the whole identity, because a controls-only line loses the page's name.
   const hangLeavesNoName = splitWidthPx !== null && actionsNaturalWidthPx > 0
@@ -360,7 +359,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // The mark keeps to the title's row; what supports the title runs under both, from the column's edge.
   const markOnTitleRow = props.markSpan === 'title' && Boolean(props.leading) && showTitle && !centered;
   const backPlacement = resolveHappierPageBackPlacement({
-    paneWidthPx: paneWidthPx ?? props.initialFrameWidthPx ?? detailWidthPx, columnMaxWidthPx, backShown: showsBack,
+    paneWidthPx: props.initialFrameWidthPx ?? detailWidthPx ?? measuredWidthPx, columnMaxWidthPx, backShown: showsBack,
   });
 
   // In the gutter the arrow is outside the flow, anchored to what sits on the
@@ -469,8 +468,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // (a phone's navigation chrome takes Save and Cancel when the window narrows).
   const actionsBelowIdentity = splitTitleLine && Boolean(props.actions)
     && actionsWrapWidthPx !== null && splitWidthPx !== null && splitWidthPx <= actionsWrapWidthPx;
-  const columnContentWidthPx = paneWidthPx === null ? splitWidthPx
-    : Math.max(0, Math.min(paneWidthPx, columnMaxWidthPx) - textInsetPx * 2 - contentInsetPx);
+  const columnContentWidthPx = measuredWidthPx === null ? splitWidthPx
+    : Math.max(0, Math.min(measuredWidthPx, columnMaxWidthPx) - textInsetPx * 2 - contentInsetPx);
   // A mark sharing the identity's row consumes this part of the column. If it wraps onto its own
   // row, the identity already spans the column and the wrapped actions need no horizontal escape.
   const leadingInsetPx = props.leading && columnContentWidthPx !== null && splitWidthPx !== null
