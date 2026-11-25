@@ -167,6 +167,8 @@ export const UpdateBodySchema = lazyZodSchema(() => z.discriminatedUnion('t', [
     /** Exact machine wake for persisted Workflow cancellation custody. */
     workflowControl: z.optional(z.enum(['cancel_requested', 'review_resolved'])),
     requesterScope: z.optional(WorkflowRequesterScopeV1Schema),
+    /** Manual Run now uses saved custody for this Account and the update's Automation id. */
+    workflowAutomationRequesterAccountId: z.optional(z.string().check(z.minLength(1))),
     managedWakeTargetV1: z.optional(ManagedWakeTargetV1Schema),
   }),
   z.strictObject({

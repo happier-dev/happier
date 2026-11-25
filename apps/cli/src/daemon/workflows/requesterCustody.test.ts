@@ -110,8 +110,8 @@ it('reconciles only addressed guest custody on typed changes and catches up miss
     return triggerId ? publishedProfileAutomation(id, installation.machineId, [triggerId])
       : reply.code(404).send({ error: 'not_found' });
   });
-  app.post<{ Body: { request: { runId?: string; triggerId?: string } } }>('/v3/automations/runs/workflow-storage', async request => {
-    const id = request.body.request.runId ?? request.body.request.triggerId;
+  app.post<{ Body: { request: { runId?: string; automationId?: string } } }>('/v3/automations/runs/workflow-storage', async request => {
+    const id = request.body.request.runId ?? request.body.request.automationId;
     if (!id) throw new Error('Expected exact custody selector');
     reads.push(id);
     return { runs: pending.has(id) ? [{ ...kit.run(), id, workflowCustodyState: 'pending' }] : [] };
@@ -155,7 +155,7 @@ it('reconciles only addressed guest custody on typed changes and catches up miss
       if (inventory.status === 'ready') expect(inventory.bindings.map(scope => scope.sessionId).sort())
         .toEqual(['direct-a', 'direct-b', 'direct-other', 'trigger-b']);
     });
-    expect(reads).toEqual(['trigger-a']);
+    expect(reads).toEqual(['automation-a']);
     reads.length = 0;
     definitionReads.length = 0;
     // A missed offline update is intentionally coarse: reconnect re-reads
@@ -211,12 +211,18 @@ it('keeps direct Run custody across offline terminal cleanup until the exact Run
   } finally { restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-it('keeps custody for an admitted queued Run when its trigger is disabled, then retires after drain', async () => {
+it.each(['trigger', 'manual'] as const)('keeps custody for an admitted queued %s Run when its trigger is disabled, then retires after drain', async kind => {
   const app = fastify();
   const origin = 'http://queued-workflow-requester.test';
   const directory = await mkdtemp(join(tmpdir(), 'workflow-queued-requester-'));
   const attribution = { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' };
-  const kit = createWorkflowRunStorageTestkit({ runId: 'queued', machineId: 'machine', state: 'queued', origin: { kind: 'direct' } });
+  const automationId = 'saved-automation';
+  const triggerId = AutomationTriggerIdSchema.parse('trigger');
+  const kit = createWorkflowRunStorageTestkit({ runId: 'queued', machineId: 'machine', state: 'queued', origin: {
+    kind: 'automation', automationId,
+    cause: kind === 'manual' ? { kind, invokedAt: 1 } : { kind, triggerId, triggerRevision: 0, triggerKind: 'schedule',
+      occurrenceKey: Buffer.alloc(32, 7).toString('base64url'), occurredAt: 1, evidence: { scheduledFor: 1 } },
+  } });
   let pending = true;
   app.get('/v1/account/profile', async () => ({ id: 'guest' }));
   app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }));
@@ -226,12 +232,15 @@ it('keeps custody for an admitted queued Run when its trigger is disabled, then 
     return published ? publishedProfileAutomation('saved-automation', attribution.machineId, ['trigger'])
       : reply.code(404).send({ error: 'not_found' });
   });
-  app.post<{ Body: { operation: string; request: { runId?: string; triggerId?: string; cursor?: string } } }>('/v3/automations/runs/workflow-storage', async request => {
+  app.post<{ Body: { operation: string; request: { runId?: string; triggerId?: string; automationId?: string; cursor?: string } } }>('/v3/automations/runs/workflow-storage', async request => {
     expect(request.headers.authorization).toBe('Bearer guest-token');
     if (request.body.request.runId) return { runs: request.body.request.runId === 'finished-direct'
       ? [{ ...kit.run(), id: 'finished-direct', state: 'succeeded', workflowCustodyState: 'settled' }] : [] };
     if (request.body.request.triggerId === 'finished-direct') return { runs: [] };
-    expect(request.body).toMatchObject({ operation: 'list', request: { triggerId: 'trigger', machineId: 'machine' } });
+    expect(request.body).toMatchObject({ operation: 'list', request: { machineId: 'machine' } });
+    const selector = request.body.request;
+    if (selector.triggerId !== undefined && (kind === 'manual' || selector.triggerId !== triggerId)) return { runs: [] };
+    if (selector.automationId !== undefined && selector.automationId !== automationId) return { runs: [] };
     return pending ? request.body.request.cursor === 'admitted-page'
       ? { runs: [kit.run()] } : { runs: [], nextCursor: 'admitted-page' } : { runs: [] };
   });
@@ -241,9 +250,19 @@ it('keeps custody for an admitted queued Run when its trigger is disabled, then 
   try {
     await retainWorkflowRequesterCredentials({ ...binding, automationId: 'saved-automation', credentials: { token: 'guest-token', encryption: null }, attribution });
     await retireWorkflowRequesterCredentials(binding);
-    const admitted = await acquireWorkflowRequesterCredentials(binding);
+    const admitted = kind === 'manual'
+      ? await requesterCustody.acquireWorkflowAutomationRequesterCredentials({ ...binding, automationId })
+      : await acquireWorkflowRequesterCredentials(binding);
     expect(admitted?.credentials.token).toBe('guest-token');
     await admitted?.release();
+    if (kind === 'manual') {
+      await expect(requesterCustody.acquireWorkflowAutomationRequesterCredentials({
+        ...binding, accountId: 'another-guest', automationId,
+      })).resolves.toBeNull();
+      await expect(requesterCustody.acquireWorkflowAutomationRequesterCredentials({
+        ...binding, automationId: 'another-automation',
+      })).resolves.toBeNull();
+    }
     pending = false;
     await retainWorkflowRequesterCredentials({ ...binding, automationId: 'saved-automation', credentials: { token: 'guest-token', encryption: null }, attribution });
     await requesterCustody.settleWorkflowRequesterCredentialRetirement(binding);

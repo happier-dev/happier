@@ -49,6 +49,15 @@ export async function listWorkflowRequesterCredentialScopes(input: Omit<ScopeBin
   return await listRequesterSessionCredentialBindings({ ...input, scope: 'workflow_trigger' });
 }
 
+type AutomationScopeBinding = Omit<ScopeBinding, 'scopeId'> & Readonly<{ automationId: string; accountId: string }>;
+
+async function listAutomationRequesterScopeIds(input: AutomationScopeBinding): Promise<readonly string[]> {
+  const scopes = await listWorkflowRequesterCredentialScopes(input);
+  if (scopes.status === 'unavailable') throw new Error(scopes.reason);
+  return scopes.bindings.filter(scope => scope.automationId === input.automationId
+    && scope.attribution.accountId === input.accountId).map(scope => scope.sessionId);
+}
+
 export async function retainWorkflowRequesterCredentials(input: Readonly<{
   scopeId: string; credentials: StoredCredentials; attribution: RequesterWorkAttributionV1; happyHomeDir: string; homeServerIdentityId?: string; automationId?: string;
   machineAdmission?: NonNullable<SavedSecretOperationContextV1['machineAdmission']> & Readonly<{ encryptionMode?: 'plain' | 'e2ee' }>;
@@ -118,7 +127,7 @@ export async function retainWorkflowInitialTriggerCredentials(input: Omit<Parame
   }
 }
 
-async function readBinding(input: ScopeBinding) {
+async function readBinding(input: ScopeBinding, automationId?: string) {
   const path = requesterSessionCredentialPath({ happyHomeDir: input.happyHomeDir, sessionId: input.scopeId,
     attribution: { serverId: input.serverId }, scope: 'workflow_trigger' });
   try {
@@ -127,7 +136,8 @@ async function readBinding(input: ScopeBinding) {
       || stored.attribution.installationId !== input.installationId
       || input.accountId !== undefined && stored.attribution.accountId !== input.accountId
       || input.homeServerIdentityId !== undefined && stored.homeServerIdentityId !== input.homeServerIdentityId) return null;
-    if (stored.scope !== 'workflow_trigger' || stored.sessionId !== input.scopeId) return null;
+    if (stored.scope !== 'workflow_trigger' || stored.sessionId !== input.scopeId
+      || automationId !== undefined && stored.automationId !== automationId) return null;
     return { path, stored, value: binding(input, stored.attribution) };
   } catch { return null; }
 }
@@ -202,8 +212,8 @@ export async function reconcileWorkflowRequesterCredentialScope(input: ScopeBind
 }
 
 /** A disable retires future use; already admitted queued/active work keeps custody. */
-export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBinding): Promise<void> {
-  const stored = await readBinding(input);
+export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBinding, automationId?: string): Promise<void> {
+  const stored = await readBinding(input, automationId);
   if (!stored?.stored.retireWhenIdle) return;
   const active = activeScopes.get(stored.path) ?? { count: 0, retire: true };
   activeScopes.set(stored.path, active);
@@ -213,13 +223,19 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
     verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
   if (!credentials) { activeScopes.delete(stored.path); return; }
   const storage = createWorkflowRunStorageClient({ token: credentials.token, serverHttpBaseUrl });
+  const savedAutomationId = stored.stored.automationId;
   let cursor: string | undefined;
   do {
     const page = RunPageSchema.parse(await storage.execute({ operation: 'list', request: {
-      ...(stored.stored.automationId ? { triggerId: input.scopeId } : { runId: input.scopeId }),
+      ...(savedAutomationId ? { automationId: savedAutomationId, projection: 'membership' as const } : { runId: input.scopeId }),
       machineId: input.machineId, ...(cursor ? { cursor } : {}),
     }, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }, { signal: input.signal }));
-    if (page.runs.some(run => !isTerminalAutomationRunStateV3(run.state) || run.workflowCustodyState === 'pending')) return;
+    if (page.runs.some(run => {
+      if (isTerminalAutomationRunStateV3(run.state) && run.workflowCustodyState !== 'pending') return false;
+      if (!savedAutomationId) return true;
+      const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
+      return cause?.kind === 'manual' || cause?.triggerId === input.scopeId;
+    })) return;
     cursor = page.nextCursor;
   } while (cursor);
   // A re-save clears this same scope's retirement intent, including while the
@@ -230,6 +246,12 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
     activeScopes.delete(stored.path);
     notifyCustodyChange();
   });
+}
+
+export async function settleWorkflowAutomationRequesterRetirement(input: AutomationScopeBinding): Promise<void> {
+  for (const scopeId of await listAutomationRequesterScopeIds(input)) {
+    await settleWorkflowRequesterCredentialRetirement({ ...input, scopeId }, input.automationId);
+  }
 }
 
 /** The incumbent guest Account socket lives only while this installation holds its custody. */
@@ -341,8 +363,8 @@ export function observeWorkflowRequesterCredentialCustody(input: Omit<ScopeBindi
   } };
 }
 
-export async function acquireWorkflowRequesterCredentials(input: ScopeBinding & Readonly<{ serverHttpBaseUrl: string }>) {
-  const stored = await readBinding(input);
+export async function acquireWorkflowRequesterCredentials(input: ScopeBinding & Readonly<{ serverHttpBaseUrl: string }>, automationId?: string) {
+  const stored = await readBinding(input, automationId);
   if (!stored) return null;
   const credentials = await resolveRequesterSessionCredentials({ ...stored.value, serverHttpBaseUrl: input.serverHttpBaseUrl,
     // Admission was decided for this occurrence by Home. Recovery binds the
@@ -353,6 +375,15 @@ export async function acquireWorkflowRequesterCredentials(input: ScopeBinding & 
     ...(stored.stored.machineAdmission ? { machineAdmission: {
       actorAccountId: stored.value.attribution.accountId, ...stored.stored.machineAdmission } } : {}),
     release: holdExecutionScope(input, stored.value, stored.stored.retireWhenIdle) };
+}
+
+/** Manual Run now borrows the credential from its saved trigger set. The Run claim owns its role. */
+export async function acquireWorkflowAutomationRequesterCredentials(input: AutomationScopeBinding & Readonly<{ serverHttpBaseUrl: string }>) {
+  for (const scopeId of await listAutomationRequesterScopeIds(input)) {
+    const requester = await acquireWorkflowRequesterCredentials({ ...input, scopeId }, input.automationId);
+    if (requester) return requester;
+  }
+  return null;
 }
 
 

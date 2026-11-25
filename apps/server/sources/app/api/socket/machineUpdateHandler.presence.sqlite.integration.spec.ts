@@ -102,6 +102,11 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             workflowCustodyState: 'pending', state: 'running', scheduledAt: new Date(), dueAt: new Date(),
             assignments: { create: { machineId: machine.id, admittedMachineInstallationId: machine.installationId } },
         } });
+        const manual = await db.automationRun.create({ data: { accountId: guest.id, automationId: automation.id,
+            ...encodeAutomationRunCause({ kind: 'manual', invokedAt: now.getTime() }),
+            workflowCustodyState: 'pending', state: 'queued', scheduledAt: now, dueAt: now,
+            assignments: { create: { machineId: machine.id, admittedMachineInstallationId: machine.installationId } },
+        } });
         const terminalPendingId = randomUUID();
         for (const [state, custody, installationId] of [
             ['succeeded', 'pending', machine.installationId],
@@ -131,7 +136,7 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         assignmentReads = 0;
         await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
             timestamp: Date.now(), continuingBeat: false });
-        expect(wakes().map(body => body.runId).sort()).toEqual([queued.id, running.id, terminalPendingId].sort());
+        expect(wakes().map(body => body.runId).sort()).toEqual([queued.id, running.id, terminalPendingId, manual.id].sort());
         expect(assignmentReads).toBe(1);
         expect(wakes()).toEqual(expect.arrayContaining([
             expect.objectContaining({ runId: queued.id, targetMachineId: machine.id,
@@ -140,13 +145,16 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
                 requesterScope: { kind: 'workflow_trigger', id: running.id } }),
             expect.objectContaining({ runId: terminalPendingId, state: 'succeeded', targetMachineId: machine.id,
                 requesterScope: { kind: 'workflow_trigger', id: terminalPendingId } }),
+            expect.objectContaining({ runId: manual.id, automationId: automation.id, targetMachineId: machine.id,
+                workflowAutomationRequesterAccountId: guest.id }),
         ]));
+        expect(wakes().find(body => body.runId === manual.id)?.requesterScope).toBeUndefined();
         expect(JSON.stringify(wakes())).not.toContain('private definition');
-        expect(Object.keys(wakes()[0]).sort()).toEqual(['t', 'runId', 'automationId', 'state', 'scheduledAt',
+        expect(Object.keys(wakes().find(body => body.runId === queued.id)!).sort()).toEqual(['t', 'runId', 'automationId', 'state', 'scheduledAt',
             'startedAt', 'finishedAt', 'updatedAt', 'machineId', 'attempt', 'targetMachineId', 'requesterScope'].sort());
         await observeMachineAliveFromSocket({ userId: owner.id, socket: publisher as unknown as Socket,
             timestamp: Date.now(), continuingBeat: true });
-        expect(wakes()).toHaveLength(3);
+        expect(wakes()).toHaveLength(4);
         expect(assignmentReads).toBe(1);
         } finally { stopObserving(); }
     });

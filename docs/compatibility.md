@@ -3322,6 +3322,13 @@ only the installation-sealed Workflow scope. Raw Session spawn stays custodian-o
 An older Home or daemon fails closed. UI, CLI, Home, and daemon need the new route
 for shared trigger authoring.
 
+For a guest's manual Run now in unreleased 0.3, the Machine-targeted Automation
+update can carry `workflowAutomationRequesterAccountId`. The installed daemon
+matches that Account and the existing Automation id to saved trigger custody.
+The existing claim supplies the Run's admitted Machine role. Earlier clients
+can ignore the routing hint and continue to see their own Runs. Shared manual
+Runs require matching development Home and daemon sources.
+
 The existing daemon-local requester custody record may retain an optional
 `retireWhenIdle` marker for a disabled or deleted trigger. It uses the same
 at-rest protection and is not sent to the server. Re-saving clears that marker;

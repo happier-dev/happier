@@ -6,6 +6,17 @@ import type { Socket } from 'socket.io';
 import { log } from '@/utils/logging/log';
 
 type AdmittedWorkflowMachineTarget = Pick<Extract<MachineAdmission, { kind: 'admitted' }>, 'machineId' | 'custodianAccountId'>;
+type WorkflowWakeRun = Parameters<typeof emitAutomationRunUpdatedToMachineOnly>[0]['run']
+    & Readonly<{ triggerId?: string | null; causeKind?: string | null }>;
+
+function requesterCustodyWake(run: WorkflowWakeRun, accountId: string, custodianAccountId: string): Pick<
+    Parameters<typeof emitAutomationRunUpdatedToMachineOnly>[0], 'requesterScope' | 'workflowAutomationRequesterAccountId'
+> {
+    if (accountId === custodianAccountId) return {};
+    // Run now is admitted for the saved Automation, with no individual trigger as its cause.
+    return run.automationId && run.causeKind === 'manual' ? { workflowAutomationRequesterAccountId: accountId }
+        : { requesterScope: { kind: 'workflow_trigger', id: run.triggerId ?? run.id } };
+}
 
 /** The connect owner has already authenticated this exact installed Machine socket. */
 export async function replayWorkflowRunMachineWakes(input: Readonly<{
@@ -15,7 +26,7 @@ export async function replayWorkflowRunMachineWakes(input: Readonly<{
         machineId: input.machineId, admittedMachineInstallationId: input.installationId,
         run: { workflowCustodyState: 'pending' },
     }, select: { run: { select: {
-        id: true, accountId: true, automationId: true, triggerId: true, state: true,
+        id: true, accountId: true, automationId: true, triggerId: true, causeKind: true, state: true,
         scheduledAt: true, startedAt: true, finishedAt: true, updatedAt: true,
         claimedByMachineId: true, attempt: true, account: { select: { seq: true } },
     } } } });
@@ -25,9 +36,7 @@ export async function replayWorkflowRunMachineWakes(input: Readonly<{
             timestamp: new Date().toISOString(), machineId: input.machineId });
         input.socket.emit('update', buildAutomationRunMachineWakeUpdate({ accountId: input.custodianAccountId,
             machineId: input.machineId, run, cursor: run.account.seq,
-            ...(run.accountId !== input.custodianAccountId ? { requesterScope: {
-                kind: 'workflow_trigger', id: run.triggerId ?? run.id,
-            } } : {}),
+            ...requesterCustodyWake(run, run.accountId, input.custodianAccountId),
         }));
     }
 }
@@ -35,7 +44,7 @@ export async function replayWorkflowRunMachineWakes(input: Readonly<{
 /** Immutable admission chooses the executor; grant changes apply to the next admission. */
 export async function publishWorkflowRunMachineWakeInTx(tx: Tx, params: Readonly<{
     accountId: string;
-    run: Parameters<typeof emitAutomationRunUpdatedToMachineOnly>[0]['run'] & { triggerId?: string | null };
+    run: WorkflowWakeRun;
     cursor: { resolveCursor(): number };
     workflowControl?: 'cancel_requested' | 'review_resolved';
     admittedTargets?: readonly AdmittedWorkflowMachineTarget[];
@@ -47,9 +56,7 @@ export async function publishWorkflowRunMachineWakeInTx(tx: Tx, params: Readonly
                 timestamp: new Date().toISOString(), machineId: target.machineId });
             emitAutomationRunUpdatedToMachineOnly({ accountId: target.custodianAccountId,
                 machineId: target.machineId, run: params.run, cursor: params.cursor.resolveCursor(),
-                ...(target.custodianAccountId !== params.accountId ? { requesterScope: {
-                    kind: 'workflow_trigger', id: params.run.triggerId ?? params.run.id,
-                } } : {}),
+                ...requesterCustodyWake(params.run, params.accountId, target.custodianAccountId),
                 ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
             });
         });

@@ -37,7 +37,11 @@ import type { LiveWorkItemV1, LiveWorkListenerV1, LiveWorkProducerV1 } from '../
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { configuration } from '@/configuration';
-import { acquireWorkflowRequesterCredentials, createWorkflowRequesterCustody, listWorkflowRequesterCredentialScopes, observeWorkflowRequesterCredentialCustody, reconcileWorkflowRequesterCredentialScope, retireWorkflowRequesterCredentials, settleWorkflowRequesterCredentialRetirement } from '../workflows/requesterCustody';
+import { acquireWorkflowAutomationRequesterCredentials, acquireWorkflowRequesterCredentials, createWorkflowRequesterCustody,
+  listWorkflowRequesterCredentialScopes, observeWorkflowRequesterCredentialCustody, reconcileWorkflowRequesterCredentialScope,
+  retireWorkflowRequesterCredentials, settleWorkflowAutomationRequesterRetirement, settleWorkflowRequesterCredentialRetirement } from '../workflows/requesterCustody';
+
+type RequesterScope = Readonly<{ kind: 'exact'; id: string }> | Readonly<{ kind: 'automation'; id: string; accountId: string }>;
 
 type AutomationMachineAdmissionTransport = NonNullable<
   Parameters<typeof sendSessionMessage>[0]['machineAdmissionTransport']
@@ -111,7 +115,7 @@ export function startAutomationWorker(params: {
   const attribution = params.requesterWorkAttributionV1
     ? Object.freeze(RequesterWorkAttributionV1Schema.parse(params.requesterWorkAttributionV1)) : { kind: 'unknown' as const };
   const claimClient = createAutomationClaimClient({ token: params.token });
-  const requesterWakes = new Map<string, { scopeId: string; runId?: string; nextClaimAt: number }>();
+  const requesterWakes = new Map<string, { key: string; scope: RequesterScope; runId?: string; nextClaimAt: number }>();
 
   let stopped = false;
   let requesterCustodyObservation: ReturnType<typeof observeWorkflowRequesterCredentialCustody> | undefined;
@@ -418,16 +422,24 @@ export function startAutomationWorker(params: {
     }
   };
 
-  const recoverWorkflowCustody = (runId: string, scopeId?: string) => {
+  const acquireRequester = (scope: RequesterScope, accountId?: string) => {
+    const host = params.requesterWorkAttributionV1;
+    const homeServerIdentityId = params.requesterHomeServerIdentityId;
+    if (!host || !homeServerIdentityId) return null;
+    const binding = { happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
+      installationId: host.installationId, homeServerIdentityId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal };
+    return scope.kind === 'automation'
+      ? acquireWorkflowAutomationRequesterCredentials({ ...binding, automationId: scope.id, accountId: scope.accountId })
+      : acquireWorkflowRequesterCredentials({ ...binding, scopeId: scope.id, accountId });
+  };
+
+  const recoverWorkflowCustody = (runId: string, scope?: RequesterScope) => {
     void (async () => {
-      const host = params.requesterWorkAttributionV1;
-      const acquire = (id: string) => host && params.requesterHomeServerIdentityId ? acquireWorkflowRequesterCredentials({ scopeId: id,
-        happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
-        installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
-        homeServerIdentityId: params.requesterHomeServerIdentityId }) : null;
-      const retainedRun = scopeId ? await acquire(runId) : null;
-      const requester = retainedRun ?? (scopeId && scopeId !== runId ? await acquire(scopeId) : null);
-      if (scopeId && !requester) {
+      const retainedRun = scope ? await acquireRequester({ kind: 'exact', id: runId },
+        scope.kind === 'automation' ? scope.accountId : undefined) : null;
+      const requester = retainedRun ?? (scope && (scope.kind === 'automation' || scope.id !== runId)
+        ? await acquireRequester(scope) : null);
+      if (scope && !requester) {
         await reportMissingRequesterCustody(runId);
         return;
       }
@@ -531,7 +543,7 @@ export function startAutomationWorker(params: {
     const consumeRequesterWake = (wake: NonNullable<typeof requesterWake>) => {
       // The async claim can only consume the wake it read. A later occurrence
       // on this scope starts from the new wake, even after an empty claim.
-      if (requesterWakes.get(wake.scopeId) === wake) requesterWakes.delete(wake.scopeId);
+      if (requesterWakes.get(wake.key) === wake) requesterWakes.delete(wake.key);
     };
     let releaseClaim = () => {};
     // Preparation belongs to the same single-flight operation as dispatch.
@@ -567,17 +579,8 @@ export function startAutomationWorker(params: {
         pendingQueuedWake = true;
         return;
       }
-      if (requesterWake && (!params.requesterWorkAttributionV1 || !params.requesterHomeServerIdentityId)) {
-        consumeRequesterWake(requesterWake);
-        if (requesterWake.runId) await reportMissingRequesterCustody(requesterWake.runId);
-        return;
-      }
-      if (requesterWake && params.requesterWorkAttributionV1) {
-        const host = params.requesterWorkAttributionV1;
-        requester = await acquireWorkflowRequesterCredentials({ scopeId: requesterWake.scopeId,
-          happyHomeDir: configuration.happyHomeDir, serverId: host.serverId, machineId: params.machineId,
-          installationId: host.installationId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
-          ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
+      if (requesterWake) {
+        requester = await acquireRequester(requesterWake.scope);
         if (!requester) {
           consumeRequesterWake(requesterWake);
           if (requesterWake.runId) await reportMissingRequesterCustody(requesterWake.runId);
@@ -616,14 +619,11 @@ export function startAutomationWorker(params: {
 
       // The Account-scoped claim may return another admitted occurrence. Its
       // own private scope must be available before this executor reads content.
-      const claimedScopeId = claimed.run.triggerId ?? claimed.run.id;
-      if (requester && requesterWake && params.requesterWorkAttributionV1 && claimedScopeId !== requesterWake.scopeId) {
-        const host = params.requesterWorkAttributionV1;
-        const claimedRequester = await acquireWorkflowRequesterCredentials({ scopeId: claimedScopeId,
-          accountId: requester.attribution.accountId, happyHomeDir: configuration.happyHomeDir,
-          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
-          serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
-          ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
+      const claimedScope: RequesterScope = requester && claimed.run.automationId && claimed.run.cause?.kind === 'manual'
+        ? { kind: 'automation', id: claimed.run.automationId, accountId: requester.attribution.accountId }
+        : { kind: 'exact', id: claimed.run.triggerId ?? claimed.run.id };
+      if (requester && requesterWake && (claimedScope.kind !== requesterWake.scope.kind || claimedScope.id !== requesterWake.scope.id)) {
+        const claimedRequester = await acquireRequester(claimedScope, requester.attribution.accountId);
         if (!claimedRequester) {
           await reportMissingRequesterCustody(claimed.run.id);
           return;
@@ -827,7 +827,7 @@ export function startAutomationWorker(params: {
           serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
           scopeId: scope.sessionId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), signal: workerCancellation.signal,
           ...(params.requesterHomeServerIdentityId ? { homeServerIdentityId: params.requesterHomeServerIdentityId } : {}) });
-        requesterWakes.set(scope.sessionId, { scopeId: scope.sessionId, nextClaimAt: Date.now() });
+        requesterWakes.set(scope.sessionId, { key: scope.sessionId, scope: { kind: 'exact', id: scope.sessionId }, nextClaimAt: Date.now() });
       }
     }
     pendingQueuedWake = true;
@@ -932,22 +932,34 @@ export function startAutomationWorker(params: {
       }
 
       invalidateActiveExecution(update);
+      let requesterScope: RequesterScope | undefined;
+      if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId) {
+        if (body.requesterScope?.kind === 'workflow_trigger' && typeof body.requesterScope.id === 'string') {
+          requesterScope = { kind: 'exact', id: body.requesterScope.id };
+        } else if (body.automationId && typeof body.workflowAutomationRequesterAccountId === 'string') {
+          requesterScope = { kind: 'automation', id: body.automationId, accountId: body.workflowAutomationRequesterAccountId };
+        }
+      }
       if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId
         && isTerminalAutomationRunStateV3(body.state) && params.requesterWorkAttributionV1) {
-        if (body.automationId === null) requesterWakes.delete(body.runId);
+        if (body.automationId === null || requesterScope?.kind === 'automation') requesterWakes.delete(body.runId);
         const host = params.requesterWorkAttributionV1;
-        const scope = body.requesterScope;
-        const scopeId = scope && typeof scope === 'object' && 'id' in scope && typeof scope.id === 'string' ? scope.id : body.runId;
+        const binding = { happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId,
+          signal: workerCancellation.signal };
         const retire = body.automationId === null ? retireWorkflowRequesterCredentials : settleWorkflowRequesterCredentialRetirement;
-        void retire({ scopeId, happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-          serverId: host.serverId, machineId: params.machineId, installationId: host.installationId, signal: workerCancellation.signal }).catch(error =>
+        const retirement = requesterScope?.kind === 'automation'
+          ? settleWorkflowAutomationRequesterRetirement({ ...binding, homeServerIdentityId: params.requesterHomeServerIdentityId,
+            automationId: requesterScope.id, accountId: requesterScope.accountId })
+          : retire({ ...binding, scopeId: requesterScope?.id ?? body.runId });
+        void retirement.catch(error =>
           logAutomationWarn('Workflow requester custody retirement failed', error, { runId: body.runId }));
       }
 
       if (body.t === 'automation-run-updated' && body.targetMachineId === params.machineId
         && isTerminalAutomationRunStateV3(body.state)
         && !activeExecutions.has(body.runId)) {
-        recoverWorkflowCustody(body.runId, body.requesterScope?.kind === 'workflow_trigger' ? body.requesterScope.id : undefined);
+        recoverWorkflowCustody(body.runId, requesterScope);
         return;
       }
 
@@ -957,8 +969,7 @@ export function startAutomationWorker(params: {
         && body.workflowControl === 'cancel_requested'
         && !activeExecutions.has(body.runId)
       ) {
-        const scope = body.requesterScope;
-        recoverWorkflowCustody(body.runId, scope && typeof scope === 'object' && 'id' in scope && typeof scope.id === 'string' ? scope.id : undefined);
+        recoverWorkflowCustody(body.runId, requesterScope);
         return;
       }
 
@@ -967,11 +978,9 @@ export function startAutomationWorker(params: {
           logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: body.runId,
             phase: 'daemon_receipt', timestamp: new Date().toISOString() });
         }
-        const scope = body.requesterScope;
-        if (scope && typeof scope === 'object' && 'kind' in scope && scope.kind === 'workflow_trigger'
-          && 'id' in scope && typeof scope.id === 'string' && body.targetMachineId === params.machineId) {
-          const scopeId = scope.id;
-          requesterWakes.set(scopeId, { scopeId, runId: body.runId, nextClaimAt: Date.now() });
+        if (requesterScope) {
+          const key = requesterScope.kind === 'exact' ? requesterScope.id : body.runId;
+          requesterWakes.set(key, { key, scope: requesterScope, runId: body.runId, nextClaimAt: Date.now() });
         }
         if (assignmentReadInFlight) assignmentRefreshPending = true;
         pendingQueuedWake = true;

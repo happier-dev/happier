@@ -2869,7 +2869,7 @@ export async function deleteWorkflowRun(params: Readonly<{ accountId: string; ru
             const exists = await tx.automationRun.findFirst({
                 where: { id: params.runId, accountId: params.accountId },
                 select: { id: true, state: true, workflowCustodyState: true, revision: true,
-                    automationId: true, triggerId: true, scheduledAt: true, startedAt: true, finishedAt: true,
+                    automationId: true, triggerId: true, causeKind: true, scheduledAt: true, startedAt: true, finishedAt: true,
                     updatedAt: true, claimedByMachineId: true, attempt: true, account: { select: { seq: true } } },
             });
             if (!exists) throw new WorkflowRunServiceError("run_not_found");

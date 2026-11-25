@@ -191,6 +191,7 @@ export function emitAutomationRunUpdatedToMachineOnly(params: {
     workflowControl?: "cancel_requested" | "review_resolved";
     managedWakeTargetV1?: ManagedWakeTargetV1;
     requesterScope?: WorkflowRequesterScopeV1;
+    workflowAutomationRequesterAccountId?: string;
 }): void {
     eventRouter.emitUpdate({
         userId: params.accountId,
@@ -223,6 +224,8 @@ export function buildAutomationRunMachineWakeUpdate(
             ...(params.workflowControl ? { workflowControl: params.workflowControl } : {}),
             ...(params.managedWakeTargetV1 ? { managedWakeTargetV1: params.managedWakeTargetV1 } : {}),
             ...(params.requesterScope ? { requesterScope: params.requesterScope } : {}),
+            ...(params.workflowAutomationRequesterAccountId
+                ? { workflowAutomationRequesterAccountId: params.workflowAutomationRequesterAccountId } : {}),
         },
         createdAt: Date.now(),
     };

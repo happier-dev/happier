@@ -172,6 +172,7 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => {
 import { executeClaimedRun } from '@/daemon/automation/automationRunExecutor';
 import { startAutomationWorker } from '@/daemon/automation/automationWorker';
 import { createAutomationClaimClient } from '@/daemon/automation/automationClaimClient';
+import { retainWorkflowRequesterCredentials } from './requesterCustody';
 import { dispatchActionFromRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createWorkflowActionExecutor } from '@/session/actions/workflowActionExecutor';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
@@ -218,7 +219,7 @@ import { projectSpawnSessionControlErrorResponse, SpawnSessionControlErrorRespon
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { SessionLaunchRetiredV1Schema } from '@happier-dev/protocol/spawnSession';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
-import { reloadConfiguration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
 import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { captureSessionLaunchControlMetadata, createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { resolveSpawnChildEnvironment } from '../spawn/resolveSpawnChildEnvironment';
@@ -3515,15 +3516,33 @@ describe('composed Automation workflow claim and optional receipt', () => {
     expect(kit.run()).toMatchObject({ state: 'succeeded', workflowCustodyState: 'settled' });
   });
 
-  it.each([false, true])('readies the exact Bot before offering a quiet origin step (already active: %s)', async alreadyActive => {
+  it.each([
+    { alreadyActive: false, guest: false },
+    { alreadyActive: true, guest: false },
+    { alreadyActive: false, guest: true },
+  ])('readies the exact Bot before offering a quiet origin step ($alreadyActive active, $guest guest)', async ({ alreadyActive, guest }) => {
     const directory = await projectDirectory();
     const habitRunId = '35353535-3535-4535-8535-353535353535';
+    const automationId = 'habit';
+    const credentials = { token: guest ? 'guest-token' : 'token', encryption: null };
+    const exactMachineRpc = machineRpc.callExactMachineRpc;
+    const machineResume = vi.fn<typeof machineRpc.callExactMachineRpc>(async rpc => {
+      if (rpc.method !== RPC_METHODS.SPAWN_HAPPY_SESSION) return await exactMachineRpc(rpc);
+      const spawn = SpawnDaemonSessionRequestSchema.parse(rpc.request);
+      expect(spawn.sessionId).toBe(sessionId);
+      expect(rpc.machineId).toBe(machineId);
+      expect(rpc.credentials.token).toBe(credentials.token);
+      freshSessionRecords.set(sessionId, { ...freshSessionRecords.get(sessionId)!, active: true });
+      return { type: 'success', sessionId };
+    });
+    vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(machineResume);
+    vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(machineResume);
     freshSessionRecords.set(sessionId, createSessionRecordFixture({ id: sessionId, active: alreadyActive,
       encryptionMode: 'plain', machineId, metadata: JSON.stringify({ machineId, path: directory,
         claudeSessionId: 'native-session', runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} },
       }) }));
-    const kit = createWorkflowRunStorageTestkit({ runId: habitRunId, machineId, state: 'claimed',
-      origin: { kind: 'automation', automationId: 'habit' } });
+    const kit = createWorkflowRunStorageTestkit({ runId: habitRunId, machineId, accountId, state: 'claimed',
+      origin: { kind: 'automation', automationId } });
     const offered: unknown[] = [];
     const origin = createWorkflowOriginContextInputPort({ accountId, originSessionId: sessionId, machineId,
       resolveEncryption: async () => ({ kind: 'available', witness: currentness }),
@@ -3546,17 +3565,84 @@ describe('composed Automation workflow claim and optional receipt', () => {
       return { ok: true, sessionId, localId: request.localId,
         result: { kind: 'final_text', text: 'Reading notes are up to date.' } };
     });
-    const coordinate = workflowDaemonProcess({ storage: kit, sessionInput, directory, readActualConversation: true });
+    const coordinate = workflowDaemonProcess({ storage: kit, sessionInput, directory, credentials, readActualConversation: true });
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: { conversation: { kind: 'origin_session' } },
       blocks: [step('upkeep', { document: { text: 'Keep the reading notes tidy.', references: [], attachments: [] } })],
       finalOutput: { kind: 'result', producer: { blockId: 'upkeep', scope: { kind: 'current' } }, path: [] } };
-    const claim = { runId: habitRunId, automationId: 'habit', scopeSessionId: sessionId, attempt: 1,
+    const claim = { runId: habitRunId, automationId, scopeSessionId: sessionId, attempt: 1,
       expectedRevision: 0, accountCurrentness: currentness, automationCause: { kind: 'manual' as const, invokedAt: 1 },
       causeWorkDepth: 0, definitionEnvelope: JSON.stringify({ t: 'plain', v: { inlineDefinition: definition,
         workspace: { directory }, executionTarget: { kind: 'session' } } }),
       acquireMachineStartCapacity: async () => { throw new Error('An existing Bot input consumes no Agent-start slot'); } };
-    expect(await coordinate(claim)).toMatchObject({ state: 'succeeded' });
+    if (guest) {
+      const homeServerIdentityId = 'srv_stopped_guest';
+      const custodianAccountId = 'custodian';
+      const custodian = { token: 'custodian-token', encryption: null };
+      vi.stubEnv('HAPPIER_HOME_DIR', directory);
+      reloadConfiguration();
+      onTestFinished(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
+      const attribution = { serverId: configuration.activeServerId, machineId, installationId: 'installation', accountId };
+      let claimed = false;
+      let outcome: Awaited<ReturnType<typeof coordinate>> | 'requester_custody_unavailable' | undefined;
+      vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+        if (url.endsWith('/v1/account/profile')) {
+          expect(options?.headers?.Authorization).toBe('Bearer guest-token');
+          return { status: 200, data: { id: accountId } };
+        }
+        if (url.endsWith('/v3/automations/worker/assignments')) return { data: { assignments: [],
+          settings: { maxActiveRunsPerMachine: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE } } };
+        if (url.endsWith('/v3/automations/worker/run-lifecycle')) return { data: { sources: [] } };
+        return await readSessionReadiness(url);
+      });
+      const machineAdmission = { actorAccountId: accountId, custodianAccountId, machineId,
+        installationId: attribution.installationId, role: 'use', encryptionMode: 'plain' } as const;
+      vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
+        const authorization = options?.headers?.Authorization;
+        if (url.endsWith(`/runs/${habitRunId}/requester-custody-unavailable`)) {
+          expect(authorization).toBe('Bearer custodian-token');
+          outcome = 'requester_custody_unavailable';
+          return { data: { recorded: true } };
+        }
+        if (!url.endsWith('/v3/automations/runs/claim')) return await writeSessionReadiness(url, body);
+        if (claimed || authorization !== 'Bearer guest-token') return { data: { run: null, automation: null, accountCurrentness: null } };
+        expect(body.scope).toBe('workflow');
+        claimed = true;
+        return { data: {
+          run: { id: habitRunId, automationId, triggerId: null, triggerRetired: false, cause: claim.automationCause,
+            causeWorkDepth: claim.causeWorkDepth, recipeKind: 'workflow-v2', attempt: 1, revision: 0, leaseExpiresAt: Date.now() + 120_000,
+            executionInputEnvelope: claim.definitionEnvelope, automationEvidenceEnvelope: null, machineAdmission },
+          automation: { id: automationId, name: 'Quiet habit', enabled: true, scopeSessionId: sessionId },
+          accountCurrentness: currentness,
+        } };
+      });
+      const worker = startAutomationWorker({ token: custodian.token, credentials: custodian, machineId,
+        requesterHomeServerIdentityId: homeServerIdentityId,
+        requesterWorkAttributionV1: { ...attribution, accountId: custodianAccountId },
+        coordinateWorkflowRun: async (input, requester) => {
+          expect(requester?.attribution.accountId).toBe(accountId);
+          expect(input.machineAdmission).toEqual(machineAdmission);
+          outcome = await coordinate(input);
+          return outcome;
+        } });
+      try {
+        await worker.refreshAssignments();
+        // The stopped Session's enabled trigger has already saved custody on the installed Machine.
+        await retainWorkflowRequesterCredentials({ scopeId: 'stopped-session-trigger', automationId, credentials,
+          attribution, homeServerIdentityId, happyHomeDir: directory });
+        // Home selects the admitted Automation owner for this manual occurrence.
+        worker.handleServerUpdate({ id: 'stopped-session-run-now', seq: 1, createdAt: 1, body: {
+          t: 'automation-run-updated', runId: habitRunId, automationId, state: 'queued', scheduledAt: 1,
+          startedAt: null, finishedAt: null, updatedAt: 1, machineId: null, targetMachineId: machineId,
+          workflowAutomationRequesterAccountId: accountId,
+        } });
+        await expect.poll(() => outcome).toBeDefined();
+        expect(outcome, JSON.stringify(outcome)).toMatchObject({ state: 'succeeded' });
+      } finally { worker.stop(); }
+    } else {
+      expect(await coordinate(claim)).toMatchObject({ state: 'succeeded' });
+    }
     expect(offered).toHaveLength(1);
+    expect(machineResume.mock.calls.filter(([rpc]) => rpc.method === RPC_METHODS.SPAWN_HAPPY_SESSION)).toHaveLength(alreadyActive ? 0 : 1);
     expect(sessionInput.enqueue).not.toHaveBeenCalled();
     expect(openRowProgress(kit, rowFor(kit, 'upkeep')!).result).toBe('Reading notes are up to date.');
     const acceptedEnvelope = kit.acceptedEnvelope();
