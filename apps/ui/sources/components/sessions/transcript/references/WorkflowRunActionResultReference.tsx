@@ -19,6 +19,7 @@ import { renderWorkUpdateCardSurface, useWorkTheme, WORK_HOST } from '@/componen
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
+import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { useSaveRunAsWorkflow } from '@/components/workflows/run/useSaveRunAsWorkflow';
 import { Typography } from '@/constants/Typography';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -138,16 +139,7 @@ function MountedWorkflowRunReference(props: Readonly<{
 
     if (!readable) return null;
 
-    // The same three-way name rule as the Workflows collection: the accepted
-    // private title when this device can read it, an explicit unavailable
-    // notice when the owner says it cannot, and the neutral label while the row
-    // is not yet known — never a title guessed from the tool input.
-    const metadata = row?.metadata ?? null;
-    const title = metadata?.kind === 'available'
-        ? metadata.value.title
-        : metadata?.kind === 'unavailable'
-            ? t('workflows.contentUnavailable')
-            : t('workflows.run.untitled');
+    const title = formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(row?.metadata), summary?.state);
     const status = summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) })
         : notice ? resolveWorkStatusTone({ kind: 'worker_update', facts: { update: notice } }) : null;
     const progress = summary ? describeWorkflowRunProgress(summary.stepProgress) : null;

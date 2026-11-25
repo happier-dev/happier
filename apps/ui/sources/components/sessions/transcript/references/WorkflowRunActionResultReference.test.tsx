@@ -104,7 +104,7 @@ function startToolCall(overrides: Record<string, unknown> = {}) {
 }
 
 async function getResult(
-    state: 'running' | 'succeeded' | 'interrupted',
+    state: 'running' | 'succeeded' | 'interrupted' | 'failed',
     revision = 2,
     metadata: Readonly<{ title: string }> | null | false = { title: 'Release audit' },
 ) {
@@ -133,7 +133,7 @@ async function getResult(
         keyCensusByRunId: { [RUN_ID]: keyCensus } };
 }
 
-async function answerRun(state: 'running' | 'succeeded' | 'interrupted', revision = 2,
+async function answerRun(state: 'running' | 'succeeded' | 'interrupted' | 'failed', revision = 2,
     metadata: Readonly<{ title: string }> | null | false = { title: 'Release audit' }) {
     home.answer(serverId, STORAGE_ROUTE, { body: await getResult(state, revision, metadata) });
 }
@@ -302,6 +302,16 @@ describe('inline transcript workflow Run result', () => {
         const text = collectHostText(screen.tree);
         expect(text).toContain('workflows.contentUnavailable');
         expect(text).not.toContain('workflows.run.untitled');
+    });
+
+    it('uses the standard fallback name for a failed Run without accepted content', async () => {
+        await answerRun('failed', 2, null);
+        const screen = await renderCardRow();
+        await settle();
+
+        const text = collectHostText(screen.tree);
+        expect(text).toContain('workflows.run.untitled');
+        expect(text).not.toContain('workflows.contentUnavailable');
     });
 
     it('names a Run without an authored title from its frozen program', async () => {
