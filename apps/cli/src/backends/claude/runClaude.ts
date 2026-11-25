@@ -741,6 +741,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Start Hook server for receiving Claude session notifications
     const statuslineApplier = createClaudeStatuslineApplier({ logPrefix: '[claude]' });
     const hookServerOptions: Parameters<typeof startHookServer>[0] = {
+        sessionWorkingDirectory: workingDirectory,
         onStatuslineUpdate: (payload) => {
             if (currentSession) {
                 statuslineApplier.apply(currentSession, payload);
@@ -1619,6 +1620,7 @@ async function runClaudeLocalFastStart(credentials: Credentials, options: StartO
 
     const statuslineApplier = createClaudeStatuslineApplier({ logPrefix: '[claude]' });
     const hookServerOptions: Parameters<typeof startHookServer>[0] = {
+        sessionWorkingDirectory: workingDirectory,
         onStatuslineUpdate: (payload) => {
             if (currentSession) {
                 statuslineApplier.apply(currentSession, payload);

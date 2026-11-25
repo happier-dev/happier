@@ -84,7 +84,12 @@ process.stdin.on('end', () => {
             ...(secret.length > 0 ? { 'x-happier-hook-secret': secret } : {})
         }
     }, (res) => {
-        res.resume(); // Drain response
+        if (res.statusCode >= 200 && res.statusCode < 300 && res.headers['content-type'] === 'application/json') {
+            // Claude consumes the hook's JSON response from stdout.
+            res.pipe(process.stdout);
+        } else {
+            res.resume();
+        }
         res.on('end', () => {
             if (res.statusCode < 200 || res.statusCode >= 300) {
                 reportFailure(`Hook server returned HTTP ${res.statusCode}`);

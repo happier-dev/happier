@@ -60,6 +60,7 @@
 import { createServer, IncomingMessage, ServerResponse, Server } from 'node:http';
 import { logger } from '@/ui/logger';
 import { parseClaudeStatuslinePayload, type ClaudeStatuslinePayload } from '../statusline/statuslinePayload';
+import { resolveClaudeAttachmentPromptContext } from './resolveClaudeAttachmentPromptContext';
 
 /**
  * Data received from Claude's SessionStart hook
@@ -140,6 +141,8 @@ function buildDefaultPermissionHookResponse(data?: PermissionHookData): Permissi
 }
 
 export interface HookServerOptions {
+    /** Original session directory used by Happier's attachment uploader */
+    sessionWorkingDirectory?: string;
     /** Called when a session hook is received with a valid session ID */
     onSessionHook: (sessionId: string, data: SessionHookData) => void;
     /** Called when a permission hook is received */
@@ -289,6 +292,16 @@ export async function startHookServer(options: HookServerOptions): Promise<HookS
                         logger.debug('[hookServer] Session hook received but no session_id found in data');
                     }
 
+                    if (sessionId && options.sessionWorkingDirectory
+                        && (data.hook_event_name ?? data.hookEventName) === 'UserPromptSubmit') {
+                        const additionalContext = resolveClaudeAttachmentPromptContext(data.prompt, options.sessionWorkingDirectory);
+                        if (additionalContext) {
+                            res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+                                hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext },
+                            }));
+                            return;
+                        }
+                    }
                     res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
                 } catch (error) {
                     clearTimeout(timeout);
