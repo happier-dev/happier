@@ -5,9 +5,8 @@ import type {
   TerminalHostHandle,
 } from '@happier-dev/agents';
 import type { AgentTerminalLaunchPlan, AgentTerminalLaunchRequest } from './surfaces.js';
-import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
-import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
-export type { AgentSessionIdleCompactionPreferenceV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
+import type { AgentSessionCatalogChangedEventV1, AgentSessionIdleCompactionPreferenceV1, AgentUsageObservedPayloadV1 } from './sessionProtocolTypes.js';
+export type { AgentSessionIdleCompactionPreferenceV1 } from './sessionProtocolTypes.js';
 
 import type { JsonValue, PluginJsonSchema } from '../identity.js';
 import type { Disposable } from '../lifecycle.js';
@@ -19,7 +18,7 @@ export type {
   AgentSessionCompactionCapability,
   AgentSessionCompactionIdleCapability,
   PluginAgentSessionCompactionCapabilityV2,
-} from '@happier-dev/protocol/plugins/agents';
+} from './sessionProtocolTypes.js';
 
 /** Agent-owned runtime identity carried across host-owned session lifecycle. */
 export type RuntimeDescriptorV1 = Readonly<{
