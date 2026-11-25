@@ -3,10 +3,25 @@ import { describe, expect, it } from 'vitest';
 import { ApprovalRequestV2Schema, HistoricalPublishApprovalRequestV2Schema, StoredApprovalRequestSchema, type ApprovalRequestV2 } from './approvalRequestV1.js';
 import { RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { createApprovalAutomaticChecksV1 } from '../actions/executor/automaticApprovalContinuation.js';
-import { decideApprovalRequestTransition, resolveApprovalRequestExecutionInput, settleApprovalRequestActionArgs } from './approvalRequestTransition.js';
+import { decideApprovalRequestTransition, isApprovalResultRouteUnavailableV1, resolveApprovalRequestExecutionInput, settleApprovalRequestActionArgs } from './approvalRequestTransition.js';
 import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { PileApplyResultV1Schema } from '../storage/storageV1.js';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../actions/externalActionExecutionAuthorization.js';
+
+describe('approval result delivery route availability', () => {
+  it.each([
+    ['target_unavailable', true],
+    ['machine_offline', true],
+    ['machine_unavailable', true],
+    ['server_unreachable', true],
+    ['RPC_TRANSPORT_UNAVAILABLE', true],
+    ['RPC_METHOD_NOT_AVAILABLE', false],
+    ['permission_denied', false],
+    [undefined, false],
+  ] as const)('classifies %s as replayable=%s', (code, expected) => {
+    expect(isApprovalResultRouteUnavailableV1(code)).toBe(expected);
+  });
+});
 
 const target = { kind: 'window', displayId: ':73', pid: 42, windowId: 123 } as const;
 

@@ -4,6 +4,7 @@ import { getActionSpec } from '../actions/actionSpecs.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { ApprovalRequestUpdateSchema, ApprovalRequestV2Schema, isHistoricalPublishApprovalRequestV2, type ApprovalRequest, type ApprovalRequestV2, type CurrentApprovalRequest, type StoredApprovalRequestV2 } from './approvalRequestV1.js';
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isMachineRequestReachabilityFailureV1 } from '../machines/machineReachabilityV1.js';
 import type { SessionInputAdmissionResultV1 } from '../sessions/messages/sessionInputAdmission.js';
 import { actionAutomationTriggerKeyV1, isApprovalRequestExecutionApproved } from './approvalAutomaticChecks.js';
 export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from './creation.js';
@@ -33,8 +34,8 @@ export { createApprovalRequestArtifact, deriveApprovalRequestArtifactId, assertA
 type ApprovalRequestStatus = ApprovalRequest['status'];
 
 export function isApprovalResultRouteUnavailableV1(code: string | null | undefined): boolean {
-  return code === 'target_unavailable' || code === 'machine_offline' || code === 'server_unreachable'
-    || code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE;
+  return code === 'server_unreachable' || code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE
+    || isMachineRequestReachabilityFailureV1({ rpcErrorCode: code });
 }
 
 export function canReplayApprovalResultDeliveryV1(delivery: SessionInputAdmissionResultV1): boolean {
