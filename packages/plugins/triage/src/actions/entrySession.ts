@@ -411,6 +411,19 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
                 relationFailure = projectTriageNewSessionFailureV1(error) ?? { codes: ['action_failed'] };
             }
         }
+        if (composition && parsed.kind === 'native' && parsed.runs.length === 0) {
+            const [firstRefusal, ...otherRefusals] = parsed.failed;
+            // A person-only Review has no executable reviewers and can still be admitted.
+            if (firstRefusal !== undefined) {
+                throw new PluginError({
+                    code: firstRefusal.errorCode,
+                    diagnostics: otherRefusals.map(({ errorCode }) => ({ code: errorCode, severity: 'error' as const })),
+                    details: projectNativeJsonValueForTransport({
+                        reviewResult: fanout, review: parsed.reviewRound, failure: relationFailure,
+                    }),
+                });
+            }
+        }
         if (parsed.kind !== 'outcome_unknown' && (composition || parsed.kind === 'workflow')) {
             return { v: 1, status: 'accepted', reviewResult: projectNativeJsonValueForTransport(fanout),
                 ...(relationFailure === undefined ? {} : { failure: relationFailure }),

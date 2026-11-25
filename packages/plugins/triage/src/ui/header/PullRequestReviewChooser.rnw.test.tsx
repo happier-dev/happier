@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRuns';
-import { ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
+import { ReviewStartInputSchema, reviewReviewerIdsForStartV1 } from '@happier-dev/plugin-sdk/reviews';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { SelectActionInputRequest, SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
@@ -21,14 +21,14 @@ import {
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, TriageStartPullRequestReviewInputV1Schema } from '../../actions/entrySessionProtocol.js';
+import { TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, TriagePreparePullRequestReviewResultV1Schema, TriageStartPullRequestReviewInputV1Schema } from '../../actions/entrySessionProtocol.js';
 import { createTriageStartPullRequestReviewActionHandler } from '../../actions/entrySession.js';
 import type { TriagePendingPullRequestReviewV1 } from './useEntrySessionStart.js';
 import { TriagePullRequestReviewChooser } from './PullRequestReviewChooser.js';
 import { readTriageActionsForSurface } from '../../actions/actionsCatalog.js';
 import { mutateTriageAction, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } from '../../settings/actions.js';
 import { createTestkitAccountKv } from '../../settings/testkit/accountKv.test-support.js';
-import { testkitTriageActionId, TESTKIT_REVIEW_WORKFLOW_RECEIPT } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
+import { createTriagePullRequestReviewActionTestkit, testkitTriageActionId, TESTKIT_OBSERVED_REVISION, TESTKIT_REVIEW_WORKFLOW_RECEIPT } from '../../sessions/testkit/entrySessionTestkit.test-support.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,7 +104,8 @@ async function mountChooser(executeAction: (
   request: SelectActionInputRequest,
 ) => Promise<SelectActionInputResult> = async () => ({ kind: 'reviewComposition', input: DEFAULT_REVIEW_INPUT }),
 catalog = createReviewCatalog(), notifications: string[] = [],
-executeControl?: Parameters<typeof createPluginUiActionControlTestHost>[0]): Promise<Readonly<{
+executeControl?: Parameters<typeof createPluginUiActionControlTestHost>[0],
+pending = PENDING): Promise<Readonly<{
   fixture: PluginUiTestkit;
   focusedLabels: readonly string[];
   controls: ReturnType<typeof createPluginUiActionControlTestHost>;
@@ -131,7 +132,7 @@ executeControl?: Parameters<typeof createPluginUiActionControlTestHost>[0]): Pro
         />
         {visible ? (
           <TriagePullRequestReviewChooser
-            pending={PENDING}
+            pending={pending}
             onFinished={() => { setVisible(false); }}
           />
         ) : null}
@@ -331,6 +332,34 @@ describe('the mounted selected-PR review chooser', () => {
       expect(notifications.join(' ')).toContain('relation-write-17');
       expect(notifications.join(' ')).toContain('Review started. Relation not recorded.');
     }
+  });
+
+  it('shows Details and Retry for a definitively refused native Review without opening the Session', async () => {
+    const code = 'execution_run_target_unavailable';
+    const review = { reviewId: 'review-refused', roundOrdinal: 1 };
+    const results = await fanoutStarts({ keys: reviewReviewerIdsForStartV1(DEFAULT_REVIEW_INPUT), startOne: async () => ({
+      ok: false, errorCode: code, error: 'execution_run_failed', details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    }) });
+    const kit = await createTriagePullRequestReviewActionTestkit({ executeReview: async () => ({
+      intent: 'review', sessionId: PENDING.sessionId, reviewRound: review, results,
+    }) });
+    const prepared = TriagePreparePullRequestReviewResultV1Schema.parse(await kit.invoke('entries/prepare-pull-request-review-v1',
+      { ...kit.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha }));
+    if (prepared.status !== 'prepared') throw new Error('Expected prepared PR');
+    const calls: string[] = [];
+    const { fixture, controls } = await mountChooser(async (action, input) => {
+      calls.push(action);
+      if (action === 'session.open') return null;
+      return await kit.invoke(action, input as import('@happier-dev/plugin-sdk').JsonValue);
+    }, undefined, undefined, undefined, undefined, { ...PENDING, review: prepared.review, comparisonSource: prepared.comparisonSource });
+
+    await controls.press('Start review');
+    await settle();
+
+    expect(calls).toEqual([TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1]);
+    expect(controls.presentation('Try again')).toBeDefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
+    expect(document.body.textContent).toContain(code);
   });
 
   it('opens the already-linked Session when the optional review is cancelled', async () => {

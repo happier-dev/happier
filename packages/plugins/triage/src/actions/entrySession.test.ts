@@ -7,6 +7,7 @@ import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginActionPresentUserGate, PLUGIN_ACTION_INPUT_SCHEMAS, type SessionMessageSendResultV1 } from '@happier-dev/protocol';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, projectTriagePrepareReviewWorkspaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
@@ -30,7 +31,7 @@ import {
     testkitEntryRef,
     testkitLocator,
 } from '../corpus/testkit/observations.test-support.js';
-import { PLUGIN_MANIFEST } from '../manifest.js';
+import { PLUGIN_MANIFEST, TRIAGE_PLUGIN } from '../manifest.js';
 import { SessionServerStartSpawnDraftV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import { projectTriageNewSessionDestinationV1 } from '../ui/header/newSessionDestination.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
@@ -1343,19 +1344,44 @@ describe('the registered formal Review transition', () => {
         expect(events.filter(event => event === 'review.start')).toHaveLength(1);
     });
 
-    it('reports the admitted Review and round of an editable composition beside its retained receipt', async () => {
+    it.each([true, false])('keeps the admitted Review and keyed launch results (partial=%s)', async partial => {
         const review = { reviewId: 'review-composed', roundOrdinal: 1 };
-        const receipt = reviewStartFanout({ 'engine-a': 'started' }, review);
+        const reviewers = reviewReviewersForEngineIdsV1(['engine-a', 'engine-b']);
+        const keys = reviewReviewerIdsForStartV1({ reviewers });
+        const errorCodes = ['execution_run_target_unavailable', 'review_engine_unavailable'];
+        const results = await fanoutStarts({ keys, startOne: async key => {
+            if (partial && key === keys[0]) {
+                return { runId: 'run-engine-a', callId: 'call-engine-a', sidechainId: 'sidechain-engine-a' };
+            }
+            const errorCode = errorCodes[keys.indexOf(key)]!;
+            return { ok: false, errorCode, error: errorCode,
+                details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
+        } });
+        const receipt = { intent: 'review', sessionId: 'session-a', reviewRound: review, results };
         const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async () => receipt });
         const prepared = TriagePreparePullRequestReviewResultV1Schema.parse(await h.invoke('entries/prepare-pull-request-review-v1', { ...h.savedInput, expectedHeadSha: TESTKIT_OBSERVED_REVISION.headSha }));
         if (prepared.status !== 'prepared') throw new Error('Expected prepared PR');
-        const answer = await h.invoke(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1, {
-            v: 1, sessionId: 'session-a', review: prepared.review, comparisonId: prepared.comparisonId,
-            reviewInput: { reviewers: [{ kind: 'engine', engineId: 'engine-a' }], instructions: 'Review the pinned PR' },
-        });
-        expect(TriageStartPullRequestReviewResultV1Schema.parse(answer)).toEqual({
-            v: 1, status: 'accepted', reviewResult: receipt, review,
-        });
+        const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: TRIAGE_PLUGIN });
+        try {
+            const start = plugin.registration('actions', TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+            if (start === undefined) throw new Error('Expected registered Review start');
+            const answer = start({
+                v: 1, sessionId: 'session-a', review: prepared.review, comparisonId: prepared.comparisonId,
+                reviewInput: { reviewers, instructions: 'Review the pinned PR' },
+            }, h.context);
+            if (partial) {
+                await expect(answer).resolves.toEqual({ v: 1, status: 'accepted', reviewResult: receipt, review });
+            } else {
+                await expect(answer).rejects.toMatchObject({
+                    code: errorCodes[0],
+                    diagnostics: [{ code: errorCodes[1], severity: 'error' }],
+                    details: { review, reviewResult: receipt },
+                });
+            }
+            expect(await readAdmittedReview({ collections: h.collections, entryRef: prepared.review.entryRef })).toEqual(review);
+        } finally {
+            await plugin.dispose();
+        }
     });
 
     /**

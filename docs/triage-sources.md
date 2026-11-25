@@ -1054,13 +1054,15 @@ the canonical `review.start` schema. It binds that composition to the selected
 Session, prepared comparison ID and verified pinned PR scope, retaining the
 prepared comparison rather than capturing it a second time. Preparation consumes
 the selected source's prepared currentness directly; the final start invokes its
-workspace verifier once, after any intervening editing. Its `accepted` result retains the exact
-Review admission receipt, including a composed Workflow receipt; it does not
-claim that every reviewer has already started. Existing chooser requests retain
-their engine-start results through the same final verifier. A failed admitted
-Review relation write preserves that receipt and surfaces the existing failure
-warning while opening its Session; it does not invite another Review start. Matching 0.3
-development declarations and consumers reload together.
+workspace verifier once, after any intervening editing. Workflow admission and
+partial native starts return `accepted` with the exact Review receipt. If every
+native launch in the composition definitively refused before creating a Run, the
+Action records the admitted PR relation and reports the native refusal with the
+Review receipt and keyed launch results in its failure details. The mounted
+chooser offers Details and Try again. Existing engine-id requests retain their
+engine-start results through the same verifier. An accepted start with a failed
+relation write opens the linked Session and displays the relation failure alongside
+the receipt. Matching 0.3 development declarations and consumers reload together.
 
 The built-in PR review and its editable starter first select opened, reopened
 and synchronized occurrences; closed and merged occurrences finish without
