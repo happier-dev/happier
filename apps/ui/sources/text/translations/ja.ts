@@ -5760,7 +5760,7 @@ localTailscale: {
     },
     authModal: {
       nativeAuthTitle: "バックエンドのネイティブ認証",
-      nativeAuthSubtitle: "ローカルCLIログイン / APIキーを使用",
+      nativeAuthSubtitle: "このマシンですでに設定されているログインを使用",
             groupSubtitle: 'アカウントグループ',
       groupReadySubtitle: 'アクティブなメンバーを使用し、必要に応じてフォールバック',
       groupExhaustedSubtitle: '有効なメンバー全員が使用制限の解除を待っています',

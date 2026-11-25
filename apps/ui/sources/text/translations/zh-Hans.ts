@@ -5185,7 +5185,7 @@ export const zhHans: TranslationStructure = {
     },
     authModal: {
       nativeAuthTitle: "后端原生认证",
-      nativeAuthSubtitle: "使用本地 CLI 登录 / API 密钥",
+      nativeAuthSubtitle: "使用这台机器上已有的登录",
             groupSubtitle: '账户组',
       groupReadySubtitle: '账户组已就绪',
       groupExhaustedSubtitle: '账户组已耗尽',

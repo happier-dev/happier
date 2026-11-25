@@ -5045,7 +5045,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         },
         authModal: {
             nativeAuthTitle: 'Native Backend-Auth',
-            nativeAuthSubtitle: 'Deinen lokalen CLI-Login bzw. deine API-Keys nutzen',
+            nativeAuthSubtitle: 'Die bereits auf diesem Computer vorhandene Anmeldung verwenden',
             groupSubtitle: 'Eine verbundene Kontogruppe nutzen',
             groupReadySubtitle: 'Das aktive Mitglied nutzen, Fallback steht bereit',
             groupExhaustedSubtitle: 'Alle aktivierten Mitglieder warten auf Kontingent',

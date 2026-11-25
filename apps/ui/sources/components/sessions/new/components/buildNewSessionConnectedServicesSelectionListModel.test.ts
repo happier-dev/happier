@@ -8,6 +8,7 @@ import { ConnectedServiceQuotaSnapshotV1Schema } from '@happier-dev/protocol/con
 
 import {
     buildNewSessionConnectedServicesSelectionListModel,
+    createConnectServiceOptionId,
     createConnectedServiceGroupOptionId,
     createConnectedServiceOptionId,
     createNativeServiceOptionId,
@@ -61,6 +62,20 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it.each(['needs_reauth', 'unsupported_kind', 'connected'] as const)(
+        'keeps the no-account prompt out of an existing %s account inventory', (status) => {
+            const model = buildModel({
+                profileOptionsByServiceId: { anthropic: [
+                    { profileId: 'work', status },
+                    { profileId: 'personal', status },
+                ] },
+            });
+            const options = firstStaticSection(model).options;
+            expect(options.some(option => option.id === createConnectServiceOptionId('anthropic'))).toBe(false);
+            expect(options).toHaveLength(3);
+        },
+    );
+
     it.each([false, true])('shows a continuity refusal for own sign-in with a native route descriptor: %s', (withNativeRoute) => {
         const onBrowse = vi.fn();
         const model = buildModel({
@@ -238,19 +253,18 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(pool.disabled).toBe(false);
         vi.restoreAllMocks();
     });
-    it('opens Connect from the control used for an empty or signed-out service', () => {
+    it.each([false, true])('opens Connect from the relevant control for a signed-out service: %s', (signedOut) => {
         const onOpenSettings = vi.fn();
         const trigger = { getBoundingClientRect: () => ({ left: 30, top: 40, width: 24, height: 24 }) };
         // Only currentTarget crosses this platform press boundary; domain selection does not read other fields.
         const event = { currentTarget: trigger } as unknown as GestureResponderEvent;
-        const model = buildModel({ profileOptionsByServiceId: { anthropic: [{ profileId: 'work', status: 'needs_reauth' }] }, onOpenSettings });
+        const model = buildModel({ profileOptionsByServiceId: { anthropic: signedOut ? [{ profileId: 'work', status: 'needs_reauth' }] : [] }, onOpenSettings });
         const rows = firstStaticSection(model).options;
-        for (const id of [createReauthServiceOptionId('anthropic', 'work'), 'connected-service:anthropic:connect']) {
-            const row = rows.find(candidate => candidate.id === id);
-            expect(row).toBeDefined();
-            row?.onSelect?.(event);
-            expect(onOpenSettings).toHaveBeenLastCalledWith('anthropic', { kind: 'view', ref: { current: trigger } });
-        }
+        const id = signedOut ? createReauthServiceOptionId('anthropic', 'work') : createConnectServiceOptionId('anthropic');
+        const row = rows.find(candidate => candidate.id === id);
+        expect(row).toBeDefined();
+        row?.onSelect?.(event);
+        expect(onOpenSettings).toHaveBeenLastCalledWith('anthropic', { kind: 'view', ref: { current: trigger } });
     });
 
     it('leads each row with what it is and marks the current choice with a trailing check (RT1)', () => {

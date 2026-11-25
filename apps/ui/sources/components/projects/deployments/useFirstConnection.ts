@@ -5,6 +5,7 @@ import {
   sameQualifiedConnectedAccountRef,
   type QualifiedConnectedAccountRef,
 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { ConnectSheetAccountRequest } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -22,6 +23,7 @@ export function useFirstConnection(
   lifetime: ServerAccountScopeLifetime | null,
   service: PluginContributionIdentityV1 | null,
   onConnected: (account: QualifiedConnectedAccountRef) => void,
+  initialMachineTarget?: ConnectSheetAccountRequest['initialMachineTarget'],
 ) {
   const [acknowledged, setAcknowledged] = React.useState<Readonly<{
     account: QualifiedConnectedAccountRef;
@@ -87,6 +89,7 @@ export function useFirstConnection(
       ...(lifetime ? { scope: lifetime.scope } : {}),
       service,
       intent: 'add',
+      ...(initialMachineTarget ? { initialMachineTarget } : {}),
     });
     if (result.kind === 'dismissed' || scope && !scope.isCurrent()) return;
     setAcknowledged({ account: result.account, lifetime, scope, status: 'checking' });

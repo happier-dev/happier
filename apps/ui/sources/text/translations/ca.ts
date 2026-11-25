@@ -5116,7 +5116,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         authModal: {
             groupSubtitle: 'Fes servir un grup de comptes connectats',
             nativeAuthTitle: 'Autenticació nativa del backend',
-            nativeAuthSubtitle: 'Utilitza l\'inici de sessió del CLI local / claus API',
+            nativeAuthSubtitle: 'Utilitza l\'inici de sessió ja disponible en aquesta màquina',
             groupReadySubtitle: 'Utilitza el membre actiu, amb alternativa disponible',
             groupExhaustedSubtitle: 'Tots els membres activats esperen quota',
             groupNeedsMembersSubtitle: 'Afegeix o activa un membre abans d\'usar aquest grup',

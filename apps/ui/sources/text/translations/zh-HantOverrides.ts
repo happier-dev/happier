@@ -3411,7 +3411,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         },
         authModal: {
             nativeAuthTitle: '後端原生驗證',
-            nativeAuthSubtitle: '使用本機 CLI 登入 / API 金鑰',
+            nativeAuthSubtitle: '使用這台機器上已有的登入',
             groupSubtitle: '帳戶群組',
             connectedServicesTitle: '使用已連線服務',
             connectedServicesSubtitle: '你的代理用於登入的帳號，以及每個帳號的剩餘用量。',

@@ -521,7 +521,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             });
         }
 
-        if (connectedProfiles.length === 0) {
+        if (serviceOptions.length === 0) {
             const connectLabel = params.translate('connectedServices.authModal.notConnectedTitle');
             options.push({
                 id: createConnectServiceOptionId(serviceId),

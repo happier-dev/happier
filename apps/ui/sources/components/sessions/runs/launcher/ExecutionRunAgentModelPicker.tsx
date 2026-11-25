@@ -1,6 +1,8 @@
 import { getAgentModelConfig } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings } from '@happier-dev/protocol/account/settings/connected-services';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import type { ConnectSheetAccountRequest } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { useFirstConnection } from '@/components/projects/deployments/useFirstConnection';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
@@ -51,8 +53,10 @@ function ExecutionRunAccountPurposePicker(props: AgentModelPickerProps) {
     const parsed = ConnectedServiceBindingsV2Schema.safeParse(props.actionInput.connectedServices);
     if (!catalog?.identity) return null;
     const consumer = catalog.identity;
+    const serverIdentityId = props.serverId ? getServerProfileById(props.serverId)?.serverIdentityId : null;
+    const initialMachineTarget = serverIdentityId && props.machineId ? { serverIdentityId, machineId: props.machineId } : null;
     return <>{catalog.connectedAccounts.map(declaration => <ExecutionRunAccountPurposeField key={declaration.purpose}
-        declaration={declaration} consumer={consumer} agentTitle={props.choice.title}
+        declaration={declaration} consumer={consumer} agentTitle={props.choice.title} initialMachineTarget={initialMachineTarget}
         bindings={parsed.success ? parsed.data : undefined} setActionInput={props.setActionInput} />)}</>;
 }
 
@@ -60,6 +64,7 @@ function ExecutionRunAccountPurposeField(props: Readonly<{
     declaration: React.ComponentProps<typeof ConnectedAccountPurposeTargetChooser>['declaration'];
     consumer: NonNullable<NonNullable<ExecutionRunLauncherBackendChoice['agentCatalogEntry']>['identity']>;
     agentTitle: string;
+    initialMachineTarget: ConnectSheetAccountRequest['initialMachineTarget'];
     bindings: SessionModelPickerProps['connectedServices'];
     setActionInput: AgentModelPickerProps['setActionInput'];
 }>) {
@@ -76,7 +81,7 @@ function ExecutionRunAccountPurposeField(props: Readonly<{
                 purpose: { consumer, purpose: declaration.purpose }, service: declaration.service, target, teamResource,
             }]),
         }));
-    const connection = useFirstConnection(null, declaration.service, account => select({ kind: 'account', account }, null));
+    const connection = useFirstConnection(null, declaration.service, account => select({ kind: 'account', account }, null), props.initialMachineTarget);
     const testID = `execution-run-account:${declaration.purpose}`;
     const ownSignIn = t('connectedServices.purposeTargets.ownSignIn', { agent: props.agentTitle });
     if (connection.pending) return <SurfaceStateCard testID={`${testID}:pending`} size="line" kind="loading" title={t('common.loading')} />;

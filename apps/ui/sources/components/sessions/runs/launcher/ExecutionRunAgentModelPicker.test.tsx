@@ -124,14 +124,16 @@ it('offers an account-only engine its declared purpose without a model picker', 
 
 
 it('offers the shared connect sheet instead of an empty account picker when an engine has no accounts', async () => {
-    const { serverId } = await account.restore({ waivedActions: ['providers.models.refresh'] });
+    const machineId = 'review-connect-machine';
+    rpc.state.machines.push(createMachineFixture({ id: machineId, activeAt: Date.now() }));
+    const { serverId } = await account.restore({ waivedActions: ['providers.models.refresh'], serverIdentityId: 'srv_review_connect' });
     const choice = resolveExecutionRunLauncherBackendChoices({ intent: 'review', enabledAgentIds: ['coderabbit'], executionRunsBackends: {},
         reviewEngines: [{ engineId: 'coderabbit', value: 'agent:happier.review.coderabbit/coderabbit', label: 'CodeRabbit', enabled: true,
             available: true, capabilities: { structuredNarration: false } }] })[0]!;
     const token = account.home.findByServerUrl('https://provider-settings-account.test')?.token;
     if (!token) throw new Error('Expected synthetic Account credentials');
     const screen = await renderScreen(<InjectedAuthProvider credentials={{ token }}><ModalProvider>
-        <ExecutionRunAgentModelPicker choice={choice} sessionId={null} serverId={serverId} machineId={null}
+        <ExecutionRunAgentModelPicker choice={choice} sessionId={null} serverId={serverId} machineId={machineId}
             actionInput={{}} selected={null} inheritedTeamCredentialModel={null}
             selectBackend={() => undefined} setActionInput={() => undefined} />
     </ModalProvider></InjectedAuthProvider>);
@@ -139,6 +141,7 @@ it('offers the shared connect sheet instead of an empty account picker when an e
     await screen.pressByTestIdAsync('execution-run-account:coderabbit:connect');
     const { ConnectSheetContent } = await import('@/components/settings/connectedServices/setup/ConnectSheetContent');
     expect(screen.findAllByType(ConnectSheetContent)[0]?.props.request).toMatchObject({
+        initialMachineTarget: { serverIdentityId: 'srv_review_connect', machineId },
         intent: 'add', service: choice.agentCatalogEntry!.connectedAccounts[0]!.service,
     });
 });

@@ -5781,7 +5781,7 @@ const enConnectedServices = {
   },
   authModal: {
     nativeAuthTitle: 'Its own sign-in',
-    nativeAuthSubtitle: 'The CLI login or API keys already on this machine',
+    nativeAuthSubtitle: 'Use the sign-in already on this machine',
     groupSubtitle: 'Use a connected account group',
     groupReadySubtitle: 'Use the active member, with fallback available',
     groupExhaustedSubtitle: 'All enabled members are waiting for quota',

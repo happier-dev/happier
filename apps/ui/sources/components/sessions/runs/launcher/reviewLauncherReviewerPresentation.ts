@@ -28,15 +28,20 @@ export function presentReviewLauncherReviewer(reviewer: ReviewEngineReviewerSele
     const runnerTitle = agent?.title ?? (reviewer.runnerAgentTarget ? resolveAgentCatalogTitle(
         agentId ?? buildQualifiedPluginContributionKey(reviewer.runnerAgentTarget.identity),
     ) : null);
+    if (agentId && getAgentModelConfig(agentId)?.supportsSelection === false) {
+        const connected = agent?.agentCatalogEntry?.connectedAccounts.some(declaration =>
+            reviewer.connectedServices?.bindingsByServiceId[buildQualifiedPluginContributionKey(declaration.service)]?.source === 'connected');
+        return { label, subtitle: choice.unavailableReason ?? (connected
+            ? t('settings.connectedAccounts') : t('connectedServices.authModal.nativeAuthTitle')) };
+    }
     const target = reviewer.runnerAgentTarget ?? agent?.backendTarget;
     const inherited = inheritedModel && target && reviewer.childSelection !== 'agentDefault'
         && reviewer.modelSelection === undefined && reviewer.teamCredentialModel === undefined && reviewer.modelId === undefined
         && backendTargetKeysMatch(inheritedModel.selection.agentTargetKey, target) ? inheritedModel : null;
     const modelSelection = reviewer.modelSelection ?? inherited?.selection;
     const modelId = reviewer.teamCredentialModel?.modelId ?? modelSelection?.modelId ?? reviewer.modelId;
-    const model = agentId && getAgentModelConfig(agentId)?.supportsSelection === false ? null
-        : modelId ? inherited?.label ?? resolveRunNativeModelLabel(target, undefined, {
+    const model = modelId ? inherited?.label ?? resolveRunNativeModelLabel(target, undefined, {
             modelSelection: modelSelection ?? null, teamCredentialModel: reviewer.teamCredentialModel ?? null,
-        })(modelId) ?? modelId : t('settingsAgents.defaultModelTitle');
+        })(modelId) ?? modelId : t('agentInput.model.useCliSettings');
     return { label, subtitle: choice.unavailableReason ?? [runnerTitle, model].filter(Boolean).join(' · ') };
 }

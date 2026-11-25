@@ -5274,7 +5274,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     },
     authModal: {
       nativeAuthTitle: "Natywne uwierzytelnianie backendu",
-      nativeAuthSubtitle: "Użyj lokalnego logowania CLI / kluczy API",
+      nativeAuthSubtitle: "Użyj logowania już dostępnego na tym komputerze",
             groupSubtitle: 'Grupa kont',
       groupReadySubtitle: 'Użyj aktywnego członka z możliwością przełączenia na konto zapasowe',
       groupExhaustedSubtitle: 'Wszyscy włączeni członkowie czekają na odnowienie limitu',

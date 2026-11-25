@@ -5156,7 +5156,7 @@ export const ru: TranslationStructure = {
       groupExhaustedSubtitle: 'Все включённые участники ожидают восстановления квоты',
       groupNeedsMembersSubtitle: 'Добавьте или включите участника перед использованием группы',
       nativeAuthTitle: "Нативная авторизация бэкенда",
-      nativeAuthSubtitle: "Используйте локальный логин CLI / API‑ключи",
+      nativeAuthSubtitle: "Используйте вход, уже настроенный на этой машине",
             groupSubtitle: 'Группа аккаунтов',
       connectedServicesTitle: "Использовать подключённые сервисы",
       connectedServicesSubtitle: "Загрузить и материализовать из облака Happier",

@@ -5257,7 +5257,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     },
     authModal: {
       nativeAuthTitle: "Auth native du backend",
-      nativeAuthSubtitle: "Utilise ta connexion CLI locale / tes clés API",
+      nativeAuthSubtitle: "Utilise la connexion déjà présente sur cette machine",
             groupSubtitle: 'Utiliser un groupe de comptes connectés',
       groupReadySubtitle: 'Utiliser le membre actif, avec un compte de repli disponible',
       groupExhaustedSubtitle: 'Tous les membres activés attendent le renouvellement de leur quota',
