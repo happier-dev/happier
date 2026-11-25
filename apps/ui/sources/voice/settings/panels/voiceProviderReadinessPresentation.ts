@@ -2,6 +2,9 @@ import type { VoiceRoleReadiness } from '@/voice/registry/readiness';
 import { t, tLoose } from '@/text';
 
 export function translateVoiceReadiness(key: string, params?: { service: string }): string {
+  if (key === 'voice.readiness.voice_feature_policy_disabled') {
+    return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.voice') });
+  }
   if (key === 'voice.readiness.feature_policy_disabled') {
     return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
   }
@@ -32,7 +35,7 @@ function resolveVoiceReadinessShort(code: string): VoiceReadinessShort {
   if (code === 'credential_approval_required') return 'needsApproval';
   if (code.startsWith('credential_')) return 'needsKey';
   if (code === 'server_feature_disabled') return 'offOnServer';
-  if (code === 'feature_policy_disabled') return 'needsSetup';
+  if (code === 'feature_policy_disabled' || code === 'voice_feature_policy_disabled') return 'needsSetup';
   if (code.startsWith('execution_machine_') || code.startsWith('daemon_')) return 'needsComputer';
   if (code.startsWith('endpoint_')) return 'needsAddress';
   if (code === 'model_missing') return 'needsModel';
@@ -77,7 +80,7 @@ export function resolveVoiceProviderReadinessPresentation(
       && (readiness.code === 'agent_signed_out' || readiness.code.startsWith('runtime_'))
       ? t('voiceSurface.setUpAgent', { agent: readiness.selectedAgent.title }) : readiness.recoveryAction === 'none'
       ? null
-      : translate(readiness.recoveryAction === 'enable_voice_agent' ? 'voice.readiness.actions.open_features'
+      : translate((readiness.recoveryAction === 'enable_voice' || readiness.recoveryAction === 'enable_voice_agent') ? 'voice.readiness.actions.open_features'
         // A check that could not complete is checked again; any other Retry stays Retry.
         : readiness.recoveryAction === 'retry' ? isVoiceReadinessCouldNotCheck(readiness) ? 'voice.readiness.actions.check_again' : 'common.retry'
         : `voice.readiness.actions.${readiness.recoveryAction}`),

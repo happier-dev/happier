@@ -29,7 +29,7 @@ export type VoiceSettingsRouteFocus = 'privacy' | 'provider' | 'execution_machin
 export function resolveVoiceSettingsRecoveryFocus(
   action: VoiceRoleReadiness['recoveryAction'],
 ): Exclude<VoiceSettingsRouteFocus, 'privacy'> | null {
-  if (action === 'none' || action === 'retry' || action === 'enable_voice_agent') return null;
+  if (action === 'none' || action === 'retry' || action === 'enable_voice' || action === 'enable_voice_agent') return null;
   if (action === 'select_execution_machine') return 'execution_machine';
   if (action === 'install_model') return 'local';
   return 'provider';
@@ -57,7 +57,7 @@ export function resolveVoiceSettingsRecoveryTarget(input: VoiceRoleReadiness['re
     if (setting) return { pathname: SETTINGS_ROUTES.voiceConversations,
       params: { [SETTING_ANCHOR_QUERY_PARAM]: setting.anchor } };
   }
-  if (action === 'enable_voice_agent') return SETTINGS_ROUTES.features;
+  if (action === 'enable_voice' || action === 'enable_voice_agent') return SETTINGS_ROUTES.features;
   const focus = resolveVoiceSettingsRecoveryFocus(action);
   if (focus === 'provider') return VOICE_SETTINGS_PROVIDER_FOCUS_TARGET;
   if (focus === 'execution_machine') return VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET;

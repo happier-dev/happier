@@ -7,7 +7,14 @@ import {
   type LocalVoiceTtsProviderController,
   type LocalVoiceTtsProviderId,
 } from './localVoiceTtsProviderControllers';
+import { projectVoiceReadAloudAdmissionReadiness } from '@/voice/settings/projectLocalConversationReadinessFacts';
+import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
+import { getCachedServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import { storage } from '@/sync/domains/state/storage';
+import { parseLocalVoiceTtsSettings, resolveLocalVoiceAdapterSettingsFromVoice } from '@/voice/local/localVoiceSettings';
 import { createVoicePlaybackController } from '@/voice/runtime/playback/VoicePlaybackController';
 
 export function createLocalVoiceTtsController(options?: Readonly<{
@@ -19,6 +26,13 @@ export function createLocalVoiceTtsController(options?: Readonly<{
   }
 
   const playback = createVoicePlaybackController();
+  const readAdmission = (settings: ReturnType<typeof storage.getState>['settings']) =>
+    projectVoiceReadAloudAdmissionReadiness({ voice: settings.voice,
+      voiceAvailability: resolveFeatureAvailabilityArm(resolveRuntimeFeatureDecisionFromSnapshot({
+        featureId: 'voice', settings,
+        snapshot: getCachedServerFeaturesSnapshot({ serverId: getAppliedActiveServerSnapshot().serverId }) ?? { status: 'loading' },
+      })),
+    });
   let sayState: ReturnType<LocalVoiceTtsController['readSay']> = 'idle';
   let saySource: ReturnType<LocalVoiceTtsController['readSaySource']> = null;
   const listeners = new Set<() => void>();
@@ -68,6 +82,9 @@ export function createLocalVoiceTtsController(options?: Readonly<{
     },
     say: async (ctx) => {
       if (ctx.signal?.aborted) return { status: 'cancelled' };
+      const settings = storage.getState().settings;
+      const admission = readAdmission(settings);
+      if (admission) throw Object.assign(new Error(admission.code), { code: admission.code });
       controller.stopSay();
       const epoch = playback.captureEpoch();
       const current = () => playback.isEpochCurrent(epoch);
@@ -81,8 +98,10 @@ export function createLocalVoiceTtsController(options?: Readonly<{
         if (!current()) return { status: 'cancelled' };
         await localVoiceRuntimeController.prepareForReadAloud();
         if (!current()) return { status: 'cancelled' };
-        await dispatchSpeech({ ...ctx,
-          readAloudChunkChars: readLocalConversationVoiceSettings(ctx.settings.voice).streaming.ttsChunkChars,
+        const { config } = resolveLocalVoiceAdapterSettingsFromVoice(settings.voice);
+        await dispatchSpeech({ ...ctx, settings, tts: parseLocalVoiceTtsSettings(config.tts),
+          readAloudChunkChars: readLocalConversationVoiceSettings(settings.voice).streaming.ttsChunkChars,
+          networkTimeoutMs: config.networkTimeoutMs,
           registerPlaybackStopper: playback.registerStopper.captureAttempt!(),
           onSpeaking: () => { if (current()) { publish('speaking'); ctx.onSpeaking(); } },
         });

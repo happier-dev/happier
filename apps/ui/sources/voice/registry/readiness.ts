@@ -46,7 +46,7 @@ export type VoiceRoleReadiness = Readonly<{
   status: 'ready' | 'needs_setup' | 'unavailable' | 'installing' | 'incompatible';
   code: string;
   reasonKey: string;
-  recoveryAction: 'enable_voice_agent' | 'none' | 'retry' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
+  recoveryAction: 'enable_voice' | 'enable_voice_agent' | 'none' | 'retry' | 'select_provider' | 'open_provider_settings' | 'select_execution_machine' | 'configure_credential' | 'review_credential_access' | 'configure_endpoint' | 'install_model' | 'switch_provider';
 }>;
 
 export function projectHostedModeAvailabilityReadiness(input: Readonly<{

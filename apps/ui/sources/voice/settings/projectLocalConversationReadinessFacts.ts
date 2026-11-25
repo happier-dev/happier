@@ -1,4 +1,5 @@
 import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { resolveStoredVoiceProviderId, resolveVoiceProviderId } from './resolveVoiceProviderId';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -76,6 +77,28 @@ function projectUnselectedRuntimeFact(
   return 'incompatible';
 }
 
+/** Read aloud is an admitted Voice action; raw Speak remains available for setup previews. */
+export function projectVoiceReadAloudAdmissionReadiness(input: Readonly<{
+  voice: Pick<VoiceSettings, 'providerId'>;
+  registry?: VoiceProviderRegistry;
+  voiceAvailability: FeatureAvailabilityArm;
+}>): VoiceRoleReadiness | null {
+  const providerId = resolveStoredVoiceProviderId(input.voice.providerId);
+  const failure = (status: VoiceRoleReadiness['status'], code: string,
+    recoveryAction: VoiceRoleReadiness['recoveryAction']): VoiceRoleReadiness => Object.freeze({
+      role: 'conversation_tts', providerId, status, code, reasonKey: `voice.readiness.${code}`, recoveryAction,
+    });
+  if (!providerId) return failure('needs_setup', 'provider_unselected', 'select_provider');
+  if (!resolveVoiceProviderId(providerId, input.registry)) return failure('unavailable', 'contribution_unavailable', 'select_provider');
+  if (input.voiceAvailability === 'available') return null;
+  if (input.voiceAvailability === 'policy_disabled') return failure('needs_setup', 'voice_feature_policy_disabled', 'enable_voice');
+  if (input.voiceAvailability === 'server_disabled') return failure('unavailable', 'server_feature_disabled', 'none');
+  if (input.voiceAvailability === 'unsupported' || input.voiceAvailability === 'unsupported_context') {
+    return failure('unavailable', 'platform_unsupported', 'none');
+  }
+  return failure('unavailable', 'server_feature_unknown', 'none');
+}
+
 export function projectLocalConversationReadinessFacts(input: Readonly<{
   registry: VoiceProviderRegistry;
   voice: VoiceSettings;
@@ -88,6 +111,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   executionMachineId: string | null | undefined;
   executionMachineSelectionKind?: VoiceExecutionMachineSelection['kind'];
   voiceAgentAvailability: FeatureAvailabilityArm;
+  voiceAvailability?: FeatureAvailabilityArm;
   /** Selected Agent's observed inventory readiness; never a speech runtime fact. */
   voiceAgentRuntime?: VoiceSelectedAgentRuntimeReadiness;
   selectedAgent?: VoiceRoleReadiness['selectedAgent'];
@@ -109,6 +133,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   credential: VoiceCredentialReadinessFact;
   daemonRouteReadiness: VoiceRoleReadiness | null;
   speechReadiness: LocalVoiceSpeechReadiness;
+  readAloudReadiness: VoiceRoleReadiness | null;
   thinkReadiness: VoiceRoleReadiness;
 }> {
   const local = resolveLocalVoiceAdapterSettingsFromVoice(input.voice);
@@ -272,6 +297,11 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     speak: speak.readiness,
   };
 
+  const readAloudReadiness = input.voiceAvailability === undefined ? null
+    : projectVoiceReadAloudAdmissionReadiness({
+      voice: input.voice, registry: input.registry, voiceAvailability: input.voiceAvailability,
+    }) ?? speechReadiness.speak;
+
   if (input.voice.providerId !== 'local_conversation') {
     return {
       settings,
@@ -283,6 +313,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       credential,
       daemonRouteReadiness: null,
       speechReadiness,
+      readAloudReadiness,
       thinkReadiness,
     };
   }
@@ -348,6 +379,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     credential,
     daemonRouteReadiness,
     speechReadiness,
+    readAloudReadiness,
     thinkReadiness,
   };
 }

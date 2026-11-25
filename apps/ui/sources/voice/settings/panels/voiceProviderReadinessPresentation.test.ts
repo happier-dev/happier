@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { tLoose } from '@/text';
+import { t, tLoose } from '@/text';
 
 import { resolveVoiceProviderReadinessPresentation, translateVoiceReadiness } from './voiceProviderReadinessPresentation';
 
@@ -64,6 +64,17 @@ describe('resolveVoiceProviderReadinessPresentation', () => {
     }, tLoose);
     expect(presentation.action).toBe(tLoose('voice.readiness.actions.open_features'));
     expect(presentation.action).not.toMatch(/^settingsVoice\./);
+  });
+
+  it('names Voice and the existing Features recovery when read-aloud is opted out', () => {
+    const reasonKey = 'voice.readiness.voice_feature_policy_disabled';
+    expect(translateVoiceReadiness(reasonKey)).toBe(t('settingsVoice.pages.conversations.agentFeatureRequired', {
+      feature: t('settingsFeatures.voice'),
+    }));
+    expect(resolveVoiceProviderReadinessPresentation({ status: 'needs_setup', code: 'voice_feature_policy_disabled',
+      reasonKey, recoveryAction: 'enable_voice' }, translateVoiceReadiness)).toMatchObject({
+      action: tLoose('voice.readiness.actions.open_features'), short: tLoose('voice.readiness.short.needsSetup'),
+    });
   });
 
   it('does not add readiness noise to a ready provider', () => {

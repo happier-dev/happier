@@ -356,6 +356,7 @@ export function useVoiceConversationsReadinessModel(props: {
   selectedReadinessCheckKey: string | null;
   selectedLocalThinkReadiness: ReturnType<typeof projectLocalConversationReadinessFacts>['thinkReadiness'];
   selectedLocalSpeechReadiness: ReturnType<typeof projectLocalConversationReadinessFacts>['speechReadiness'] | null;
+  selectedReadAloudReadiness: ReturnType<typeof projectLocalConversationReadinessFacts>['readAloudReadiness'];
 } {
   React.useSyncExternalStore(
     registry.subscribe ?? (() => () => {}),
@@ -380,6 +381,7 @@ export function useVoiceConversationsReadinessModel(props: {
   const accountProfile = useProfile();
   const activeAccountScopeLifetime = captureActiveServerAccountScopeLifetime();
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
+  const voiceAvailability = resolveFeatureAvailabilityArm(useFeatureDecision('voice', { scopeKind: 'runtime' }));
   const voiceAgentAvailability = resolveFeatureAvailabilityArm(useFeatureDecision('voice.agent'));
   const [checkedReadiness, setCheckedReadiness] = React.useState<CheckedVoiceProviderReadinessState | null>(null);
   const checkedReadinessRevision = React.useRef(0);
@@ -485,6 +487,7 @@ export function useVoiceConversationsReadinessModel(props: {
     executionMachineId: props.executionMachineId,
     executionMachineSelectionKind: props.executionMachineSelectionKind,
     voiceAgentAvailability,
+    voiceAvailability,
     voiceAgentRuntime: configuredAgentTarget?.ok === false ? 'incompatible' : selectedAgentReadiness.runtime,
     selectedAgent: selectedAgentReadiness.selectedAgent,
     rawCredentialAuthorizationByContribution:
@@ -1130,6 +1133,7 @@ export function useVoiceConversationsReadinessModel(props: {
     selectedReadinessCheckKey,
     selectedLocalThinkReadiness: localConversationReadinessFacts.thinkReadiness,
     selectedLocalSpeechReadiness,
+    selectedReadAloudReadiness: selectedLocalSpeechReadiness ? localConversationReadinessFacts.readAloudReadiness : null,
   };
 }
 

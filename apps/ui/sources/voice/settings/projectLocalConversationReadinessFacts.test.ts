@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { FeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
 
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import {
@@ -91,7 +92,7 @@ function addCredential(
   }).settings;
 }
 
-function project(settings: Settings) {
+function project(settings: Settings, voiceAvailability: FeatureAvailabilityArm = 'available') {
   return projectLocalConversationReadinessFacts({
     registry,
     voice: settings.voice,
@@ -103,6 +104,7 @@ function project(settings: Settings) {
     localInput,
     executionMachineId,
     voiceAgentAvailability: 'available',
+    voiceAvailability,
     rawCredentialAuthorizationByContribution: Object.fromEntries(([
       ['happier.voice.google/gemini-stt', { pluginId: 'happier.voice.google', localId: 'gemini-stt' }],
       ['happier.voice.google/google-cloud-tts', { pluginId: 'happier.voice.google', localId: 'google-cloud-tts' }],
@@ -279,6 +281,26 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     expect(projectVoiceConfiguredAgentTarget({ selection, entries: null, backendEnabledByTargetKey: { 'backend:claude': false } })).toMatchObject({ ok: false });
     expect(projectVoiceConfiguredAgentTarget({ selection: { agentId: 'custom-agent', agentTargetKey: null, agentIdentity: null },
       entries: null, backendEnabledByTargetKey: null })).toMatchObject({ ok: true, kind: 'legacy', agentId: 'custom-agent' });
+  });
+
+  it.each([null, 'off'] as const)('keeps device setup capability but requires explicit Voice selection for read-aloud (%s)', providerId => {
+    const facts = project(settingsParse({ voice: { ...voiceSettingsDefaults, providerId } }));
+    expect(facts.speechReadiness.speak).toMatchObject({ status: 'ready' });
+    expect(facts.readAloudReadiness).toMatchObject({
+      status: 'needs_setup', code: 'provider_unselected', recoveryAction: 'select_provider',
+    });
+  });
+
+  it.each([
+    ['available', 'ready', 'ready', 'none'],
+    ['server_disabled', 'unavailable', 'server_feature_disabled', 'none'],
+    ['policy_disabled', 'needs_setup', 'voice_feature_policy_disabled', 'enable_voice'],
+    ['unknown', 'unavailable', 'server_feature_unknown', 'none'],
+    ['checking', 'unavailable', 'server_feature_unknown', 'none'],
+  ] as const)('admits configured device read-aloud only when global Voice is available (%s)', (availability, status, code, recoveryAction) => {
+    const facts = project(createLocalSettings('device', 'device'), availability);
+    expect(facts.speechReadiness.speak).toMatchObject({ status: 'ready' });
+    expect(facts.readAloudReadiness).toMatchObject({ status, code, recoveryAction });
   });
 
   it('makes fresh device defaults runnable where recognition exists and reports setup when it does not', () => {

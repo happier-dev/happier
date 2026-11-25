@@ -22,10 +22,10 @@ export function ReadAloudReadinessSubscription(props: Readonly<{
         executionMachineSelectedId: inputs.executionMachine.selectedMachineId,
         executionMachineSelectionKind: inputs.executionMachine.selectionKind,
     });
-    const status = model.selectedLocalSpeechReadiness?.speak?.status ?? null;
-    const reasonKey = model.selectedLocalSpeechReadiness?.speak?.reasonKey ?? null;
-    const code = model.selectedLocalSpeechReadiness?.speak?.code ?? null;
-    const recoveryAction = model.selectedLocalSpeechReadiness?.speak?.recoveryAction ?? null;
+    const status = model.selectedReadAloudReadiness?.status ?? null;
+    const reasonKey = model.selectedReadAloudReadiness?.reasonKey ?? null;
+    const code = model.selectedReadAloudReadiness?.code ?? null;
+    const recoveryAction = model.selectedReadAloudReadiness?.recoveryAction ?? null;
     React.useLayoutEffect(() => {
         props.onChange(status && reasonKey && code && recoveryAction ? { status, reasonKey, code, recoveryAction } : null);
         return () => props.onChange(null);
