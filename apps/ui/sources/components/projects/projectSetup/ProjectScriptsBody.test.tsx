@@ -737,6 +737,33 @@ describe('ProjectScriptsBody setup affordance', () => {
     expect(inspects()[3]!.input.ifRevision).toBeUndefined();
   });
 
+  it.each([
+    { control: 'create', title: 'projects.scripts.createProjectFile', read: 'create' },
+    { control: 'edit', title: 'projects.scripts.editProjectFile', read: 'editor' },
+    { control: 'openEditor', title: 'projects.scripts.definition.openInEditor', read: 'editor' },
+  ] as const)('opens the Scripts file editor through the mounted $control Action', async ({ control, title, read }) => {
+    isolateManifestDrafts();
+    const definition = control === 'create' ? { basis: { kind: 'absent' }, document: null }
+      : control === 'openEditor' ? { basis: { kind: 'present', hash }, document: readProjectManifestDocument('{') }
+        : presentDefinition(declared);
+    shared.inspection = { definition, detection, importCandidates: [] };
+    const screen = await render('page', `scripts.${control}`, { mountedCommands: true });
+    const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+    const { t } = await import('@/text');
+    const command = readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands.find(item => item.title === t(title));
+    expect(command).toBeDefined();
+    await act(async () => {
+      expect(await createDefaultActionExecutor().execute(
+        ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id }, { surface: 'agent' },
+      )).toMatchObject({ ok: true });
+    });
+    await vi.waitFor(() => expect(screen.findByTestId(control === 'openEditor'
+      ? 'project-manifest-editor.raw' : 'project-manifest-editor')).toBeTruthy());
+    expect(shared.calls.filter(call => call.actionId === 'projects.inspect').map(call => call.input.read.kind)).toEqual(['scripts', read]);
+  });
+
   it('pays for whole-project preselection only after explicit Create', async () => {
     isolateManifestDrafts();
     shared.inspection = { definition: { basis: { kind: 'absent' }, document: null }, detection,

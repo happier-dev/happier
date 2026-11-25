@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPageHeader, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { WidgetFrameBodyRowsContext } from '@/components/widgets/frame/widgetFrameBody';
 import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import type { WorkspaceAddressV1, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectExecutionChoiceV1, WorkspaceWorkerPreferenceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
@@ -135,6 +136,7 @@ export type ProjectScriptsBodyProps = Readonly<{
 
 /** The phone's way into the pushed review page: opens it, and hands back the entry that focus returns to. */
 type PhoneSetupReview = Readonly<{ open: () => void; entryTarget: React.MutableRefObject<FocusReturnTarget> }>;
+type ScriptsEditorEntry = Readonly<{ title: string; onPress: () => void }>;
 
 type EditorState = Readonly<{
   key: string;
@@ -400,6 +402,18 @@ export function ProjectScriptsContent(
 ) {
   const { definition, detection } = props.inspection;
   const document = definition.document;
+  const { onEdit } = props;
+  const invalidFile = document?.status === 'invalid';
+  const editorEntry = onEdit ? {
+    title: t(invalidFile ? 'projects.scripts.definition.openInEditor'
+      : document ? 'projects.scripts.editProjectFile' : 'projects.scripts.createProjectFile'),
+    onPress: () => onEdit(!document, invalidFile ? 'raw' : undefined),
+  } : null;
+  useCurrentUiContextLocalCommands(editorEntry && props.page ? [{
+    key: 'project-scripts-edit-file',
+    title: editorEntry.title,
+    invoke: editorEntry.onPress,
+  }] : [], { contextKey: projectDefinitionInspectionKey(props.workspace) });
   const effective = readProjectEffectiveDefinition(props.inspection);
   const effectiveManifest = effective.kind === 'available' ? effective.value.effectiveManifest : null;
   // Nix/devenv definitions are read once the environment is evaluated; that is a fact about the
@@ -445,11 +459,11 @@ export function ProjectScriptsContent(
           title={t('projects.scripts.definition.invalid')}
           description={diagnostic?.message}
           action={
-            props.onEdit
+            editorEntry
               ? {
-                  label: t('projects.scripts.definition.openInEditor'),
+                  label: editorEntry.title,
                   testID: `${props.testID}.openEditor`,
-                  onPress: () => props.onEdit?.(false, 'raw'),
+                  onPress: editorEntry.onPress,
                 }
               : null
           }
@@ -465,7 +479,7 @@ export function ProjectScriptsContent(
   if (!manifest) {
     return (
       <>
-        <FirstRun {...props} pendingShared={pendingSharedRow} />
+        <FirstRun {...props} editorEntry={editorEntry} pendingShared={pendingSharedRow} />
         {partial}
       </>
     );
@@ -476,6 +490,7 @@ export function ProjectScriptsContent(
       {/* The Machine runs the composed definition (repository, shared setup, changes just for you), so the
           page lists that; the repository's own bytes belong to the editor. */}
       <DeclaredScripts {...props} manifest={manifest}
+        editorEntry={editorEntry}
         layersDefinition={effective.kind === 'available' ? effective.value : null}
         pendingShared={pendingSharedRow}>
         {partial}
@@ -511,6 +526,7 @@ function DeclaredScripts(
     glance?: boolean;
     testID: string;
     onEdit: ((seed: boolean, mode?: 'form' | 'raw') => void) | null;
+    editorEntry: ScriptsEditorEntry | null;
     onOpenWorkers?: (() => void) | null;
     phoneReview?: PhoneSetupReview | null;
     /** Re-reads the checkout's definition after a setup choice made from the header. */
@@ -569,14 +585,14 @@ function DeclaredScripts(
       icon: <Icon name="user-circle" size={14} color={theme.colors.text.secondary} /> }] : []),
   ], [hasProjectFile, toolchain.config, toolchain.title, managed, versions, theme.colors.text.secondary, layers, sharedName]);
   const phone = useDeviceType() === 'phone';
-  const editButton = props.onEdit ? (
+  const editButton = props.editorEntry ? (
     <RoundButton
       size="normal"
       display="secondary"
-      title={t(hasProjectFile ? 'projects.scripts.editProjectFile' : 'projects.scripts.createProjectFile')}
+      title={props.editorEntry.title}
       testID={`${props.testID}.${hasProjectFile ? 'edit' : 'create'}`}
       leading={<Icon name="file-text" size={14} />}
-      onPress={() => props.onEdit?.(!hasProjectFile)}
+      onPress={props.editorEntry.onPress}
     />
   ) : undefined;
   const binding = props.binding ?? null;
@@ -1228,7 +1244,7 @@ function FirstRun(
     /** The Overview widget: a summary of what was found and the ways forward, never the runnable list. */
     glance?: boolean;
     testID: string;
-    onEdit: ((seed: boolean, mode?: 'form' | 'raw') => void) | null;
+    editorEntry: ScriptsEditorEntry | null;
     onOpenServices?: () => void;
     onOpenScripts?: () => void;
     /** The Project's shared setup this checkout has not taken: offered under the hero, before what was found. */
@@ -1306,12 +1322,12 @@ function FirstRun(
           details={(
             <>
             <View style={phone ? styles.actionsPhone : styles.actions}>
-              {props.onEdit ? (
+              {props.editorEntry ? (
                 <RoundButton
                   testID={`${props.testID}.create`}
                   size={phone ? 'normal' : 'small'}
-                  title={t('projects.scripts.createProjectFile')}
-                  onPress={() => props.onEdit?.(true)}
+                  title={props.editorEntry.title}
+                  onPress={props.editorEntry.onPress}
                 />
               ) : null}
               {setupButton}
