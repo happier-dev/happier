@@ -90,6 +90,9 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
     }
     if (row === null || unavailable) return { status: 'unavailable' };
     switch (operation.kind) {
+      case 'closeDetail':
+        await host.openSurface(TRIAGE_APP_PAGE_DESTINATION_V1, undefined, { signal });
+        break;
       case 'selectDetailTab':
         if (!tabs?.some(item => item.value === operation.tab)) return { status: 'unavailable' };
         setTab(operation.tab);
@@ -110,7 +113,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
       default: return { status: 'unavailable' };
     }
     return { status: 'applied' };
-  }, [completePostMutation, fixRetry, loadMore, row, sessions, tabs, unavailable]);
+  }, [completePostMutation, fixRetry, host, loadMore, row, sessions, tabs, unavailable]);
   const operationRef = React.useRef(runOperation);
   React.useLayoutEffect(() => { operationRef.current = runOperation; }, [runOperation]);
   React.useLayoutEffect(() => scope === null || !activity.active ? undefined : bindTriageMountedUiActions(
@@ -137,6 +140,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
       commands: [
         command(unavailable ? text('plugins.triage.surface.actions.retry', 'Retry') : text('plugins.triage.surface.actions.refresh', 'Refresh'), { kind: 'refresh' }),
         ...(visibleRow === null ? [] : [
+          command(TRIAGE_DISPLAY_NAME, { kind: 'closeDetail' }),
           ...(tabs ?? []).map(item => command(item.title, { kind: 'selectDetailTab', tab: item.value })),
           ...sessions.map(session => command(session.displayTitle ?? text('session.untitled', 'Untitled session'), { kind: 'selectLinkedSession', sessionId: session.sessionId })),
           ...(loadMore === null ? [] : [command(text('plugins.triage.surface.loadMore', 'Load more'), { kind: 'loadMore', section: 'linkedSessions' })]),
@@ -165,7 +169,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
     {...(band.subtitle === undefined ? {} : { subtitle: band.subtitle, subtitleLeading: band.subtitleLeading })}
     pushedBelowWidthPx={paneMinimumWidths.minListWidth + paneMinimumWidths.minDetailWidth}
     backLabel={TRIAGE_DISPLAY_NAME}
-    onBack={() => { void host.openSurface(TRIAGE_APP_PAGE_DESTINATION_V1); }}>
+    onBack={() => execute({ kind: 'closeDetail' })}>
     {({ pushed, headerHosted }) => <TriageDetailRegion exactRead={exactRead} sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
       pushed={pushed} headerHosted={headerHosted}
       refreshGeneration={refreshGeneration} onFixPullRequestsRetryChange={reportFixRetry} onRetryFixPullRequests={() => execute({ kind: 'retryFixPullRequests' })}

@@ -1736,6 +1736,8 @@ URL/resource details bind the same mounted dispatcher and source-panel callback
 registry as page details. Their current UI context publishes the actual detail
 tabs, linked Sessions, continuations and source-panel commands. Resource Retry
 uses `refresh` to retry exact resolution/read rather than an aggregate scan.
+A detached resource preview advertises `closeDetail` when its detail is visible.
+It opens PRs & Issues through the same path as the preview’s Back control.
 
 In the current development implementation, `setLens` also accepts optional
 `smartPolicy: { v: 1, precedence: ['attention', 'activity'] }` or the reversed

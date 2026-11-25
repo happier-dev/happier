@@ -910,6 +910,32 @@ describe('the mounted PRs & Issues surface', () => {
         expect(harness.unroutedActions).toEqual([]);
     });
 
+    it('returns from an addressed resource to PRs & Issues through the mounted close command', async () => {
+        const harness = createHarness({ details: true });
+        const resource = { kind: 'pullRequest' as const, url: 'https://github.com/example/repository/pull/1' };
+        const resourceSurface = defineUiSurface(() => <TriageResourceSurface resource={resource} />);
+        const page = await mountSurface(resourceSurface, harness, 'resource-close', sourceContextFixture(harness), { recordSurfaceOpens: true });
+        await expect(page.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
+
+        const close = harness.publishedContexts.at(-1)?.commands?.find(command => command.command.kind === 'executeAction'
+            && TriageMountedUiInputV1Schema.parse(command.command.input).operation.kind === 'closeDetail');
+        expect(close).toBeDefined();
+        if (close?.command.kind !== 'executeAction') throw new Error('Missing resource close command');
+        const command = close.command;
+        await act(async () => {
+            const input = TriageMountedUiInputV1Schema.parse(command.input);
+            expect(await createTriageMountedUiActionHandler()(input, {
+                plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                contribution: { id: 'ui/mounted-v1', qualifiedId: PLUGIN_MANIFEST.id + '/actions/ui/mounted-v1' },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: page.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+            })).toEqual({ status: 'applied' });
+        });
+        expect(harness.surfaceOpens).toEqual([expect.objectContaining({
+            view: { pluginId: PLUGIN_MANIFEST.id, localId: 'triage' },
+        })]);
+    });
+
     it.each(['ui', 'agent', 'refresh'] as const)('recovers failed fix PR links through the same mounted read (%s)', async surface => {
         const harness = createHarness({ tasks: true, details: true });
         harness.state.fixPullRequestsUnavailable = true;
