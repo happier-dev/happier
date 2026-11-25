@@ -2614,7 +2614,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         const failure = 'diagnostic' in result
           ? result.diagnostic
           : diagnostic('acp_initial_configuration_not_applied');
-        throw Object.assign(new Error(failure.message ?? failure.code), { code: failure.code });
+        throw Object.assign(new Error(failure.message ?? failure.code), { code: failure.code, diagnostic: failure });
       }
       currentConfiguration = mergeConfigurationSnapshot(null, initialConfiguration);
     }

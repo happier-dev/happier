@@ -514,6 +514,10 @@ describe('FX model selection through the public ACP owner', () => {
         await expect(f.open(configuration('custom/new', 'explicit', 'codex'))).rejects.toMatchObject({
           code: 'acp_configuration_update_failed',
           message: expect.stringContaining('Model was refused by the native route'),
+          diagnostic: {
+            code: 'acp_configuration_update_failed',
+            details: { requestErrorCode: -32602 },
+          },
         });
         expect(f.setters().map(params => params.value)).toEqual(['codex', 'custom/new']);
       } finally { await f.dispose(); }
