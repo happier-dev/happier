@@ -718,9 +718,12 @@ type CliAssistantTurnTranscript = Readonly<{
 }>;
 
 function assistantTurnTranscript(params: CliAssistantTurnTranscript): AssistantTurnTranscriptReader {
+    const { token, sessionId, sidechainId, ctx, signal, resolveAuthorizationHeaders } = params;
     return {
-        openContent: content => decryptTranscriptRowContent({ content, ctx: params.ctx }),
-        readPage: input => fetchEncryptedTranscriptPageAfterSeq({ ...params, ...input }),
+        openContent: content => decryptTranscriptRowContent({ content, ctx }),
+        readPage: ({ afterSeq, limit }) => fetchEncryptedTranscriptPageAfterSeq({
+            token, sessionId, sidechainId, signal, resolveAuthorizationHeaders, afterSeq, limit,
+        }),
     };
 }
 

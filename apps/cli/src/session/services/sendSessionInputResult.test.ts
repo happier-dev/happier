@@ -141,7 +141,10 @@ describe('waitForSessionInputResult', () => {
       // These retained inputs predate the Turn ledger. A current empty ledger
       // would authoritatively mean that this input has not begun a turn yet.
       if (url.endsWith('/turns')) return { status: 404, data: { error: 'Not found' } };
-      if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: rows() } };
+      if (url.includes('/messages?')) {
+        if (new URL(url).searchParams.get('scope') !== 'main') return { status: 400, data: {} };
+        return { status: 200, data: { hasMore: false, messages: rows() } };
+      }
       throw new Error(`Unexpected result HTTP read: ${url}`);
     });
     const httpPost = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Result observation cannot dispatch input'));
@@ -279,6 +282,7 @@ describe('waitForSessionInputResult', () => {
     } : previousGet(url, config));
     const observed = await waitForSessionInputResult({ credentials: { token: 'token', encryption: null }, serverId: session.serverId,
       idOrPrefix: sessionId, localId: 'automation:run:run-1', observeReply: true,
+      ...(status === 'answer' ? { scope: 'user' as const } : {}),
       observation: { kind: 'absolute_deadline', deadlineMs: Date.now() } });
     if (status === 'unfulfilled') {
       expect(observed).toEqual({ ok: false, code: 'session_reply_timeout' });
