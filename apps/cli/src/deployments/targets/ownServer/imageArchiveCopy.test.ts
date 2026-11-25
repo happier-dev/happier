@@ -6,24 +6,27 @@ import { tmpdir } from 'node:os';
 import { create as createTar } from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
+import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployments';
 import * as persistence from '@/persistence';
+import * as machineRpc from '@/session/transport/rpc/machineRpc';
+import { projectDeploymentException, projectDeploymentReceiptFailure } from '../../deploymentFailure';
 import { prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createNativeComposeImageIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { nativeRegistryPause310 } from '@/daemon/local/services/launch/nativeComposeImageRegistry.testkit';
-import { adoptOwnServerImageArchives } from './releaseProvenance';
+import { adoptOwnServerImageArchives, resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createDeploymentImageArchiveCopyForHost } from './imageArchiveCopy';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('installed receipt image archive copy', () => {
-    it.each(['explicit', 'compact_match', 'compact_mismatch'] as const)('admits exact primary source before reusing local archive bytes (%s)', async kind => {
+    it.each(['explicit', 'compact_match', 'compact_mismatch', 'carrier_refusal'] as const)('settles admitted archive copies with exact byte custody and typed refusals (%s)', async kind => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const directory = await mkdtemp(join(tmpdir(), 'happier-local-image-copy-'));
         let prepared: Awaited<ReturnType<typeof prepareInstalledRequesterAccountActionContext>> = null;
@@ -53,19 +56,19 @@ describe('installed receipt image archive copy', () => {
             const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
                 machineId: 'machine', installationId: 'installed', phase: 'activate', deploymentId: 'receipt',
                 selectedDeploymentId: 'receipt', actionOperationId: 'operation',
-                input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
+                input: { serverId: 'srv_archive_home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
                     expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
             const requester = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain', job,
-                receivingIdentity: { machineId: job.machineId, installationId: job.installationId, homeIdentityId: 'home' },
+                receivingIdentity: { machineId: job.machineId, installationId: job.installationId, homeIdentityId: 'srv_archive_home' },
                 source: { id: primary.sourceIntent.projectSourceId, revision: primary.sourceIntent.sourceRevision },
-                rootInput: kind === 'explicit' ? job.input : {
-                    serverId: 'home', environmentId: 'environment', targetLinkId: 'link', requestKey: 'request', sha: 'a'.repeat(40),
+                rootInput: kind === 'explicit' || kind === 'carrier_refusal' ? job.input : {
+                    serverId: 'srv_archive_home', environmentId: 'environment', targetLinkId: 'link', requestKey: 'request', sha: 'a'.repeat(40),
                 } });
             const { installed: identity, envelope, sealed, purpose, packet } = requester;
             prepared = await prepareInstalledRequesterAccountActionContext({ authorization: sealed, purpose,
                 deploymentChildExecution: packet, machineId: job.machineId, serverId: 'profile', serverHttpBaseUrl: 'https://home.test',
                 verifyServiceMoveChildCurrent: async () => { custodyReads++; return true; },
-                resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: job.machineId, serverIdentityId: 'home' }),
+                resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: job.machineId, serverIdentityId: 'srv_archive_home' }),
                 createExecutor: () => ({ execute: async () => ({ ok: false, errorCode: 'unused', error: 'unused' }) }) });
             expect(prepared).not.toBeNull();
             const variant = nativeRegistryPause310.variants[0];
@@ -92,14 +95,14 @@ describe('installed receipt image archive copy', () => {
             const effectKeys = [{ kind: 'dockerEngine', dockerEndpoint: `native-export-boundary:${directory}` }] as const;
             const exported = await machineNativeEffectAdmission.run({ operation: { operationId: 'archive-export', kind: 'deployment' }, keys: effectKeys },
                 context => native.exportImage(image, { references: ['owned:image'], ownedTag: 'owned:image', authority: { context } }));
-            const [archive] = await adoptOwnServerImageArchives({ archives: [exported], serverId: 'home',
-                admission: { deploymentRoot, environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost('home', 'environment'), deploymentId: 'receipt',
+            const [archive] = await adoptOwnServerImageArchives({ archives: [exported], serverId: 'srv_archive_home',
+                admission: { deploymentRoot, environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost('srv_archive_home', 'environment'), deploymentId: 'receipt',
                     machineId: job.machineId, installationId: identity.installationId },
                 signal: new AbortController().signal, async assertCurrent() {} });
             if (!archive) throw new Error('Native archive was not adopted');
             const destination = archive.holder;
             const transport = { sizeBytes: archive.sizeBytes, sha256: archive.sha256 };
-            const copy = createDeploymentImageArchiveCopyForHost({ credentials, credentialProfileId: 'profile', serverId: 'home',
+            const copy = createDeploymentImageArchiveCopyForHost({ credentials, credentialProfileId: 'profile', serverId: 'srv_archive_home',
                 serverHttpBaseUrl: 'https://home.test', machineId: job.machineId, installationId: identity.installationId, deploymentRoot });
             const context = { externalActionExecutionAuthorization: prepared!.authorization, originalActionEnvelope: envelope };
             const admittedCustodyReads = custodyReads;
@@ -107,6 +110,37 @@ describe('installed receipt image archive copy', () => {
             // admitted finite deployment's archive acquisition.
             storedCredentials.mockResolvedValue({ ...credentials, token: 'next-login' });
             const admittedCredentialReads = storedCredentials.mock.calls.length;
+            if (kind === 'carrier_refusal') {
+                const settings = await persistence.readSettings();
+                vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: {
+                    profile: { id: 'profile', name: 'QA Home', serverUrl: 'https://home.test', webappUrl: 'https://home.test',
+                        createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+                        homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_archive_home', canonicalServerUrl: 'https://home.test',
+                            revision: 1, endpoints: [{ kind: 'https', url: 'https://home.test' }] } },
+                } });
+                const failureCause = { errorClass: 'Error', phase: 'daemon.filesystem.copy', httpStatus: null, errorCode: null };
+                // The Machine RPC boundary supplies the safe failure facts. The installed
+                // requester, copy executor, deployment mapper and Receipt projection stay real.
+                vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async ({ machineId }) => {
+                    if (machineId !== 'holder') throw new Error('Copy must ask the archive holder for bytes first');
+                    return { ok: false, errorCode: 'machine_carrier_unavailable', error: 'machine_carrier_unavailable', failureCause };
+                });
+                const remoteArchive = { ...archive, holder: { ...archive.holder, machineId: 'holder', installationId: 'holder-installation' } };
+                const remoteDestination = resolveOwnServerImageArchivePathForHost({ deploymentRoot,
+                    environmentInstanceId: resolveOwnServerDeploymentEnvironmentInstanceIdForHost('srv_archive_home', 'environment'),
+                    deploymentId: job.deploymentId }, archive.sha256);
+                const settled = await copy({ archive: remoteArchive, destination: remoteDestination, context,
+                    signal: new AbortController().signal, async assertCurrent() {} }).catch(error => projectDeploymentException(error));
+                expect(settled).toMatchObject({ ok: false, errorCode: 'machine_carrier_unavailable', failureCause,
+                    details: { success: false, status: 'failed', errorCode: 'machine_carrier_unavailable' } });
+                if (!('ok' in settled)) throw new Error('Expected a typed copy refusal');
+                const receipt = projectDeploymentReceiptFailure(settled, 'activate');
+                expect(receipt).toMatchObject({ code: 'machine_carrier_unavailable', failureCause });
+                expect(readDeploymentFailureRecoveryV1(receipt.code, { failure: receipt })).toMatchObject({
+                    nextAction: { kind: 'navigate', destination: 'machines' },
+                });
+                return;
+            }
             if (kind === 'compact_mismatch') {
                 await expect(copy({ archive, destination, context, signal: new AbortController().signal, async assertCurrent() {} }))
                     .rejects.toMatchObject({ code: 'target_mismatch' });

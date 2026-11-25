@@ -78,10 +78,7 @@ export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
                 destination: { serverId: target.fixedServer.serverId, machineId: host.machineId,
                     rootPath: request.destination.rootPath, path: request.destination.path }, overwrite: false, recursive: false },
             context: { ...request.context, serverId: target.fixedServer.serverId, signal: request.signal }, assertCurrent, archiveOrigin });
-        if (!result.ok) {
-            const code = result.errorCode === 'machine_carrier_unavailable' ? 'image_transfer_unreachable' : result.errorCode;
-            return refuse(code, { ...result, errorCode: code });
-        }
+        if (!result.ok) return refuse(result.errorCode, result);
         const output = result.result;
         if (!output || typeof output !== 'object' || !('success' in output) || output.success !== true
             || !('status' in output) || output.status !== 'completed' || !('path' in output)
