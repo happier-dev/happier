@@ -9,6 +9,7 @@ import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuth
 import type { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import type { MachineAdminAccessReconcileInput } from '@/machines/adminAccess/machineAdminAccessHost';
 import type { MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
+import { resolveNativePreauthorization } from '@/machines/adminAccess/nativePreauthorization';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { assertMachineSystemTaskResponseCurrent } from '@/capabilities/service';
 import { buildActionExecutorContextForRpc, type RpcActionExecutorContext } from './_actionDispatchAdapter';
@@ -71,8 +72,14 @@ export function registerDaemonMachineAdminAccessRpcHandlers(rpc: RpcHandlerRegis
             const current = await getMachineAdminAccessV1(port);
             return current.status === 'ready' && MachineAdminAccessFieldV1.equal(current.policy, result.policy);
           };
+          const native: { observation?: Awaited<ReturnType<typeof options.observer.inspect>>['observation'] } = {};
+          const inspect = async () => {
+            const inspected = await options.observer.inspect();
+            native.observation = inspected.observation;
+            return inspected;
+          };
           const reconcile = async (taskContext: InteractiveSystemTaskContext) => await options.reconcile({ machineId: target.machineId, installationId: target.installationId,
-            operationId, previousPolicy: previous, policy: result.policy, port, inspect: options.observer.inspect,
+            operationId, previousPolicy: previous, policy: result.policy, port, inspect,
             signal: taskContext.signal ? AbortSignal.any([context!.signal, taskContext.signal]) : context!.signal,
             verifyCurrent: verifyTransition,
             prompt: async question => await taskContext.prompt({ ...question, validateResponse: async authorization => {
@@ -124,9 +131,14 @@ export function registerDaemonMachineAdminAccessRpcHandlers(rpc: RpcHandlerRegis
             effect ??= { outcome: 'outcome_unknown' };
           }
           effect ??= context!.signal.aborted ? { outcome: 'not_applied', reasonCode: 'cancelled' } : { outcome: 'outcome_unknown' };
-          if (effect.outcome === 'outcome_unknown') await options.observer.inspect().catch(() => undefined);
-          const observation = options.observer.read();
-          return MachineAdminAccessMutationResultV1Schema.parse({ ...result, effect, ...(observation ? { observation } : {}) });
+          if (effect.outcome === 'outcome_unknown') await inspect().catch(() => undefined);
+          const observation = effect.outcome === 'applied' ? effect.observation : native.observation;
+          const readiness = effect.outcome === 'not_applied' && effect.reasonCode === 'not_preauthorized'
+            ? effect : observation && resolveNativePreauthorization(observation);
+          return MachineAdminAccessMutationResultV1Schema.parse({
+            ...result, effect, ...(observation ? { observation } : {}),
+            ...(readiness && 'preauthorizationIssue' in readiness ? { preauthorizationIssue: readiness.preauthorizationIssue } : {}),
+          });
         }
         // No correlation means no owned host operation, not a failed desired write.
         // An issued/acknowledged CAS keeps its settlement even if the caller retires.
@@ -137,9 +149,11 @@ export function registerDaemonMachineAdminAccessRpcHandlers(rpc: RpcHandlerRegis
       const result = await options.observer.inspect().catch(() => ({ status: 'unavailable' as const }));
       const current = 'observation' in result ? await getMachineAdminAccessV1(port) : null;
       context.signal.throwIfAborted();
-      return MachineAdminAccessInspectResultV1Schema.parse(current?.status === 'ready'
-        ? { ...result, adminAccess: current.policy, metadataVersion: current.metadataVersion }
-        : current ?? result);
+      if (!('observation' in result) || current?.status !== 'ready') return MachineAdminAccessInspectResultV1Schema.parse(current ?? result);
+      const readiness = resolveNativePreauthorization(result.observation);
+      return MachineAdminAccessInspectResultV1Schema.parse({ ...result, adminAccess: current.policy, metadataVersion: current.metadataVersion,
+        ...(readiness.kind === 'not_preauthorized' ? { preauthorizationIssue: readiness.preauthorizationIssue } : {}),
+      });
       };
       if (actionId !== 'machines.setup.adminAccess.set') return await run(ingress);
       if (!ingress) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);

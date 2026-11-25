@@ -4340,6 +4340,17 @@ owned by the corridor integration boundary, not evidence of released availabilit
 
 ### Privileged Machine effects (0.3 development)
 
+Administrator access is the desired Machine policy. Preauthorized permits
+unattended elevation when Linux recognizes the daemon as root or the daemon's
+passwordless sudo probe succeeds. Set records the reviewed preference before
+attempting native reconciliation. Inspect and Set report the native
+`observation` separately. The optional `preauthorizationIssue` describes why the
+Machine could not establish passwordless access. When the daemon observes a
+denial for a known sudoers principal, its console remedy provides the command
+and exact rule for the target Machine's administrator. A manually added rule
+stays under that administrator's control. The native effect refusal carries the
+same issue. `mode_none` identifies the distinct policy refusal.
+
 Administrator-access sudoers files are scoped to the daemon's native username
 by cli-common's `managedSudoers` owner. The standard `happier` user retains
 `/etc/sudoers.d/90-happier-daemon`; other users receive that prefix followed by

@@ -367,6 +367,15 @@ export type MachineAgentIsolationActionResultById = {
                     category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
                 };
             };
+            preauthorizationIssue?: undefined | {
+                cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                remedy?: undefined | {
+                    kind: 'console';
+                    where: 'target_machine_console';
+                    command: string;
+                    sudoersRule: string;
+                };
+            };
             recovery?: undefined | {
                 kind: 'configure_admin_access';
                 mode: 'preauthorized';
@@ -520,6 +529,15 @@ export type MachineAgentIsolationActionResultById = {
                     phase: 'install' | 'update';
                     exitCode: null | number;
                     category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                };
+            };
+            preauthorizationIssue?: undefined | {
+                cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                remedy?: undefined | {
+                    kind: 'console';
+                    where: 'target_machine_console';
+                    command: string;
+                    sudoersRule: string;
                 };
             };
             recovery?: undefined | {

@@ -110,6 +110,15 @@ export type MachineAdminAccessActionResultById = {
                     category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
                 };
             };
+            preauthorizationIssue?: undefined | {
+                cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+                remedy?: undefined | {
+                    kind: 'console';
+                    where: 'target_machine_console';
+                    command: string;
+                    sudoersRule: string;
+                };
+            };
             recovery?: undefined | {
                 kind: 'configure_admin_access';
                 mode: 'preauthorized';
@@ -186,6 +195,15 @@ export type MachineAdminAccessActionResultById = {
                         commands: string[];
                     };
                 };
+            };
+        };
+        preauthorizationIssue?: undefined | {
+            cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+            remedy?: undefined | {
+                kind: 'console';
+                where: 'target_machine_console';
+                command: string;
+                sudoersRule: string;
             };
         };
         observation?: undefined | {
@@ -283,6 +301,15 @@ export type MachineAdminAccessActionResultById = {
             mode: 'preauthorized';
         };
         metadataVersion: number;
+        preauthorizationIssue?: undefined | {
+            cause: 'sudo_denied' | 'sudo_unavailable' | 'sudo_unknown';
+            remedy?: undefined | {
+                kind: 'console';
+                where: 'target_machine_console';
+                command: string;
+                sudoersRule: string;
+            };
+        };
     } | {
         status: 'invalid' | 'locked' | 'unavailable';
     };

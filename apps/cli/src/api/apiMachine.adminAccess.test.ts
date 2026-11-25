@@ -8,6 +8,8 @@ import { MachineAdminAccessInspectResultV1Schema, MachineAdminAccessMutationResu
   FeaturesResponseSchema, type ActionOperationSnapshotV1, type MachineAdminAccessV1 } from '@happier-dev/protocol';
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import type { RpcHandlerContext } from './rpc/types';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { ApiMachineClient } from './apiMachine';
@@ -345,8 +347,11 @@ describe.runIf(process.platform !== 'win32')('administrator Action desired-first
             metadata: { ...metadata, adminAccess: preauthorized, displayName: 'Unrelated edit after desired commit' }, metadataVersion: 3 });
         }
       });
-      expect(await h.set({}, h.operation()), JSON.stringify(h.records)).toMatchObject({ status: 'applied', policy: preauthorized, metadataVersion: 2,
+      const result = await h.set({}, h.operation());
+      expect(result, JSON.stringify(h.records)).toMatchObject({ status: 'applied', policy: preauthorized, metadataVersion: 2,
+        observation: { passwordlessSudoToRoot: 'allowed' },
         effect: { outcome: 'applied', observation: { managedDropIn: 'valid', passwordlessSudoToRoot: 'allowed' } } });
+      expect(result).not.toHaveProperty('preauthorizationIssue');
       expect(h.nativeFailures).toEqual([]);
       expect(h.launches).toHaveLength(1);
       const operations = await h.readOperations();
@@ -404,11 +409,31 @@ describe.runIf(process.platform !== 'win32')('administrator Action desired-first
     } finally { await h.close(); }
   });
 
-  it('shows denied host capability separately from successfully persisted Preauthorized intent', async () => {
+  it.each(['cli', 'agent'] as const)('returns the denied native capability with the saved Preauthorized intent (%s)', async surface => {
     const h = await createHostBoundary('plain'); h.denyRoot();
     try {
-      expect(await h.set({}, h.operation())).toMatchObject({ status: 'applied', policy: preauthorized, metadataVersion: 2,
-        effect: { outcome: 'not_applied', reasonCode: 'not_preauthorized' } });
+      const preauthorizationIssue = { cause: 'sudo_denied', remedy: { kind: 'console', where: 'target_machine_console',
+        command: 'sudo visudo', sudoersRule: 'happier ALL=(ALL:ALL) NOPASSWD: ALL' } };
+      const actionId = RPC_METHODS.MACHINE_ADMIN_ACCESS_SET;
+      const actionsSettings = setScopedActionApprovalPreference({ settings: ActionsSettingsV1Schema.parse({ v: 1 }), actionId,
+        scope: { kind: 'machine', machineId: 'machine' }, surface, mode: 'waived' });
+      const operation = h.operation();
+      const guest = { ...operation, machineAdmission: { ...operation.machineAdmission!, actorAccountId: 'guest', role: 'use' as const } };
+      await expect(h.set({}, guest)).rejects.toMatchObject({ rpcErrorCode: 'RPC_FORBIDDEN' });
+      expect(h.counts().writes).toBe(0);
+      const executor = createActionExecutor({ machineAdminAccessAction: ({ input }) => h.set(input, operation) });
+      const execution = await executor.execute(actionId, { machineId: 'machine', expectedMetadataVersion: 1,
+        expectedAdminAccess: none, adminAccess: preauthorized, comparison: 'field' },
+      { surface, serverId: configuration.activeServerId, actionsSettings });
+      expect(execution).toMatchObject({ ok: true, result: { status: 'applied', policy: preauthorized, metadataVersion: 2,
+        observation: { passwordlessSudoToRoot: 'denied' }, preauthorizationIssue,
+        effect: { outcome: 'not_applied', reasonCode: 'not_preauthorized', preauthorizationIssue } } });
+      const context = h.context();
+      const inspected = await h.client.invokeLocalMachineAction(RPC_METHODS.MACHINE_ADMIN_ACCESS_INSPECT,
+        { machineId: 'machine' }, { signal: context.signal, rpcContext: context });
+      expect(MachineAdminAccessInspectResultV1Schema.parse(inspected)).toMatchObject({
+        adminAccess: preauthorized, observation: { passwordlessSudoToRoot: 'denied' }, preauthorizationIssue,
+      });
       expect(h.client.getMachineMetadataSnapshot()).toMatchObject({ metadata: { adminAccess: preauthorized } });
       expect(h.client.getMachineAdminAccessRights()).toMatchObject({ observation: { passwordlessSudoToRoot: 'denied' } });
       expect(h.launches).toEqual([]);

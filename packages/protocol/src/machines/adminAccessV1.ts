@@ -107,10 +107,23 @@ export const MachineElevationFailureV1Schema = lazyZodSchema(() => z.strictObjec
 }));
 export type MachineElevationFailureV1 = z.infer<typeof MachineElevationFailureV1Schema>;
 
+/** Nonsecret guidance from the target daemon's passwordless elevation observation. */
+const MachinePreauthorizationIssueV1Schema = lazyZodSchema(() => z.strictObject({
+  cause: z.enum(['sudo_denied', 'sudo_unavailable', 'sudo_unknown']),
+  remedy: z.optional(z.strictObject({
+    kind: z.literal('console'),
+    where: z.literal('target_machine_console'),
+    command: z.string().check(z.minLength(1)),
+    sudoersRule: z.string().check(z.minLength(1)),
+  })),
+}));
+export type MachinePreauthorizationIssueV1 = z.infer<typeof MachinePreauthorizationIssueV1Schema>;
+
 export const MachineElevatedNotAppliedResultV1Schema = lazyZodSchema(() =>
   z.strictObject({ outcome: z.literal('not_applied'), reasonCode: z.union([z.enum(['mode_none', 'not_preauthorized',
     'denied', 'platform_unsupported', 'plan_stale', 'cancelled', 'managed_cli_unavailable']), MachineElevationFailureKindV1Schema]),
     failure: z.optional(MachineElevationFailureV1Schema),
+    preauthorizationIssue: z.optional(MachinePreauthorizationIssueV1Schema),
     recovery: z.optional(z.discriminatedUnion('kind', [
       z.strictObject({ kind: z.literal('install_managed_cli'), executablePath: z.string().check(z.minLength(1)) }),
       z.strictObject({ kind: z.literal('configure_admin_access'), mode: z.literal('preauthorized') }),
@@ -129,6 +142,7 @@ export type MachineElevatedResultV1 = z.infer<typeof MachineElevatedResultV1Sche
 
 export const MachineAdminAccessInspectResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ observation: MachineAdminAccessObservationV1Schema,
+    preauthorizationIssue: z.optional(MachinePreauthorizationIssueV1Schema),
     checkedAt: z.number().check(z.int(), z.nonnegative()),
     adminAccess: MachineAdminAccessV1Schema,
     metadataVersion: z.number().check(z.int(), z.nonnegative()) }),
@@ -139,6 +153,7 @@ export type MachineAdminAccessInspectResultV1 = z.infer<typeof MachineAdminAcces
 export const MachineAdminAccessMutationResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ status: z.enum(['applied', 'satisfied', 'unchanged']), policy: MachineAdminAccessV1Schema,
     metadataVersion: z.number().check(z.int(), z.nonnegative()), effect: z.optional(MachineElevatedResultV1Schema),
+    preauthorizationIssue: z.optional(MachinePreauthorizationIssueV1Schema),
     observation: z.optional(MachineAdminAccessObservationV1Schema) }),
   z.strictObject({ status: z.literal('conflict'), policy: MachineAdminAccessV1Schema,
     metadataVersion: z.number().check(z.int(), z.nonnegative()) }),

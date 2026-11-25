@@ -34,7 +34,7 @@ function createMachineAdminAccessActionSpecs() {
   {
     id: 'machines.setup.adminAccess.set', title: 'Change administrator access',
     permissionChanging: true, approvalScope: 'machine',
-    description: 'Save the reviewed administrator policy on the target daemon, then reconcile its host policy.',
+    description: 'Save the reviewed administrator access preference and reconcile the target Machine. The result reports observed sudo access separately and includes console recovery when available.',
     approval: { result: 'required' }, safety: 'danger', sideEffectClass: 'danger',
     approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'plugin'], uiConfirmation: 'policy' },
     executionPlacement: 'machine', placements: [], surfaces,
@@ -52,7 +52,7 @@ function createMachineAdminAccessActionSpecs() {
   },
   {
     id: 'machines.setup.adminAccess.inspect', title: 'Inspect administrator access',
-    description: 'Observe this daemon’s identity, host administrator power and native operator evidence without elevation.',
+    description: 'Read the saved administrator access preference, observed host administrator power and any passwordless sudo issue or console recovery, without elevation.',
     approval: { result: 'required' }, safety: 'safe', sideEffectClass: 'read',
     executionPlacement: 'machine', placements: [], surfaces,
     bindings: { mcpToolName: 'machines_setup_admin_access_inspect', voiceClientToolName: 'machines_setup_admin_access_inspect', rpcMethod: RPC_METHODS.MACHINE_ADMIN_ACCESS_INSPECT },

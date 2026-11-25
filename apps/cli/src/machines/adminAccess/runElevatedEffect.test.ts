@@ -587,7 +587,10 @@ describe('one operation-scoped sudo stdin hand-off', () => {
         expect(await runElevatedEffect(input, { ...f.dependencies, readPolicy: async () => ({ version: 1, mode: 'none' }) }))
             .toEqual({ outcome: 'not_applied', reasonCode: 'mode_none' });
         expect(await runElevatedEffect(input, { ...f.dependencies, readPolicy: async () => ({ version: 1, mode: 'preauthorized' }) }))
-            .toMatchObject({ outcome: 'not_applied', reasonCode: 'not_preauthorized' });
+            .toMatchObject({ outcome: 'not_applied', reasonCode: 'not_preauthorized', preauthorizationIssue: {
+                cause: 'sudo_denied', remedy: { kind: 'console', where: 'target_machine_console',
+                    command: 'sudo visudo', sudoersRule: `${observation.daemonUsername} ALL=(ALL:ALL) NOPASSWD: ALL` },
+            } });
         expect(f.launches).toEqual([]);
         expect(await runElevatedEffect(input, { ...f.dependencies, readPolicy: async () => ({ version: 1, mode: 'preauthorized' }),
             observe: async () => ({ ...observation, passwordlessSudoToRoot: 'allowed' }) })).toMatchObject({ outcome: 'applied' });

@@ -12327,7 +12327,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.setup.adminAccess.inspect`
 
-**Inspect administrator access** — Observe this daemon’s identity, host administrator power and native operator evidence without elevation.
+**Inspect administrator access** — Read the saved administrator access preference, observed host administrator power and any passwordless sudo issue or console recovery, without elevation.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -12342,7 +12342,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `machines.setup.adminAccess.set`
 
-**Change administrator access** — Save the reviewed administrator policy on the target daemon, then reconcile its host policy.
+**Change administrator access** — Save the reviewed administrator access preference and reconcile the target Machine. The result reports observed sudo access separately and includes console recovery when available.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.

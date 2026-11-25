@@ -11,6 +11,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { MachineSetupEffectError, readMachineSetupStepExecutionUserV1,
     type MachineSetupApplyResultV1, type MachineSetupStageDecisionV1 } from '@happier-dev/cli-common/machineSetup';
 import { buildManagedSudoersSteps } from './managedSudoers';
+import { resolveNativePreauthorization } from './nativePreauthorization';
 import { createSudoPasswordResponder, passwordFrame } from './sudoPasswordResponder';
 import { MachineEffectInternalRecordSchema, type MachineEffectInternalRequest } from '../setup/effectInternalProtocol';
 import type { MachineConnectorSecretGrantHostRequest } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
@@ -72,17 +73,10 @@ export type MachineElevationDependencies = MachineEffectCliInvocation & Readonly
     connectorSecretGrant?: MachineConnectorSecretGrantHostRequest;
 }>;
 
-function resolvePromptlessElevation(policy: MachineAdminAccessV1, observation: MachineAdminAccessObservationV1): 'root' | 'sudo' | null {
-    if (policy.mode !== 'preauthorized' || observation.reasonCode === 'platformUnsupported') return null;
-    if (observation.daemonUid === 0) return 'root';
-    return observation.passwordlessSudoToRoot === 'allowed' ? 'sudo' : null;
-}
-
 function classifyMachineElevation(policy: MachineAdminAccessV1, observation: MachineAdminAccessObservationV1) {
     if (observation.reasonCode === 'platformUnsupported') return { kind: 'platform_unsupported' as const };
     if (policy.mode === 'ask') return { kind: 'ask' as const };
-    const elevation = resolvePromptlessElevation(policy, observation);
-    return elevation ? { kind: 'authorized' as const, elevation } : { kind: 'not_preauthorized' as const };
+    return resolveNativePreauthorization(observation);
 }
 
 /** Read the same Machine policy and native authority used by elevation, without preparing an effect. */
@@ -100,11 +94,11 @@ export async function prepareMachinePoweroff(dependencies: Pick<MachineElevation
     const policy = await dependencies.readPolicy();
     if (policy.mode !== 'preauthorized') return null;
     const observation = await dependencies.observe();
-    const elevation = resolvePromptlessElevation(policy, observation);
-    if (!elevation) return null;
+    const readiness = resolveNativePreauthorization(observation);
+    if (readiness.kind !== 'authorized') return null;
     return async () => {
         signal?.throwIfAborted();
-        const child = (dependencies.spawn ?? spawnElevation)(elevation === 'root'
+        const child = (dependencies.spawn ?? spawnElevation)(readiness.elevation === 'root'
             ? { executable: '/sbin/poweroff', args: [] }
             : { executable: 'sudo', args: ['-n', '-u', 'root', '--', '/sbin/poweroff'] });
         child.stdin.end();
@@ -350,7 +344,9 @@ async function runElevatedProcessInternal(input: Omit<RunElevatedEffectInput, 'e
         : refused('mode_none');
     const observation = transitionObservation ?? await dependencies.observe();
     const readiness = classifyMachineElevation(policy, observation);
-    if (readiness.kind === 'platform_unsupported' || readiness.kind === 'not_preauthorized') return refused(readiness.kind);
+    if (readiness.kind === 'platform_unsupported') return refused(readiness.kind);
+    if (readiness.kind === 'not_preauthorized') return { outcome: 'not_applied', reasonCode: readiness.kind,
+        preauthorizationIssue: readiness.preauthorizationIssue };
     const elevation = readiness.kind === 'authorized' ? readiness.elevation : null;
     const ask = policy.mode === 'ask';
     if (ask) {
