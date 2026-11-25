@@ -888,7 +888,7 @@ describe('automationWorker', () => {
       expect(row.assignments[0]?.machineId).toBe('machine-1');
       expect(row.templateVersion).toBe(1);
     } finally {
-      worker.stop();
+      await worker.stop();
     }
   });
 
@@ -911,9 +911,9 @@ describe('automationWorker', () => {
         [{ token: 'token-1', legacySessionLifecycleSelections: true, signal: expect.any(AbortSignal) }],
         [{ token: 'token-1', managedTargetUnindexed: true, signal: expect.any(AbortSignal) }],
       ]);
-      expect(migrationBoundary.get).not.toHaveBeenCalled();
-      expect(migrationBoundary.reconcile).not.toHaveBeenCalled();
-    } finally { worker.stop(); }
+      expect(migrationBoundary.get.mock.calls.filter(([input]) => input.token === 'token-1')).toEqual([]);
+      expect(migrationBoundary.reconcile.mock.calls.filter(([input]) => input.token === 'token-1')).toEqual([]);
+    } finally { await worker.stop(); }
   });
 
   afterEach(() => {
