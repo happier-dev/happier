@@ -428,6 +428,11 @@ describe('editor workflow composer', () => {
             releaseDeferred?.();
             getStorage().setState({ isDataReady: true });
         });
+        if (admission === 'shell' || admission === 'route') {
+            // The web editor shows the seed on the resting card until the person opens its prompt.
+            expect(screen.root.findAllByType(AgentInput)).toHaveLength(0);
+            await screen.pressByTestIdAsync('workflow-editor-step-prompt-summary-prompt');
+        }
         expect(screen.root.findByType(AgentInput).props.value).toBe('FIRST');
         expect(workspace?.state.tabs['pinned-editor'].pinned).toBe(true);
         if (admission === 'remote') await vi.waitFor(() => expect(workspace?.tabSyncStatus).toBe('synced'));
