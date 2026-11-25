@@ -5,7 +5,7 @@ import type { TeamDirectoryGroupV1, TeamDirectorySourceSummaryV1, TeamExternalGr
 import { TeamGroupNameProjectionV1Schema } from '@happier-dev/protocol/teams';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 
-import { createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamSummaryFixture } from '@/dev/testkit';
 import { teamCredentialDisplayNameFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
@@ -90,26 +90,47 @@ describe('IdentityConnectionGroupMappings list refusals', () => {
 });
 
 describe('IdentityConnectionGroupMappings acknowledged writes', () => {
+    it('offers only a supported mapping target on a sign-in connection', async () => {
+        const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://identity-home.example', accountId: 'owner', teamsEnabled: true });
+        harness.answer(serverId, `GET ${LIST_PATH}`, { body: { items: [], nextCursor: null } });
+        const screen = await renderScreen(<IdentityConnectionGroupMappings
+            scope={{ serverId, accountId: 'owner' }} address={{ serverId, teamId: 'team-1' }}
+            connectionId="connection-1" mutationsAvailable requestApproval={() => undefined}
+        />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-map-existing')).not.toBeNull());
+        expect(screen.findByTestId('identity-group-map-create')).toBeNull();
+    });
+
+
     it.each(['set', 'remove'] as const)('releases %s pending state while its list revalidation is pending', async (operation) => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://identity-home.example', accountId: 'owner', teamsEnabled: true });
         harness.answer(serverId, `GET ${LIST_PATH}`, { body: { items: operation === 'remove' ? [binding] : [], nextCursor: null } });
-        harness.answer(serverId, `PUT ${PATH}`, { body: binding });
+        harness.answer(serverId, '/v1/teams/groups/list', { body: { items: [teamGroupFixture({ name: 'Engineering' })], nextCursor: null } });
+        harness.answer(serverId, `PUT ${PATH}`, { body: { ...binding, mode: 'native_target' } });
         harness.answer(serverId, `DELETE ${PATH}/binding-1`, { body: { v: 1, outcome: 'removed' } });
         const screen = await renderScreen(<IdentityConnectionGroupMappings
             scope={{ serverId, accountId: 'owner' }} address={{ serverId, teamId: 'team-1' }}
             connectionId="connection-1" mutationsAvailable requestApproval={() => undefined}
         />);
         await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH), screen.getTextContent()).toHaveLength(1));
-        if (operation === 'set') act(() => screen.changeTextByTestId('identity-external-group-id', 'engineering'));
-        else await vi.waitFor(() => expect(screen.findByTestId('identity-group-binding:binding-1')).not.toBeNull());
+        if (operation === 'set') {
+            act(() => screen.changeTextByTestId('identity-external-group-id', 'engineering'));
+            await screen.pressByTestIdAsync('identity-group-map-existing');
+            await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-native-target:group-1')).not.toBeNull());
+        } else {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('identity-group-binding:binding-1')).not.toBeNull());
+        }
         const refresh = createDeferred<void>();
         harness.answer(serverId, `GET ${LIST_PATH}`, { body: { items: [binding], nextCursor: null }, respondAfter: refresh.promise });
-        const control = operation === 'set' ? 'identity-group-map-create' : 'identity-group-binding:binding-1';
-        act(() => screen.pressByTestId(control));
+        const control = operation === 'set' ? 'identity-group-map-existing' : 'identity-group-binding:binding-1';
+        act(() => screen.pressByTestId(operation === 'set' ? 'identity-group-native-target:group-1' : control));
         try {
             // The accepted write has reached the list revalidation. That read
             // remains held; only the acknowledged write should release pending.
             await vi.waitFor(() => expect(harness.requestsFor(LIST_PATH)).toHaveLength(2));
+            if (operation === 'set') {
+                expect(harness.requestsFor(PATH)[0]?.input).toMatchObject({ target: { kind: 'native_target', teamGroupId: 'group-1' } });
+            }
             await vi.waitFor(() => {
                 expect(screen.findByTestId(control)).not.toBeNull();
                 expect(screen.findAllByTestId(control).some(node => node.props.loading === true)).toBe(false);

@@ -84,9 +84,9 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
         scope: props.scope,
         groups: groupLabelInputs,
     });
-    const bind = React.useCallback(async (target: Parameters<typeof buildIdentityConnectionGroupMappingCommand>[0]['target']) => {
+    const bind = React.useCallback(async (teamGroupId: string) => {
         const command = buildIdentityConnectionGroupMappingCommand({
-            teamId: props.address.teamId, connectionId: props.connectionId, externalGroupId, target,
+            teamId: props.address.teamId, connectionId: props.connectionId, externalGroupId, target: { kind: 'native_target', teamGroupId },
         });
         if (!command) { setFailure(t('identityAdministration.required')); return; }
         const finishBinding = () => {
@@ -134,11 +134,10 @@ export const IdentityConnectionGroupMappings = React.memo(function IdentityConne
             </ItemGroup></SettingAnchor>
             <ItemGroup title={t('identityAdministration.chooseGroup')}>
                 <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.externalGroupId} accessoryLayout="adaptive" showChevron={false} rightElement={<FieldTextInput testID="identity-external-group-id" accessibilityLabel={t('identityAdministration.directoryGroups')} value={externalGroupId} editable={props.mutationsAvailable} onChangeText={setExternalGroupId} autoCapitalize="none" />} />
-                <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.mapCreate} testID="identity-group-map-create" loading={pending === 'create'} disabled={pending !== null || !props.mutationsAvailable} onPress={() => void bind({ kind: 'directory_created' })} showChevron={false} />
-                <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.mapExisting} testID="identity-group-map-existing" selected={choosingTarget} disabled={pending !== null || !props.mutationsAvailable} onPress={() => setChoosingTarget((value) => !value)} showChevron={false} />
+                <SettingRow setting={TEAM_IDENTITY_CONNECTION_SETTINGS.settings.mapExisting} testID="identity-group-map-existing" selected={choosingTarget} loading={pending === 'create'} disabled={pending !== null || !props.mutationsAvailable} onPress={() => setChoosingTarget((value) => !value)} showChevron={false} />
                 {choosingTarget && nativeGroups.status === 'loading' && nativeGroups.rows.length === 0 ? <SurfaceStateCard testID="identity-group-native-loading" kind="loading" size="line" title={t('common.loading')} /> : null}
                 {choosingTarget && nativeGroups.isCurrent && nativeGroups.rows.length === 0 ? <SurfaceStateCard testID="identity-group-native-empty" kind="empty" size="line" title={t('teams.groups.emptyTitle')} /> : null}
-                {choosingTarget ? nativeGroups.rows.map((group) => <Item key={group.id} testID={`identity-group-native-target:${group.id}`} title={openedGroupDisplayNames.get(group.id) ?? t('common.unavailable')} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pending !== null || !props.mutationsAvailable || !nativeGroups.isCurrent} onPress={() => void bind({ kind: 'native_target', teamGroupId: group.id })} showChevron={false} />) : null}
+                {choosingTarget ? nativeGroups.rows.map((group) => <Item key={group.id} testID={`identity-group-native-target:${group.id}`} title={openedGroupDisplayNames.get(group.id) ?? t('common.unavailable')} subtitle={t('teams.groups.memberCount', { count: group.memberCount })} disabled={pending !== null || !props.mutationsAvailable || !nativeGroups.isCurrent} onPress={() => void bind(group.id)} showChevron={false} />) : null}
                 {choosingTarget && nativeGroups.error ? <SurfaceStateCard testID="identity-group-native-error" kind="error" size="line" title={teamReadFailureLabel(nativeGroups.error)} action={readFailureAction(nativeGroups.error, { testIDPrefix: 'identity-group-native', reloadsFirstPage: true, onPress: () => void nativeGroups.reload() })} /> : null}
                 {choosingTarget && nativeGroups.hasMore && nativeGroups.status !== 'loading' && !nativeGroups.error ? <Item title={t('identityAdministration.loadMore')} loading={nativeGroups.status === 'loading_more'} disabled={nativeGroups.status === 'loading_more'} onPress={() => void nativeGroups.loadMore()} showChevron={false} /> : null}
             </ItemGroup>

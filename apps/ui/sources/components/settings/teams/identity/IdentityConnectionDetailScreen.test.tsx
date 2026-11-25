@@ -408,7 +408,6 @@ describe('IdentityConnectionDetailScreen test return', () => {
         expect(screen.findByTestId('identity-external-group-id')?.props.editable).toBe(false);
         for (const testID of [
             'identity-settings-save',
-            'identity-group-map-create',
             'identity-group-map-existing',
             'team-identity-test',
             'team-identity-enable',

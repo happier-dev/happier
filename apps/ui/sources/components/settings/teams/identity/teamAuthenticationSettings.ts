@@ -52,7 +52,6 @@ const IDENTITY_CONNECTION_SECTIONS = {
         groupMappings: { titleKey: 'identityAdministration.directoryGroups', settings: {
             groupMappings: {},
             externalGroupId: {},
-            mapCreate: {},
             mapExisting: {},
         } },
         actions: { titleKey: 'identityAdministration.actions', settings: {

@@ -4,7 +4,7 @@ export function buildIdentityConnectionGroupMappingCommand(input: Readonly<{
     teamId: string;
     connectionId: string;
     externalGroupId: string;
-    target: TeamExternalGroupBindingSetInputV1['target'];
+    target: Extract<TeamExternalGroupBindingSetInputV1['target'], { kind: 'native_target' }>;
 }>): TeamExternalGroupBindingSetInputV1 | null {
     const externalGroupId = input.externalGroupId.trim();
     if (!externalGroupId) return null;
