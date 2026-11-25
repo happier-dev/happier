@@ -53,7 +53,10 @@ import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport 
 
 // Only HTTP and environment configuration are substituted. Snapshot, protocol,
 // signing, event envelopes, triage mapping, and terminalization remain real.
-vi.mock('axios', () => ({ default: { defaults: {}, post: vi.fn(), get: vi.fn(), patch: vi.fn() } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, post: vi.fn(), get: vi.fn(), patch: vi.fn() } };
+});
 const environment = vi.hoisted(() => ({ homeDir: '' }));
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
@@ -231,7 +234,7 @@ describe('canonical review Run comments', () => {
         reviewers: [{ options: { acceptCharge: freshConsent, effort: 'high' } }] });
     }
     if (mode === 'launch-failed') {
-      expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_failed' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'action_failed' });
       expect((await records.read('stable-review'))?.rounds[1]).toMatchObject({ state: 'failed', runs: [] });
       expect(started).toHaveLength(1);
       return;
@@ -773,8 +776,9 @@ describe('canonical review Run comments', () => {
   it('keeps an admitted Workflow identity in private exact-daemon transport context, not request JSON', async () => {
     return runWithScmAccountScope('account', async () => {
     let observed = false;
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const deps = createCliActionDeps({
-      sessionId: 'cli-global', token: 'token-1', credentials: { token: 'token-1', encryption: null }, mode: 'plain', ctx: null,
+      sessionId: 'cli-global', token, credentials: { token, encryption: null }, mode: 'plain', ctx: null,
       // The direct daemon invocation is the process transport boundary.
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (_method, request, options) => {
         observed = true;
