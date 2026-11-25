@@ -1372,6 +1372,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                             ...(fact.causeClass ? { causeClass: fact.causeClass } : {}),
                             ...(fact.causeCode ? { causeCode: fact.causeCode } : {}),
                             ...(fact.projectionCollapsed ? { projectionCollapsed: true } : {}),
+                            ...(fact.failureCause ? { failureCause: fact.failureCause } : {}),
                         });
                     }
                 },

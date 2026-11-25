@@ -6,7 +6,7 @@ import { createApprovalAutomaticChecksV1 } from '@happier-dev/protocol/actions/e
 import type { ApprovalAutomaticChecksV1 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
 import { readCurrentIntentMismatchFieldV1, type CurrentIntentMismatchV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
-import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, ActionOperationCredentialUseV1Schema, type ActionFailureCauseV1, type ActionOperationCredentialUseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalExecutionV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -187,6 +187,15 @@ function unavailable(code: string, data?: JsonValue): TargetActionExecutionResul
   });
 }
 
+/** The wrapped handler's Protocol-projected cause; only its closed schema fields reach a diagnostic. */
+function readDiagnosticFailureCause(result: TargetActionExecutionResult): Readonly<{ failureCause: ActionFailureCauseV1 }> | Record<string, never> {
+  if (result.status !== 'failed' && result.status !== 'unavailable') return {};
+  const data = 'data' in result ? result.data : undefined;
+  const raw = data && typeof data === 'object' && !Array.isArray(data) ? (data as Readonly<Record<string, unknown>>).failureCause : undefined;
+  const parsed = raw === undefined ? null : ActionFailureCauseV1Schema.safeParse(raw);
+  return parsed?.success ? { failureCause: parsed.data } : {};
+}
+
 /** Closed, content-free facts naming an untyped handler throw for the failure diagnostic only. */
 type UntypedFailureCause = Readonly<{ causeClass: string; causeCode?: string }>;
 const untypedFailureCauses = new WeakMap<object, UntypedFailureCause>();
@@ -279,7 +288,9 @@ export function createTargetActionExecutor(deps: Readonly<{
     /** An untyped handler throw: its class and identifier-like code, never its message or data. */
     causeClass?: string; causeCode?: string;
     /** Redaction replaced the handler's code with the stable generic code. */
-    projectionCollapsed?: true }>) => void | Promise<void>;
+    projectionCollapsed?: true;
+    /** The handler wrapper's closed cause (phase, class, code), already projected by the Protocol owner. */
+    failureCause?: ActionFailureCauseV1 }>) => void | Promise<void>;
 }>) {
   type ExecuteArgs = Readonly<{
     pluginId: string;
@@ -342,6 +353,7 @@ export function createTargetActionExecutor(deps: Readonly<{
             surface: args.surface, status: publicResult.status, ...('code' in publicResult ? { code: publicResult.code } : {}),
             ...untypedFailureCauses.get(result),
             ...readTargetActionProjectionCollapseCause(publicResult),
+            ...readDiagnosticFailureCause(publicResult),
             ...(readTargetActionProjectionCollapseCause(publicResult) || ('code' in result && 'code' in publicResult
               && result.code !== publicResult.code && publicResult.code === 'plugin_action_execution_failed')
               ? { projectionCollapsed: true as const } : {}),

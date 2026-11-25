@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -524,6 +525,19 @@ describe('target action executor', () => {
     expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', code: 'plugin_action_execution_failed',
       projectionCollapsed: true, causeClass: 'RangeError' }));
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('postgres://');
+  });
+
+  it('carries the wrapped handler failureCause into the failure diagnostic', async () => {
+    const diagnostic = vi.fn(async () => {});
+    // The handler wrapper's own producer, as for a real untyped handler throw.
+    const failureCause = projectActionFailureCauseV1(Object.assign(new Error('permission denied for view pg_stat_statements'),
+      { code: 'permission_denied' }), 'action.handler');
+    const executor = createExecutor({ resolve: () => resolved(), diagnostic, invoke: async () => ({
+      status: 'failed', code: 'plugin_action_execution_failed', message: 'plugin_action_execution_failed',
+      data: { failureCause } }) });
+    await expect(executor.execute({ pluginId: 'acme.alpha', localId: 'run', input: {}, surface: 'cli' }))
+      .resolves.toMatchObject({ status: 'failed', code: 'plugin_action_execution_failed' });
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', failureCause }));
   });
 
   it('normalizes requester rejection, cancellation, and invocation throws without escaping the final owner', async () => {
