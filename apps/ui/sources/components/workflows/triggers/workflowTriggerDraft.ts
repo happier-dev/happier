@@ -313,41 +313,44 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
     draft: WorkflowTriggerDraft;
     writer: WorkflowTriggerWriter;
     isCurrent?: () => boolean;
-    onAcknowledged?: (edit: WorkflowTriggerDraftEdit, triggerId: AutomationTriggerId | undefined, set: WorkflowTriggerSetV1 | null) => void;
+    onAcknowledged?: (edit: WorkflowTriggerDraftEdit, triggerId: AutomationTriggerId | undefined,
+        set: WorkflowTriggerSetV1 | null, postWriteFailure?: WorkflowTriggerWriteResult['postWriteFailure']) => void;
 }>): Promise<WorkflowTriggerSaveResult> {
     let set = params.set;
     let remaining = params.draft;
     try {
         for (const triggerId of params.draft.removes) {
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
-            if (set !== null) {
-                set = (await params.writer.remove({ automationId: set.automationId, triggerId })).set;
-            }
+            const receipt = set === null ? undefined : await params.writer.remove({ automationId: set.automationId, triggerId });
+            if (receipt) set = receipt.set;
             remaining = { ...remaining, removes: remaining.removes.filter((id) => id !== triggerId) };
-            params.onAcknowledged?.({ kind: 'remove', triggerId }, undefined, set);
+            params.onAcknowledged?.({ kind: 'remove', triggerId }, undefined, set, receipt?.postWriteFailure);
         }
         for (const [triggerId, update] of Object.entries(params.draft.updates)) {
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
+            const savedTriggerId = AutomationTriggerIdSchema.parse(triggerId);
+            let receipt: WorkflowTriggerWriteResult | undefined;
             if (set !== null && (update.trigger !== undefined || update.enabled !== undefined)) {
-                set = (await params.writer.update({
+                receipt = await params.writer.update({
                     automationId: set.automationId,
-                    triggerId: AutomationTriggerIdSchema.parse(triggerId),
+                    triggerId: savedTriggerId,
                     expectedRevision: set.revision,
                     patch: {
                         ...(update.trigger === undefined ? {} : { trigger: update.trigger }),
                         ...(update.enabled === undefined ? {} : { enabled: update.enabled }),
                     },
-                })).set;
+                });
+                set = receipt.set;
             }
             const { [triggerId]: _applied, ...updates } = remaining.updates;
             remaining = { ...remaining, updates };
-            params.onAcknowledged?.({ kind: 'update', triggerId: AutomationTriggerIdSchema.parse(triggerId), ...update }, undefined, set);
+            params.onAcknowledged?.({ kind: 'update', triggerId: savedTriggerId, ...update }, undefined, set, receipt?.postWriteFailure);
         }
         // The set's own context, for every trigger at once (no trigger id).
         const context = params.draft.context;
         if (context !== undefined && set !== null) {
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
-            set = (await params.writer.update({
+            const receipt = await params.writer.update({
                 automationId: set.automationId,
                 expectedRevision: set.revision,
                 patch: {
@@ -356,10 +359,11 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                     ...(context.roleOverrides === undefined ? {} : { roleOverrides: [...context.roleOverrides] }),
                     ...(context.visibleTeamId === undefined ? {} : { visibleTeamId: context.visibleTeamId }),
                 },
-            })).set;
+            });
+            set = receipt.set;
             const { context: _applied, ...rest } = remaining;
             remaining = rest;
-            params.onAcknowledged?.({ kind: 'setContext', context }, undefined, set);
+            params.onAcknowledged?.({ kind: 'setContext', context }, undefined, set, receipt.postWriteFailure);
         }
         for (const add of params.draft.adds) {
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
@@ -379,7 +383,8 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                 ...(set === null && context?.visibleTeamId !== undefined ? { visibleTeamId: context.visibleTeamId } : {}),
             });
             set = result.set;
-            params.onAcknowledged?.({ kind: 'add', ...add }, result.triggerId === undefined ? undefined : AutomationTriggerIdSchema.parse(result.triggerId), set);
+            params.onAcknowledged?.({ kind: 'add', ...add },
+                result.triggerId === undefined ? undefined : AutomationTriggerIdSchema.parse(result.triggerId), set, result.postWriteFailure);
             remaining = { ...remaining, adds: remaining.adds.filter((item) => item.clientId !== add.clientId) };
             if (remaining.context !== undefined && set !== null) {
                 const { context: _seeded, ...rest } = remaining;

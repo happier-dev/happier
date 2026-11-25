@@ -1,6 +1,7 @@
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import * as React from 'react';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -8,7 +9,9 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { AutomationTriggerId} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import type { AutomationTriggerDefinition } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1} from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
@@ -218,7 +221,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
             draft: captured.draft,
             writer,
             isCurrent: current,
-            onAcknowledged: (edit, triggerId, acknowledgedSet) => {
+            onAcknowledged: (edit, triggerId, acknowledgedSet, postWriteFailure) => {
                 if (!current()) return;
                 if (acknowledgedSet !== null) acknowledge(acknowledgedSet);
                 const beforeSet = previousSet;
@@ -258,6 +261,20 @@ export function useWorkflowTriggerEditing(params: Readonly<{
                     return { ...latest, draft: restoreWorkflowTriggerSnapshot(acknowledgedSet,
                         { ...snapshot, inputs }, acknowledgedDefinitions) };
                 });
+                if (postWriteFailure) {
+                    const failure = WorkflowActionFailureV1Schema.safeParse(postWriteFailure).data;
+                    const workflowError = new WorkflowActionError({
+                        message: postWriteFailure.error,
+                        rawCode: postWriteFailure.errorCode,
+                        rawDetails: postWriteFailure.details,
+                        ...(failure ? { failure } : {}),
+                    });
+                    publishPresentationNotice({
+                        key: `workflow-trigger-follow-up:${acknowledgedSet?.automationId ?? workflow}:${acknowledgedSet?.revision ?? ''}`,
+                        severity: 'warning',
+                        message: resolveActionExecutionErrorMessage(postWriteFailure, formatWorkflowProblemMessage(workflowError), { closedCodesOnly: true }),
+                    });
+                }
             },
         }).finally(() => { if (pendingSave.current === pending) pendingSave.current = null; });
         if (!current()) return 'stale';

@@ -831,9 +831,16 @@ describe('workflow trigger editing lifetime', () => {
             expect(hook.getCurrent().sets.map(value => value.automationId)).toEqual([set.automationId]);
         });
     });
-    it.each(['prComment', 'ciFailed'] as const)('edits saved %s in the shared section using its saved lifetime without an intake context', async kind => {
+    it.each([
+        { kind: 'prComment', operation: 'update', bindingRefused: false },
+        { kind: 'ciFailed', operation: 'update', bindingRefused: false },
+        { kind: 'prComment', operation: 'update', bindingRefused: true },
+        { kind: 'prComment', operation: 'remove', bindingRefused: true },
+    ] as const)('saves $operation of $kind with its saved lifetime (binding refused: $bindingRefused)', async ({ kind, operation, bindingRefused }) => {
         const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
         const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
+        const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        retirePresentationNotice();
         seed(set);
         rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, scopeSessionId: 'session-a' }));
         rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, triggers: [persistedTrigger('t1', {
@@ -846,12 +853,15 @@ describe('workflow trigger editing lifetime', () => {
             SessionPullRequestBindingResultV1Schema } = await import('@happier-dev/channels-protocol/v1');
         const attachments: ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>[] = [];
         await answerExternalActionAccountForHome(home, serverId, { machineId: projectTarget.machineId, actionId: 'action.invoke', tokenEpoch: 0,
+            failure: result => result === null ? { errorCode: 'target_unavailable', error: 'target_unavailable',
+                details: { code: 'target_unavailable', reason: 'action_unavailable' } } : null,
             execute(input) {
                 const invocation = getActionSpec('action.invoke').inputSchema.parse(input);
                 expect(invocation.action).toEqual({ pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
                 const attachment = SessionPullRequestBindingInputV1Schema.parse(invocation.input);
-                if (attachment.kind !== 'attach') throw new Error('Expected the saved trigger binding update');
                 attachments.push(attachment);
+                if (bindingRefused) return null;
+                if (attachment.kind !== 'attach') throw new Error('Expected the saved trigger binding update');
                 return SessionPullRequestBindingResultV1Schema.parse({ kind: 'attached', bindingId: 'binding-a' });
             } });
         const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'saved-pr', projectTarget,
@@ -863,13 +873,28 @@ describe('workflow trigger editing lifetime', () => {
             whereTarget={projectTarget} whereSummary="/repo" inputs={[]} />);
         const block = screen.findAll(node => node.type === WorkflowTriggerBlock)[0];
         if (!block) throw new Error('Expected the saved PR editor');
-        await act(async () => { block.props.onChangeWhen({ kind, pullRequest: { repository: 'acme/widgets', number: 8 } }); });
+        await act(async () => {
+            if (operation === 'remove') block.props.onRemove();
+            else block.props.onChangeWhen({ kind, pullRequest: { repository: 'acme/widgets', number: 8 } });
+        });
         await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
-        expect(rows[0]).toMatchObject({ scopeSessionId: 'session-a' });
-        await waitForHomeGovernance(() => expect(hook.getCurrent().set?.triggers).toMatchObject([{ kind,
-            pullRequest: { repository: 'acme/widgets', number: 8 } }]));
-        expect(attachments).toMatchObject([{ kind: 'attach', sessionId: 'session-a', pullRequest: { repository: 'acme/widgets', number: 8 },
-            target: { automationId: set.automationId, triggerKind: kind } }]);
+        expect(rows[0]).toMatchObject({ scopeSessionId: 'session-a', templateVersion: 2 });
+        await waitForHomeGovernance(() => {
+            if (operation === 'remove') expect(hook.getCurrent().set).toBeNull();
+            else expect(hook.getCurrent().set).toMatchObject({ revision: 2,
+                triggers: [{ kind, pullRequest: { repository: 'acme/widgets', number: 8 } }] });
+        });
+        expect(attachments).toMatchObject(operation === 'remove'
+            ? [{ kind: 'removeTrigger', sessionId: 'session-a', automationId: set.automationId }]
+            : [{ kind: 'attach', sessionId: 'session-a', pullRequest: { repository: 'acme/widgets', number: 8 },
+                target: { automationId: set.automationId, triggerKind: kind } }]);
+        if (bindingRefused) {
+            expect(readPresentationNotice()).toMatchObject({ severity: 'warning', message: 'workflows.problem.preExecution.actionUnavailable' });
+            expect(hook.getCurrent().dirty).toBe(false);
+            await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+            expect(writes).toHaveLength(1);
+            retirePresentationNotice();
+        }
     });
 
     it('supplies Session context and Account destinations through one shared physical-Account census', async () => {
