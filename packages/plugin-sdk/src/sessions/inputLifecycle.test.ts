@@ -3,6 +3,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { describe, expect, it } from 'vitest';
 
 import { PluginError } from '../errors.js';
+import type { JsonValue } from '../identity.js';
 import { projectSessionSpawnNewActionInputV2, SessionServerStartSpawnDraftV1Schema, spawnSessionInputDestinationV1 } from './index.public.js';
 
 const spawn = projectSessionSpawnNewActionInputV2(SessionServerStartSpawnDraftV1Schema.parse({
@@ -33,7 +34,7 @@ describe('Session input destination spawn', () => {
         await expect(spawnSessionInputDestinationV1({ spawn, async execute() { throw error; } })).resolves.toEqual(details);
     });
 
-    it.each([
+    it.each<JsonValue>([
         { type: 'error', code: 'agent_signed_out', retryable: false },
         { type: 'error', code: 'target_required', retryable: false },
         { type: 'pending', outcome: 'unknown', retryWithSameCreationKey: true },

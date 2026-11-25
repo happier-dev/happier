@@ -273,6 +273,7 @@ const emptyRuntime = undefined as never; /* @sdk-negative-type-case-end */
       | 'fileEnvironmentUses'
       | 'environmentUses'
       | 'environmentUnsetUses'
+      | 'prepareEnvironment'
       | 'switchContinuity'
       | 'stateSharingDescriptor'
       | 'continuity'
