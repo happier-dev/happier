@@ -77,6 +77,7 @@ export type WorkspaceAction =
     | (MeasuredSplit & Readonly<{ type: 'openSplitTab'; groupId: string; tab: WorkspaceTab;
         newGroupId: string; axis: SplitCanvasAxis; placement: SplitCanvasPlacement }>)
     | Readonly<{ type: 'activateTab'; groupId: string; tabId: string }>
+    | Readonly<{ type: 'adoptRestoredTab'; tabId: string; restoredTabId: string; target: DestinationRef }>
     | Readonly<{ type: 'setPresentation'; tabId: string; presentation: WorkspaceTab['presentation'] | null }>
     | Readonly<{ type: 'closeTab'; groupId: string; tabId: string; newTab: WorkspaceTab; remember?: boolean }>
     | Readonly<{ type: 'closeTabs'; groupId: string; tabIds: readonly string[]; newTab: WorkspaceTab }>
@@ -248,6 +249,25 @@ export function reduceWorkspaceState(state: WorkspaceState, action: WorkspaceAct
                     ...(action.fallbackTitle === undefined ? {} : { [action.tab.id]: action.fallbackTitle }),
                 },
                 tabPairs: removePairMembers(state, preview.removedTabIds),
+            };
+        }
+        case 'adoptRestoredTab': {
+            const tab = state.tabs[action.tabId];
+            const saved = state.tabs[action.restoredTabId];
+            const source = groupContaining(state, action.tabId);
+            const destination = groupContaining(state, action.restoredTabId);
+            if (!tab?.preview || !saved || saved.preview || !source || !destination) return state;
+            const moved = reduceWorkspaceState(state, { type: 'moveTab', tabId: tab.id,
+                sourceGroupId: source.id, targetGroupId: destination.id, beforeTabId: saved.id });
+            const closed = reduceWorkspaceState(moved, { type: 'closeTab', groupId: destination.id, tabId: saved.id,
+                newTab: tab, remember: false });
+            const title = state.fallbackTitlesByTabId[tab.id] ?? state.fallbackTitlesByTabId[saved.id];
+            return {
+                ...closed,
+                tabs: { ...closed.tabs, [tab.id]: { ...tab, preview: false, pinned: saved.pinned, target: action.target } },
+                fallbackTitlesByTabId: title === undefined ? closed.fallbackTitlesByTabId
+                    : { ...closed.fallbackTitlesByTabId, [tab.id]: title },
+                tabPairs: state.tabPairs.map(pair => pair.map(id => id === saved.id ? tab.id : id)),
             };
         }
         case 'activateTab': {

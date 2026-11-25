@@ -51,8 +51,9 @@ vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
 function harness(
   pages: Parameters<typeof resolveCompactAppDestinations>[0]['pages'] = [],
   scope?: Readonly<{ serverId: string; accountId: string }>,
+  initial?: ReturnType<typeof createWorkspaceState>,
 ) {
-  let state = createWorkspaceState({
+  let state = initial ?? createWorkspaceState({
     id: 'A',
     target: { kind: 'session', params: { id: 'A1', serverId: 'home-a' } },
     pinned: false,
@@ -113,6 +114,27 @@ function sectionColumn(h: ReturnType<typeof harness>) {
 }
 
 describe('workspace navigation adapter', () => {
+  it('keeps the presented preview when cold restore finds a saved tab for its Session', () => {
+    const tab = (id: string, sessionId: string, preview: boolean) => ({
+      id, target: { kind: 'session', params: { id: sessionId, serverId: 'home-a' } }, pinned: !preview, preview,
+    });
+    const saved = tab('restored', 'A1', false);
+    const other = tab('other', 'B2', false);
+    const drawn = tab('drawn', 'A1', true);
+    const initial = createWorkspaceState(saved);
+    const groupId = initial.focusedGroupId;
+    const tabs = reduceWorkspaceState(reduceWorkspaceState(initial, { type: 'openTab', groupId, tab: other }),
+      { type: 'openTab', groupId, tab: drawn });
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' }, tabs);
+    expect(h.active().id).toBe(drawn.id);
+    h.adapter.initialize('/session/A1?serverId=home-a&mobileSurface=chat', { presentedTabId: drawn.id });
+    expect(h.active().id).toBe(drawn.id);
+    expect(h.state().groups[groupId].tabIds).toEqual([drawn.id, other.id]);
+    expect(h.state().tabs[drawn.id]).toMatchObject({ pinned: true, preview: false, target: { params: { mobileSurface: 'chat' } } });
+    expect(h.state().tabs[other.id]).toBe(other);
+    expect(h.adapter.history.entries.at(-1)?.tabId).toBe(drawn.id);
+  });
+
   it('restores the selected section through Back and Forward, including ordinary cross-section items', () => {
     const h = harness();
     h.adapter.openHref('/settings/roles', { section: true });

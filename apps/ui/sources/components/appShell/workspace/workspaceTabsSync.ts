@@ -28,6 +28,8 @@ export function createWorkspaceTabsSync(input: Readonly<{
     transport: WorkspaceTabsTransport;
     onRecord: (record: SharedWorkspaceTabs, localRecord: SharedWorkspaceTabs) => void;
     getLocalRecord?: () => SharedWorkspaceTabs;
+    /** A cold Session preview has drawn but does not yet belong to the portable record. */
+    findRestoreAlias?: (record: SharedWorkspaceTabs) => Readonly<{ id: string; restoredId: string }> | undefined;
     shouldContinue?: () => boolean;
     onStatus?: (snapshot: WorkspaceTabsSyncSnapshot) => void;
     enroll?: () => readonly WorkspaceTabIntent[];
@@ -46,8 +48,6 @@ export function createWorkspaceTabsSync(input: Readonly<{
     const normalize = (value: SharedWorkspaceTabs) => input.normalizeRecord?.(value) ?? value;
     const destinationIdentity = input.destinationIdentity ?? workspaceDestinationAdmissionIdentity;
     const rememberNormalizedAliases = (before: SharedWorkspaceTabs, after: SharedWorkspaceTabs) => {
-        // A currently retained identity is an alias root, including one restored by a peer.
-        for (const id of after.order) tabAliases.delete(id);
         for (const id of before.order) {
             if (after.tabsById[id]) continue;
             const destinationKey = destinationIdentity(before.tabsById[id].target);
@@ -57,6 +57,8 @@ export function createWorkspaceTabsSync(input: Readonly<{
     };
     const normalizeWithAliases = (value: SharedWorkspaceTabs) => {
         const normalized = normalize(value);
+        // Only an ID in the portable record can supersede a learned local alias.
+        for (const id of normalized.order) tabAliases.delete(id);
         rememberNormalizedAliases(value, normalized);
         return normalized;
     };
@@ -93,6 +95,14 @@ export function createWorkspaceTabsSync(input: Readonly<{
         };
         rememberNormalizedAliases(combined, normalize(combined));
     };
+    const retainTabAlias = (id: string, restoredId: string) => {
+        const restored = record?.tabsById[restoredId];
+        if (restored && id !== restoredId && !record?.tabsById[id]) {
+            tabAliases.set(id, { id: restoredId, destinationKey: destinationIdentity(restored.target) });
+            return true;
+        }
+        return false;
+    };
     const localProjection = (value: SharedWorkspaceTabs, local: SharedWorkspaceTabs | undefined): SharedWorkspaceTabs => {
         if (!local) return value;
         const localIds = new Map<string, string>();
@@ -102,6 +112,10 @@ export function createWorkspaceTabsSync(input: Readonly<{
                 && destinationIdentity(local.tabsById[id].target) === destinationIdentity(value.tabsById[sharedId].target)) {
                 localIds.set(sharedId, id);
             }
+        }
+        const restored = input.findRestoreAlias?.(value);
+        if (restored && retainTabAlias(restored.id, restored.restoredId)) {
+            localIds.set(restored.restoredId, restored.id);
         }
         if (!localIds.size) return value;
         const localId = (id: string) => localIds.get(id) ?? id;
@@ -166,6 +180,7 @@ export function createWorkspaceTabsSync(input: Readonly<{
     };
     return {
         reproject: project,
+        retainTabAlias,
         reconcileLocal: () => {
             if (!current()) return;
             const local = input.getLocalRecord?.();
@@ -200,8 +215,11 @@ export function createWorkspaceTabsSync(input: Readonly<{
             }
             status = pending.length ? 'pending' : 'synced';
             if (!pending.length) {
-                tabAliases.clear();
-                rememberLocalAliases(input.getLocalRecord?.());
+                const local = input.getLocalRecord?.();
+                for (const id of tabAliases.keys()) {
+                    if (!local?.tabsById[id] || resolvePendingId(id) === id) tabAliases.delete(id);
+                }
+                rememberLocalAliases(local);
             }
             notify();
         }),

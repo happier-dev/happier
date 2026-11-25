@@ -14,7 +14,8 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { CompactAppDestination } from '../destinations/compactAppDestinationCatalog';
 import type { useWorkspaceState } from './useWorkspaceState';
-import type { WorkspaceAction } from './workspaceState';
+import type { WorkspaceAction, WorkspaceTab } from './workspaceState';
+import { findWorkspaceRestoredSessionTab, readWorkspaceColdSessionPreview, workspaceRestoredSessionKey } from './workspaceNavigationAdapter';
 import { collectWorkspaceTabIntents, projectWorkspaceSharedTabs, type SharedWorkspaceTabs, type WorkspaceTabIntent } from './workspaceSyncedTabs';
 import { createWorkspaceTabsSync, type WorkspaceTabsSyncSnapshot } from './workspaceTabsSync';
 import { createWorkspaceTabsHandoffPublisher, WorkspaceTabsHandoffSourceUnavailableError, type WorkspaceTabsHandoffSource, type WorkspaceTabsHandoffPublisher } from './workspaceTabsHandoff';
@@ -26,6 +27,7 @@ type Runtime = Readonly<{
     accept: (intents: readonly WorkspaceTabIntent[], projection: SharedWorkspaceTabs) => void;
     policyChanged: () => void;
     reconcileLocal: () => void;
+    retainTabAlias: (id: string, restoredId: string) => void;
 }>;
 type PublishedProjection = Readonly<{
     binding: string;
@@ -43,6 +45,7 @@ function enrollmentIntents(record: SharedWorkspaceTabs): readonly WorkspaceTabIn
 
 export function useWorkspaceTabSync(input: Readonly<{
     local: LocalOwner;
+    initialTab?: WorkspaceTab;
     catalog: readonly CompactAppDestination[];
     enabled: boolean;
 }>): LocalOwner & Readonly<{
@@ -110,7 +113,18 @@ export function useWorkspaceTabSync(input: Readonly<{
         const controller = syncEnabled ? createWorkspaceTabsSync({
             transport: createAccountKvJsonTransport({ credentials, request, key: 'workspace:tabs:v1', shouldContinue }),
             shouldContinue, normalizeRecord,
-            destinationIdentity: target => workspaceDestinationAdmissionIdentity(target, latest.current.catalog),
+            destinationIdentity: target => workspaceRestoredSessionKey(target, scope)
+                ?? workspaceDestinationAdmissionIdentity(target, latest.current.catalog),
+            findRestoreAlias: record => {
+                const { initialTab, local } = latest.current;
+                if (!initialTab) return undefined;
+                const state = local.getState();
+                const current = readWorkspaceColdSessionPreview(state, initialTab.target, initialTab.id, scope);
+                if (!current || record.tabsById[current.id]) return undefined;
+                const restored = findWorkspaceRestoredSessionTab(current.target,
+                    record.order.map(id => record.tabsById[id]), scope);
+                return restored && !state.tabs[restored.id] ? { id: current.id, restoredId: restored.id } : undefined;
+            },
             getLocalRecord: () => projectWorkspaceSharedTabs(latest.current.local.getState()),
             onRecord: (_record, localRecord) => {
                 if (!shouldContinue()) return;
@@ -158,7 +172,9 @@ export function useWorkspaceTabSync(input: Readonly<{
         let timer: ReturnType<typeof setTimeout> | null = null;
         let dirty = false;
         const refresh = () => { if (controller && shouldContinue()) { refreshRequested = true; sharedSync.invalidate(); } };
-        const mounted: Runtime = { reconcileLocal: () => {
+        const mounted: Runtime = { retainTabAlias: (id, restoredId) => {
+            if (shouldContinue()) controller?.retainTabAlias(id, restoredId);
+        }, reconcileLocal: () => {
             if (shouldContinue()) controller?.reconcileLocal();
         }, policyChanged: () => {
             if (!shouldContinue()) return;
@@ -205,6 +221,7 @@ export function useWorkspaceTabSync(input: Readonly<{
     }, []);
     const restoreAction = React.useCallback((action: WorkspaceAction) => {
         latest.current.local.restoreAction(action);
+        if (action.type === 'adoptRestoredTab') runtime.current?.retainTabAlias(action.tabId, action.restoredTabId);
         runtime.current?.reconcileLocal();
     }, []);
     const offProjection = React.useMemo(() => syncEnabled ? null : projectWorkspaceSharedTabs(input.local.state), [input.local.state, syncEnabled]);

@@ -204,6 +204,7 @@ export function WorkspaceProvider(props: Readonly<{
     const localOwner = useWorkspaceState({ initialTab, admitState, restoreRetainedHome: props.restoreRetainedHome, windowId: props.appWindow?.record.layoutId,
         persistInitial: Boolean(props.appWindow) && !props.appWindow?.browser, persistLayout: !props.appWindow?.browser });
     const owner = useWorkspaceTabSync({ local: localOwner, catalog: props.catalog,
+        initialTab: Platform.OS === 'web' && !props.appWindow ? initialTab : undefined,
         enabled: (!props.appWindow || props.appWindow.chrome === 'full') && (props.enabled || phone) });
     const [historyVersion, changed] = React.useReducer((value: number) => value + 1, 0);
     const [publishedTitles, setPublishedTitles] = React.useState<Readonly<{
@@ -547,7 +548,8 @@ export function WorkspaceProvider(props: Readonly<{
             const retainedHref = appWindowRef.current?.record.selectedAddress.kind === 'home'
                 ? hrefForDestinationRef(latest.current.catalog, state.tabs[state.groups[state.focusedGroupId].activeTabId].target) : null;
             const unresolvedTabId = !appWindowRef.current && initialTab.target.kind === 'newTab' ? initialTab.id : undefined;
-            runtime.adapter.initialize(retainedHref ?? routeHref, unresolvedTabId);
+            runtime.adapter.initialize(retainedHref ?? routeHref, { unresolvedTabId,
+                presentedTabId: Platform.OS === 'web' && !appWindowRef.current ? initialTab.id : undefined });
             runtime.initialized = true;
         } else if (runtime.projectedHref === routeHref) {
             if (!runtime.browser) runtime.projectedHref = null;

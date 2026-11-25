@@ -6,7 +6,7 @@ export { sameDestinationRef } from './workspaceState';
 import { isWorkflowDraftDestination, isWorkspaceSingletonDestination, resolveWorkspaceDestinationScope, workspaceDestinationNavigationIdentity } from './workspaceDestinationPolicy';
 import { createWorkspaceDestinationSplit, createWorkspaceSplit } from './workspaceSplit';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState, SESSION_PANE_URL_PARAM_KEYS } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { isSessionDetailsWorkspacePath, resolveSessionCockpitRouteFromPathname } from '@/components/workspaceCockpit/session/sessionCockpitState';
@@ -65,6 +65,39 @@ function normalizedTabTarget(catalog: readonly CompactAppDestination[], target: 
     return normalized;
 }
 
+function readSessionIdentity(ref: DestinationRef, scope?: ServerAccountScope | null) {
+    const routedSession = ref.params.workspacePathname
+        ? resolveSessionCockpitRouteFromPathname(ref.params.workspacePathname) : null;
+    if (ref.kind !== 'session' && ref.kind !== 'sessionDetails'
+        && (!routedSession || routedSession.sessionId !== ref.params.id)) return null;
+    const serverId = ref.params.serverId ?? scope?.serverId;
+    // Missing qualifiers denote the current persisted workspace realm.
+    return { id: ref.params.id, serverId, accountId: ref.params.accountId
+        ?? (areServerProfileIdentifiersEquivalent(serverId, scope?.serverId) ? scope?.accountId : undefined) };
+}
+
+export function workspaceRestoredSessionKey(ref: DestinationRef, scope?: ServerAccountScope | null): string | null {
+    const address = ref.kind === 'session' && ref.params.id ? readSessionIdentity(ref, scope) : null;
+    return address && JSON.stringify([address.id, resolveServerProfileScopeIdForIdentifier(address.serverId), address.accountId]);
+}
+
+export function readWorkspaceColdSessionPreview(
+    state: WorkspaceState, address: DestinationRef, initialTabId: string | undefined, scope?: ServerAccountScope | null,
+): WorkspaceTab | undefined {
+    const id = state.groups[state.focusedGroupId].activeTabId;
+    if (id !== initialTabId) return undefined;
+    const tab = state.tabs[id];
+    const key = workspaceRestoredSessionKey(address, scope);
+    return tab.preview && key !== null && workspaceRestoredSessionKey(tab.target, scope) === key ? tab : undefined;
+}
+
+export function findWorkspaceRestoredSessionTab<T extends Pick<WorkspaceTab, 'target'>>(
+    target: DestinationRef, candidates: readonly T[], scope?: ServerAccountScope | null,
+): T | undefined {
+    const key = workspaceRestoredSessionKey(target, scope);
+    return key === null ? undefined : candidates.find(tab => workspaceRestoredSessionKey(tab.target, scope) === key);
+}
+
 export function createWorkspaceNavigationAdapter(input: Readonly<{
     getState: () => WorkspaceState;
     getCatalog: () => readonly CompactAppDestination[];
@@ -94,18 +127,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         return pane?.rightTabId === 'terminal'
             || (!pane?.details && !pane?.rightTabId && pane?.bottomTabId === 'terminal');
     };
-    const sessionIdentity = (ref: DestinationRef) => {
-        const routedSession = ref.params.workspacePathname
-            ? resolveSessionCockpitRouteFromPathname(ref.params.workspacePathname) : null;
-        if (ref.kind !== 'session' && ref.kind !== 'sessionDetails'
-            && (!routedSession || routedSession.sessionId !== ref.params.id)) return null;
-        const scope = input.getScope?.();
-        const serverId = ref.params.serverId ?? scope?.serverId;
-        // Missing qualifiers denote the current persisted workspace realm,
-        // never an Account on an explicitly different Home.
-        return { id: ref.params.id, serverId, accountId: ref.params.accountId
-            ?? (areServerProfileIdentifiersEquivalent(serverId, scope?.serverId) ? scope?.accountId : undefined) };
-    };
+    const sessionIdentity = (ref: DestinationRef) => readSessionIdentity(ref, input.getScope?.());
     const sameSessionIdentity = (a: DestinationRef, b: DestinationRef) => {
         const identity = sessionIdentity(a);
         const candidate = sessionIdentity(b);
@@ -231,13 +253,27 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
             const target = resolveOpenTarget(href);
             return target ? findOpenDestination(target) : null;
         },
-        initialize(href: string, unresolvedTabId?: string) {
+        initialize(href: string, options?: Readonly<{ unresolvedTabId?: string; presentedTabId?: string }>) {
             const target = resolveOpenTarget(href);
             const focused = focusedEntry();
             // A blank preview seeded from an unowned route has no address to retain.
-            const focusedHref = focused.tabId === unresolvedTabId && focused.target.kind === 'newTab'
+            const focusedHref = focused.tabId === options?.unresolvedTabId && focused.target.kind === 'newTab'
                 ? null : hrefForDestinationRef(input.getCatalog(), focused.target);
             const focusedTarget = focusedHref ? resolveOpenTarget(focusedHref) : null;
+            const state = input.getState();
+            const scope = input.getScope?.();
+            const provisional = target && readWorkspaceColdSessionPreview(state, target, options?.presentedTabId, scope);
+            if (provisional && target) {
+                const saved = findWorkspaceRestoredSessionTab(target,
+                    Object.values(state.tabs).filter(tab => !tab.preview && !tab.presentation), scope);
+                if (saved) {
+                    // Restoration takes over the saved slot without replacing the mounted Session.
+                    input.dispatch({ type: 'adoptRestoredTab', tabId: provisional.id, restoredTabId: saved.id,
+                        target: adoptSessionTarget(provisional.target, target) });
+                    visit(true, false, true);
+                    return;
+                }
+            }
             if (target && focusedTarget && sameDestinationRef(focusedTarget, target)) {
                 // Several retained panes can have the same URL (notably New Tab).
                 // An unchanged address adopts the restored selection, not the first match.
