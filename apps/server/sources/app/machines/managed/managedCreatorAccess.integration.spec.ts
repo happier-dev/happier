@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, it } from 'vitest';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { exerciseManagedCreatorAccess, exerciseManagedCreatorDelete, exerciseManagedCreatorBirth, exerciseManagedCreatorPublication, exerciseManagedCreatorSetupRecovery, exerciseManagedCreatorControllerProjection, exerciseManagedRequesterRetention, exerciseManagedEnrollmentInstallationContext, exerciseManagedBoundSetupRecovery } from './managedCreatorAccess.testkit';
+import { exerciseManagedCreatorAccess, exerciseManagedCreatorDelete, exerciseManagedCreatorBirth, exerciseManagedCreatorPublication, exerciseManagedCreatorSetupRecovery, exerciseManagedCreatorControllerProjection, exerciseManagedRequesterRetention, exerciseManagedEnrollmentInstallationContext, exerciseManagedBoundSetupRecovery, exerciseManagedSignInOccurrence } from './managedCreatorAccess.testkit';
 
 describe('managed creator lifecycle on SQLite', () => {
     let harness: LightSqliteHarness;
@@ -13,6 +13,7 @@ describe('managed creator lifecycle on SQLite', () => {
     it('lets a member delete only the container they created, keeping the custodian\'s Delete', exerciseManagedCreatorDelete);
     it('projects only the exact creator resource controller without private credential references', exerciseManagedCreatorControllerProjection);
     it('publishes pre-enrollment progress to the creator and custodian', exerciseManagedCreatorPublication);
+    it('publishes each sign-in occurrence transition only to the admitted requester Account', exerciseManagedSignInOccurrence);
     it('admits creation birth only on the exact resulting guest', exerciseManagedCreatorBirth);
     it('recovers setup only on the same requester-owned guest', exerciseManagedCreatorSetupRecovery);
     it('retains unfinished bound Setup facts across Retry without guest enrollment', exerciseManagedBoundSetupRecovery);

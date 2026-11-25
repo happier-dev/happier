@@ -84,6 +84,39 @@ export function roleResult(localId: string): JsonValue {
     return { completed: localId };
 }
 
+/** Native process boundary for an installed provisioner whose guest awaits pairing. */
+export function pendingEnrollmentGuestRoleSource(input: Readonly<{ pluginId: string; localId: string; homeId: string }>): string {
+    const resource = { contributionRef: { pluginId: input.pluginId, localId: input.localId }, schemaVersion: 1 };
+    return `const boundResource = ${JSON.stringify(resource)};
+      const output = (stdout = '') => ({ termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+        stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false });
+      const nativeGuestRoles = {
+        acquire: () => ({ kind: 'bound', resource: { ...boundResource, value: {} } }),
+        bootstrap: () => ({ kind: 'native', transport: boundResource }),
+        inspect: () => ({ observedAt: Date.now(), availability: 'present', power: 'running' }),
+        exec: ({ argv }) => {
+          const command = argv?.[2] ?? '';
+          if (command.includes('command -v loginctl')) return output('linger_not_applicable\\n');
+          if (command.includes('uname -s')) return output(command.includes('uname -m') ? 'Linux\\nx86_64\\n/home/guest\\n' : 'Linux\\n');
+          if (command.includes('managed_guest_cli_absent')) return output('managed_guest_cli_absent\\n');
+          if (command.includes('mktemp')) return output('/tmp/happier-bootstrap-transfer.fixture\\n');
+          if (command.includes('version_path')) return output('current=\\nprevious=\\n');
+          if (command.includes("'auth' 'status'")) {
+            const data = { authenticated: false, credentialState: 'missing', machineRegistrationState: 'unregistered' };
+            return output(JSON.stringify({ ...data, v: 1, ok: true, kind: 'auth_status', data }));
+          }
+          if (command.includes("'auth' 'request'")) {
+            const createdAtMs = Date.now();
+            return output(JSON.stringify({ kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
+              publicKey: Buffer.alloc(32, 1).toString('base64'), homeServerIdentityId: ${JSON.stringify(input.homeId)},
+              pairing: { secretB64Url: Buffer.alloc(32, 23).toString('base64url'), createdAtMs, expiresAtMs: createdAtMs + 120000 },
+              supportsTokenOnly: true, pairingRequirement: 'v3', remoteProfileId: 'fixture-home' }));
+          }
+          return output();
+        },
+      };`;
+}
+
 export function fixture(options: Readonly<{
     cold?: boolean; dangerous?: boolean; privateNative?: boolean;
     /** Lets a composed caller prove that a host-reviewed child, not plugin surface access, admitted a native role. */

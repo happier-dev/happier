@@ -26,7 +26,8 @@ import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protoc
 import { readManagedMachineRequesterEnrollmentAccountIdV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import type { DevcontainerRebuildIntentV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { ManagedMachineSignInOccurrenceReportResultV1Schema, type ManagedMachineSignInOccurrenceReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
@@ -57,6 +58,7 @@ import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { rebuildManagedPresetAtFirstUse } from './presetPreparationRebuild';
 import { selectManagedPresetPreparationCliDelivery } from './presetPreparationCli';
+import { logger } from '@/ui/logger';
 
 export type WorkspaceTrustTask = Readonly<{ id: string; taskKind: 'remote.ssh.bootstrapMachine.v1' }>;
 
@@ -840,6 +842,8 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     const { target, contribution, occurrenceId } = invocation;
     const { runManagedMachineEnrollment } = await import('./enrollment');
     const native = carrier.kind === 'native' ? createManagedNativeBootstrapIO(correlation, invoke) : undefined;
+    const operationId = params.options.context?.operationAcceptance?.operationId;
+    const reportsSignIn = operationId && (params.action === MANAGED_ACQUIRE_ACTION_ID_V1 || params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1);
     let enrollmentLifetime: HomeOperationRetry | undefined;
     let enrollmentAttempted = false;
     try {
@@ -851,7 +855,21 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
             reviewedChild: params.options.context?.hostReviewedChild,
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,
             ...(enrollmentInput.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: enrollmentInput.guestHostPublicKey }),
-            operationId: params.options.context?.operationAcceptance?.operationId,
+            operationId,
+            ...(reportsSignIn ? { onSignInOccurrence: async ({ taskId, state }) => {
+                const body = { ...params.client.correlation(machine), signInOccurrence: {
+                    taskId, operationId, state, promptKind: 'auth.approveRemoteProvisioning',
+                } } satisfies ManagedMachineSignInOccurrenceReportV1;
+                try {
+                    await params.client.post('/v1/machines/managed/controller/report', body,
+                        ManagedMachineSignInOccurrenceReportResultV1Schema, state === 'pending' ? params.options.signal : null);
+                } catch (error) {
+                    // The existing exact operation can still answer or expose its receipt.
+                    logger.debug('[MANAGED ENROLLMENT] Sign-in occurrence publication failed', {
+                        state, code: error instanceof ManagedMachineControllerError ? error.code : 'action_failed',
+                    });
+                }
+            } } : {}),
             presetCredentialBroker: params.hydrator?.readPresetDefinition(machine)?.credentialBroker,
             ...createManagedBootstrapProgress(params, machine, () => { enrollmentAttempted = true; }),
         }, {

@@ -2,6 +2,7 @@ import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from 
 import { projectManagedMachineBootstrapPrompt, SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { ManagedMachineSignInOccurrenceV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { createManagedEnrollmentResponseValidation } from './enrollmentPairing';
 
@@ -11,6 +12,7 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
   onEvent?(event: InteractiveSystemTaskEventInput): void;
   onTask?(task: Readonly<{ taskId: string; kind: 'remote.ssh.bootstrapMachine.v1' }>): void | Promise<void>;
   onPrompt?(prompt: ManagedMachineBootstrapPromptV1 | null): void;
+  onSignInOccurrence?(occurrence: Pick<ManagedMachineSignInOccurrenceV1, 'taskId' | 'state'>): Promise<void>;
   readResponseOwner?(): Parameters<typeof createManagedEnrollmentResponseValidation>[0] | undefined;
 }>) {
   let liveTaskId: string | undefined;
@@ -20,6 +22,7 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
       const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
       const owner = getLiveSystemTasksRunnerAdapter();
       let taskFailure: unknown;
+      let finishSignIn: ((state: 'answered' | 'cancelled' | 'expired') => Promise<void>) | undefined;
       const task = await owner.startAdmitted({ run: async ctx => {
         try {
           return await kind.run({ ...ctx, emit: event => { ctx.emit(event); input.onEvent?.(event); }, prompt: async prompt => {
@@ -28,9 +31,26 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
             const promptId = data && typeof data === 'object' && !Array.isArray(data) && 'promptId' in data
               && typeof data.promptId === 'string' ? data.promptId : undefined;
             const responseOwner = input.readResponseOwner?.();
-            try { return await ctx.prompt({ ...prompt, ...(responseOwner ? {
-              validateResponse: createManagedEnrollmentResponseValidation(responseOwner, { kind: prompt.kind, promptId }),
-            } : {}) }); } finally { input.onPrompt?.(null); }
+            try {
+              const answer = ctx.prompt({ ...prompt, ...(responseOwner ? {
+                validateResponse: createManagedEnrollmentResponseValidation(responseOwner, { kind: prompt.kind, promptId }),
+              } : {}) });
+              const { taskId } = ctx;
+              const report = input.onSignInOccurrence;
+              if (responseOwner && taskId && report && prompt.kind === 'auth.approveRemoteProvisioning') {
+                const pending = report({ taskId, state: 'pending' });
+                finishSignIn = async state => {
+                  finishSignIn = undefined;
+                  await pending;
+                  await report({ taskId, state });
+                };
+              }
+              const result = await answer;
+              if (typeof result === 'object' && result !== null && 'approved' in result && result.approved === true) {
+                await finishSignIn?.('answered');
+              }
+              return result;
+            } finally { input.onPrompt?.(null); }
           } });
         } catch (error) {
           taskFailure = error;
@@ -59,7 +79,11 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
         await owner.cancel(task);
         await owner.wait(task);
         throw error;
-      } finally { input.signal?.removeEventListener('abort', cancel); }
+      } finally {
+        input.signal?.removeEventListener('abort', cancel);
+        await finishSignIn?.(taskFailure instanceof SystemTaskExecutionError && taskFailure.code === 'auth_request_expired'
+          ? 'expired' : 'cancelled');
+      }
     },
   };
 }

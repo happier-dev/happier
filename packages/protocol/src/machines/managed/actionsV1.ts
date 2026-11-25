@@ -15,6 +15,7 @@ import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { MachineProvisionersListResultV1Schema, MachineProvisionerCheckResultV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerContributionV1Schema, MachineProvisionerResizeResultV1Schema } from '../../plugins/contributions/machineProvisioners.js';
 import * as actionOperations from '../../actions/operations/v1.js';
+import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 import { BugReportMachineDiagnosticsSnapshotSchema } from '../../bugs/reports/machineDiagnostics.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../../account/settings/savedSecretResourceActionsV1.js';
 import { MachineRetentionPolicyV1Schema } from '../../account/settings/machineRetentionDefaultsV1.js';
@@ -586,6 +587,33 @@ export const ManagedErrorV1Schema = lazyZodSchema(() => z.strictObject({
   code: z.union([ManagedRefusalCodeV1Schema, ManagedControllerDeclarationRefusalCodeV1Schema]),
 }));
 export const ManagedControllerCurrentnessV1Schema = lazyZodSchema(() => z.strictObject(current()));
+
+const signInOccurrence = () => ({
+  operationId: ActionOperationIdentifierV1Schema,
+  taskId: id(),
+  promptKind: z.literal('auth.approveRemoteProvisioning'),
+  state: z.enum(['pending', 'answered', 'cancelled', 'expired']),
+});
+export const ManagedMachineSignInOccurrenceV1Schema = lazyZodSchema(() => z.strictObject({
+  ...signInOccurrence(),
+  ...target(),
+  requesterAccountId: id(),
+}));
+export type ManagedMachineSignInOccurrenceV1 = z.infer<typeof ManagedMachineSignInOccurrenceV1Schema>;
+export const ManagedMachineSignInOccurrenceReportV1Schema = lazyZodSchema(() => z.strictObject({
+  ...current(),
+  signInOccurrence: z.strictObject(signInOccurrence()),
+}));
+export type ManagedMachineSignInOccurrenceReportV1 = z.infer<typeof ManagedMachineSignInOccurrenceReportV1Schema>;
+export const ManagedMachineSignInOccurrenceReportResultV1Schema = lazyZodSchema(() => z.strictObject({
+  observed: z.literal(true),
+}));
+export const MANAGED_MACHINE_SIGN_IN_OCCURRENCES_PATH_V1 = '/v1/machines/managed/sign-in-occurrences';
+export const ManagedMachineSignInOccurrencesV1Schema = lazyZodSchema(() => z.strictObject({
+  occurrences: z.array(ManagedMachineSignInOccurrenceV1Schema),
+}));
+export const MANAGED_MACHINE_SIGN_IN_OCCURRENCE_ENTITY_PREFIX_V1 = 'managed-sign-in:';
+
 export const ManagedControllerCurrentInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ManagedControllerCurrentnessV1Schema, { nativeRole: z.optional(z.literal('inspect')) })));
 /** Signed only by the current guest after its real admission drain commits idle. */
 export const ManagedCommittedIdleEvidenceV1Schema = lazyZodSchema(() => z.strictObject({

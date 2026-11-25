@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
+import { createAuthenticatedFakeSocket } from '@/app/api/testkit/socketHarness';
+import { qualifyCurrentAccountStoredContentSocket } from '@/app/api/testkit/accountStoredContentCompatibility';
+import { eventRouter } from '@/app/events/connectionEventRouter';
+import type { ClientConnection } from '@/app/events/eventPayloadTypes';
+import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import tweetnacl from 'tweetnacl';
@@ -269,6 +274,72 @@ export async function exerciseManagedCreatorPublication() {
     expect((await db.accountChange.findMany({ where: { entityId: row.id }, select: { accountId: true } })).map(change => change.accountId).sort())
         .toEqual([creator.id, custodian.id].sort());
     expect(await db.accountChange.count({ where: { entityId: row.id, accountId: stranger.id } })).toBe(0);
+}
+
+export async function exerciseManagedSignInOccurrence() {
+    const { homeId, creator, custodian, stranger, controller, row } = await createCreatorFixture();
+    await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound' } });
+    const app = createAuthenticatedTestApp();
+    app.addHook('preHandler', async (request: FastifyRequest) => {
+        if (request.method !== 'POST') return;
+        request.externalActionExecutionAuthorized = true;
+        request.externalActionExecutionMachineId = controller.id;
+        request.externalActionExecutionCustodianAccountId = custodian.id;
+        request.externalActionExecutionRequestId = row.admittedActionRequestId;
+        request.externalActionEffectActionId = 'machines.managed.acquire';
+    });
+    registerManagedMachineRoutes(app);
+    await app.ready();
+    const occurrence = { operationId: randomUUID(), taskId: randomUUID(), promptKind: 'auth.approveRemoteProvisioning' };
+    const publish = (state: string, accountId = creator.id, extra = {}) => app.inject({ method: 'POST',
+        url: '/v1/machines/managed/controller/report', headers: { 'x-test-user-id': accountId },
+        payload: { homeId, managedId: row.id, expectedIntentRevision: 0, requestId: row.admittedActionRequestId,
+            controller: { machineId: controller.id, installationId: controller.installationId },
+            signInOccurrence: { ...occurrence, state, ...extra } } });
+    const read = (accountId: string) => app.inject({ method: 'GET', url: '/v1/machines/managed/sign-in-occurrences',
+        headers: { 'x-test-user-id': accountId } });
+    const cursors = () => db.account.findMany({ where: { id: { in: [creator.id, custodian.id, stranger.id] } },
+        select: { id: true, seq: true }, orderBy: { id: 'asc' } });
+    const peers = [creator.id, creator.id, custodian.id, stranger.id].map(accountId => {
+        const socket = createAuthenticatedFakeSocket({ id: randomUUID() });
+        qualifyCurrentAccountStoredContentSocket(socket);
+        const connection: ClientConnection = { connectionType: 'user-scoped', userId: accountId,
+            socket: socket as unknown as ClientConnection['socket'] };
+        eventRouter.addConnection(accountId, connection);
+        return { connection, readWakes: () => socket.emit.mock.calls.flatMap(([event, raw]) => {
+            if (event !== 'update') return [];
+            const { body } = UpdateContainerSchema.parse(raw);
+            return body.t === 'account-change' ? body.entityIds ?? [] : [];
+        }) };
+    });
+    try {
+        const before = await cursors();
+        expect((await publish('pending', creator.id, { publicKey: 'must-be-refused' })).statusCode).toBe(400);
+        expect((await publish('pending', custodian.id)).statusCode).toBe(403);
+        expect((await publish('pending', stranger.id)).statusCode).toBe(403);
+        const published = await publish('pending');
+        expect(published.statusCode, published.body).toBe(200);
+        expect((await read(creator.id)).json()).toEqual({ occurrences: [{
+            ...occurrence, homeId, managedId: row.id, requesterAccountId: creator.id, state: 'pending',
+        }] });
+        for (const account of [custodian, stranger]) {
+            expect((await read(account.id)).json()).toEqual({ occurrences: [] });
+        }
+        expect((await publish('pending')).statusCode).toBe(200);
+        expect(await cursors()).toEqual(before.map(account => ({ ...account,
+            seq: account.id === creator.id ? account.seq + 1 : account.seq })));
+        expect((await publish('expired')).statusCode).toBe(200);
+        expect((await read(creator.id)).json()).toEqual({ occurrences: [] });
+        expect((await publish('pending')).statusCode).toBe(200);
+        expect(await cursors()).toEqual(before.map(account => ({ ...account,
+            seq: account.id === creator.id ? account.seq + 2 : account.seq })));
+        const change = await db.accountChange.findFirstOrThrow({ where: { accountId: creator.id, kind: 'account' } });
+        expect(peers.map(peer => peer.readWakes()))
+            .toEqual([[change.entityId, change.entityId], [change.entityId, change.entityId], [], []]);
+    } finally {
+        for (const { connection } of peers) eventRouter.removeConnection(connection.userId, connection);
+        await app.close();
+    }
 }
 
 export async function exerciseManagedCreatorBirth() {

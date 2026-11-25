@@ -5,6 +5,7 @@ import { ExternalActionRetainedWorkflowRootV1Schema, projectExternalActionEncryp
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
 import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -38,6 +39,10 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { isManagedPresentUser, resolveSignedManagedAccountExecutorInTx } from './managedRequestAuthority';
 import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readServerGuestCliIdentity } from '@/app/runtime/serverRelease';
+
+import { MANAGED_MACHINE_SIGN_IN_OCCURRENCES_PATH_V1, ManagedMachineSignInOccurrenceReportV1Schema,
+    ManagedMachineSignInOccurrencesV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { listPendingManagedMachineSignInOccurrences, reportManagedMachineSignInOccurrence } from './managedSignInOccurrence';
 
 type ControllerProof = Pick<FastifyRequest, "userId" | "externalActionExecutionAuthorized" | "externalActionExecutionMachineId" | "externalActionEffectActionId" | "externalActionExecutionRequestId" | "externalActionExecutionCustodianAccountId">;
 export function requireManagedControllerProof(request: ControllerProof, controllerMachineId: string | null | undefined, effects: readonly string[]): Readonly<{ requestId: string; custodianAccountId: string }> {
@@ -217,6 +222,9 @@ async function respond(reply: FastifyReply, execute: () => Promise<unknown>) {
 
 /** Internal controller transitions consume the existing signed Action HTTP authority. */
 export function registerManagedMachineRoutes(app: Fastify): void {
+    app.get(MANAGED_MACHINE_SIGN_IN_OCCURRENCES_PATH_V1, { preHandler: app.authenticate,
+        schema: { response: { 200: ManagedMachineSignInOccurrencesV1Schema } } },
+        async (request, reply) => reply.send(await listPendingManagedMachineSignInOccurrences(request.userId)));
     // Birth is an Account-owned, ids-only read across both relationship indexes.
     app.post(managedMachineActionEndpointPathV1('machines.managed.birth.get'), { preHandler: app.authenticate,
         schema: { body: ManagedMachineActionInputSchemasV1['machines.managed.birth.get'],
@@ -588,7 +596,16 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         await requireManagedOperationRequest(request, request.body, ['machines.managed.acquire', 'machines.managed.bootstrap.retry']);
         return await submitManagedAcquire(request.body);
     }));
-    app.post("/v1/machines/managed/controller/report", { preHandler: app.authenticate, schema: { body: z.union([ManagedControllerReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema]) } }, async (request, reply) => respond(reply, async () => {
+    app.post("/v1/machines/managed/controller/report", { preHandler: app.authenticate, schema: { body: z.union([
+        ManagedControllerReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, ManagedMachineSignInOccurrenceReportV1Schema,
+    ]) } }, async (request, reply) => respond(reply, async () => {
+        if ('signInOccurrence' in request.body) {
+            const proof = requireManagedControllerProof(request, request.body.controller?.machineId,
+                [MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1]);
+            if (request.externalActionEffectActionId === MANAGED_ACQUIRE_ACTION_ID_V1
+                && proof.requestId !== request.body.requestId) throw new ManagedMachineError('request_conflict');
+            return await reportManagedMachineSignInOccurrence(request.body, request.userId, proof.custodianAccountId);
+        }
         if ('credentialDelivery' in request.body) {
             const { custodianAccountId, requestId: actionRequestId } = requireManagedControllerProof(request, request.body.controller?.machineId, ['machines.managed.credentials.install']);
             const root = request.externalActionExecutionAuthorizationBinding?.managedAdmission;

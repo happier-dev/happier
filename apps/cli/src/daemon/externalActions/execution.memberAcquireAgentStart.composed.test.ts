@@ -37,11 +37,12 @@ import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedSer
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { fixture as nativeFixture, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
+import { fixture as nativeFixture, pendingEnrollmentGuestRoleSource, roleResult } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { createCliPayloadFixture } from '../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture';
 
 const boundary = vi.hoisted(() => ({
   control: null as Parameters<typeof startDaemonControlServer>[0] | null,
@@ -146,6 +147,7 @@ type AcquireCase = Readonly<{
   delegated?: true;
   /** Home's acquire routing refuses this member (for example, the delegation was withdrawn). */
   routingRefused?: true;
+  guestEnrollment?: true;
 }>;
 
 // A Session agent's managed acquire with agentStart on the member's installed
@@ -165,6 +167,14 @@ async function runMemberAcquire(acquire: AcquireCase) {
     credentialProvenance: 'stored_session' as const,
   };
   const ownerCredentials = { token: accountToken('owner'), encryption: null };
+  if (acquire.guestEnrollment) {
+    const payload = await createCliPayloadFixture();
+    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload.payloadRoot);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await payload.cleanup();
+    });
+  }
   const policyFor = (policy: 'ask' | 'allow') => normalizeActionsSettingsV1(policy === 'ask'
     ? { v: 1, actions: { 'machines.managed.acquire': { approvalRequiredSurfaces: ['agent'] } } }
     : { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.managed.acquire': ['agent'] } });
@@ -175,7 +185,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
     () => boundary.control,
     undefined,
     true,
-    acquire.delegated ? delegatedComputePlugin().plugin : undefined,
+    acquire.delegated ? delegatedComputePlugin(acquire.guestEnrollment).plugin : undefined,
     undefined,
     {
       ordinaryAccountSession: true,
@@ -235,7 +245,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
           features: {},
           capabilities: { serverIdentity: { serverIdentityId: homeId },
             // Home's guest CLI source, which the owner's controller reads before acquiring.
-            ...(acquire.delegated ? { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } } : {}) },
+            ...(acquire.delegated ? { guestCli: { source: acquire.guestEnrollment ? 'home-payload' : 'public-release', line: '0.3', channel: 'stable' } } : {}) },
         }),
       );
     return await homeFetch(...args);
@@ -247,6 +257,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
   /** The owner's controller steps on Home's managed row, and its native reports. */
   const controllerSteps: string[] = [];
   const controllerReports: unknown[] = [];
+  const requesterOccurrences: unknown[] = [];
   let managed: ReturnType<typeof ManagedMachineV1Schema.parse> | undefined;
   let receiverManager: Awaited<ReturnType<typeof createReceivingControllerDaemon>>['manager'] | undefined;
   /** Each Home request with the Account it authenticated as. */
@@ -362,6 +373,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
       const step = path.slice('/v1/machines/managed/controller/'.length);
       controllerSteps.push(`${account} ${step}`);
       managed ??= ManagedMachineV1Schema.parse({ id: 'delegated-guest', homeId, custodianAccountId: 'owner',
+        ...(acquire.guestEnrollment ? { enrollmentAccountId: 'requester' } : {}),
         preset: { id: 'team-preset', revision: 1, contentEncryptionMode: 'plain' }, controller, allocation: 'unsubmitted',
         creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
@@ -370,6 +382,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
           schemaVersion: 1, name: 'guest', choices: {} } } });
       if (step === 'admit') return { status: 200, data: { machine: managed, presetContent, replayed: false } };
       if (step === 'current') return { status: 200, data: { machine: managed } };
+      if (step === 'enrollment-context') return { status: 200, data: { machine: managed } };
       if (step === 'context') return { status: 200, data: { machine: managed, requestId: mints.at(-1)?.envelope.requestId, presetContent } };
       if (step === 'submit') {
         ManagedControllerSubmitInputV1Schema.parse(args[1]);
@@ -377,7 +390,15 @@ async function runMemberAcquire(acquire: AcquireCase) {
         return { status: 200, data: { machine: managed, submitted: true } };
       }
       if (step === 'report') {
+        if (typeof args[1] === 'object' && args[1] && 'signInOccurrence' in args[1]) {
+          requesterOccurrences.push({ ...args[1].signInOccurrence as Record<string, unknown>,
+            homeId: managed.homeId, managedId: managed.id, requesterAccountId: managed.enrollmentAccountId });
+          return { status: 200, data: { observed: true } };
+        }
         controllerReports.push(ManagedControllerReportV1Schema.parse(args[1]));
+        if (acquire.guestEnrollment) {
+          managed = ManagedMachineV1Schema.parse({ ...managed, allocation: 'bound' });
+        }
         return { status: 200, data: { machine: managed } };
       }
     }
@@ -531,7 +552,7 @@ async function runMemberAcquire(acquire: AcquireCase) {
       verifyExecutionAuthorization: async () => true, signal: h.signal });
   };
   return { h, credentials, controller, outcome, paths, homeRequests, mints, relayed, delivered, atDelivery, homeRelayed, homeRelayResults, controllerSteps, controllerReports, approve, receiverManager,
-    approvals, readApproval, controllerRequests };
+    approvals, readApproval, controllerRequests, requesterOccurrences };
 }
 
 // Ruling O-MACH 2026-11-24 13:42Z (S-IDENTITY step 5a) moves the requester's
@@ -591,13 +612,13 @@ it.each([true, false])("today: a Session agent's acquire whose preset controller
  */
 let delegatedCompute: Readonly<{ plugin: NonNullable<Parameters<typeof createInstalledProjectAgentDaemonFixture>[3]>;
   provisionerId: string }> | undefined;
-function delegatedComputePlugin() {
-  if (delegatedCompute) return delegatedCompute;
+function delegatedComputePlugin(guestEnrollment?: true) {
+  if (!guestEnrollment && delegatedCompute) return delegatedCompute;
   const native = nativeFixture({ credentialPurposes: [] });
   const nativeManifest = native.manifest;
   native.retire();
   const provisioner = nativeManifest.contributes.machineProvisioners[0]!;
-  delegatedCompute = { provisionerId: provisioner.id, plugin: {
+  const result = { provisionerId: provisioner.id, plugin: {
     manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch', contributes: {
       agents: [{ id: 'agent', title: 'Project launch Agent', runtime: { kind: 'custom' }, primary: 'sessions',
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }],
@@ -605,16 +626,17 @@ function delegatedComputePlugin() {
       actions: nativeManifest.contributes.actions,
     } }), files: {
       'agent.mjs': `export function factory() { return { sessions: { open() { throw new Error('No Agent open at authorization'); } } }; }`,
-      // The provider answers the native child acquisition with a typed refusal, so the
-      // controller's one allocation settles without a guest to enroll.
       'daemon.mjs': `import { factory } from './agent.mjs';
+        ${guestEnrollment ? pendingEnrollmentGuestRoleSource({ pluginId: 'acme.project-launch', localId: provisioner.id, homeId }) : ''}
         export function activate(api) {
           api.agents.register('agent', factory, { sessionRunnerFactory: { module: './agent.mjs', export: 'factory', runtimeApiVersion: 1 } });
-          ${nativeManifest.contributes.actions.map(({ id }) => `api.actions.register(${JSON.stringify(id)}, async () => ${id === 'acquire'
-            ? `({ kind: 'rejected', code: 'provider_unavailable' })` : `(${JSON.stringify(roleResult(id))})`});`).join('\n')}
+          ${nativeManifest.contributes.actions.map(({ id }) => `api.actions.register(${JSON.stringify(id)}, async input => ${guestEnrollment
+            ? `nativeGuestRoles[${JSON.stringify(id)}]?.(input) ?? (${JSON.stringify(roleResult(id))})` : id === 'acquire'
+              ? `({ kind: 'rejected', code: 'provider_unavailable' })` : `(${JSON.stringify(roleResult(id))})`});`).join('\n')}
         }`,
     } } };
-  return delegatedCompute;
+  if (!guestEnrollment) delegatedCompute = result;
+  return result;
 }
 
 /** The owner's provider authority; the local provisioner needs no connected Account material. */
@@ -768,6 +790,38 @@ it("a member's Agent acquire through the owner's delegated Team preset asks the 
     scope: { accountId: 'requester', machineId: OWNER_MACHINE_ID }, error: { errorCode: 'provider_unavailable' } } });
   expect(run.approvals('owner')).toEqual([]);
   expect(run.relayed).toEqual([]);
+}, 180_000);
+
+it('delivers the pending sign-in occurrence from an approved delegated Agent acquire to its requester', async () => {
+  const run = await runMemberAcquire({ controller: 'owner machine', namesController: false, memberPolicy: 'ask',
+    delegated: true, guestEnrollment: true });
+  const [ask] = run.approvals('requester');
+  expect(ask).toBeDefined();
+  const decided = await run.approve(ask!.id);
+  expect(decided).toMatchObject({ kind: 'response', response: { execution: { ok: true, result: {
+    status: 'executed', execution: { ok: true, result: { managedId: 'delegated-guest', operation: { operationId: expect.any(String) } } },
+  } } } });
+  const operationId = (decided as { response: { execution: { result: { execution: { result: { operation: { operationId: string } } } } } } })
+    .response.execution.result.execution.result.operation.operationId;
+  const owner = run.receiverManager!;
+  const context = { signal: run.h.signal, rpcContext: { machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'owner',
+    machineId: OWNER_MACHINE_ID, installationId: run.controller.installationId, role: 'manage' as const, encryptionMode: 'plain' as const },
+    verifyMachineAdmissionCurrent: async () => true } };
+  const raw = await owner.invokeLocal(ACTION_OPERATION_RPC_METHODS_V2.get,
+    { operationId, waitForTerminal: true, includeManagedPrompt: true }, context);
+  const observed = ActionOperationGetV1ResponseSchema.parse(raw);
+  expect(observed, observed.kind === 'found' ? JSON.stringify({ state: observed.operation.state,
+    error: observed.operation.error, progress: observed.operation.progress, steps: run.controllerSteps }) : undefined)
+    .toMatchObject({ kind: 'found', operation: { state: 'running', domainRef: { bootstrapTask: {
+    id: expect.any(String), prompt: { kind: 'auth.approveRemoteProvisioning' },
+  } } } });
+  const domain = observed.kind === 'found' ? observed.operation.domainRef : undefined;
+  if (domain?.kind !== 'managedMachine' || !domain.bootstrapTask) throw new Error('Missing managed enrollment task');
+  await vi.waitFor(() => expect(run.requesterOccurrences).toEqual([{
+    homeId, requesterAccountId: 'requester', managedId: 'delegated-guest', operationId,
+    taskId: domain.bootstrapTask!.id, promptKind: 'auth.approveRemoteProvisioning', state: 'pending',
+  }]));
+  expect(run.approvals('owner')).toEqual([]);
 }, 180_000);
 
 it("a member's approved Agent acquire on a delegated Team preset that Home no longer routes for the member keeps Home's typed refusal and reaches nothing", async () => {
