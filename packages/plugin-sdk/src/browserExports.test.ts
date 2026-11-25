@@ -100,10 +100,14 @@ function emittedVoiceRealmEntries(modules: ReadonlySet<string>): VoiceRealmEntry
 }
 
 describe('browser-safe package exports', () => {
-    it('does not publish retired usage compatibility paths', () => {
+    it('publishes the Usage facade and retires its experimental path', () => {
         const packageJson = readPackageJson(new URL('../package.json', import.meta.url));
 
-        expect(packageJson.exports).not.toHaveProperty('./usage');
+        expect(packageJson.exports).toHaveProperty('./usage', {
+            'happier-source': './src/usage/index.ts',
+            types: './dist/usage/index.d.ts',
+            default: './dist/usage/index.js',
+        });
         expect(packageJson.exports).not.toHaveProperty('./experimental/usage');
     });
 
