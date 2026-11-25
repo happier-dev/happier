@@ -86,10 +86,11 @@ it('keeps an Agent checkpoint behind the approval policy', async () => {
     const executor = createDefaultActionExecutor({ presentUserActionConfirmation });
 
     const result = await executor.execute('session.checkpoint', checkpoint, {
-        ...home, surface: 'agent', defaultSessionId: sessionId, sessionListAccess: 'current_session',
+        ...home, surface: 'agent', actionRequestId: 'checkpoint-request',
+        defaultSessionId: sessionId, sessionListAccess: 'current_session',
         actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
     });
-    expect(result).toMatchObject({
+    expect(result, result.ok ? undefined : result.errorCode).toMatchObject({
         ok: true,
         result: { kind: 'approval_request_created', actionId: 'session.checkpoint', artifactId: expect.any(String) },
     });
