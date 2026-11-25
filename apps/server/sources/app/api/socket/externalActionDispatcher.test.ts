@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { symbols, type DestinationStream } from 'pino';
 import { Server } from 'socket.io';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, decodeBase64, encodePlainMachineStoredContent } from "@happier-dev/protocol";
 import { API_TOKEN_FULL_GRANT_V1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 
 import {
@@ -15,6 +17,10 @@ import {
     type ExternalActionRequestEnvelopeV1,
 } from "@happier-dev/protocol/actions";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
+import { auth } from "@/app/auth/auth";
+import { db } from "@/storage/db";
+import { createLightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { logger } from '@/utils/logging/log';
 import { TransactionAcquisitionUnavailableError, TransactionConflictExhaustedError } from '@/storage/inTx';
 
@@ -521,36 +527,66 @@ describe("createExternalActionDaemonDispatcher", () => {
     });
 
     it("retains plaintext V1 main-send compatibility without requiring targeted admission", async () => {
-        const envelope: ExternalActionRequestEnvelopeV1 = {
-            v: 1,
-            requestId: "request-v1-main-send",
-            target: { kind: "machine", machineId: "machine-1" },
-            input: { sessionId: "session-1", message: "Continue" },
-        };
-        const resolveMachine = vi.fn(async () => "available" as const);
-        const forwardRpc = vi.fn(async () => ({
-            ok: true as const,
-            result: relayResponse("session.message.send", envelope),
-        }));
-        const dispatch = createExternalActionDaemonDispatcher({
-            io: {} as never,
-            forwardRpc: forwardRpc as never,
-            resolveMachine,
+        const harness = await createLightSqliteHarness({
+            tempDirPrefix: "external-action-v1-send-",
+            initAuth: true,
+            initEncrypt: true,
         });
+        try {
+            const account = await db.account.create({ data: { encryptionMode: "plain" } });
+            const machine = await db.machine.create({ data: {
+                id: randomUUID(),
+                accountId: account.id,
+                installationId: randomUUID(),
+                metadata: encodePlainMachineStoredContent({ host: "v1-send", platform: "linux" }),
+                dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, "base64")),
+                active: true,
+                lastActiveAt: new Date(),
+                operationProtocolCapabilitiesRevision: 1,
+                operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
+            } });
+            const session = await db.session.create({ data: {
+                accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
+            } });
+            await db.accessKey.create({ data: {
+                accountId: account.id, machineId: machine.id, sessionId: session.id, data: "opaque-key",
+            } });
+            const credential = await auth.createApiToken({
+                accountId: account.id,
+                tokenId: randomUUID(),
+                label: await preparePlainAccountApiTokenLabel(account.id, "V1 main-send"),
+                grant: API_TOKEN_FULL_GRANT_V1,
+            });
+            const authenticated = await auth.verifyPat(credential.token);
+            if (!authenticated.ok) throw new Error("Fixture credential could not be verified");
 
-        await expect(dispatch({
-            actionId: "session.message.send",
-            envelope,
-            principal,
-        })).resolves.toEqual(dispatchedResponse(response("session.message.send", envelope)));
-        expect(resolveMachine).toHaveBeenCalledWith(expect.objectContaining({
-            actionId: 'session.message.send',
-            accountId: "account-1",
-            callerAuthority: principal.authority,
-            machineId: "machine-1",
-            requiredExternalActionExecutionAuthorization: true,
-        }));
-        expect(forwardRpc).toHaveBeenCalledTimes(1);
+            const envelope: ExternalActionRequestEnvelopeV1 = {
+                v: 1,
+                requestId: "request-v1-main-send",
+                target: { kind: "machine", machineId: machine.id },
+                input: { sessionId: session.id, message: "Continue" },
+            };
+            const forwardRpc = vi.fn<ExternalActionForwardRpcCall>(async () => ({
+                ok: true,
+                result: relayResponse("session.message.send", envelope),
+            }));
+            const dispatch = createProductionExternalActionDaemonDispatcher({ io: {} as never, forwardRpc });
+
+            await expect(dispatch({
+                actionId: "session.message.send",
+                envelope,
+                principal: {
+                    accountId: authenticated.accountId,
+                    principalId: authenticated.principalId,
+                    credentialId: authenticated.credentialId,
+                    grant: authenticated.grant,
+                    authority: authenticated.authority,
+                },
+            })).resolves.toEqual(dispatchedResponse(response("session.message.send", envelope)));
+            expect(forwardRpc).toHaveBeenCalledTimes(1);
+        } finally {
+            await harness.close();
+        }
     });
 
     it("does not require Session input admission v2 for another opaque V2 Action", async () => {
