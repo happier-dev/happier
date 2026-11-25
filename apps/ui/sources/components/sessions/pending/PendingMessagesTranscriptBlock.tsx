@@ -25,6 +25,9 @@ import { t } from '@/text';
 import { resolvePendingDeliveryFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PopoverAnchor } from '@/components/ui/popover';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { useDeviceType } from '@/utils/platform/responsive';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
@@ -141,9 +144,16 @@ async function copyPendingMessageText(message: PendingMessage | DiscardedPending
     }
 }
 
-type PendingMessageMenuPressAnchor = Extract<PopoverAnchor, { kind: 'rect' }>;
+type PendingMessageMenuPressAnchor = Extract<PopoverAnchor, { kind: 'rect' | 'view' }>;
 
-function resolvePendingMessageMenuPressAnchor(event: unknown): PendingMessageMenuPressAnchor | null {
+/**
+ * Where a message's menu hangs. Under a mouse it opens at the press point, beside the words clicked. On a phone or
+ * a touch screen the finger covers that point and the menu would cover the message it acts on, so it hangs from
+ * the pressed bubble's edge and the menu's auto-vertical placement puts it above or below the bubble.
+ */
+function resolvePendingMessageMenuPressAnchor(event: unknown, hangFromBubble: boolean): PendingMessageMenuPressAnchor | null {
+    const bubble = hangFromBubble ? resolvePressTriggerAnchor(event) : undefined;
+    if (bubble?.kind === 'view') return bubble;
     if (!event || typeof event !== 'object') return null;
     const nativeEvent = (event as { nativeEvent?: unknown }).nativeEvent;
     if (!nativeEvent || typeof nativeEvent !== 'object') return null;
@@ -343,6 +353,9 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
     }> | null>(null);
     const [scrollContentHeightPx, setScrollContentHeightPx] = React.useState<number | null>(null);
     const isWeb = Platform.OS === 'web';
+    const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
+    const phone = useDeviceType() === 'phone';
+    const menuHangsFromBubble = touchPrimaryPointer || phone;
     const [hoveredMessageId, setHoveredMessageId] = React.useState<string | null>(null);
     const [scrollViewportHeightPx, setScrollViewportHeightPx] = React.useState<number | null>(null);
     const [scrollOffsetY, setScrollOffsetY] = React.useState<number | null>(null);
@@ -884,7 +897,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         closeMenu();
                                         return;
                                     }
-                                    const anchor = resolvePendingMessageMenuPressAnchor(event);
+                                    const anchor = resolvePendingMessageMenuPressAnchor(event, menuHangsFromBubble);
                                     setMenuPressAnchor(anchor ? { menuKey, anchor } : null);
                                     openMenu();
                                 }}
@@ -1047,6 +1060,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         materializingLocalIds,
         machineAccessRemoved,
         menuPressAnchor,
+        menuHangsFromBubble,
         openMenuKey,
         pendingQueueDeliveryTiming,
         pendingQueueForegroundState,
@@ -1150,7 +1164,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     closeMenu();
                                     return;
                                 }
-                                const anchor = resolvePendingMessageMenuPressAnchor(event);
+                                const anchor = resolvePendingMessageMenuPressAnchor(event, menuHangsFromBubble);
                                 setMenuPressAnchor(anchor ? { menuKey, anchor } : null);
                                 openMenu();
                             }}
@@ -1222,6 +1236,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
         handleRemoveDiscarded,
         isWeb,
         menuPressAnchor,
+        menuHangsFromBubble,
         openMenuKey,
         session?.lastRuntimeIssue?.code,
         theme.colors.input.background,

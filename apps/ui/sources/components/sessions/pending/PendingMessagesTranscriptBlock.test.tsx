@@ -75,6 +75,8 @@ const resolvePreferredServerIdForSessionId = vi.fn();
 const resolvePendingDeliveryLabelKeyForSession = vi.hoisted(() => vi.fn());
 const resolvePendingDeliveryTransientActionForSession = vi.hoisted(() => vi.fn());
 const writeClipboardText = vi.fn(async (_value: string) => {});
+// The window size the device-type owner reads (Dimensions is the platform boundary); a phone is 390 wide.
+const windowSize = vi.hoisted(() => ({ width: 1280, height: 900 }));
 const serverFeaturesSnapshotState = vi.hoisted(() => ({
     current: { status: 'loading' } as any,
 }));
@@ -114,6 +116,10 @@ installPendingMessagesCommonModuleMocks({
                 Platform: {
                     OS: 'web',
                     select: (value: any) => value?.web ?? value?.default,
+                },
+                Dimensions: {
+                    get: () => ({ ...windowSize, scale: 1, fontScale: 1 }),
+                    addEventListener: () => ({ remove: () => {} }),
                 },
             }
         );
@@ -957,6 +963,33 @@ describe('PendingMessagesTranscriptBlock', () => {
 
         await screen.pressByTestIdAsync('pendingMessages.menu.copy:p1');
         expect(writeClipboardText).toHaveBeenCalledWith('x'.repeat(600));
+    });
+
+    it('on a phone, hangs a pending-message menu from the bubble it acts on instead of covering it', async () => {
+        windowSize.width = 390;
+        windowSize.height = 844;
+        try {
+            const PendingMessagesTranscriptBlock = await loadPendingMessagesTranscriptBlock();
+            const screen = await renderScreen(React.createElement(PendingMessagesTranscriptBlock, {
+                sessionId: 's1',
+                pendingMessages: [{ id: 'p1', text: 'Reply only when this Session can run again.', displayText: undefined,
+                    createdAt: 0, updatedAt: 0, localId: 'p1', rawRecord: {} }],
+                discardedMessages: [],
+            }));
+            const bubble = { getBoundingClientRect: () => ({ left: 80, top: 600, width: 294, height: 72 }) };
+            await act(async () => {
+                invokeTestInstanceHandler(screen.findByTestId('pendingMessages.message:p1')!, 'onPress',
+                    { nativeEvent: { pageX: 200, pageY: 620 }, currentTarget: bubble });
+            });
+            const menu = screen.findByType('DropdownMenu' as any);
+            expect(menu?.props.open).toBe(true);
+            // Placed above or below the bubble's edge by the menu's auto-vertical placement, never at the press point.
+            expect(menu?.props.popoverAnchor).toEqual({ kind: 'view', ref: { current: bubble } });
+            expect(menu?.props.placement).toBe('auto-vertical');
+        } finally {
+            windowSize.width = 1280;
+            windowSize.height = 900;
+        }
     });
 
     it('sends steer-now directly while a steer-capable session is thinking and does not abort the turn', async () => {
