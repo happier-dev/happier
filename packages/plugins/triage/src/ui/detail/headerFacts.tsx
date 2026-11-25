@@ -54,7 +54,7 @@ export function TriageDetailHeaderFacts(
       : facts.checks.kind === 'unknown' && facts.checks.reading !== true ? unavailable : checksFact(text, facts.checks)
     : { value: line.lead ?? line.label, tone: line.state === 'failed' ? 'danger' : 'neutral',
         sub: rollup?.failing?.[0]?.name ?? (line.lead === null ? line.line : line.line.replace(/^· /, '')) };
-  const sourceMerge = facts.merge.kind === 'unknown' ? source?.merge : null;
+  const sourceMerge = source?.merge;
   const reviewStatus = source?.review === 'reading' ? { kind: 'unknown' as const, reading: true }
     : source?.review ?? facts.review;
   const review = reviewStatus.kind === 'unknown' && reviewStatus.reading !== true

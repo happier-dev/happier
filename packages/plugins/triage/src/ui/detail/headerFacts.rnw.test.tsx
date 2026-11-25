@@ -21,7 +21,7 @@ afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
-async function mount(header: Pick<TriageDetailHeaderV1, 'pullRequestFacts' | 'attention'>) {
+async function mount(header: Pick<TriageDetailHeaderV1, 'pullRequestFacts' | 'attention' | 'sourceStatus'>) {
   const fixture = await createPluginUiTestkit({
     identity: {
       instanceId: 'fixture-instance-facts',
@@ -56,6 +56,15 @@ describe('the detail header cells', () => {
     await expect(view.getByText('1 failing')).resolves.toBeDefined();
     await expect(view.getByText('typecheck')).resolves.toBeDefined();
     await expect(view.getByText('coderabbitai +2')).resolves.toBeDefined();
+  });
+
+  it('uses the contributor’s settled merge fact when the list observation disagrees', async () => {
+    const view = await mount({
+      pullRequestFacts: { ...UNKNOWN, merge: { kind: 'blocked', why: 'checks' } },
+      sourceStatus: { kind: 'detail', merge: { value: 'Mergeable', tone: 'success' }, checks: null },
+      attention: null,
+    });
+    expect(document.querySelector('[data-testid="triage-detail-facts.status"]')?.textContent).toContain('Mergeable');
   });
 
   it('says the reader\'s own requested review as "you"', async () => {
