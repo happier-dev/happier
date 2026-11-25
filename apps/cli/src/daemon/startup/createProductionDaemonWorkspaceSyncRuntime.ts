@@ -1705,8 +1705,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       return result;
     };
   };
-  // The one requester-private Sync execution: an admitted Project Open's, or the link a person's
-  // handoff creates (ruling 2026-11-24 23:16Z (a)). Rows, custody and TARGET calls are the requester's.
+  // The one requester-private Sync execution: an admitted Project Open's, or the link or one-time copy a
+  // person's handoff makes (rulings 2026-11-24 23:16Z (a), 2026-11-25 05:41Z). Rows, custody and TARGET calls
+  // are the requester's.
   const retainRequesterSyncExecution = (request: Parameters<NonNullable<DaemonWorkspaceSyncRuntimeDependencies['resolveHandoffExecutionInput']>>[0],
     admittedSnapshot: ActiveProjectAccountRowsSnapshot,
     requester: NonNullable<ReturnType<typeof readRequesterAccountActionContext>>, accountId: string,
@@ -1748,13 +1749,15 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       } });
   };
   const resolveHandoffExecutionInput: NonNullable<DaemonWorkspaceSyncRuntimeDependencies['resolveHandoffExecutionInput']> = async (request, authority, context) => {
-    // A person's handoff to another Account's SOURCE: the link is the person's, never this
-    // installed Account's (ruling 2026-11-24 23:16Z (a)). The coordinator's admitted session.handoff
-    // root signs its TARGET calls; Home admits them from that root's own signed facts. The private
-    // execution is retained before the basis read, so the basis reads the person's rows.
+    // A person's handoff to another Account's SOURCE: the link, or the one-time copy, is the person's,
+    // never this installed Account's (rulings 2026-11-24 23:16Z (a), 2026-11-25 05:41Z). The coordinator's
+    // admitted session.handoff root signs its TARGET calls; Home admits them from that root's own signed
+    // facts. The private execution is retained before the basis read, so the basis reads the person's
+    // rows: a copy's source is the person's own Workspace or nothing.
     const handoffRoot = context?.localActionContext?.externalActionExecutionAuthorization;
     const handoffRequester = context?.requesterSessionBootstrap;
-    if (request.action.kind === 'create_relationship' && handoffRoot?.binding.actionId === 'session.handoff'
+    if ((request.action.kind === 'create_relationship' || request.action.kind === 'copy_once')
+      && handoffRoot?.binding.actionId === 'session.handoff'
       && handoffRequester && context && !context.callerInputAuthorization
       && !runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId })
       && !canUseInstalledRelationshipOwner(context)) {
@@ -1766,7 +1769,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         && handoffRoot.binding.accountId === handoffRequester.attribution.accountId
         ? readRequesterAccountActionContext(handoffRoot) : null;
       if (!handoff || !requester || !context.machineAdmission) {
-        throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
+        throw Object.assign(compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable'), {
+          failureCause: { phase: 'workspace_sync.requester_custody.handoff_admission', errorClass: 'Error',
+            errorCode: 'project_requester_authority_unavailable', httpStatus: null } });
       }
       const snapshot = await factories.refreshProjectRows({ credentials: requester.credentials,
         sessionCustody: { serverId: semanticServerId, accountId: handoffRoot.binding.accountId,
@@ -2332,7 +2337,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           semanticServerId,
         );
         if (!sourceRef || resolveWorkspaceSyncExecutionMachineIdV1(sourceRef) !== input.localMachineId) {
-          throw compositionError('peer_unavailable', 'Workspace sync source endpoint is unavailable on this daemon');
+          // The rows that decide this copy (a person's own, for their handoff) hold no source here.
+          throw Object.assign(compositionError('peer_unavailable', 'Workspace sync source endpoint is unavailable on this daemon'), {
+            failureCause: { phase: 'workspace_sync.copy_source.resolve', errorClass: 'Error', errorCode: 'peer_unavailable', httpStatus: null } });
         }
         if (isManagedWorkspaceRefV2(sourceRef)) {
           const accepted = bootstrapInput.managedCopySource;
@@ -2408,6 +2415,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       let retainedTargetCleanupContext: RpcHandlerContext | undefined;
       const privateTarget = runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId: bootstrapInput.operationId });
       const nativeTarget = privateTarget?.execution.nativeSync;
+      // A person's one-time copy (ruling 2026-11-25 05:41Z): its TARGET calls ride the signed writer → target
+      // transport of the execution the person-handoff branch retained, as the link's prepare does.
+      const personCopyTarget = bootstrapInput.action.kind === 'copy_once' && !nativeTarget && !context?.callerInputAuthorization
+        ? privateTarget?.execution.callTargetPhase : undefined;
+      const personCopyRouting = (phase: 'prepare' | 'release') => ({ v: 1 as const, phase, operationId: bootstrapInput.operationId,
+        accountServerId: semanticServerId, targetMachineId: bootstrapInput.targetMachineId, targetRootPath: bootstrapInput.targetRootPath });
       if (privateTarget?.execution.executionIdentity?.kind === 'isolated'
         && bootstrapInput.targetMachineId === input.localMachineId && !nativeTarget) {
         throw compositionError('agent_isolation_unavailable', 'The captured native Sync target is unavailable');
@@ -2417,6 +2430,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         if (nativeTarget && bootstrapInput.targetMachineId === input.localMachineId) {
           await nativeTarget.releaseBootstrapHere({ v: 1, bootstrapOperationId: prepareRequest.bootstrapOperationId,
             targetWorkspaceRefId: prepareRequest.targetWorkspaceRefId, reason }, cleanupSignal);
+          return;
+        }
+        if (personCopyTarget) {
+          await personCopyTarget({ machineId: bootstrapInput.targetMachineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+            request: { v: 1, bootstrapOperationId: prepareRequest.bootstrapOperationId,
+              targetWorkspaceRefId: prepareRequest.targetWorkspaceRefId, reason },
+            routing: personCopyRouting('release'), signal: cleanupSignal });
           return;
         }
         await targetAuthority.releaseBootstrapAtTarget({
@@ -2454,6 +2474,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         const prepareTarget = async () => {
           if (nativeTarget && bootstrapInput.targetMachineId === input.localMachineId) {
             return nativeTarget.prepareBootstrapAtTarget(prepareRequest);
+          }
+          if (personCopyTarget) {
+            const { targetMachineId, signal, ...wire } = prepareRequest;
+            const prepared: Awaited<ReturnType<typeof targetAuthority.prepareBootstrapAtTarget>> = WorkspaceSyncTargetBootstrapPrepareResultV1Schema
+              .parse(await personCopyTarget({ machineId: targetMachineId, method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+                request: wire, routing: personCopyRouting('prepare'), ...(signal ? { signal } : {}) }));
+            return prepared;
           }
           return targetAuthority.prepareBootstrapAtTarget({
             ...prepareRequest, ...(admittedTarget ? { admittedTarget } : {}),

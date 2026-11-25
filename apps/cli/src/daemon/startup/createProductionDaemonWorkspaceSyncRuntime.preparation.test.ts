@@ -478,10 +478,16 @@ describe('signed Project clean preparation', () => {
   // creates from another Account's SOURCE is the PERSON's. It is written to their rows and prepared at their own
   // TARGET over the signed writer → target path, under the admitted session.handoff root and routed by the handoff's
   // operation id. On an owner TARGET, Home's admission of that root is the whole admission.
+  //
+  // HANDOFF-COPY-ONCE-PERSON-OPUS-1125, ruling 2026-11-25 05:41Z: a person's ONE-TIME copy takes the same branch. Its
+  // source is the person's own Session Workspace, read from their rows only; the copy is prepared at the TARGET under
+  // the same root and leaves no lasting link.
   it.each(['own TARGET', 'another handoff root', "SOURCE owner's own handoff", 'custody retired before finalize',
-    'Session runtime retired after the handoff'] as const)(
-    'creates the link a person hands off with in their own rows, signed with the handoff root (%s)', async scenario => {
-    const person = scenario === "SOURCE owner's own handoff" ? 'owner' : 'target-owner';
+    'Session runtime retired after the handoff', 'person copy_once', "another Account's Workspace, copy_once",
+    "SOURCE owner's own copy_once", 'copy_once under a root this SOURCE never admitted'] as const)(
+    'keeps what a person hands off with in their own rows, signed with the handoff root (%s)', async scenario => {
+    const copyOnce = scenario.includes('copy_once');
+    const person = scenario === "SOURCE owner's own handoff" || scenario === "SOURCE owner's own copy_once" ? 'owner' : 'target-owner';
     const token = (sub: string) => [Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url'),
       Buffer.from(JSON.stringify({ sub })).toString('base64url'), 'fixture-signature'].join('.');
     const personCredentials = { token: token('target-owner'), encryption: null };
@@ -495,6 +501,9 @@ describe('signed Project clean preparation', () => {
     const graphWriters: Array<string | null> = [];
     const signed: Array<Readonly<{ phase: string; refused?: true }>> = [];
     const targetResults: unknown[] = [];
+    // Every Machine RPC the SOURCE sends during the handoff, by method (the unsigned path to the TARGET).
+    const machineRpcs: string[] = [];
+    let handingOff = false;
     const operationId = 'person-handoff-link';
     const targetInstallation = { machineId: 'target-parent', installationId: 'target-parent-installation',
       installationPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
@@ -526,6 +535,12 @@ describe('signed Project clean preparation', () => {
         if (!url.endsWith('/list') && !url.endsWith('/read')
           && JSON.stringify(body).includes('"relationship-graph"')) graphWriters.push(accountOf(config));
         return http(url, body);
+      },
+      handleAdditionalSocketAck: async payload => {
+        if (handingOff && payload && typeof payload === 'object' && 'method' in payload && typeof payload.method === 'string') {
+          machineRpcs.push(payload.method);
+        }
+        return undefined;
       },
       // Home's writer → target admission of a session.handoff root (readCurrentWorkspaceSyncHandoffWriterTarget):
       // operation = the root's request, SOURCE = its signed handoff admission, TARGET = its signed TARGET; then the
@@ -586,13 +601,21 @@ describe('signed Project clean preparation', () => {
     const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
     const key = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.sourceRef.id };
     rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: cipher.seal({ key, value: fixture.sourceRef }) }));
-    await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
+    // A person's copy: their Session's Workspace is in their rows only, never in the SOURCE owner's installed rows.
+    if (scenario !== 'person copy_once') await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => readProjectAccountRows({
       credentials: fixture.credentials, serverId: fixture.serverId, publication: 'installed' }));
+    // Another Account's Workspace: the SOURCE owner's installed rows hold it and the person's rows do not.
+    if (scenario === "another Account's Workspace, copy_once") rows.splice(0, rows.length);
+    // The copy's TARGET is the person's own Workspace, in their rows (the TARGET qualifies its own row).
+    const targetKey = { kind: 'workspace-ref' as const, serverId: fixture.serverId, id: fixture.targetRef.id };
+    if (copyOnce) rows.push(ProjectAccountRowV1Schema.parse({ key: targetKey, revision: 0, content: cipher.seal({ key: targetKey, value: fixture.targetRef }) }));
     await fixture.settleProjects();
-    const action = { kind: 'create_relationship' as const, mode: 'keep_both_in_sync' as const, contentPolicy, flushBeforeCommit: true as const };
+    const action = copyOnce ? { kind: 'copy_once' as const, contentPolicy }
+      : { kind: 'create_relationship' as const, mode: 'keep_both_in_sync' as const, contentPolicy, flushBeforeCommit: true as const };
     const input = { operationId, accountServerId: fixture.serverId, action,
       sourceMachineId: fixture.sourceRef.machineId, sourceWorkspaceRefId: fixture.sourceRef.id, sourceRootPath: fixture.sourceRef.rootPath,
-      targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetPath };
+      targetMachineId: fixture.targetRef.machineId, targetRootPath: fixture.targetPath,
+      ...(copyOnce ? { targetWorkspaceRefId: fixture.targetRef.id } : {}) };
     // The person on the bound SOURCE they hold Manage on, and the root Home admitted for their handoff.
     const admission = { actorAccountId: person, custodianAccountId: 'owner', machineId: fixture.sourceRef.machineId,
       installationId: 'parent-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
@@ -630,12 +653,64 @@ describe('signed Project clean preparation', () => {
     // another person's handoff; the SOURCE owner's own handoff keeps today's context.
     const context: RpcHandlerContext = { signal: new AbortController().signal, requesterSessionBootstrap,
       machineAdmission: admission, ...(dispatch ? { verifyMachineAdmissionCurrent: async () => true,
-        localActionContext: { externalActionExecutionAuthorization: dispatch.authorization } } : {}) };
+        // A root this installation's ingress never admitted carries no custody of the person here.
+        localActionContext: { externalActionExecutionAuthorization: scenario === 'copy_once under a root this SOURCE never admitted'
+          ? ExternalActionExecutionAuthorizationV1Schema.parse(admittedRoot) : dispatch.authorization } } : {}) };
+    handingOff = true;
     const settled = await runWithServerHttpBaseUrl('https://bind-child-home.invalid',
       () => fixture.parent.handoffAdapter.prepare(input, undefined, context)).then(value => ({ value }), (error: unknown) => ({ error }));
+    handingOff = false;
     const refusal = 'error' in settled && settled.error && typeof settled.error === 'object' ? settled.error : undefined;
-    const evidence = JSON.stringify({ refusal: refusal && { code: Reflect.get(refusal, 'code'), message: Reflect.get(refusal, 'message') },
-      signed, graphWriters, targetResults });
+    const evidence = JSON.stringify({ refusal: refusal && { code: Reflect.get(refusal, 'code'), message: Reflect.get(refusal, 'message'),
+      failureCause: Reflect.get(refusal, 'failureCause') }, signed, graphWriters, targetResults, machineRpcs });
+    if (copyOnce) {
+      const unsignedTargetCalls = machineRpcs.filter(method => method.startsWith(`${fixture.targetRef.machineId}:`));
+      // A one-time copy writes no link into anyone's rows, and nothing reaches the TARGET unsigned.
+      expect(graphWriters, evidence).toEqual([]);
+      expect(unsignedTargetCalls, evidence).toEqual([]);
+      if (scenario === "SOURCE owner's own copy_once") {
+        // Parity: the SOURCE's own Account keeps today's path (its installed rows, the installed TARGET transport),
+        // which here resolves the copy's TARGET row in those rows and refuses before any TARGET call.
+        expect(signed, evidence).toEqual([]);
+        expect(refusal, evidence).toMatchObject({ code: 'peer_unavailable', message: 'Workspace sync endpoint is unavailable' });
+        expect(refusal && Reflect.get(refusal, 'failureCause'), evidence).toBeUndefined();
+        return;
+      }
+      if (scenario === 'copy_once under a root this SOURCE never admitted') {
+        // The person-handoff branch finds no custody of the person admitted here for this root: refused at that step.
+        expect(refusal, evidence).toMatchObject({ code: 'project_requester_authority_unavailable',
+          failureCause: { phase: 'workspace_sync.requester_custody.handoff_admission', errorCode: 'project_requester_authority_unavailable' } });
+        expect(signed, evidence).toEqual([]);
+        expect(targetResults, evidence).toEqual([]);
+        return;
+      }
+      if (scenario === "another Account's Workspace, copy_once") {
+        // The person's rows decide their copy's source: the SOURCE owner's Workspace is not theirs.
+        // Refused at that step, before any TARGET call.
+        expect(refusal, evidence).toMatchObject({ code: 'peer_unavailable',
+          failureCause: { phase: 'workspace_sync.copy_source.resolve', errorCode: 'peer_unavailable' } });
+        expect(signed, evidence).toEqual([]);
+        expect(targetResults, evidence).toEqual([]);
+        return;
+      }
+      // L12 cut 46: the SOURCE resolved the person's copy source in its owner's installed rows and refused
+      // (peer_unavailable at the copy source). Now the person's own TARGET accepts the copy's prepare, signed
+      // with the handoff root and routed by the handoff's operation.
+      expect(refusal, evidence).toBeUndefined();
+      expect(signed, evidence).toEqual([{ phase: 'prepare' }]);
+      expect(targetResults[0], evidence).toMatchObject({ phase: 'prepare', routing: { operationId },
+        request: { bootstrapOperationId: operationId, owner: { kind: 'copy_once',
+          operation: { operationId, alphaWorkspaceRefId: fixture.sourceRef.id } } } });
+      // No lasting link: the person's execution names no relationship, and settling the handoff releases it
+      // and the TARGET's prepared copy.
+      expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId })?.relationshipId, evidence).toBeUndefined();
+      if (!('value' in settled)) throw new Error('The person copy must be prepared');
+      await runWithServerHttpBaseUrl('https://bind-child-home.invalid', () => fixture.parent.handoffAdapter.abort({
+        operationId, prepared: settled.value }));
+      expect(signed, evidence).toEqual([{ phase: 'prepare' }, { phase: 'release' }]);
+      expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId }) ?? null, evidence).toBeNull();
+      return;
+    }
     if (scenario === "SOURCE owner's own handoff") {
       // Parity: the SOURCE's own Account keeps today's installed-owner selection and never the signed path.
       expect(signed, evidence).toEqual([]);
