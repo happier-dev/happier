@@ -32,7 +32,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spawn/spawnSessionRpcTimeout';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -41,6 +41,7 @@ import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames
 import { readPresentationNotice, retirePresentationNotice, subscribePresentationNotices } from '@/components/sessions/presentation/presentationNotices';
 import { requesterMachineNoticeKey } from '@happier-dev/protocol/machines/managed/requesterMachineNotice';
 import { t } from '@/text';
+import { storage } from '@/sync/domains/state/storageStore';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const disclosureConsent = vi.hoisted(() => vi.fn<() => Promise<boolean>>());
@@ -628,12 +629,12 @@ describe('captured Account Action response decoding', () => {
                 return;
             }
             expect(result).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
-            // The person is told once, naming the other person's Machine that received the sign-in.
+            // The machine is absent from the app inventory, so the notice uses the unnamed copy.
             const told = recipient === 'shared' ? row.id : 'private-controller';
             await vi.waitFor(() => expect(notices).toEqual([`machine-requester-use:${binding.serverIdentityId}:${told}`]));
             expect(noticeRows.size).toBe(1);
             expect(readPresentationNotice()).toMatchObject({ severity: 'info', sticky: true,
-                message: expect.stringContaining(t('machineRequester.runsOn', { owner: 'Custodian', machine: keepHyphenatedNameTogether(told) })) });
+                message: expect.stringContaining(t('machineRequester.runsOnSomeoneElses', { machine: keepHyphenatedNameTogether(told) })) });
             retirePresentationNotice();
             // A second use of the same Machine proceeds and says nothing.
             expect(await run()).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
@@ -643,12 +644,21 @@ describe('captured Account Action response decoding', () => {
             expect(readPresentationNotice()).toBeNull();
         } finally { stopNotices(); }
     });
-    it('shows an Agent-originated first use on app startup and records it for other clients', async () => {
+    it.each(['legacy named Machine', 'legacy missing Machine', 'new pending row'] as const)('shows an Agent-originated first use on app startup and records it for other clients (%s)', async scenario => {
         if (!account) throw new Error('Expected captured Account');
-        const machineId = 'agent-destination';
+        const machineId = scenario === 'legacy missing Machine' ? 'missing-destination' : 'agent-destination';
         const key = requesterMachineNoticeKey(machineId);
         const encoded = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })));
-        let row = { key, version: 0, value: encoded({ owner: 'Custodian' }) };
+        const owner = scenario === 'legacy missing Machine' ? null : 'Home Custodian';
+        if (owner) {
+            storage.getState().applyMachines([createHydratedPlainMachineFixture({
+                id: machineId, accountId: 'custodian',
+                machine: { metadata: null, access: { custodian: { accountId: 'custodian', displayName: owner },
+                    role: 'use', resourceMode: 'plain', accessState: 'ready' } },
+            })], false, { sourceServerId: serverId, sourceAccountId: 'owner' });
+        }
+        const machine = keepHyphenatedNameTogether(machineId);
+        let row = { key, version: 0, value: encoded(scenario === 'new pending row' ? {} : { owner: 'Forged Custodian' }) };
         homes.answer(serverId, 'GET /v1/kv', { select: (_body, { url }) => ({
             body: { items: new URL(url).searchParams.has('afterKey') ? [] : [row] },
         }) });
@@ -662,6 +672,7 @@ describe('captured Account Action response decoding', () => {
         try {
             await vi.waitFor(() => expect(readPresentationNotice()).toMatchObject({
                 key: `machine-requester-use:${binding.serverIdentityId}:${machineId}`,
+                emphasis: owner ? t('machineRequester.runsOn', { owner, machine }) : t('machineRequester.runsOnSomeoneElses', { machine }),
                 message: expect.stringContaining(t('machineRequester.toldOnce')),
             }));
             expect(row).toEqual({ key, version: 1, value: encoded(true) });

@@ -923,13 +923,13 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       if (!mutation) throw new Error('Expected one notice mutation');
       const existing = options.requesterMachineNotices.get(mutation.key);
       events.push('notice-claim');
-      if (existing) {
+      if (mutation.version !== (existing?.version ?? -1)) {
         response.statusCode = 409;
         return respond({ success: false, errors: [{ key: mutation.key, error: 'version-mismatch', ...existing }] });
       }
-      expect(mutation.version).toBe(-1);
-      options.requesterMachineNotices.set(mutation.key, { value: mutation.value, version: 0 });
-      return respond({ success: true, results: [{ key: mutation.key, version: 0 }] });
+      const version = mutation.version + 1;
+      options.requesterMachineNotices.set(mutation.key, { value: mutation.value, version });
+      return respond({ success: true, results: [{ key: mutation.key, version }] });
     }
     const availability = readBundledPluginAvailabilityHttpFixture(request.url ?? '', body);
     if (availability) return respond(availability);
@@ -2450,11 +2450,14 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey })).toEqual(encodeStoredCredentials(credentials));
   });
 
-  it.each([false, true])('prints the foreign Machine notice once across CLI calls (app already showed it: %s)', async appAlreadyTold => {
+  it.each(['unseen', 'app already told', 'pending with forged owner'] as const)('prints the foreign Machine notice once across CLI calls (%s)', async state => {
     const events: string[] = [];
     const requesterMachineNotices = new Map<string, { value: string; version: number }>();
-    if (appAlreadyTold) requesterMachineNotices.set(requesterMachineNoticeKey('alice-machine'), {
-      value: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: true }))), version: 0,
+    const appAlreadyTold = state === 'app already told';
+    const key = requesterMachineNoticeKey('alice-machine');
+    const encoded = (value: unknown) => encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: value })));
+    if (state !== 'unseen') requesterMachineNotices.set(key, {
+      value: encoded(appAlreadyTold ? true : { owner: 'Forged Custodian' }), version: 0,
     });
     const target = await home('plain', events, { originalOwnAction: 'agents.models.list', requesterMachineNotices });
     const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
@@ -2466,11 +2469,14 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
         await expect(executor.execute('agents.models.list', ownMachineInput,
           { surface: 'cli', authority: 'present_user', actionRequestId: requestId })).resolves.toMatchObject({ ok: true });
+        await vi.waitFor(() => expect(requesterMachineNotices.get(key)?.value).toBe(encoded(true)));
       }
-      await vi.waitFor(() => expect(events.filter(event => event === 'notice-claim')).toHaveLength(2));
+      await vi.waitFor(() => expect(events.filter(event => event === 'notice-claim')).toHaveLength(state === 'pending with forged owner' ? 3 : 2));
       const notices = () => stderr.mock.calls.filter(([value]) => String(value).includes('Your Happier sign-in is stored on this machine'));
       if (!appAlreadyTold) await vi.waitFor(() => expect(notices()).toHaveLength(1));
       expect(notices()).toHaveLength(appAlreadyTold ? 0 : 1);
+      if (!appAlreadyTold) expect(String(notices()[0]?.[0])).toContain('Runs on Alice’s ');
+      expect(requesterMachineNotices.get(key)?.value).toBe(encoded(true));
     } finally { stderr.mockRestore(); }
   });
 

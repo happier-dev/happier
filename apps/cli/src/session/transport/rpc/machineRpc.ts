@@ -667,7 +667,7 @@ export async function callExactMachineRpc(params: Readonly<{
               || Reflect.get(request, 'kind') === 'requester_session_handoff_workspace_capture_v1');
           if (deploymentArchive) await assertDeploymentArchiveChildCurrentForHost({ context: externalAction!.context,
             machineId: deploymentArchive.job.machineId, installationId: externalAction!.installationId });
-          let foreignCustodian: NonNullable<typeof machineTarget.access>['custodian'] | undefined;
+          let foreignCustodian = false;
           if (seal && transportAuthorization && !hasPrivateBootstrap && !deploymentArchive && !referenceServiceList) {
             const encodedKey = machineTarget.installationPublicKey;
             if (!moveChild && (machineTarget.installationId !== transportAuthorization.binding.installationId
@@ -683,7 +683,7 @@ export async function callExactMachineRpc(params: Readonly<{
                 ...(moveChild && !readinessChild ? { recipient: { machineId, installationId: machineTarget.installationId } } : {}) }, installationPublicKey: publicKey });
             if (!sealed || !sealed.requesterAccountContext) throw new Error('Requester Account custody unavailable');
             const custodian = machineTarget.access?.custodian;
-            if (requester && custodian && custodian.accountId !== sealed.binding.accountId) foreignCustodian = custodian;
+            foreignCustodian = Boolean(requester && custodian && custodian.accountId !== sealed.binding.accountId);
             transportAuthorization = sealed;
           }
           if (!accountRpc && moveChild && !seal) throw new Error('Requester Account custody unavailable');
@@ -701,7 +701,7 @@ export async function callExactMachineRpc(params: Readonly<{
             onIssued: () => {
               issued = true;
               if (foreignCustodian && requester) reportRequesterMachineUse({ credentials: requester.credentials,
-                serverBaseUrl: requester.serverHttpBaseUrl, machineId, owner: foreignCustodian.displayName || null, surface: 'agent' });
+                serverBaseUrl: requester.serverHttpBaseUrl, machineId, surface: 'agent' });
             },
             signal: attemptSignal,
             ...(waitForResultOnCancel ? { waitForResultOnCancel: true } : {}),

@@ -398,10 +398,10 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
                 throw error;
             }
             if (foreignGuest) tellRequesterMachineUseOnce(
-                account, binding.serverIdentityId, binding.target.machineId, custody.custodian.displayName || null,
+                account, binding.serverIdentityId, binding.target.machineId,
             );
             if (wakeDisclosure && controllerPublicKey && wake?.target.controller) {
-                tellRequesterMachineUseOnce(account, binding.serverIdentityId, wake.target.controller.machineId, wakeDisclosure.displayName || null);
+                tellRequesterMachineUseOnce(account, binding.serverIdentityId, wake.target.controller.machineId);
             }
         }
         request = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: binding.target.machineId,

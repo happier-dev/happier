@@ -11,26 +11,25 @@ export const requesterMachineNoticeEnglish = {
     toldOnce: 'Your Happier sign-in is stored on this machine while you work on it. Anyone with terminal or agent access could use your account and see your sessions’ files there.',
 };
 
-const PendingNoticeSchema = z.strictObject({ owner: z.nullable(z.string()) });
-type PendingNotice = z.infer<typeof PendingNoticeSchema>;
-type CompareAndSet = (value: true | PendingNotice, version: number) => Promise<
+// Object rows mark a pending notice. Discard all fields, including old owner text.
+const PendingNoticeSchema = z.object({});
+type CompareAndSet = (value: true | Record<string, never>, version: number) => Promise<
     Readonly<{ success: true }> | Readonly<{ success: false; value: unknown; version: number }>
 >;
 
 /** A new Account row is either immediately claimed by a presenter or left for the app by its Agent. */
-export async function recordRequesterMachineNotice(compareAndSet: CompareAndSet, pending?: PendingNotice): Promise<boolean> {
-    const result = await compareAndSet(pending ?? true, -1);
+export async function recordRequesterMachineNotice(compareAndSet: CompareAndSet, pending = false): Promise<boolean> {
+    const result = await compareAndSet(pending ? {} : true, -1);
     if (pending) return false;
     if (result.success) return true;
-    return await claimPendingRequesterMachineNotice(compareAndSet, result) !== null;
+    return await claimPendingRequesterMachineNotice(compareAndSet, result);
 }
 
 /** Only one app window or CLI can claim an outstanding notice. */
 export async function claimPendingRequesterMachineNotice(
     compareAndSet: CompareAndSet,
     row: Readonly<{ value: unknown; version: number }>,
-): Promise<PendingNotice | null> {
-    const pending = PendingNoticeSchema.safeParse(row.value);
-    if (!pending.success) return null;
-    return (await compareAndSet(true, row.version)).success ? pending.data : null;
+): Promise<boolean> {
+    if (!PendingNoticeSchema.safeParse(row.value).success) return false;
+    return (await compareAndSet(true, row.version)).success;
 }

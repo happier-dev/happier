@@ -10,7 +10,8 @@ export function reportRequesterMachineUse(input: Readonly<{
     serverBaseUrl: string;
     machineId: string;
     machineLabel?: string;
-    owner: string | null;
+    /** Display name from Home's Machine access record, when available. */
+    owner?: string | null;
     surface: 'cli' | 'agent';
 }>): void {
     void (async () => {
@@ -20,7 +21,7 @@ export function reportRequesterMachineUse(input: Readonly<{
             key: requesterMachineNoticeKey(input.machineId),
             resolveAuthorizationHeaders: () => ({ Authorization: `Bearer ${input.credentials.token}` }),
         });
-        const claimed = await recordRequesterMachineNotice(compareAndSet, input.surface === 'agent' ? { owner: input.owner } : undefined);
+        const claimed = await recordRequesterMachineNotice(compareAndSet, input.surface === 'agent');
         if (!claimed) return;
         const machine = input.machineLabel || input.machineId;
         const title = input.owner

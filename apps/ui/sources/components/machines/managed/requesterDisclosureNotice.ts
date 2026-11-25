@@ -57,24 +57,17 @@ export function presentRequesterMachineNotice(
     serverId: string;
     serverIdentityId: string;
     machineId: string;
-    owner: string | null;
   }>,
 ): void {
   const machineKey = `${params.serverIdentityId}:${params.machineId}`;
   const key = `machine-requester-use:${machineKey}`;
   // A host name like "NLDW3-5-36-33" wraps around the name, never inside it.
-  const machine = keepHyphenatedNameTogether(
-    readDisplayedMachineName(
-      resolveServerScopedMachine(
-        storage.getState(),
-        params.serverId,
-        params.machineId,
-      ),
-    ) ?? params.machineId,
-  );
+  const record = resolveServerScopedMachine(storage.getState(), params.serverId, params.machineId);
+  const machine = keepHyphenatedNameTogether(readDisplayedMachineName(record) ?? params.machineId);
+  const owner = record?.access?.custodian.displayName?.trim() || null;
   // The glance, not the badge popover's full account: whose Machine (the badge's own "Runs on" words), then what
   // that means in two sentences. It is told when the Machine is first used, before any one Session runs.
-  const title = formatRequesterRunsOn(params.owner, machine);
+  const title = formatRequesterRunsOn(owner, machine);
   publishPresentationNotice({
     key,
     severity: 'info',

@@ -17,7 +17,7 @@ type NoticeAccount = Pick<LazyActionAccountContext,
 
 /** The admitted Action proceeds independently of the notice. */
 export function tellRequesterMachineUseOnce(
-    account: NoticeAccount, serverIdentityId: string, machineId: string, owner: string | null,
+    account: NoticeAccount, serverIdentityId: string, machineId: string,
 ): void {
     void (async () => {
         const shouldContinue = account.accountLifetime.isCurrent;
@@ -26,7 +26,7 @@ export function tellRequesterMachineUseOnce(
             credentials: account.credentials, request: account.request, shouldContinue, encryption, key: requesterMachineNoticeKey(machineId),
         });
         if (await recordRequesterMachineNotice(compareAndSet) && shouldContinue()) {
-            presentRequesterMachineNotice({ serverId: account.serverId, serverIdentityId, machineId, owner });
+            presentRequesterMachineNotice({ serverId: account.serverId, serverIdentityId, machineId });
         }
     })().catch(() => { /* The next use can claim an unwritten notice. */ });
 }
@@ -42,9 +42,9 @@ export function observeRequesterMachineNotices(account: NoticeAccount): () => vo
     };
     const transport = (key: string) => createAccountKvJsonTransport({ credentials, request, shouldContinue, key });
     const claim = async (key: string, row: Readonly<{ value: unknown; version: number }>) => {
-        const pending = await claimPendingRequesterMachineNotice(transport(key).compareAndSet, row);
-        if (pending && shouldContinue()) presentRequesterMachineNotice({
-            serverId, serverIdentityId, machineId: key.slice(REQUESTER_MACHINE_NOTICE_PREFIX.length), owner: pending.owner,
+        const claimed = await claimPendingRequesterMachineNotice(transport(key).compareAndSet, row);
+        if (claimed && shouldContinue()) presentRequesterMachineNotice({
+            serverId, serverIdentityId, machineId: key.slice(REQUESTER_MACHINE_NOTICE_PREFIX.length),
         });
     };
     const catchUp = async () => {
