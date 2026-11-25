@@ -274,7 +274,7 @@ export const WorkflowRunPrivateMetadataV1Schema = lazyZodSchema(() => z.discrimi
 ]));
 export type WorkflowRunPrivateMetadataV1 = z.infer<typeof WorkflowRunPrivateMetadataV1Schema>;
 export const WorkflowRunCallerAccessV1Schema = lazyZodSchema(() => z.strictObject({ canEdit: z.boolean() }));
-const workflowRunMembershipPrivateFields = ['where', 'startedBy', 'heldStep', 'stepProgress', 'stepProgressCurrentness'] as const satisfies readonly (keyof WorkflowRunSummaryV1)[];
+const workflowRunMembershipPrivateFields = ['where', 'startedBy', 'heldStep', 'stepProgress', 'stepProgressCurrentness', 'startWaitReason'] as const satisfies readonly (keyof WorkflowRunSummaryV1)[];
 
 /** Project a trusted, possibly opened Run row to the public membership contract. */
 export function projectWorkflowRunMembershipV1(run: WorkflowRunSummaryV1): Omit<WorkflowRunSummaryV1, typeof workflowRunMembershipPrivateFields[number]> {

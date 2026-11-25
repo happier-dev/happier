@@ -21491,6 +21491,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         stopping: 'Parando…',
         stopWhenMachineReconnects: ({ machine }) => `Vai parar quando ${machine} se reconectar`,
         waitsForMachineOnline: ({ machine }) => `Aguarda ${machine} ficar online`,
+        waitsForMachineStartSlot: ({ machine }) => `Aguarda uma vaga para iniciar em ${machine}`,
         stopWhenMachineReconnectsUnknown: 'Vai parar quando a máquina se reconectar',
         stopRequested: ({ machine }) => `Parada solicitada. Aguardando a confirmação de ${machine}.`,
         occurrenceItem: ({ number }) => `Item ${number}`,

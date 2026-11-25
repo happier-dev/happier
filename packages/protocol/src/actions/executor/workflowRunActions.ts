@@ -69,7 +69,7 @@ import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPlugi
 import { resolveInputTypeOptions, readInputFieldOptionsConstraint, validateInputFieldSchema, validateInputFieldValue } from '../../inputs/inputTypeRuntime.js';
 import type { InputOption } from '../../inputs/inputFields.js';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError, parseActionExecuteFailure } from '../actionExecutionResult.js';
-import { WorkflowOperationErrorCodeV1Schema, type WorkflowOperationErrorCodeV1 } from '../../workflows/workflowProgressV1.js';
+import { WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1, WorkflowOperationErrorCodeV1Schema, type WorkflowOperationErrorCodeV1 } from '../../workflows/workflowProgressV1.js';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from './actionStartDiagnostics.js';
 import { prepareWorkflowRunStartV1, resolveWorkflowContextInputsV1, resolveWorkflowRunStartInputsV1 as resolveInputs,
   supportsWorkflowAnotherRoundV1, WORKFLOW_PREVIOUS_ROUND_CONTEXT_INPUT_V1 } from '../../workflows/workflowStartPreparationV1.js';
@@ -972,25 +972,26 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     return opened;
   };
 
-  // Reads the worker's authored-count fact; neither list nor detail recounts invocations.
+  // Read the worker's current root facts. Neither list nor detail recounts invocations or infers a wait.
   const openRootProgress = (runId: string, raw: unknown, enc: WorkflowRunEncryptionV1 | undefined, accountId: string) => {
     // A storage read may omit the root observation. Omission does
     // not revoke an already-opened count; an observed invalid/unreadable root
     // below still explicitly projects null and fails closed.
     if (raw === undefined || raw === null) return {
-      stepProgress: undefined, stepProgressCurrentness: undefined, resultProvenance: undefined,
+      stepProgress: undefined, stepProgressCurrentness: undefined, resultProvenance: undefined, startWaitReason: undefined,
     };
     const root = record(raw ?? {});
     const parsed = WorkflowRunInvocationIndexV1Schema.safeParse(root.index);
     let stepProgress: WorkflowRunSummaryV1['stepProgress'] = null;
     let stepProgressCurrentness: WorkflowRunSummaryV1['stepProgressCurrentness'] = null;
     let resultProvenance: WorkflowProgressEnvelopeV1['resultProvenance'];
+    let startWaitReason: WorkflowRunSummaryV1['startWaitReason'] = null;
     if (parsed.success) {
       const index = parsed.data;
       if (index.runId === runId && index.parentRecordId === null && index.sequence === '0'
         && index.memberOrdinal === '0' && index.attempt === '0') {
         stepProgressCurrentness = { recordId: index.id, attempt: index.attempt, contentRevision: index.contentRevision };
-        if (!enc) return { stepProgress, stepProgressCurrentness, resultProvenance };
+        if (!enc) return { stepProgress, stepProgressCurrentness, resultProvenance, startWaitReason };
         const opened = openWorkflowProgressStoredEnvelopeV1({ ...openMode(enc),
           binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: index.id,
             sequence: index.sequence, parentRecordId: index.parentRecordId, memberOrdinal: index.memberOrdinal, attempt: index.attempt },
@@ -1000,10 +1001,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         else if (opened.kind === 'available') {
           stepProgress = opened.content.stepProgress ?? null;
           resultProvenance = opened.content.resultProvenance;
+          if (index.lifecycle === 'running' && opened.content.reason?.code === WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1) {
+            startWaitReason = WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1;
+          }
         }
       }
     }
-    return { stepProgress, stepProgressCurrentness, resultProvenance };
+    return { stepProgress, stepProgressCurrentness, resultProvenance, startWaitReason };
   };
 
   const assertWaitDoesNotOccupyTargetConversation = async (args: WorkflowActionExecuteArgs<'workflow.run.wait'>): Promise<number | undefined> => {
@@ -2932,6 +2936,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             let sourceSavedBy: WorkflowRunSummaryV1['sourceSavedBy'];
             let stepProgress: WorkflowRunSummaryV1['stepProgress'] = null;
             let resultProvenance: WorkflowProgressEnvelopeV1['resultProvenance'];
+            let startWaitReason: WorkflowRunSummaryV1['startWaitReason'] = null;
             let stepProgressCurrentness = openRootProgress(run.id, rootProgressByRunId[run.id], undefined, run.ownerAccountId).stepProgressCurrentness;
             let heldStep: WorkflowRunSummaryV1['heldStep'] = args.input.attention === 'required' ? null : undefined;
             try {
@@ -2940,7 +2945,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
               const resolved = resolveWorkflowRunDataKeyV1({ encryption: readEncryption, census });
               if (resolved.kind !== 'available') throw workflowError(resolved.reason);
               await prepareRunRecipients(run.id, resolved.encryption, census, args.context.signal);
-              ({ stepProgress, stepProgressCurrentness, resultProvenance } = openRootProgress(run.id,
+              ({ stepProgress, stepProgressCurrentness, resultProvenance, startWaitReason } = openRootProgress(run.id,
                 rootProgressByRunId[run.id], resolved.encryption, census.ownerAccountId));
               const rawEnvelope = acceptedEnvelopesByRunId[run.id];
               const rawDisplay = displayEnvelopesByRunId[run.id];
@@ -3039,7 +3044,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
             if (!matchesResource || !matchesDestination || !matchesUnder) continue;
             // Storage/control rows cannot author this private accepted-source fact.
             const { sourceSavedBy: _unopenedSavedBy, ...publicRun } = run;
-            runs.push({ ...publicRun, origin, where, startedBy, stepProgress, stepProgressCurrentness, heldStep,
+            runs.push({ ...publicRun, origin, where, startedBy, stepProgress, stepProgressCurrentness, startWaitReason, heldStep,
               ...(sourceSavedBy ? { sourceSavedBy } : {}) });
             if (projected) metadataByRunId[run.id] = projected;
           }
@@ -3146,11 +3151,11 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         { accountId, enc },
         args.context.signal,
       );
-      const { stepProgress, stepProgressCurrentness } = openRootProgress(args.input.runId, snapshot.rootProgress, enc, accountId);
+      const { stepProgress, stepProgressCurrentness, startWaitReason } = openRootProgress(args.input.runId, snapshot.rootProgress, enc, accountId);
       const heldStep = snapshot.heldProgress === undefined ? undefined
         : projectHeldStep(snapshot.heldProgress, args.input.runId, accountId, enc, path => authoredStepContext(accepted, path));
       return WorkflowActionOutputSchemasV1[args.actionId].parse({
-        run: { ...snapshot.run, origin: projectAcceptedOrigin(accepted.origin, snapshot.run.origin), stepProgress, stepProgressCurrentness,
+        run: { ...snapshot.run, origin: projectAcceptedOrigin(accepted.origin, snapshot.run.origin), stepProgress, stepProgressCurrentness, startWaitReason,
           ...(heldStep === undefined ? {} : { heldStep }) },
         callerAccess: projectRunCallerAccess(snapshot.keyCensus),
         definition: accepted.definition,

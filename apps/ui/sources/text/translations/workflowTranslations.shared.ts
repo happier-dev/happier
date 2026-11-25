@@ -766,6 +766,7 @@ export const en = {
         stopping: 'Stopping…',
         stopWhenMachineReconnects: ({ machine }: { machine: string }) => `Stops when ${machine} reconnects`,
         waitsForMachineOnline: ({ machine }: { machine: string }) => `Waits for ${machine} to come online`,
+        waitsForMachineStartSlot: ({ machine }: { machine: string }) => `Waits for a free start slot on ${machine}`,
         stopWhenMachineReconnectsUnknown: 'Stops when the Machine reconnects',
         stopRequested: ({ machine }: { machine: string }) => `Stop requested. Waiting for ${machine} to confirm.`,
         /** One occurrence of a repeated step, by its 1-based position. */

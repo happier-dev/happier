@@ -214,12 +214,16 @@ export const WorkflowRunStepProgressCurrentnessV1Schema = lazyZodSchema(() => z.
 }));
 export type WorkflowRunStepProgressCurrentnessV1 = z.infer<typeof WorkflowRunStepProgressCurrentnessV1Schema>;
 
+export const WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1 = 'machine_start_capacity';
+
 export const WorkflowRunSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   /** Display-only attribution from this occurrence's opened, frozen accepted source. */
   sourceSavedBy: z.optional(WorkflowDefinitionSavedByV1Schema),
   startedBy: zMini.optional(zMini.nullable(WorkflowRunStartedByV1Schema)),
   stepProgress: z.optional(z.nullable(WorkflowRunStepProgressV1Schema)),
   stepProgressCurrentness: z.optional(z.nullable(WorkflowRunStepProgressCurrentnessV1Schema)),
+  /** Opened root progress. Null clears the wait; omission supplies no root observation. */
+  startWaitReason: z.optional(z.nullable(z.literal(WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1))),
   /** Authorized attention-list projection; null clears a hold, omission preserves a prior observation. */
   heldStep: z.optional(z.nullable(z.strictObject({
     invocationId: WorkflowInvocationRecordIdSchema,

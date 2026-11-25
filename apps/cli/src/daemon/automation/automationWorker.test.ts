@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { setTimeout as pauseForHttp } from 'node:timers/promises';
 import {
   DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE,
+  createWorkflowAccountRunActionOwner,
   FeaturesResponseSchema,
   materializeWorkflowAcceptedSnapshotV1,
   serializeWorkflowStoredContentEnvelopeV1,
@@ -2131,6 +2132,17 @@ describe('automationWorker', () => {
     const stores = ids.map((id, index) => createWorkflowRunStorageTestkit({ runId: id, machineId,
       origin: { kind: 'automation', automationId: `automation-${index}` }, acceptedEnvelope: accepted[index], state: 'claimed',
       keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId: id, accountId }), ownerAccountCurrentness: V3_CLAIM_CURRENTNESS } }));
+    const runReads = createWorkflowAccountRunActionOwner({
+      storage: stores[waiterIndex]!,
+      resolveAccountId: async () => accountId,
+      resolveEncryption: async () => ({ kind: 'available', witness: V3_CLAIM_CURRENTNESS }),
+      definitions: { get: async () => { throw new Error('Reads use the accepted snapshot'); } },
+      normalizeAbsolutePath: path => path,
+      randomBytes: () => { throw new Error('Plain Runs do not request keys'); },
+    });
+    const readWaitingRun = () => runReads.execute({ actionId: 'workflow.run.get',
+      input: { runId: ids[waiterIndex]!, includeUsage: false }, context: {} });
+    const listWaitingRun = () => runReads.execute({ actionId: 'workflow.run.list', input: { machineId }, context: {} });
     const claims: Array<string | undefined> = [];
     let holdSettledAssignmentRefresh = false;
     let settledAssignmentRefreshHeld = false;
@@ -2279,6 +2291,10 @@ describe('automationWorker', () => {
           && 'phase' in event && event.phase === 'machine_start_capacity' ? [event] : []);
       expect(capacityPhases()).toEqual([expect.objectContaining({ status: 'started',
         activeRuns: budget, maxActiveRunsPerMachine: budget, paused: false, draining: false })]);
+      await vi.waitFor(async () => {
+        expect(await readWaitingRun()).toMatchObject({ run: { state: 'running', machineId, startWaitReason: 'machine_start_capacity' } });
+      });
+      expect(await listWaitingRun()).toMatchObject({ runs: [{ id: ids[waiterIndex], startWaitReason: 'machine_start_capacity' }] });
       if (ending === 'settle') {
         const replacementAdmitted = new Promise<void>((resolve, reject) => {
           replacementObservation = stores[waiterIndex]!.observeChanges(ids[waiterIndex]!, () => {
@@ -2289,6 +2305,7 @@ describe('automationWorker', () => {
         starts[0]!();
         if (holdSettledAssignmentRefresh) await waitForCondition(() => settledAssignmentRefreshHeld);
         await replacementAdmitted;
+        expect(await readWaitingRun()).toMatchObject({ run: { startWaitReason: null } });
         expect(capacityPhases()).toEqual([
           expect.objectContaining({ status: 'started', activeRuns: budget }),
           expect.objectContaining({ status: 'completed', activeRuns: budget }),

@@ -3928,6 +3928,18 @@ describe('WorkflowRunContent', () => {
     await screen.unmount();
   });
 
+  it('states a Run waiting for a free Machine start slot once', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', startWaitReason: 'machine_start_capacity' }),
+      machineName: 'Build box',
+      machineReachable: true,
+    });
+    const waits = 'workflows.run.waitsForMachineStartSlot:{"machine":"Build box"}';
+    expect(screen.getTextContent().split(waits)).toHaveLength(2);
+    expect(screen.getTextContent()).not.toContain('workflows.run.outcomeLine');
+    await screen.unmount();
+  });
+
   it('omits missing usage for settled steps, running steps and containers', async () => {
     const renderStep = (lifecycle: 'completed' | 'running') =>
       renderContent({

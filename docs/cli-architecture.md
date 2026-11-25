@@ -6100,6 +6100,10 @@ full budget, the worker still claims Workflow recipes to classify the private
 graph. New starts that need a slot wait with claim cancellation and heartbeat
 active. Older snapshots without a capacity projection use their frozen leaves.
 
+At a full start budget, the coordinator records a typed wait on the same sealed
+Run root and clears it when it acquires a slot. Authorized Run detail and list
+reads project the reason from the root they already open.
+
 In 0.3 development source, initial direct Workflow Run admission freezes its
 per-Run Machine assignment and publishes the queued hint to that exact Machine
 after commit through the existing Automation Run publisher. It needs neither an

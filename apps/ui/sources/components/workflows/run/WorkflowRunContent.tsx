@@ -1014,6 +1014,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         && failureRecoveryInstruction === failureChoices?.waitLine;
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
+        startWaitReason: props.run.startWaitReason,
         workflowCustodyState: props.run.workflowCustodyState,
         cancelRequested: props.cancelRequested,
         machineReachable: props.machineReachable,
@@ -1067,10 +1068,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // "Waiting for you — X is waiting for you." beside the row naming X (U8 R4 A1).
     const holdNamedBelow = props.run.state === 'waiting_for_review' && firstAttention !== undefined
         && attentionWaitsForYou(firstAttention);
-    // A queued Run waiting for its offline Machine has one fact, and its status word already states it whole:
-    // "Waits for <Machine> to come online", never followed by "— Waiting to start" (R12 M3).
+    // An assigned Machine wait is already a complete status sentence.
     const machineWaitIsWhole = outcomeWord === presentWorkflowRunMachineWait(props.run.state,
-        { reachable: props.machineReachable, name: props.machineName ?? props.run.machineId });
+        { reachable: props.machineReachable, name: props.machineName ?? props.run.machineId }, props.run.startWaitReason);
     const outcomeLine = formatWorkflowRunOutcomeLine({
         word: outcomeWord,
         sentence: holdNamedBelow || machineWaitIsWhole ? outcomeWord : formatWorkflowRunOutcomeSentence({

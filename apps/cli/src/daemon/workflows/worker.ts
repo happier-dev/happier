@@ -40,8 +40,8 @@ export type WorkflowClaimForCoordination = Readonly<{
   registerReviewHoldRefresh?: (refresh: () => Promise<void>) => void;
   /** Projects this claim's actual coordinator custody through the incumbent worker map. */
   registerLiveWorkProducer?: (producer: LiveWorkProducerV1) => () => void;
-  /** Reserve the incumbent machine budget after private materialization. */
-  acquireMachineStartCapacity?: (signal?: AbortSignal) => Promise<void>;
+  /** Reserve the incumbent Machine budget. The worker reports a full budget before waiting. */
+  acquireMachineStartCapacity?: (signal: AbortSignal | undefined, onFull: () => Promise<void>) => Promise<void>;
   /** Worker lifetime; unlike Stop, shutdown also cancels terminal storage. */
   storageSignal?: AbortSignal;
   signal?: AbortSignal;

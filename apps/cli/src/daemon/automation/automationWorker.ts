@@ -341,7 +341,8 @@ export function startAutomationWorker(params: {
     return countActiveStartRuns() < maxActiveRunsPerMachine;
   }
 
-  async function acquireMachineStartCapacity(runId: string, controller: AbortController, signal?: AbortSignal): Promise<void> {
+  async function acquireMachineStartCapacity(runId: string, controller: AbortController, signal: AbortSignal | undefined,
+    onFull: (() => Promise<void>) | undefined): Promise<void> {
     const logPhase = (status: 'started' | 'completed') => logger.infoFile('[WORKFLOW] Run phase', {
       event: 'workflow_run_phase', runId, phase: 'machine_start_capacity', status,
       activeRuns: countActiveStartRuns(), maxActiveRunsPerMachine, paused,
@@ -353,10 +354,18 @@ export function startAutomationWorker(params: {
       const active = activeExecutions.get(runId);
       if (!active || active.controller !== controller) throw new Error('automation_claim_not_current');
       if (active.consumesStartCapacity) { logPhase('completed'); return; }
-      if (!paused && !params.admissionDrain?.isQuiescing() && hasExecutionCapacity()) {
-        active.consumesStartCapacity = true;
-        logPhase('completed');
-        return;
+      if (!paused && !params.admissionDrain?.isQuiescing()) {
+        if (hasExecutionCapacity()) {
+          active.consumesStartCapacity = true;
+          logPhase('completed');
+          return;
+        }
+        if (onFull) {
+          await onFull();
+          onFull = undefined;
+          // A slot may have opened during publication, before any wake listener was installed.
+          continue;
+        }
       }
       await new Promise<void>((resolve, reject) => {
         const cleanup = () => { capacityWaiters.delete(wake); signal?.removeEventListener('abort', abort); };
@@ -672,7 +681,7 @@ export function startAutomationWorker(params: {
             machineId: params.machineId,
             claimClient: executionClaimClient,
             actionExecutor: selectedActionExecutor,
-            acquireMachineStartCapacity: (signal) => acquireMachineStartCapacity(claimed.run.id, executionController, signal),
+            acquireMachineStartCapacity: (signal, onFull) => acquireMachineStartCapacity(claimed.run.id, executionController, signal, onFull),
             registerReviewHoldRefresh: (refresh) => {
               const active = activeExecutions.get(claimed.run.id);
               if (active?.controller !== executionController) return;

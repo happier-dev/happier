@@ -757,7 +757,7 @@ function selectCurrentSummaryProjection(
         acceptProgress = true;
     }
     const progressSource = acceptProgress ? incoming.summary : stored.summary;
-    for (const key of ['stepProgress', 'stepProgressCurrentness'] as const) {
+    for (const key of ['stepProgress', 'stepProgressCurrentness', 'startWaitReason'] as const) {
         if (!sameStrictJsonValue(summary[key], progressSource[key])) {
             summary = { ...summary, [key]: progressSource[key] };
         }

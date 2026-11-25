@@ -21011,6 +21011,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         stopping: 'Wird gestoppt…',
         stopWhenMachineReconnects: ({ machine }) => `Wird gestoppt, wenn ${machine} wieder verbunden ist`,
         waitsForMachineOnline: ({ machine }) => `Wartet, bis ${machine} online ist`,
+        waitsForMachineStartSlot: ({ machine }) => `Wartet auf einen freien Startplatz auf ${machine}`,
         stopWhenMachineReconnectsUnknown: 'Wird gestoppt, wenn der Rechner wieder verbunden ist',
         stopRequested: ({ machine }) => `Stopp angefordert. Warten auf die Bestätigung von ${machine}.`,
         occurrenceItem: ({ number }) => `Element ${number}`,

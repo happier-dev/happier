@@ -21381,6 +21381,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         stopping: '正在停止…',
         stopWhenMachineReconnects: ({ machine }) => `${machine} 重新連線後停止`,
         waitsForMachineOnline: ({ machine }) => `等待 ${machine} 上線`,
+        waitsForMachineStartSlot: ({ machine }) => `等待 ${machine} 上的啟動名額空出`,
         stopWhenMachineReconnectsUnknown: '機器重新連線後停止',
         stopRequested: ({ machine }) => `已要求停止。正在等待 ${machine} 確認。`,
         occurrenceItem: ({ number }) => `第 ${number} 項`,

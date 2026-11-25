@@ -910,6 +910,7 @@ export function workflowRunOutcomeIsAttention(params: Readonly<{
 
 export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     state: WorkflowRunStateV1;
+    startWaitReason?: WorkflowRunSummaryV1['startWaitReason'];
     coverage: WorkflowRunCoverage;
     historyComplete?: boolean;
     cancelRequested?: boolean;
@@ -939,10 +940,12 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
             inAttentionWindow: params.inAttentionWindow,
         }).label;
     }
-    // A queued Run on an offline Machine says it waits for that Machine (R12 M3); other states keep their word.
-    return describeWorkflowRunState(params.state === 'claimed' && params.coverage.observedLeafCounts.completed > 0
-        ? 'running' : params.state, { machineStatus: params.machineStatus,
-        ...(params.state === 'queued' ? { machineReachable: params.machineReachable, machineName: params.machineName } : {}) }).label;
+    const state = params.state === 'claimed' && params.coverage.observedLeafCounts.completed > 0 ? 'running' : params.state;
+    const startWaitReason = params.state === 'running' ? params.startWaitReason : undefined;
+    return describeWorkflowRunState({ state, startWaitReason }, {
+        machineStatus: params.machineStatus, machineName: params.machineName,
+        ...(params.state === 'queued' ? { machineReachable: params.machineReachable } : {}),
+    }).label;
 }
 
 /**

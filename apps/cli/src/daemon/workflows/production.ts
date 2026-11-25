@@ -4,6 +4,7 @@ import { WorkflowStepProgress } from './stepProgress';
 
 import { WorkflowTargetUnavailableDiagnosticV1Schema, type WorkflowTargetUnavailableDiagnosticV1 } from '@happier-dev/protocol/workflows/workflowTargetUnavailableReasonV1';
 import { applyWorkflowInvocationFactV1, classifyWorkflowHoldV1, isTerminalWorkflowInvocationLifecycleV1, WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowInvocationFactV1Schema, WorkflowInvocationFactResultV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, WorkflowOperationErrorCodeV1Schema, WORKFLOW_UNSETTLED_INVOCATION_LIFECYCLES_V1, WORKFLOW_INVOCATION_LIFECYCLES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { getWorkflowActionOutputKindV1, WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
@@ -2116,6 +2117,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     const rootInvocation = await durableStore.readByLogicalInvocation(rootRecordId);
     if (!rootInvocation) throw new Error('workflow_root_invocation_missing');
     if (rootInvocation.reason !== undefined
+      && rootInvocation.reason !== WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1
       && (rootInvocation.lifecycle === 'running' || rootInvocation.lifecycle === 'needs_attention')) {
       await durableStore.commitFact({ key: rootInvocation.key, lifecycle: 'running' });
     }
@@ -2360,9 +2362,17 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       finally { releaseActivity?.(); }
     };
     if (workflowRequiresMachineStartCapacityV1(accepted.materializedLeaves, accepted, claim.automationCause)) {
-      await claim.acquireMachineStartCapacity?.(claim.signal);
+      await claim.acquireMachineStartCapacity?.(claim.signal, async () => {
+        if (rootInvocation.reason === WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1) return;
+        await durableStore.commitFact({ key: rootInvocation.key, lifecycle: 'running',
+          reason: WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1 });
+      });
     }
     claim.signal?.throwIfAborted();
+    if (durableStore.read(rootInvocation.key)?.reason === WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1) {
+      await durableStore.commitFact({ key: rootInvocation.key, lifecycle: 'running' });
+      claim.signal?.throwIfAborted();
+    }
     let result = await runCoordinator();
     while (result.state === 'waiting_for_review') {
       if (result.parkRevision === undefined) throw new Error('workflow_review_park_token_missing');
