@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectRelayedHomeAuthorizationFailure, readSignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
 import { readDeploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
@@ -42,8 +43,8 @@ it('keeps the signed purpose requirement through the Home and parent Action proj
         requiredFact: 'verification_purpose',
     }, failureCause: { phase: 'home.authorization.verification_purpose', httpStatus: 401 } };
     expect(child).toMatchObject(expected);
-    if (child.ok) throw new Error('A rejected signed purpose cannot become success');
-    const relayed = projectRelayedHomeAuthorizationFailure({ ...child, details: undefined });
+    const refusal = ActionExecuteFailureSchema.parse(child);
+    const relayed = projectRelayedHomeAuthorizationFailure({ ...refusal, details: undefined });
     expect.soft(child).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
     expect(relayed).toMatchObject({ details: expected.details });
     expect(relayed).not.toHaveProperty('details.remedy', expect.stringMatching(/\b(?:update|upgrade)\b/i));
