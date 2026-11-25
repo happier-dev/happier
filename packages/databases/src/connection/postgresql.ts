@@ -4,7 +4,7 @@ import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happi
 import { statsOperationResultV1 } from '../stats.js';
 import { databaseConnectionUrlWithoutOptions, databaseTlsVerification, type DatabaseConnectionOperationRunner, type DatabaseTls } from '../connection.js';
 import {
-    executePostgresqlOperation, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
+    executePostgresqlOperation, normalizePostgresqlStatement, PostgresqlInputError, PostgresqlOperationError, postgresqlFailureCause,
     compilePostgresqlSetupV1, decodePostgresqlSetupV1,
     type PostgresqlCompiledStatement, type PostgresqlNativeResult, type PostgresqlSetupFactsV1,
     type PostgresqlExecutionOptions,
@@ -30,7 +30,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         writeRoleSetupSql?: string;
         runOperation?: DatabaseConnectionOperationRunner;
         openStream?: () => Promise<Readonly<{ stream: Duplex; close(): Promise<void> }>>;
-    }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection> {
+    }> = {}): Promise<PostgresqlConnection & DatabaseReadRoleConnection & { normalizeStatementShape(sql: string): string }> {
     signal?.throwIfAborted();
     const uri = options.tls ? databaseConnectionUrlWithoutOptions(connectionString) : connectionString;
     const tls = options.tls && databaseTlsVerification(options.tls);
@@ -240,6 +240,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         return result.rows[0]?.[0] === 't' ? { ok: true } : readRoleFailure('database_read_role_not_read_only');
     };
     return {
+        normalizeStatementShape: sql => normalizePostgresqlStatement(sql).shape,
         execute: (input, operationSignal) => schedule(() => options.runOperation
             ? options.runOperation(() => execute(input, operationSignal), operationSignal)
             : execute(input, operationSignal)),

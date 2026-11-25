@@ -52,7 +52,7 @@ export function createApplyControl(host: ApplyHost, targetKey: string, relation:
             } else if (settled.status === 'outcomeUnknown') {
                 host.onOutcome({ kind: 'unknown', code: settled.code, message: settled.message });
             } else if (settled.status === 'error') {
-                host.onOutcome({ kind: 'refused', code: settled.code, message: settled.message });
+                host.onOutcome({ kind: 'refused', execution: settled });
             }
             submitted = [];
         },

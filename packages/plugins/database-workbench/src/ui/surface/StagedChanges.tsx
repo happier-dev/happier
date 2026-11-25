@@ -76,10 +76,10 @@ function outcomeLine(
         tone: 'attention',
       };
     case 'refused':
+      if ('execution' in outcome) return null;
       return {
         text:
-          outcome.message ??
-          (outcome.failure && 'reason' in outcome.failure ? outcome.failure.reason : undefined) ??
+          ('reason' in outcome.failure ? outcome.failure.reason : undefined) ??
           (outcome.constraint
             ? translate(
                 'plugins.database.apply.constraint',
@@ -264,7 +264,11 @@ export function StagedReview(
   const production = descriptor.origin.environment === 'production';
   const apply = draft.apply(props.relation);
   const outcome = outcomeLine(draft.outcome, translate);
-  const refusal = draft.outcome?.kind === 'refused' ? draft.outcome.code ?? draft.outcome.failure?.code : undefined;
+  const refusal = draft.outcome?.kind === 'refused' ? draft.outcome : undefined;
+  const execution = refusal && 'execution' in refusal ? refusal.execution : undefined;
+  const refusalCode = refusal && 'failure' in refusal ? refusal.failure.code : execution?.code;
+  const writeSetup = target && (refusalCode === 'write_role_setup_required' || refusalCode === 'write_connection_setup_required')
+    ? host?.renderWriteSetup?.({ target, code: refusalCode }) : null;
   const engineIsMysql = descriptor.engine === 'mysql';
   // Close on this review's own Apply, never on an earlier receipt still held for the relation.
   const openedWith = React.useRef(draft.outcome);
@@ -323,11 +327,10 @@ export function StagedReview(
           )}
         />
       ) : null}
-      {outcome && outcome.tone !== 'success' ? (
-        <ErrorState layout="line" kind="error" title={outcome.text} details={refusal} />
-      ) : null}
-      {target && (refusal === 'write_role_setup_required' || refusal === 'write_connection_setup_required')
-        ? host?.renderWriteSetup?.({ target, code: refusal }) : null}
+      {writeSetup || (execution ? <Action.Failure execution={execution} />
+        : outcome && outcome.tone !== 'success'
+          ? <ErrorState layout="line" kind="error" title={outcome.text} details={refusalCode} />
+          : null)}
       {descriptor.endpointTrust === 'encrypted_unverified'
         ? <Text tone="secondary" value={translateUnverifiedServerNotice(translate)} />
         : null}

@@ -56,9 +56,7 @@ export function createDatabaseRuntime(options: Readonly<{
                 result = input.operation === 'describe'
                     ? { ok: true, operation: 'describe', descriptor }
                     : await connection.execute(input, context.signal);
-                if (access === 'write') writeAudit = projectCommittedDatabaseWrite(input, result, {
-                    engine: descriptor.engine, normalizeStatementShape: connection.normalizeStatementShape?.bind(connection),
-                });
+                if (access === 'write') writeAudit = projectCommittedDatabaseWrite(input, result, connection);
             } finally {
                 try { await connection.close(); }
                 catch (error) {

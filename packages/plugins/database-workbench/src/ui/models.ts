@@ -25,7 +25,7 @@ import type { DatabaseSelectedRowsExportInputV1 } from '@happier-dev/database-pr
 import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { ConsoleDeviceStorage } from './consoleState.js';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
-import type { HostDatabaseActivityResource, HostDatabaseLastLook } from '@happier-dev/plugin-ui/hostApi';
+import type { HostDatabaseActivityResource, HostDatabaseLastLook, PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 
 /** Spread on the existing Action.Control; it contains preparation and settlement, never an executor. */
 export type WorkbenchControlBinding = Readonly<{ action: string; controller: PluginUiActionControlController; signal?: AbortSignal }>;
@@ -69,7 +69,8 @@ export type WorkbenchCellState =
 export type WorkbenchApplyOutcome =
     | Readonly<{ kind: 'applied'; count: string; at: string }>
     | Readonly<{ kind: 'conflict'; rowKey: string; why: string }>
-    | Readonly<{ kind: 'refused'; rowKey?: string; column?: string; constraint?: string; failure?: DatabaseFailureV1; code?: string; message?: string }>
+    | Readonly<{ kind: 'refused'; failure: DatabaseFailureV1; constraint?: string }>
+    | Readonly<{ kind: 'refused'; execution: Extract<PluginActionExecution, { status: 'error' }> }>
     | Readonly<{ kind: 'unknown'; failure?: DatabaseFailureV1; code?: string; message?: string }>;
 export type WorkbenchReview = readonly Readonly<{
     relation: DatabaseRelationV1;

@@ -1,21 +1,17 @@
-import { normalizePostgresqlStatement } from '@happier-dev/databases/postgresql';
-import { normalizeSqliteStatement } from '@happier-dev/databases/sqlite';
 import type { DatabaseEngineConnectionV1, JsonValue } from '@happier-dev/plugin-sdk';
 import type { DatabaseOperationInputV1, DatabaseOperationResultV1 } from '@happier-dev/plugin-sdk/database';
 
-function statementShape(sql: string, connection: Pick<DatabaseEngineConnectionV1, 'engine' | 'normalizeStatementShape'>) {
+function statementShape(sql: string, connection: Pick<DatabaseEngineConnectionV1, 'normalizeStatementShape'>) {
     try {
-        if (connection.normalizeStatementShape) return connection.normalizeStatementShape(sql);
-        if (connection.engine === 'postgresql') return normalizePostgresqlStatement(sql).shape;
-        if (connection.engine === 'sqlite') return normalizeSqliteStatement(sql).shape;
+        return connection.normalizeStatementShape?.(sql);
     } catch {
         // A lexical failure after commit omits the shape and keeps the committed result.
+        return undefined;
     }
-    return undefined;
 }
 
 export function projectCommittedDatabaseWrite(input: DatabaseOperationInputV1, result: DatabaseOperationResultV1,
-    connection: Pick<DatabaseEngineConnectionV1, 'engine' | 'normalizeStatementShape'>,
+    connection: Pick<DatabaseEngineConnectionV1, 'normalizeStatementShape'>,
 ): Readonly<Record<string, JsonValue>> | undefined {
     if (!result.ok) return undefined;
     if (input.operation === 'statement.run' && input.mode === 'write' && result.operation === 'statement.run') {

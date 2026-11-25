@@ -6,12 +6,13 @@ import type {
     DatabaseOperationInputV1,
     DatabaseOperationResultV1,
 } from '@happier-dev/plugin-sdk/database';
-import { executeSqliteOperation, SqliteOperationError, type SqliteExecutionOptions, type SqliteNativeValue, type SqliteQuery } from '@happier-dev/databases/sqlite';
+import { executeSqliteOperation, normalizeSqliteStatement, SqliteOperationError, type SqliteExecutionOptions, type SqliteNativeValue, type SqliteQuery } from '@happier-dev/databases/sqlite';
 import { DatabaseStatementError } from '@happier-dev/databases';
 import { fitDatabaseOperationResult } from '@happier-dev/databases';
 
 
 export interface SqliteConnection {
+    normalizeStatementShape(sql: string): string;
     execute(input: DatabaseOperationInputV1, signal?: AbortSignal): Promise<DatabaseOperationResultV1>;
     close(): Promise<void>;
 }
@@ -48,6 +49,7 @@ export async function openSqliteConnection(filePath: string, options: { readOnly
         if (response.kind !== 'ready') throw new Error(response.kind === 'open_error' ? response.message : 'SQLite worker did not open');
     } catch (error) { await exit; throw error; }
     return {
+        normalizeStatementShape: sql => normalizeSqliteStatement(sql).shape,
         execute(input, signal) {
             // Preserve the native connection's serial operation order without
             // sharing cancellation between queued requests.

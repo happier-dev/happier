@@ -970,7 +970,11 @@ describe('Database workbench surfaces', () => {
     } finally { await fixture.dispose(); }
   });
 
-  it.each(['deployment_service', 'managed_deployment'] as const)('keeps the reviewed production draft when %s write setup is required', async kind => {
+  it.each([
+    { kind: 'deployment_service', hasSetup: true },
+    { kind: 'managed_deployment', hasSetup: true },
+    { kind: 'managed_deployment', hasSetup: false },
+  ] as const)('keeps the reviewed production draft when $kind write setup is required (setup offered: $hasSetup)', async ({ kind, hasSetup }) => {
     const environment = { serverId: 'home', environmentId: 'env', projectSourceId: 'source' } as const;
     const link = { environment, targetLinkId: 'link', database: 'billing_dev' };
     const target = kind === 'deployment_service'
@@ -981,6 +985,7 @@ describe('Database workbench surfaces', () => {
     const body = JSON.stringify({ descriptor: connected, ownWriteRevision: 0, relationRevisions: [] });
     const digest = `sha256:${computeSha256HexDigest(body)}`;
     const code = kind === 'deployment_service' ? 'write_role_setup_required' : 'write_connection_setup_required';
+    const reason = 'The direct write connection needs to be configured.';
     let configured = false;
     const write = vi.fn(async (_request: Parameters<Parameters<typeof createPluginUiActionControlTestHost>[0]>[0]) => configured
       ? { ok: true as const, result: { ok: true, operation: 'edits.apply', status: 'committed', inserted: '1', updated: '0', deleted: '0' } }
@@ -992,7 +997,7 @@ describe('Database workbench surfaces', () => {
       renderProductionBackup: () => <Button title="Back up now" onPress={() => {}} />,
       renderWriteSetup: (input: unknown) => {
         expect(input).toEqual({ target, code });
-        return <Button title="Set up database writes" onPress={() => { configured = true; }} />;
+        return hasSetup ? <Button title="Set up database writes" onPress={() => { configured = true; }} /> : null;
       },
     };
     const fixture = await createPluginUiTestkit({
@@ -1013,6 +1018,10 @@ describe('Database workbench surfaces', () => {
         pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID }, container: 'appPage' }, target: { kind: 'app' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
       handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([connected], true), actionControl: control.handler,
+        async presentActionFailure({ failure }) {
+          expect(failure.errorCode).toBe(code);
+          return { reason, nextStep: null, technicalDetails: [] };
+        },
         async watchResource() { return { digest }; },
         async readResource() { return { contentType: 'application/json', digest, bytes: new TextEncoder().encode(body) }; },
       },
@@ -1023,10 +1032,17 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Stage row' }));
       await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
       await act(async () => control.press('Apply to Production'));
-      const setup = await fixture.getByRole('button', { name: 'Set up database writes' });
       expect(await fixture.getByRole('button', { name: 'Back up now' })).toBeTruthy();
       expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
       expect(write).toHaveBeenCalledTimes(1);
+      if (!hasSetup) {
+        await settle(20);
+        expect(await fixture.getByText(reason)).toBeTruthy();
+        expect(document.body.textContent).not.toContain('Something went wrong');
+        return;
+      }
+      const setup = await fixture.getByRole('button', { name: 'Set up database writes' });
+      expect(document.body.textContent).not.toContain('Something went wrong');
       await fixture.press(setup);
       expect(write).toHaveBeenCalledTimes(1);
       await act(async () => control.press('Apply to Production'));
