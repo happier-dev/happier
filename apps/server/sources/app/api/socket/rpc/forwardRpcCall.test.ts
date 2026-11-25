@@ -137,10 +137,14 @@ describe('forwardRpcCall', () => {
 
     it.each([
         { status: 'received', cancellable: true }, { status: 'disconnected', cancellable: true },
+        { status: 'cancelled', cancellable: true }, { status: 'timeout', cancellable: true },
+        { status: 'request_error', cancellable: true },
         { status: 'received', cancellable: false }, { status: 'disconnected', cancellable: false },
     ] as const)('joins target lookup, submission and $status ACK without content (cancellable=$cancellable)', async ({ status, cancellable }) => {
         const io = new Server();
         const method = 'machine-1:daemon.vitals.get';
+        const outerRequestId = 'bf2c794c-a17c-4d92-8e02-a94d86fea3c9';
+        const operationId = '438625fa-da22-42c1-8fc9-2bf9d1114c39';
         const controller = new AbortController();
         let acknowledge!: (value: unknown) => void;
         let rejectAcknowledgement!: (error: Error) => void;
@@ -148,7 +152,7 @@ describe('forwardRpcCall', () => {
         const issued = new Promise<void>(resolve => { submitted = resolve; });
         const response = new Promise<unknown>((resolve, reject) => { acknowledge = resolve; rejectAcknowledgement = reject; });
         const emitWithAck = vi.fn((_event: string, _payload: unknown) => { submitted(); return response; });
-        const target = { id: 'daemon-namespace', connected: true, data: {}, timeout: () => ({ emitWithAck }) };
+        const target = { id: 'daemon-namespace', connected: true, data: { machineId: 'machine-1' }, timeout: () => ({ emitWithAck }) };
         // Only the socket network boundary is synthetic; lookup, selection and forwarding are real.
         io.sockets.sockets.set(target.id, target as unknown as Socket);
         io.sockets.adapter.rooms.set(buildRpcMethodRoom({ userId: 'user-1', method }), new Set([target.id]));
@@ -156,6 +160,7 @@ describe('forwardRpcCall', () => {
         try {
             const input = { io, targetUserId: 'user-1', method,
                 callerSocketId: 'browser-namespace', callParams: { secret: 'private-request-content' },
+                outerRequestId, operationId,
                 ...(cancellable
                     ? { cancellation: { targetRequestId: 'relay-trace-1', signal: controller.signal, onTargetSelected() {} } }
                     : { traceId: 'relay-trace-1' }),
@@ -177,14 +182,18 @@ describe('forwardRpcCall', () => {
                 acknowledge({ secret: 'private-response-content' });
                 await expect(forwarded).resolves.toMatchObject({ ok: true });
             } else {
-                rejectAcknowledgement(Object.assign(new Error('private-transport-detail'), { code: 'SOCKET_DISCONNECTED' }));
-                await expect(forwarded).resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN });
+                if (status === 'cancelled') controller.abort();
+                const error = new Error(status === 'timeout' ? 'operation has timed out' : 'private-transport-detail');
+                rejectAcknowledgement(status === 'disconnected' ? Object.assign(error, { code: 'SOCKET_DISCONNECTED' }) : error);
+                await expect(forwarded).resolves.toMatchObject({ ok: false });
             }
             expect(events()).toHaveLength(status === 'received' ? 3 : 4);
-            expect(events()[2]).toMatchObject({ event: 'rpc-target-ack', requestId: 'relay-trace-1',
-                callerSocketId: 'browser-namespace', targetSocketId: 'daemon-namespace',
+            expect(events().filter(event => event.event === 'rpc-target-ack')).toEqual([expect.objectContaining({
+                event: 'rpc-target-ack', requestId: 'relay-trace-1', outerRequestId, operationId, method,
+                callerSocketId: 'browser-namespace', targetSocketId: 'daemon-namespace', targetMachineId: 'machine-1',
                 status: status === 'received' ? 'received' : 'failed',
-                ...(status === 'disconnected' ? { failure: 'disconnected' } : {}) });
+                ...(status === 'received' ? {} : { failure: status }),
+            })]);
             if (status === 'disconnected') expect(events()[3]).toMatchObject({
                 event: 'rpc-failed', requestId: 'relay-trace-1', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN,
                 effectAttempted: null,

@@ -1,5 +1,5 @@
 import type { Server, Socket } from "socket.io";
-import { createHash, randomUUID } from "node:crypto";
+import { hash, randomUUID } from "node:crypto";
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
@@ -133,6 +133,12 @@ async function readLatestRpcTargetBySocketId(params: Readonly<{
     }
 }
 
+const rpcLogUuid = /^(?:rpc_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function projectRpcLogId(id: string): string {
+    return rpcLogUuid.test(id) ? id : `sha256:${hash('sha256', id)}`;
+}
+
 function rpcLogCorrelation(params: Readonly<{
     traceId?: string;
     callerSocketId?: string;
@@ -142,8 +148,7 @@ function rpcLogCorrelation(params: Readonly<{
     return targetTraceId ? {
         // Ingress supplies a safe relay identity; HTTP roots use the existing
         // opaque-id privacy projection without changing the wire identity.
-        requestId: params.callerSocketId || /^(?:rpc_)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetTraceId)
-            ? targetTraceId : `sha256:${createHash('sha256').update(targetTraceId).digest('hex')}`,
+        requestId: params.callerSocketId ? targetTraceId : projectRpcLogId(targetTraceId),
         ...(params.callerSocketId ? { callerSocketId: params.callerSocketId } : {}),
     } : null;
 }
@@ -228,6 +233,9 @@ async function executeRpcForwardCall(params: Readonly<{
     continuationReturn?: SocketRpcRequestPayload['continuationReturn'];
     /** Home-minted observation only, independent of cancellation/signed request identity. */
     traceId?: string;
+    /** Diagnostic joins only. Never forwarded to the target or used for admission. */
+    outerRequestId?: string;
+    operationId?: string;
     answeringClient?: SocketRpcAnsweringClientV1;
     callerSocket?: Pick<Socket, "data">;
     /** Trusted source continuation ceiling, never copied from inbound generic RPC fields. */
@@ -535,20 +543,24 @@ async function executeRpcForwardCall(params: Readonly<{
             if (correlation) log({ module: 'websocket-rpc', event: 'rpc-target-issued', ...correlation,
                 method: params.method, targetSocketId: selection.target.id, boundary: 'emitWithAck-returned',
             }, 'RPC target emit invoked');
+            let failure: 'cancelled' | 'disconnected' | 'timeout' | 'request_error' | undefined;
             try {
-                const value = await response;
-                if (correlation) log({ module: 'websocket-rpc', event: 'rpc-target-ack', ...correlation,
-                    method: params.method, targetSocketId: selection.target.id, status: 'received',
-                }, 'RPC target ACK received');
-                return value;
+                return await response;
             } catch (error) {
-                if (correlation) log({ module: 'websocket-rpc', event: 'rpc-target-ack', ...correlation,
-                    method: params.method, targetSocketId: selection.target.id, status: 'failed',
-                    failure: params.cancellation?.signal.aborted ? 'cancelled'
-                        : error instanceof Error && 'code' in error && error.code === 'SOCKET_DISCONNECTED' ? 'disconnected'
-                        : isSocketIoAckTimeoutError(error) ? 'timeout' : 'request_error',
-                }, 'RPC target ACK failed');
+                failure = params.cancellation?.signal.aborted ? 'cancelled'
+                    : error instanceof Error && 'code' in error && error.code === 'SOCKET_DISCONNECTED' ? 'disconnected'
+                    : isSocketIoAckTimeoutError(error) ? 'timeout' : 'request_error';
                 throw error;
+            } finally {
+                if (correlation || params.outerRequestId || targetRequestId) log({
+                    module: 'websocket-rpc', event: 'rpc-target-ack', ...correlation,
+                    outerRequestId: params.outerRequestId === undefined ? undefined : projectRpcLogId(params.outerRequestId),
+                    operationId: params.operationId === undefined ? undefined : projectRpcLogId(params.operationId),
+                    targetRequestId: targetRequestId ?? correlation?.requestId,
+                    targetMachineId: selection.target.data?.machineId ?? params.admittedMachineTarget?.machineId,
+                    targetSocketId: selection.target.id, method: params.method,
+                    status: failure ? 'failed' : 'received', failure,
+                }, failure ? 'RPC target ACK failed' : 'RPC target ACK received');
             }
         };
         const guarded = params.targetGuard

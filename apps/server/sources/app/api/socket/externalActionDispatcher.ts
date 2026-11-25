@@ -7,6 +7,7 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatch
 import { evaluateApiTokenGrantV1, type ApiTokenGrantDenialReasonV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionInputAdmissionProtocolVersion } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { type SocketRpcContinuationReturnV1, ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
@@ -1008,12 +1009,22 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             placement,
             executionAuthorization: currentAuthorization,
         } satisfies ExternalActionDaemonDispatchRequest;
+        // Only operation controls with an already visible ID can contribute this
+        // join. The V2 operation ID belongs to the target's sealed input.
+        const operationInput = request.envelope.v === 1
+            && (request.actionId === ACTION_OPERATION_GET_ACTION_ID_V1 || request.actionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1)
+            ? request.envelope.input : undefined;
+        const operationId = operationInput && typeof operationInput === 'object'
+            && 'operationId' in operationInput && typeof operationInput.operationId === 'string'
+            ? operationInput.operationId : undefined;
         const relay = {
             io: params.io,
             targetUserId: currentAuthorization.binding.custodianAccountId,
             method: `${machineId}:${options.continuation ? RPC_METHODS.DAEMON_PLUGIN_UI_HOST_RESOURCE_FOLLOW : EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
             timeoutMs: null,
             authorization: ACTION_API_SERVER_ORIGIN,
+            outerRequestId: request.envelope.requestId,
+            operationId,
             ...requesterContext,
             ...(machineAdmission ? { machineAdmission } : {}),
             admittedMachineTarget: capturedMachineAdmission ?? currentAuthorization.binding,
