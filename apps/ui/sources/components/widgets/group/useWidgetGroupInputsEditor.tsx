@@ -7,7 +7,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type {
   WidgetInputBindingsV1,
-  WidgetInputIssueV1,
   WidgetLayoutGroupV1,
   WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
@@ -40,15 +39,15 @@ import type { WidgetGroupChildInputRepairContext } from './WidgetGroupChildInput
 const NO_FIELDS: readonly never[] = [];
 const NO_BINDINGS: WidgetInputBindingsV1 = Object.freeze({});
 
-type RefusedChildInput = Readonly<{ childId: string; issue: WidgetInputIssueV1 | undefined }>;
+type RefusedChildInput = Readonly<{ childId: string; fieldPath: string | undefined }>;
 
 function readRefusedChildInput(details: unknown): RefusedChildInput | null {
   if (!details || typeof details !== 'object' || !('blockingChildId' in details)) return null;
-  const { blockingChildId, ...resolution } = details;
+  const { blockingChildId, blockingFieldPath, ...resolution } = details as Record<string, unknown>;
   if (typeof blockingChildId !== 'string') return null;
   const result = WidgetBindingResolutionV1Schema.safeParse(resolution);
   if (!result.success || result.data.status === 'ready') return null;
-  return { childId: blockingChildId, issue: result.data.fields[0] };
+  return { childId: blockingChildId, fieldPath: typeof blockingFieldPath === 'string' ? blockingFieldPath : undefined };
 }
 
 /** The opening page is fixed. Each draft uses the same composed inputs the following children read. */
@@ -185,7 +184,7 @@ export function useWidgetGroupInputsEditor(
     if (await commands.invoke('close')) setRepairTarget(target);
   }, [commands]);
   const childRepair = React.useMemo(() => repairTarget ? {
-    childId: repairTarget.childId, fieldPath: repairTarget.issue?.path, consume: () => setRepairTarget(null),
+    childId: repairTarget.childId, fieldPath: repairTarget.fieldPath, consume: () => setRepairTarget(null),
   } : null, [repairTarget]);
   const done = React.useCallback((result: Extract<WidgetSetupSubmitResult, { ok: true }>) => {
     if (result.approvalPending) setNotice(t('widgetAdd.areaApprovalPending'));

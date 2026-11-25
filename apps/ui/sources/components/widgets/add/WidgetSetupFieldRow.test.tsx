@@ -296,8 +296,7 @@ describe('widget setup fields share the typed-field owners', () => {
         const screen = await renderScreen(<WidgetSetupFieldRow
             entry={{ field: { path: 'agents', title: 'Agents', widget: 'multiselect',
                 optionsSourceId: 'usage.filters.agents', placeholder: 'All agents' },
-                follow: { slot: 'agents', label: 'This page', values: [{ label: 'All agents', value: [] }] },
-                inherited: { kind: 'single', valueLabel: 'All agents' } }}
+                follow: { slot: 'agents', label: 'This page', values: [{ label: 'All agents', value: [] }] } }}
             row={{ kind: 'needed' }} options={[]} optionsStatus="ready" plainValue={undefined}
             phone testID="setup.agents" onChange={() => {}} />);
         expect.soft(screen.getTextContent()).toContain('widgetAdd.noChoices');
@@ -306,6 +305,18 @@ describe('widget setup fields share the typed-field owners', () => {
         expect(screen.findByType(DropdownMenu).props.items).toMatchObject([
             { id: 'follow', checked: false }, { id: 'own', checked: false },
         ]);
+    });
+
+    it('reads the inherited value and its source when its own fixed catalog is empty', async () => {
+        const screen = await renderScreen(<WidgetSetupFieldRow
+            entry={{ field: { path: 'agents', title: 'Agents', widget: 'select', optionsSourceId: 'usage.filters.agents' },
+                follow: { slot: 'agents', label: 'This page', values: [] },
+                inherited: { kind: 'single', valueLabel: 'Other slot agent' } }}
+            row={{ kind: 'needed' }} options={[]} optionsStatus="ready" plainValue={undefined}
+            phone testID="setup.otherSlot" onChange={() => {}} />);
+        expect.soft(screen.getTextContent()).toContain('Other slot agent');
+        expect(screen.findByTestId('setup.otherSlot.control.trigger')?.props.accessibilityLabel)
+            .toContain('Other slot agent (widgetFrame.followingGroup)');
     });
 
     it('uses the public choice owner for own long choices and collections, including limits and failed discovery', async () => {

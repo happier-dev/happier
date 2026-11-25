@@ -424,6 +424,46 @@ describe('configured widget Actions', () => {
     expect(after.items.find(item => item.kind === 'group' && item.id === groupId)).toMatchObject({ context: valid });
   });
 
+  it('identifies the new blocking field without dropping the pre-existing issue', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const homeHubArtifacts = createHomeHubArtifactPortV1(boundary.forAccount(surface.accountId), { accountId: surface.accountId });
+    const child: WidgetInstanceV1 = {
+      v: 1, id: 'multi-input-child', definition: { kind: 'builtin', id: 'count' },
+      bindings: { first: { kind: 'context', slot: 'absent' }, second: { kind: 'context', slot: 'group-budget' } },
+    };
+    const groupId = 'repair-group';
+    await homeHubArtifacts.apply({ kind: 'widget_add', instance: child });
+    await homeHubArtifacts.apply({ kind: 'group_create', groupId, instanceIds: [child.id] });
+    const widgetInputs = createWidgetActionInputResolverV1({
+      readDescriptor: async () => ({
+        inputs: { fields: [
+          { path: 'first', title: 'First', widget: 'text', required: true },
+          { path: 'second', title: 'Budget', widget: 'integer', required: true },
+        ] },
+        inputSchema: {
+          type: 'object', properties: { first: { type: 'string' }, second: { type: 'integer' } },
+          required: ['first', 'second'],
+        },
+      }),
+      readContext: async () => ({ 'group-budget': [10] }),
+      readViewerValues: async () => ({ values: {} }),
+      validateValue: async () => ({ status: 'valid' }),
+    });
+    const executor = createActionExecutor({ widgetAccountScope: () => surface, homeHubArtifacts, widgetInputs });
+    const before = await homeHubArtifacts.read();
+    const result = await executor.execute('widgets.group.inputs.set', {
+      ref: { surface, instanceId: groupId }, bindings: { 'group-budget': { kind: 'context', slot: 'unavailable-budget' } },
+    }, { surface: 'mcp', bypassApprovals: true });
+    expect(result).toMatchObject({ ok: false, errorCode: 'widget_inputs_invalid', details: {
+      blockingChildId: child.id, fields: [
+        { path: 'first', status: 'selection_required' },
+        { path: 'second', status: 'selection_required' },
+      ],
+    } });
+    expect(await homeHubArtifacts.read()).toEqual(before);
+    expect(result).toMatchObject({ details: { blockingFieldPath: 'second' } });
+  });
+
   it('restores a saved group unchanged when its option has left the inventory', async () => {
     const boundary = createWorkBoardArtifactBoundary();
     const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;

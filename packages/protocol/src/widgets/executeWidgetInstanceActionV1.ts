@@ -101,7 +101,8 @@ export async function admitWidgetGroupConfigurationV1(
     if (blocking.length === 0) continue;
     const previous = await resolve(previousBindings);
     context.signal?.throwIfAborted();
-    if (blocking.some(issue => previous.status === 'ready' || !previous.fields.some(old => sameStrictJsonValue(old, issue)))) return refusal;
+    const deciding = blocking.find(issue => previous.status === 'ready' || !previous.fields.some(old => sameStrictJsonValue(old, issue)));
+    if (deciding) return { ...refusal, details: { ...refusal.details, blockingFieldPath: deciding.path } };
   }
   return null;
 }

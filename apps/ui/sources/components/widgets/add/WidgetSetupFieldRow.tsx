@@ -320,7 +320,7 @@ function InputFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>):
     const stacked = props.phone || (presentation.kind === 'text' && presentation.multiline);
     // A source that settled with nothing to offer and nothing chosen: no choice field that cannot succeed, but what is
     // missing and, where the source names one, the place to make the first choice (DESIGN-1118-B M6).
-    if (field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
+    if (inherited === undefined && field.optionsSourceId !== undefined && isNothingToChoose({ field, optionsStatus: props.optionsStatus,
         optionCount: choicesOptions.length, value, follows: binding.kind === 'group' || binding.kind === 'page' })) {
         return <NothingToChooseRow title={field.prompt ?? field.title} optionsSourceId={field.optionsSourceId}
             phone={props.phone} testID={props.testID} bindingMenu={bindingMenu} />;

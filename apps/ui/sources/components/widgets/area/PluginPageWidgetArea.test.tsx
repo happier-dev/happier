@@ -384,8 +384,12 @@ describe('a plugin page widget area', () => {
                     error: 'widget_inputs_invalid',
                     details: {
                         status: 'invalid',
-                        fields: [{ path: 'repository', status: 'invalid', reasonCode: 'widget_input_schema_invalid' }],
+                        fields: [
+                            { path: 'missing', status: 'selection_required', reasonCode: 'widget_context_missing' },
+                            { path: 'repository', status: 'invalid', reasonCode: 'widget_input_schema_invalid' },
+                        ],
                         blockingChildId: follow.id,
+                        blockingFieldPath: 'repository',
                     },
                 })
                 : fixture.hostApi.widgetArea(raw, options);
