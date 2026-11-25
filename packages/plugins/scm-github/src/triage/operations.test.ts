@@ -1187,7 +1187,7 @@ describe('GitHub Triage source operations', () => {
       currentness: { kind: 'currentAtObservedHead' },
       // The source transports a bounded reference after the canonical reread;
       // the generic SCM/Reviews producer remains its only grammar validator.
-      pullRequest: { number: 1284 },
+      pullRequest: { number: 1284, title: GITHUB_FORK_PULL_REQUEST_RESPONSE.title },
     });
     // The source's exact configured account is still the sole credential that
     // reaches GitHub. The generic materializer receives no account authority.
@@ -1271,7 +1271,7 @@ describe('GitHub Triage source operations', () => {
     expect(materializer.execute).not.toHaveBeenCalled();
   });
 
-  it('rereads the exact pull request and asks canonical SCM to verify the prepared local HEAD', async () => {
+  it('verifies the prepared local HEAD after a title rename of the same pull request', async () => {
     const stub = createStubGithubTransport({
       respond: (request): StubHttpResponse | undefined => {
         if (!request.url.endsWith(`/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`)) {
@@ -1293,13 +1293,13 @@ describe('GitHub Triage source operations', () => {
     }));
 
     const result = await verifyGithubTriageReviewWorkspace(
-      verifyWorkspaceInput(),
+      verifyWorkspaceInput({ pullRequest: { number: 1284, title: 'Earlier pull-request title' } }),
       verifier.context,
       { now: fixedClock(1_700_000_000_000) },
     );
 
     expect(() => TriageVerifyReviewWorkspaceResultV1Schema.parse(result)).not.toThrow();
-    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 1284 } });
+    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 1284, title: GITHUB_FORK_PULL_REQUEST_RESPONSE.title } });
     expect(verifier.execute).toHaveBeenCalledWith(
       'scm.reviewWorkspace.materializePrepared',
       {
@@ -1372,7 +1372,7 @@ describe('GitHub Triage source operations', () => {
       { now: fixedClock(1_700_000_000_000) },
     ));
 
-    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 1284 } });
+    expect(result).toEqual({ kind: 'verified', pullRequest: { number: 1284, title: GITHUB_FORK_PULL_REQUEST_RESPONSE.title } });
     expect(stub.requests.filter(request => new URL(request.url).pathname.endsWith('/pulls/1284'))).toHaveLength(1);
     expect(stub.requests.every(request => request.method === 'GET')).toBe(true);
     expect(verifier.execute.mock.calls).toEqual([[

@@ -28,7 +28,7 @@ import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, pro
 import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
 import type { ScmComparison } from '../../../scm/comparison.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
-import { resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
+import { prepareReviewRoundV1, resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
 import { collectReviewRoundOutcomes, dispatchReviewSettlementAction } from './settlement.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
@@ -433,20 +433,25 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             return [key, { displayName: item?.label, agentId }] as const;
           })));
           const composedRunId = globalThis.crypto.randomUUID();
-          const reviewTitle = 'Code review';
-          const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: reviewTitle,
-            subjectKind,
-            sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
-            ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
-            // The Workflow run a person watches: the calling run, else the run composed below.
-            workflowRunId: creatingWorkflowRunId ?? composedRunId,
-            ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
-            ...(comparisonCapture ? { comparisonCapture } : {}),
-            ...(sourceSessionId ? { sourceSessionId } : {}),
-            reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
-            ...reviewReviewerIdentitiesForStartV1(reviewInput, undefined,
-              reviewer => sessionIdentities.get(sessionKey(reviewer.session))),
-            startedAt: Date.now(), signal: ctx.signal });
+          const reviewKind = 'Code review';
+          const { reviewRound } = await prepareReviewRoundV1({ reviewInput,
+            ...(initialComparison ? { comparison: initialComparison } : {}),
+            ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
+            reviewStart: { reviewId: globalThis.crypto.randomUUID(),
+              subjectKind,
+              sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
+              ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
+              // The Workflow run a person watches: the calling run, else the run composed below.
+              workflowRunId: creatingWorkflowRunId ?? composedRunId,
+              ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+              ...(comparisonCapture ? { comparisonCapture } : {}),
+              ...(sourceSessionId ? { sourceSessionId } : {}),
+              reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
+              ...reviewReviewerIdentitiesForStartV1(reviewInput, undefined,
+                reviewer => sessionIdentities.get(sessionKey(reviewer.session))),
+            },
+          }, { reviewRecords: records, startedAt: Date.now(), signal: ctx.signal,
+            captureComparison: request => captureReviewComparisonV1({ ctx, executeHostChild }, request) });
           const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
             step.reviewers.flatMap(reviewer => reviewer.kind === 'person'
               ? [{ principal: reviewer.principal, required: reviewer.required }] : []));
@@ -480,7 +485,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
               runId: composedRunId, source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
-              metadata: { title: `${reviewTitle} · ${REVIEW_SUBJECT_TITLES[subjectKind]}` },
+              metadata: { title: `${reviewKind} · ${REVIEW_SUBJECT_TITLES[subjectKind]}` },
             } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });
@@ -625,17 +630,22 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const reviewId = `${reviewIdHex.slice(0, 8)}-${reviewIdHex.slice(8, 12)}-${reviewIdHex.slice(12, 16)}-${reviewIdHex.slice(16, 20)}-${reviewIdHex.slice(20)}`;
         const reviewRecords = deps.reviewRecords?.(ctx);
         if (!reviewInput.reviewRound && !reviewRecords) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.start' };
-        const reviewRound = reviewInput.reviewRound ?? await reviewRecords!.start({ reviewId, title: 'Code review',
-          subjectKind,
-          sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
-          ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
-          ...(creatingWorkflowRunId ? { workflowRunId: creatingWorkflowRunId } : {}),
-          ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
-          ...(comparisonCapture ? { comparisonCapture } : {}),
-          ...(sourceSessionId ? { sourceSessionId } : {}),
-          reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
-          reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, (_selection, id) => selectedReviewEngineItems.get(id)?.label),
-          startedAt: Date.now(), signal: ctx.signal });
+        const reviewRound = reviewInput.reviewRound ?? (await prepareReviewRoundV1({ reviewInput,
+          ...(initialComparison ? { comparison: initialComparison } : {}),
+          ...(comparisonCapture ? { comparisonCapture: comparisonCapture.input } : {}),
+          reviewStart: { reviewId,
+            subjectKind,
+            sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
+            ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
+            ...(creatingWorkflowRunId ? { workflowRunId: creatingWorkflowRunId } : {}),
+            ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+            ...(comparisonCapture ? { comparisonCapture } : {}),
+            ...(sourceSessionId ? { sourceSessionId } : {}),
+            reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
+            reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(reviewInput, (_selection, id) => selectedReviewEngineItems.get(id)?.label),
+          },
+        }, { reviewRecords: reviewRecords!, startedAt: Date.now(), signal: ctx.signal,
+          captureComparison: request => captureReviewComparisonV1({ ctx, executeHostChild }, request) })).reviewRound;
         const reviewGroupId = reviewRound.reviewId;
         const reviewLaunchOptions = executionRunDispatchOpts;
         const results = await fanoutStarts({

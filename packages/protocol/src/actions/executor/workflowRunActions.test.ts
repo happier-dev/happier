@@ -533,7 +533,7 @@ describe('shared Account workflow run owner', () => {
       expect(await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} }))
         .toMatchObject({ metadataByRunId: { [admitted.run.id]: { kind: 'available', value: { title } } } });
       expect(storageOperations).toEqual(['list']);
-      expect(record?.title).toBe('Code review');
+      expect(record?.title).toBe(scope === 'repository' ? '/repo' : 'Working tree changes');
     }
   });
 

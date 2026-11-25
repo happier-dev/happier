@@ -17,7 +17,6 @@ import type {
   PluginActionResultById,
 } from '@happier-dev/plugin-sdk/actions';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
-import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type {
   TriagePrepareReviewWorkspaceInputV1,
   TriagePrepareReviewWorkspaceResultV1,
@@ -171,7 +170,7 @@ type GitlabAuthorizedReviewWorkspace =
   | Readonly<{
     kind: 'authorized';
     sourceTip: GitlabPreparedSourceTip;
-    pullRequest: Readonly<{ number: number }>;
+    pullRequest: Readonly<{ number: number; title?: string }>;
   }>
   | Readonly<{ kind: 'unsupported' }>
   | Readonly<{ kind: 'unavailable'; reason: 'account'; failure?: TriageSourceFailureV1 }>
@@ -294,7 +293,8 @@ async function authorizeGitlabReviewWorkspace(
   return Object.freeze({
     kind: 'authorized' as const,
     sourceTip: sourceTip.sourceTip,
-    pullRequest: Object.freeze({ number: pullRequestNumber }),
+    pullRequest: Object.freeze({ number: pullRequestNumber,
+      ...(typeof row.title === 'string' ? { title: row.title } : {}) }),
   });
 }
 
@@ -367,7 +367,8 @@ export async function verifyGitlabReviewWorkspace(
   if (authorized.kind !== 'authorized') return authorized;
   if (
     !('kind' in input.prepared)
-    && !pluginJsonValuesEqual(input.prepared.pullRequest, authorized.pullRequest)
+    // Display metadata can change without moving the selected merge request.
+    && readRecord(input.prepared.pullRequest)?.number !== authorized.pullRequest.number
   ) {
     return { kind: 'refused', reason: 'pullRequestMoved' };
   }

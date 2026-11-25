@@ -116,9 +116,13 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
     const anatomy = React.useMemo((): CollectionAnatomy<ReviewRow> => {
         const titleOf = (item: ReviewRow) => view.titles.get(item.reviewId) || reviewLabel;
         const ageOf = (item: ReviewRow) => formatShortRelativeTimeAt(item.createdAt, Date.now());
+        const roundOf = (item: ReviewRow) => item.currentRoundOrdinal > 1
+            ? t('reviewWalkthrough.detail.round', { round: item.currentRoundOrdinal }) : undefined;
         // No fact, no lead: an empty lead would still draw its separator.
-        const factOf = (item: ReviewRow) => reviewRowFact(item) ? <ReviewRowFactText item={item} /> : null;
-        const bylineOf = (item: ReviewRow) => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state)].join(' · ');
+        const factOf = (item: ReviewRow) => reviewRowFact(item)
+            ? <ReviewRowFactText item={item} suffix={narrowRows ? roundOf(item) : undefined} /> : null;
+        const bylineOf = (item: ReviewRow) => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state), roundOf(item)]
+            .filter(Boolean).join(' · ');
         return {
             wrapItem: (item, children) => <WorkspaceDestinationRow href={artifactViewRoute(item.reviewId)} existingMenu
                 entityTitle={titleOf(item)} entityItem={scope ? { kind: 'artifact', scope, artifactId: item.reviewId } : null}>

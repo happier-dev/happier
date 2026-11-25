@@ -226,7 +226,9 @@ describe('/reviews live host', () => {
             expect(reads()).toHaveLength(settledReads);
         } finally { await screen.unmount(); await connection.dispose(); }
     });
-    it('names and searches loaded Reviews from their exact Artifact headers and follows header updates', async () => {
+    it.each([{ width: 390, round: 1 }, { width: 390, round: 3 }, { width: 1440, round: 3 }])(
+        'names and searches loaded Reviews from their exact Artifact headers and shows later rounds ($width, round $round)', async ({ width, round }) => {
+        vi.mocked(Dimensions.get).mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
         const serverUrl = 'https://review-titles.example';
         const serverId = await homes.addHome({ serverUrl, name: 'Review titles', accountId: 'alice', currentAccount: true });
         const reviewId = 'review-header-title';
@@ -236,9 +238,9 @@ describe('/reviews live host', () => {
             header: encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId, title: 'Relay handshake' }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
         homes.answer(serverId, 'POST /v1/reviews/list', { body: { items: [{ reviewId, projectSourceId: null, workflowId: null,
-            subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 1,
+            subjectKind: 'repository', sourceKind: 'direct', state: 'completed', currentRoundOrdinal: round,
             startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 1, needsDecision: 0 },
-            needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
+            needsYou: { reviewId, roundOrdinal: round, reason: 'review_needs_you', needsYou: false,
                 requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } }], cursor: null } });
         const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'alice', request: homes.request });
         storage.getState().deleteArtifact(reviewId);
@@ -251,6 +253,14 @@ describe('/reviews live host', () => {
             await vi.waitFor(() => expect(screen.findHostByTestId(`reviews:row:${reviewId}`)).not.toBeNull());
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('Relay handshake'));
             expect(screen.findHostByTestId(`reviews:row:${reviewId}`)?.props.accessibilityLabel).toContain('Relay handshake');
+            const roundLabel = t('reviewWalkthrough.detail.round', { round });
+            if (round > 1) {
+                expect(screen.getTextContent()).toContain(roundLabel);
+                expect(screen.findHostByTestId(`reviews:row:${reviewId}`)?.props.accessibilityLabel).toContain(roundLabel);
+            } else {
+                expect(screen.getTextContent()).not.toContain(roundLabel);
+                expect(screen.findHostByTestId(`reviews:row:${reviewId}`)?.props.accessibilityLabel).not.toContain(roundLabel);
+            }
             expect(storage.getState().artifacts[reviewId]?.body).toBeUndefined();
             const titleReads = () => homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read');
             expect(titleReads().map(request => request.input)).toEqual([{ artifactIds: [reviewId], projection: 'headers' }]);

@@ -301,7 +301,7 @@ describe('GitLab prepared review workspace', () => {
 
   it('materializes the source project GitLab named by id at the exact selected root', async () => {
     const transport = createStubGitlabTransport({
-      respond: respondWith({ mergeRequest: mergeRequestBody() }),
+      respond: respondWith({ mergeRequest: mergeRequestBody({ title: 'Keep provider title 🧪' }) }),
     });
     const execute = preparedMaterialization();
     const context = withMaterializer(transport.context, execute);
@@ -312,7 +312,7 @@ describe('GitLab prepared review workspace', () => {
       branch: 'feature/from-fork',
       created: true,
       currentness: { kind: 'currentAtObservedHead' },
-      pullRequest: { number: 7 },
+      pullRequest: { number: 7, title: 'Keep provider title 🧪' },
     });
 
     expect(transport.requests.map((request) => request.url))
@@ -644,9 +644,9 @@ describe('GitLab final review-workspace verification', () => {
     },
   );
 
-  it('verifies only after the provider reread and canonical local HEAD agree', async () => {
+  it('verifies only after the provider reread and canonical local HEAD agree despite a title rename', async () => {
     const transport = createStubGitlabTransport({
-      respond: respondWith({ mergeRequest: mergeRequestBody() }),
+      respond: respondWith({ mergeRequest: mergeRequestBody({ title: 'Renamed merge request' }) }),
     });
     const execute = vi.fn(async () => ({
       success: true as const,
@@ -657,9 +657,15 @@ describe('GitLab final review-workspace verification', () => {
     }));
     const context = withMaterializer(transport.context, execute);
 
-    await expect(verifyGitlabReviewWorkspaceAction(verifyInput(), context)).resolves.toEqual({
+    const result = TriageVerifyReviewWorkspaceResultV1Schema.parse(await verifyGitlabReviewWorkspaceAction(verifyInput({
+      prepared: {
+        repositoryPath: '/workspaces/selected-repository/.happier/review',
+        pullRequest: { number: 7, title: 'Earlier merge-request title' },
+      },
+    }), context));
+    expect(result).toEqual({
       kind: 'verified',
-      pullRequest: { number: 7 },
+      pullRequest: { number: 7, title: 'Renamed merge request' },
     });
     expect(execute).toHaveBeenCalledWith(
       'scm.reviewWorkspace.materializePrepared',

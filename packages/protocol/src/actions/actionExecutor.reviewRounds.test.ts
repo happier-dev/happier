@@ -53,12 +53,49 @@ describe('committed Review source admission', () => {
     expect(snapshotReads).toBe(baseSelection === 'explicit' ? 0 : 1);
     const admitted = starts.mock.calls[0]?.[0];
     if (!admitted) throw new Error('Expected admitted Review');
+    expect((await records.read(admitted.reviewId))?.title).toBe('review-topic');
     expect((await records.read(admitted.reviewId))?.rounds[0]).toMatchObject({ comparisonId: capturedId,
       comparisonCapture: { input: { source } } });
   });
 });
 
 describe('Review round preparation', () => {
+  it.each([
+    { mode: 'native', knownTitle: 'Keep selected changes separate', expectedTitle: 'Keep selected changes separate' },
+    { mode: 'workflow', knownTitle: 'Show retained reviewer outcomes', expectedTitle: 'Show retained reviewer outcomes' },
+    { mode: 'native', knownTitle: undefined, expectedTitle: 'acme/reviews#42' },
+    { mode: 'workflow', knownTitle: undefined, expectedTitle: 'acme/reviews#42' },
+  ] as const)('stamps the admitted PR subject on a $mode Review ($expectedTitle)', async ({ mode, knownTitle, expectedTitle }) => {
+    const records = createInMemoryReviewRecordPortV1();
+    const starts = vi.spyOn(records, 'start');
+    const source = { kind: 'pullRequest' as const, locator: { providerId: 'github', repository: 'acme/reviews', number: 42 } };
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      resolveApiTokenGrantSessionMachineId: async () => 'review-machine',
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      scmActionExecute: async ({ actionId }) => {
+        expect(actionId).toBe('scm.diffSummary.capture');
+        return { success: true, comparison: { id: 'a'.repeat(64), source,
+          repository: { rootPath: '/review-repo' }, endpoints: { before: 'base', after: 'head' },
+          inventory: { state: 'complete', files: [], reasons: [] } }, metadata: { source, sourceKey: 'selected-pr' } };
+      },
+      executionRunStart: async () => ({ runId: 'reviewer-run', callId: 'reviewer-call', sidechainId: 'reviewer-call' }),
+      workflowAction: async () => ({ ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }),
+    });
+    const result = await executor.execute('review.start', { sessionId: 'review-session', cwd: '/review-repo', source,
+      instructions: 'Review the selected PR.',
+      reviewers: Array.from({ length: mode === 'native' ? 1 : 2 }, () => ({ kind: 'engine', engineId: 'codex' })),
+      scmPullRequestReviewScope: { kind: 'scm_pull_request_review_scope.v1',
+        account: { service: { pluginId: 'happier.scm-github', localId: 'github' }, accountId: 'review-account' },
+        pullRequest: { number: 42, ...(knownTitle ? { title: knownTitle } : {}) },
+        observed: { baseSha: '1'.repeat(40), headSha: '2'.repeat(40), nativeRevision: 'pr-42', observedAtMs: 1 },
+      },
+    }, { surface: 'ui' });
+    expect(result).toMatchObject(mode === 'native' ? { ok: true } : { ok: false, errorCode: 'content_unavailable' });
+    const admitted = starts.mock.calls[0]?.[0];
+    if (!admitted) throw new Error('Expected the durable Review admission');
+    expect((await records.read(admitted.reviewId))?.title).toBe(expectedTitle);
+  });
+
   it('admits a detached native reviewer without claiming the source Session as its execution target', async () => {
     const reviewInput = ReviewStartInputSchema.parse({ sessionId: 'selected-session', scope: 'repository',
       instructions: 'Review the selected repository.', then: 'fix', reviewers: [{ kind: 'engine', engineId: 'codex' }] });
@@ -467,6 +504,7 @@ describe('Review round preparation', () => {
         repository: { rootPath: '/workspace' }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } }),
     });
     expect(current).toMatchObject({ reviewRound: { reviewId: reviewRound.reviewId, roundOrdinal: 3 }, comparisonId: currentComparisonId });
+    expect((await records.read(reviewRound.reviewId))?.title).toBe('Review');
     expect((await records.read(reviewRound.reviewId))?.rounds[2]).toMatchObject({ comparisonCapture: {
       target: { kind: 'machine', machineId: 'original-machine' },
       input: { cwd: '/workspace', source: { kind: 'workingTree' }, comparisonId: currentComparisonId },

@@ -1,5 +1,5 @@
 import type { GithubTriageInvocationContext } from './invocation.js';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, isRecord } from '@happier-dev/plugin-sdk';
 import {
   isExternalActionResultWithinResponseEnvelopeLimitV1,
   isPluginActionApprovalRequestCreated,
@@ -363,7 +363,7 @@ type GithubAuthorizedReviewWorkspaceV1 =
   | Readonly<{
     kind: 'authorized';
     sourceTip: NonNullable<ReturnType<typeof toGithubReviewWorkspaceSourceTip>>;
-    pullRequest: Readonly<{ number: number }>;
+    pullRequest: Readonly<{ number: number; title?: string }>;
   }>
   | Readonly<{ kind: 'unavailable'; reason: 'account' }>
   | Readonly<{ kind: 'refused'; reason: 'instanceMoved' | 'pullRequestMoved' | 'observedHeadMoved' }>;
@@ -433,7 +433,8 @@ async function authorizeGithubReviewWorkspace(
   return Object.freeze({
     kind: 'authorized' as const,
     sourceTip,
-    pullRequest: Object.freeze({ number: reread.facts.number }),
+    pullRequest: Object.freeze({ number: reread.facts.number,
+      ...(reread.facts.title === null ? {} : { title: reread.facts.title }) }),
   });
 }
 
@@ -647,7 +648,7 @@ export async function prepareGithubTriageReviewWorkspace(
     branch: materialized.branchName,
     created: materialized.created,
     currentness: materialized.currentness,
-    // The source only transports the exact reread number. Generic SCM/Reviews
+    // The source transports the exact reread reference. Generic SCM/Reviews
     // remains the one parser and validity owner for the reference grammar.
     pullRequest: authorized.pullRequest,
   });
@@ -675,7 +676,9 @@ export async function verifyGithubTriageReviewWorkspace(
   if (authorized.kind !== 'authorized') return authorized;
   if (
     !('kind' in verification.prepared)
-    && !pluginJsonValuesEqual(authorized.pullRequest, verification.prepared.pullRequest)
+    // Display metadata can change without moving the selected pull request.
+    && authorized.pullRequest.number !== (isRecord(verification.prepared.pullRequest)
+      ? verification.prepared.pullRequest.number : undefined)
   ) {
     return Object.freeze({ kind: 'refused' as const, reason: 'pullRequestMoved' as const });
   }

@@ -1,7 +1,7 @@
 import { ScmComparisonSourceSchema, type ScmComparison, type ScmComparisonSource } from '../scm/comparison.js';
 import type { ScmComparisonCaptureInput } from '../scm/diffSummary.js';
 import { RpcError } from '../rpc/errors.js';
-import type { ReviewArtifactV1, ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
+import type { ReviewArtifactV1, ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewRoundStartV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
 import type { ReviewPrepareRoundInputV1, ReviewPreparedRoundV1 } from './reviewRoundActionsV1.js';
 import { reviewReviewerDisplayNamesForStartV1, reviewReviewerIdsForStartV1, type ReviewBase, type ReviewStartInput } from './reviewStart.js';
 import { readRecord } from '../inputs/inputRecords.js';
@@ -72,8 +72,33 @@ function readRetriedReviewerIds(previousRoundContext: unknown, roster: readonly 
   return roster.filter(id => requested.includes(id));
 }
 
-/** One round/comparison preparation owner for workflow replay and native continuation. */
-export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, deps: Readonly<{
+type ReviewRoundPreparationInputV1 = Omit<ReviewPrepareRoundInputV1, 'reviewRound'> & (
+  | Pick<ReviewPrepareRoundInputV1, 'reviewRound'>
+  | Readonly<{ reviewStart: Omit<ReviewRoundStartV1, 'title' | 'startedAt' | 'signal'> }>
+);
+
+/** The admitted comparison names a new Review; later rounds retain its stored title. */
+function preparedReviewTitle(input: ReviewStartInput, source?: ScmComparisonSource): string {
+  const pullRequest = input.scmPullRequestReviewScope?.pullRequest;
+  const knownTitle = readRecord(pullRequest).title;
+  if (typeof knownTitle === 'string' && knownTitle.trim()) return knownTitle.trim();
+  switch (source?.kind) {
+    case 'pullRequest': return `${source.locator.repository}#${source.locator.number}`;
+    case 'branch': return source.head;
+    case 'commit': return source.commit;
+    case 'revisionRange': return `${source.baseOid}..${source.headOid}`;
+    case 'workingTree': return 'Working tree changes';
+    case 'session': return 'Session changes';
+    case 'turnCheckpoint': return 'Turn changes';
+  }
+  const reference = readRecord(pullRequest);
+  if (typeof reference.number === 'number') return `Pull request #${reference.number}`;
+  if (typeof reference.headBranch === 'string') return reference.headBranch;
+  return input.headRef ?? input.cwd ?? 'Repository';
+}
+
+/** One initial admission and round/comparison preparation owner for every reviewer path. */
+export async function prepareReviewRoundV1(input: ReviewRoundPreparationInputV1, deps: Readonly<{
   reviewRecords: Pick<ReviewRecordPortV1, 'start'>;
   captureComparison: (input: ScmComparisonCaptureInput) => Promise<ScmComparison>;
   cwd?: string;
@@ -84,8 +109,9 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
 }>): Promise<ReviewPreparedRoundV1> {
   let comparison = input.comparison;
   let comparisonCapture = input.comparisonCapture;
-  const isNewRound = input.previousRoundContext !== undefined && input.previousRoundContext !== null;
-  if ((!comparison && input.reviewInput.comparisonId) || (isNewRound && input.reviewInput.scope !== 'repository')) {
+  const isInitialAdmission = 'reviewStart' in input;
+  const isNewRound = !isInitialAdmission && input.previousRoundContext !== undefined && input.previousRoundContext !== null;
+  if ((!isInitialAdmission && !comparison && input.reviewInput.comparisonId) || (isNewRound && input.reviewInput.scope !== 'repository')) {
     const cwd = input.comparisonCapture?.cwd ?? input.reviewInput.cwd ?? comparison?.repository.rootPath ?? deps.cwd;
     if (!cwd) throw new RpcError('workspace_unavailable', 'workspace_unavailable');
     const source = input.comparisonCapture?.source ?? comparison?.source ?? await resolveReviewComparisonSourceV1(input.reviewInput);
@@ -100,8 +126,11 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
   const { projection: _projection, ...retainedCaptureInput } = comparisonCapture ?? {};
   const roster = reviewReviewerIdsForStartV1(input.reviewInput);
   const retried = isNewRound ? readRetriedReviewerIds(input.previousRoundContext, roster) : undefined;
-  const reviewRound = isNewRound ? await deps.reviewRecords.start({
-    reviewId: input.reviewRound.reviewId, title: 'Code review',
+  const reviewRound = 'reviewStart' in input ? await deps.reviewRecords.start({ ...input.reviewStart,
+    title: preparedReviewTitle(input.reviewInput, comparison?.source ?? comparisonCapture?.source),
+    startedAt: deps.startedAt, signal: deps.signal,
+  }) : isNewRound ? await deps.reviewRecords.start({
+    reviewId: input.reviewRound.reviewId, title: preparedReviewTitle(input.reviewInput, comparison?.source ?? comparisonCapture?.source),
     subjectKind: comparison ? 'comparison' : 'repository', sourceKind: deps.sourceKind ?? 'workflow',
     reviewerIds: retried ?? roster,
     reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(input.reviewInput),
