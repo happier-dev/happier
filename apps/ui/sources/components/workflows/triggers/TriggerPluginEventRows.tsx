@@ -25,6 +25,18 @@ const styles = StyleSheet.create((theme) => ({
 
 type EventWhen = Extract<TriggerWhenValue, { kind: 'pluginEvent' }>;
 
+/**
+ * A popover that hosts a trigger's rows (the sentence's detail chip) shows an Event's setup as its own step, as the
+ * Link sheet does: the setup replaces the popover's body, with one footer, and comes back on Done or Cancel.
+ */
+export type TriggerEventStep = Readonly<{
+    editing: boolean;
+    onEditingChange: (editing: boolean) => void;
+    maxHeight?: number;
+}>;
+
+export const TriggerEventStepContext = React.createContext<TriggerEventStep | null>(null);
+
 export function TriggerPluginEventRows(props: Readonly<{
     testID: string;
     when: EventWhen;

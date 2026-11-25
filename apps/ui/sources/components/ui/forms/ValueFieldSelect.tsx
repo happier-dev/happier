@@ -105,6 +105,8 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
             showCategoryTitles={grouped}
             {...(props.searchPlaceholder ? { search: true, searchPlaceholder: props.searchPlaceholder } : {})}
             popoverPortalWebTarget="body"
+            // Pushed inside a phone sheet, the menu's band names what is being chosen beside its Back.
+            popoverAccessibilityLabel={props.label}
             trigger={({ toggle }) => (
                 <HappierPressable
                     testID={`${props.testID}.trigger`}

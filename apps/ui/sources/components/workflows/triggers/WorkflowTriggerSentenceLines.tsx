@@ -18,6 +18,7 @@ import {
   WorkflowSentenceWord,
 } from '../sentence/WorkflowSentenceChip';
 import { workflowSentenceStyles } from '../sentence/workflowSentenceStyles';
+import { TriggerEventStepContext, type TriggerEventStep } from './TriggerPluginEventRows';
 import type { WorkflowTriggerStartOption } from './workflowTriggerStarts';
 
 /** One trigger of the workflow, as `WorkflowTriggerSection` already models and writes it. */
@@ -289,8 +290,13 @@ function WorkflowSentenceRowsChip(
   }>,
 ) {
   const [open, setOpen] = React.useState(false);
+  // An Event's setup is the popover's next step (as in the Link sheet): it replaces the rows, with its own footer.
+  const [stepping, setStepping] = React.useState(false);
   const anchorRef = React.useRef<View | null>(null);
-  const close = React.useCallback(() => setOpen(false), []);
+  const close = React.useCallback(() => {
+    setOpen(false);
+    setStepping(false);
+  }, []);
   return (
     <>
       <WorkflowSentenceChip
@@ -301,7 +307,7 @@ function WorkflowSentenceRowsChip(
         struck={props.struck}
         open={open}
         hasPopup="dialog"
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => (open ? close() : setOpen(true))}
         testID={props.testID}
       />
       {open ? (
@@ -310,7 +316,8 @@ function WorkflowSentenceRowsChip(
           anchorRef={anchorRef}
           placement="bottom"
           phonePresentation="sheet"
-          accessibilityLabel={props.title}
+          // A phone sheet's band names the step it shows.
+          accessibilityLabel={stepping ? t('workflows.triggers.popover.configureEvent') : props.title}
           portal={{
             web: { target: 'body' },
             native: true,
@@ -319,17 +326,24 @@ function WorkflowSentenceRowsChip(
           maxWidthCap={SENTENCE_POPOVER_MAX_WIDTH_PX}
           onRequestClose={close}
         >
-          {({ maxHeight, maxWidth }) => (
-            <FloatingOverlay
-              maxHeight={maxHeight}
-              surfaceChrome="theme"
-              containerStyle={{
-                width: Math.min(maxWidth, SENTENCE_POPOVER_MAX_WIDTH_PX),
-              }}
-            >
-              <View style={styles.rows}>{props.renderRows()}</View>
-            </FloatingOverlay>
-          )}
+          {({ maxHeight, maxWidth }) => {
+            const step: TriggerEventStep = { editing: stepping, onEditingChange: setStepping, maxHeight };
+            return (
+              <TriggerEventStepContext.Provider value={step}>
+                {stepping ? props.renderRows() : (
+                  <FloatingOverlay
+                    maxHeight={maxHeight}
+                    surfaceChrome="theme"
+                    containerStyle={{
+                      width: Math.min(maxWidth, SENTENCE_POPOVER_MAX_WIDTH_PX),
+                    }}
+                  >
+                    <View style={styles.rows}>{props.renderRows()}</View>
+                  </FloatingOverlay>
+                )}
+              </TriggerEventStepContext.Provider>
+            );
+          }}
         </Popover>
       ) : null}
     </>

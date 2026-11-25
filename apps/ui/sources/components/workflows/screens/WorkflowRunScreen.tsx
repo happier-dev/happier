@@ -116,6 +116,7 @@ import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefi
 import { WorkflowRunAgentOverrideField } from '../run/WorkflowRunAgentOverrideField';
 import { WorkflowStartRefusal } from '../run/WorkflowStartRefusal';
 import { useOpenExecutionRunDetails } from '@/components/sessions/runs/useOpenExecutionRunDetails';
+import { useDeviceType } from '@/utils/platform/responsive';
 import {
     resolveWorkflowProblemPresentation,
     type WorkflowProblemPresentation,
@@ -369,11 +370,14 @@ const selectMachineHomeDir = (machine: Machine | null): string | null => machine
 function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: React.ReactNode; onCloseInvocation: () => void; embedded?: boolean; acknowledgeFailure: boolean }>): React.ReactElement {
     const openExecutionRunDetails = useOpenExecutionRunDetails();
     const { theme } = useUnistyles();
+    // On a phone each section already stands on the page text inset, which meets the header's Back (NF-32): no
+    // second inset outside it.
+    const phone = useDeviceType() === 'phone';
     const contentStyle = React.useMemo(() => ({
-        paddingHorizontal: theme.space.s16,
+        paddingHorizontal: phone ? 0 : theme.space.s16,
         paddingVertical: theme.space.s16,
         gap: theme.space.s16,
-    }), [theme.space.s16]);
+    }), [phone, theme.space.s16]);
     const mountedRef = useMountedRef();
     const router = useDestinationRouter();
     const openProject = useOpenProject();

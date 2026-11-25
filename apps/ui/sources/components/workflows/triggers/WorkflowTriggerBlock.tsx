@@ -8,8 +8,10 @@ import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automatio
 import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
+  HappierFieldBoxTrigger,
   HappierPressable,
   parseHappierLocalDateTime,
+  resolveHappierFieldBoxLabel,
   useHappierFieldValueDraft,
 } from '@happier-dev/plugin-ui/presentation';
 
@@ -21,7 +23,6 @@ import {
   ValueFieldSelect,
   type ValueFieldSelectItem,
 } from '@/components/ui/forms/ValueFieldSelect';
-import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
@@ -70,7 +71,7 @@ import {
   type TriggerWhenValue,
 } from './sessionTriggerForm';
 import { REPEAT_LABEL_KEYS, useStoredSessionItem } from './TriggerPopover';
-import { TriggerPluginEventRows } from './TriggerPluginEventRows';
+import { TriggerEventStepContext, TriggerPluginEventRows } from './TriggerPluginEventRows';
 import { useSessionPullRequestChoices } from './SessionTriggerPullRequestPicker';
 import {
   formatScheduleTimeInput,
@@ -119,6 +120,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   // The field hugs its value, so its menu hangs from the field's own edge rather than the track's.
   selectBox: { flexGrow: 0, flexShrink: 1, minWidth: 0, alignSelf: 'flex-start', maxWidth: '100%' },
+  fieldButton: { justifyContent: 'center' },
+  // The composer Source field's value (one field, one look in both steps).
+  fieldButtonValue: { ...Typography.variant('label'), flexGrow: 1, flexShrink: 1, minWidth: 0, color: theme.colors.text.primary },
 }));
 
 type SessionEventWhen = SessionLifecycleWhen;
@@ -195,6 +199,8 @@ export function WorkflowTriggerBlock(
 ): React.ReactElement {
   const { theme } = useUnistyles();
   const { when } = props;
+  // In a popover that offers it (the sentence's chip), the Event's setup is its own step and replaces this block.
+  const eventStep = React.useContext(TriggerEventStepContext);
   const [namedSubject, setNamedSubject] = React.useState<Readonly<{ key: string; label: string }> | null>(null);
   const title = when?.kind === 'action' && isDeployFinishedTrigger(when)
     ? formatTriggerSummary(when, { subjectTitle: subject => namedSubject?.key === automationSubjectKeyV1(subject) ? namedSubject.label : undefined })
@@ -239,6 +245,38 @@ export function WorkflowTriggerBlock(
       })),
     [props.startOptions, theme.colors.text.secondary],
   );
+  const eventRows = when?.kind === 'pluginEvent' && props.nativeSourceName === undefined ? (
+    <TriggerPluginEventRows
+      testID={props.testID}
+      when={when}
+      onChange={props.onChangeWhen}
+      machineId={props.machineId}
+      serverId={props.serverId}
+      eventEdit={props.eventEdit}
+      initialEventSeed={props.initialEventSeed}
+      onEditSeedApplied={props.onEditSeedApplied}
+      {...(eventStep ? { editing: eventStep.editing, onEditingChange: eventStep.onEditingChange,
+        editorMaxHeight: eventStep.maxHeight } : {})}
+      renderEntry={(entry) => (
+        <TrackRow
+          label={t('workflows.triggers.card.source')}
+          trackKey={`${props.testID}-source`}
+        >
+          <View style={styles.selectBox}>
+            <FieldButton
+              testID={`${props.testID}-configure-event`}
+              label={t('workflows.triggers.card.source')}
+              // A saved Event's label is in its sealed setup, read when opened: at rest it offers Edit, never Set up (QA-C).
+              value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
+              onPress={entry.onPress}
+            />
+          </View>
+        </TrackRow>
+      )}
+    />
+  ) : null;
+  // The setup step stands alone: the When select above it would repeat the Event it sets up.
+  if (eventStep?.editing && eventRows) return eventRows;
   return (
     <View testID={props.testID} style={styles.block}>
       <View style={styles.header}>
@@ -306,32 +344,7 @@ export function WorkflowTriggerBlock(
         <TrackRow label={t('workflows.triggers.card.source')} trackKey={`${props.testID}-source`}>
           <Text testID={`${props.testID}-native-source`} style={styles.value}>{props.nativeSourceName}</Text>
         </TrackRow>
-      ) : when?.kind === 'pluginEvent' ? (
-        <TriggerPluginEventRows
-          testID={props.testID}
-          when={when}
-          onChange={props.onChangeWhen}
-          machineId={props.machineId}
-          serverId={props.serverId}
-          eventEdit={props.eventEdit}
-          initialEventSeed={props.initialEventSeed}
-          onEditSeedApplied={props.onEditSeedApplied}
-          renderEntry={(entry) => (
-            <TrackRow
-              label={t('workflows.triggers.card.source')}
-              trackKey={`${props.testID}-source`}
-            >
-              <FieldButton
-                testID={`${props.testID}-configure-event`}
-                label={t('workflows.triggers.card.source')}
-                // A saved Event's label is in its sealed setup, read when opened: at rest it offers Edit, never Set up (QA-C).
-                value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
-                onPress={entry.onPress}
-              />
-            </TrackRow>
-          )}
-        />
-      ) : null}
+      ) : eventRows}
       {when?.kind === 'action' ? (
         <ActionTrackRows
           testID={props.testID}
@@ -657,32 +670,36 @@ function formatListedWhen(when: TriggerWhenValue): string {
   return '';
 }
 
-/** A value that opens its own editor, drawn as the bordered field the selects use. */
+/**
+ * A value that opens its own step (an Event's setup), drawn as the composer's Source field: the bordered field with
+ * a gear, never a select's chevron. It takes its host's field width as the host's selects do; `fill` spans the row.
+ */
 export function FieldButton(
   props: Readonly<{
     testID: string;
     label: string;
     value: string;
     onPress: () => void;
+    fill?: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
+  const colors = resolveFieldBoxColors(theme);
   return (
     <HappierPressable
       testID={props.testID}
       onPress={props.onPress}
       accessibilityRole="button"
       accessibilityLabel={`${props.label}: ${props.value}`}
-      style={styles.selectBox}
+      style={styles.fieldButton}
     >
-      {renderDropdownItemTriggerRightElement({
-        detail: props.value,
-        open: false,
-        detailColor: theme.colors.text.secondary,
-        chevronColor: theme.colors.text.secondary,
-        field: resolveFieldBoxColors(theme),
-        fieldSpan: 'content',
-      })}
+      <HappierFieldBoxTrigger colors={colors} span={props.fill ? 'row' : 'content'}
+        trailing={<Icon name="gear" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}>
+        <Text numberOfLines={1} style={[resolveHappierFieldBoxLabel({ value: props.value, placeholder: props.value, colors }).style,
+          styles.fieldButtonValue]}>
+          {props.value}
+        </Text>
+      </HappierFieldBoxTrigger>
     </HappierPressable>
   );
 }

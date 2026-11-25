@@ -9,6 +9,8 @@ import {
 } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { SELECTION_LIST_MODAL_MAX_HEIGHT, SelectionList, type SelectionListStep } from '@/components/ui/selectionList';
@@ -32,13 +34,11 @@ import { useTriggerThenOptions } from './useTriggerThenOptions';
 import { formatWorkflowLinkStartLabel, type ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
 
 const stylesheet = StyleSheet.create((theme) => ({
+  // The section around it insets the rows and sets its title, as the Event setup step's (one layout for both steps).
   body: {
-    paddingHorizontal: theme.space.s16,
-    paddingTop: theme.space.s12,
     paddingBottom: theme.space.s8,
     gap: theme.space.s8,
   },
-  title: { paddingBottom: theme.space.s4 },
   // Workflow and When span the value track, so the sheet's fields share one width (lab `automations-states-link`).
   selectBox: { minWidth: 0, alignSelf: 'stretch' },
   note: { color: theme.colors.text.secondary, flexShrink: 1 },
@@ -193,7 +193,7 @@ export function ResourceLinkWorkflowSheet(
   // The When field's own placeholder already asks for a start; a note under it says only what the field can't.
   const whenNote = !(link.whenStatus === 'ready' && !choice && whenItems.length > 0);
   const eventChoice = choice?.relation === 'event' && when?.kind === 'pluginEvent' ? { choice, when } : null;
-  const eventRows = eventChoice ? (editing: boolean, maxHeight?: number) => (
+  const eventRows = eventChoice ? (editing: boolean, maxHeight?: number, stackedFields = false) => (
     <TriggerPluginEventRows
       testID="resource-link-event"
       eventTitle={eventChoice.choice.label}
@@ -212,12 +212,15 @@ export function ResourceLinkWorkflowSheet(
       }}
       renderEntry={(entry) => (
         <TrackRow label={t('workflows.triggers.card.source')} trackKey="resource-link-event">
-          <FieldButton
-            testID="resource-link-event-configure-event"
-            label={t('workflows.triggers.card.source')}
-            value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
-            onPress={entry.onPress}
-          />
+          <View style={styles.selectBox}>
+            <FieldButton
+              testID="resource-link-event-configure-event"
+              fill={stackedFields}
+              label={t('workflows.triggers.card.source')}
+              value={entry.detail ?? t(entry.configured ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.card.setUp')}
+              onPress={entry.onPress}
+            />
+          </View>
         </TrackRow>
       )}
     />
@@ -261,7 +264,8 @@ export function ResourceLinkWorkflowSheet(
       placement="bottom"
       phonePresentation="sheet"
       autoFocusOnOpen
-      accessibilityLabel={t('workflows.triggers.link.title', {
+      // A phone sheet's band names the step it shows: the link, or the Event's setup.
+      accessibilityLabel={eventEditing && eventRows ? t('workflows.triggers.popover.configureEvent') : t('workflows.triggers.link.title', {
         name: props.resourceName,
       })}
       maxWidthCap={TRIGGER_POPOVER_WIDTH}
@@ -325,13 +329,11 @@ export function ResourceLinkWorkflowSheet(
         )}>
           {/* A phone sheet stacks each label over its field (lab `automations-states-link` at 390). */}
           <WorkflowKindCardLabelTrack.Provider value={presentation === 'sheet' ? WORKFLOW_STACKED_LABEL_TRACK : null}>
+          {/* Titled as the setup step is (its section title); a phone sheet's band already names it. */}
+          <ListPresentationProvider value="page"><ItemGroup surface="none"
+            title={presentation === 'sheet' ? undefined : t('workflows.triggers.link.title', { name: props.resourceName })}>
+          <ListPresentationProvider value="grouped" floating={presentation === 'sheet'}>
           <View style={styles.body} testID="resource-link-sheet">
-            {/* A phone sheet's band already names it. */}
-            {presentation === 'sheet' ? null : (
-              <Text variant="label" emphasis="semiBold" style={styles.title}>
-                {t('workflows.triggers.link.title', { name: props.resourceName })}
-              </Text>
-            )}
             <TrackRow
               label={t('workflows.triggers.link.workflow')}
               trackKey="resource-link-workflow"
@@ -402,7 +404,7 @@ export function ResourceLinkWorkflowSheet(
                 }}
               />
             ) : null}
-            {eventRows ? eventRows(false) : null}
+            {eventRows ? eventRows(false, undefined, presentation === 'sheet') : null}
             {sharing && recipientsIdentified ? (
               <AttentionBanner
                 testID="resource-link-share"
@@ -462,6 +464,8 @@ export function ResourceLinkWorkflowSheet(
               </Text>
             ) : null}
           </View>
+          </ListPresentationProvider>
+          </ItemGroup></ListPresentationProvider>
           </WorkflowKindCardLabelTrack.Provider>
         </FloatingOverlay>
       )}
