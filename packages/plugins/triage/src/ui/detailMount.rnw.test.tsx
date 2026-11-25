@@ -1615,9 +1615,30 @@ describe('opening a row into the source detail', () => {
 
         await vi.waitFor(() => { expect(currentHarness?.exactReads).toHaveLength(1); });
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+        expect(findDetailRegion()).toBe(pendingDetail);
         const binding = { entryRef, sourceInstanceId: INSTANCE, sourceInstanceRowId: instanceRow().instanceTag };
         expect(currentHarness?.exactReads).toEqual([{ v: 1, ...binding, includeTaskFields: true }]);
         expect(currentHarness?.readDetailInputs).toEqual([{ v: 1, ...binding }]);
+    });
+
+    it.each([false, true])('opens Manage sources on a cold scope refusal (retired connection=%s)', async retired => {
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'historical/repository', entryId: '657' };
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        const requestId = 'scope-outside-binding-request';
+        const shell = await mountShell({ subPath, noScannedEntries: true, activeSurface: true, automaticDemandOnly: true,
+            accountData: true, noActiveSource: retired, secondInstance: retired,
+            exactReadFailure: { class: 'unsupportedContract', code: 'scope-outside-binding', requestId } });
+
+        await vi.waitFor(() => expect(currentHarness?.exactReads).toMatchObject(
+            [{ entryRef, sourceInstanceId: retired ? SECOND_INSTANCE : INSTANCE }]));
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+        expect(document.body.textContent).toContain('scope-outside-binding');
+        expect(document.body.textContent).toContain(requestId);
+        await vi.waitFor(async () => expect(await shell.getByText(retired ? 'This connection is no longer configured'
+            : 'This entry’s source is no longer connected')).toBeDefined());
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Manage sources' })); });
+        await expect(shell.getByText('Configured sources')).resolves.toBeDefined();
     });
 
     it('keeps a cold pin in its routed detail when no connection can qualify it', async () => {

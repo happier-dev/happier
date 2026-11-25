@@ -5,6 +5,7 @@ import { TRIAGE_LIST_NO_FILTERS_V1, type SurfaceFilterSelectionV1, type TriageLi
 import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowErrorV1, type TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { TRIAGE_PR_VIEW_INVENTORY_V1, type TriageListViewInventoryV1 } from '../list/viewInventory.js';
 import { planTriageViewSourceSelectionV1 } from '../filters/plan.js';
+import { presentTriageSourceConnectionFailure } from '../configuration/sourceConnectionFailure.js';
 import { createTriageNameListFormatter } from './nameList.js';
 import type { TriageSourceDescriptorReaderV1 } from '../detail/sourceSurface.js';
 import {
@@ -417,13 +418,14 @@ export function readTriageSourceFailureRowV1(
   text: TriageTextResolverV1 = ENGLISH_TEXT,
   locale?: string,
 ): TriageSourceFailureRowV1 {
+  const connectionFailure = presentTriageSourceConnectionFailure(source.code, text);
   const lineReason = source.lineReason ?? source.reason;
-  const permanent = source.retryable === false;
+  const permanent = connectionFailure !== undefined || source.retryable === false;
   return Object.freeze({
     // The row's reason stands beside its ⋯, so it names Details rather than pointing below.
-    reason: permanent && lineReason === SOURCE_FAILURE_COPY_V1.transient
+    reason: connectionFailure?.title ?? (permanent && lineReason === SOURCE_FAILURE_COPY_V1.transient
       ? text('plugins.triage.surface.sources.permanent', 'Trying again won’t fix this. Details has what support needs.')
-      : withRetryAt(resolveSourceFailureReason(text, lineReason), source, text, locale),
+      : withRetryAt(resolveSourceFailureReason(text, lineReason), source, text, locale)),
     fix: source.needsConnectionChange === true ? 'connection'
       : permanent || evaluateRefreshEligibility({
           nowMs: Date.now(), retryNotBeforeMs: source.retryNotBeforeMs ?? null,

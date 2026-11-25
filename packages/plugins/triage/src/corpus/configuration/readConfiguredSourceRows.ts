@@ -44,6 +44,29 @@ export function readConfiguredEntrySourceRow(
         }, options);
 }
 
+/** Presentation can distinguish a retired connection from an unconfigured source without qualifying an entry. */
+export async function hasRetiredConfiguredSource(
+    sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>,
+    sourceQualifiedId: string,
+    options?: AccountDataSourceReadOptionsV1,
+): Promise<boolean> {
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+        const page = await sourceInstances.query({
+            index: CORPUS_SOURCE_INSTANCES_INDEX_ID.byLifecycle,
+            prefix: [CORPUS_SOURCE_INSTANCE_LIFECYCLE.retired],
+            order: 'asc',
+            ...(cursor === undefined ? {} : { cursor }),
+        }, options);
+        if (page.rows.some(row => fromCorpusStoredRow<CorpusSourceInstanceRowV1>(row).value.sourceQualifiedId === sourceQualifiedId)) {
+            return true;
+        }
+        cursor = advanceConfiguredSourceCollectionCursor(seenCursors, page.nextCursor);
+    } while (cursor !== undefined);
+    return false;
+}
+
 /** The selected-detail counterpart of the active catalog read below. */
 export async function readActiveConfiguredSourceRow(
     sourceInstances: Pick<CorpusCollectionHandleV1, 'get' | 'identityTag'>,

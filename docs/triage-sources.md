@@ -129,7 +129,11 @@ An exact entry link through a retired configured source returns
 `triage_source_retired` before the provider read. Triage shows the retired
 connection and opens Manage sources from the detail failure. Refreshed
 aggregate lists scan active connections. Retained links and pins can still
-refer to the retired connection.
+refer to the retired connection. A portable link can be tried on an active
+connection of the same source. If the source returns `scope-outside-binding`,
+detail preserves that code and its request ID in Details and offers Manage
+sources. A retired connection of the same source in the lifecycle roster uses
+the existing retired-connection wording.
 
 ## Universal Search (0.3 development source)
 

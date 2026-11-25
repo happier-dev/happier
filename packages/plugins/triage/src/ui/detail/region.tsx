@@ -3,7 +3,10 @@ import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import { isPluginError, readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 
-import { TRIAGE_SOURCE_RETIRED_CODE } from '../../corpus/configuration/configuredSourceAuthority.js';
+import { hasRetiredConfiguredSource } from '../../corpus/configuration/readConfiguredSourceRows.js';
+import { renderSourceQualifiedId } from '../../corpus/identity/components.js';
+import { presentRetiredTriageSourceConnection, presentTriageSourceConnectionFailure, SCOPE_OUTSIDE_BINDING_CODE } from '../configuration/sourceConnectionFailure.js';
+import { useTriageDurableAccount } from '../durable/accountDurableState.js';
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
 import {
   Action,
@@ -686,6 +689,7 @@ function TriageDetailKindMark(props: Readonly<{ header: TriageDetailHeaderV1 }>)
 export function TriageDetailReadFailure(props: Readonly<{
   failure?: PluginError;
   sourceFailure?: TriageSourceFailureV1;
+  entrySource?: TriageListRowV1['entryRef']['source'];
   rosterFailure?: TriageListWindowErrorV1;
   lastReadAtMs?: number | null;
   retry: () => unknown;
@@ -695,7 +699,27 @@ export function TriageDetailReadFailure(props: Readonly<{
   const { locale } = useSurfaceContext();
   const { failure, sourceFailure, rosterFailure, lastReadAtMs } = props;
   const code = sourceFailure?.code ?? failure?.code ?? rosterFailure?.code;
-  const retired = code === TRIAGE_SOURCE_RETIRED_CODE;
+  const { collections } = useTriageDurableAccount();
+  const sourceQualifiedId = code === SCOPE_OUTSIDE_BINDING_CODE && props.entrySource !== undefined
+    ? renderSourceQualifiedId(props.entrySource) : undefined;
+  const [retiredSource, setRetiredSource] = React.useState<{
+    collections: NonNullable<typeof collections>;
+    sourceQualifiedId: string;
+  } | null>(null);
+  React.useEffect(() => {
+    setRetiredSource(null);
+    if (sourceQualifiedId === undefined || collections === null) return;
+    const controller = new AbortController();
+    void hasRetiredConfiguredSource(collections.sourceInstances, sourceQualifiedId, { signal: controller.signal })
+      .then(retired => {
+        if (retired && !controller.signal.aborted) setRetiredSource({ collections, sourceQualifiedId });
+      }, () => {
+        // The provider's refusal still explains the disconnected entry when the roster cannot be read.
+      });
+    return () => controller.abort();
+  }, [collections, sourceQualifiedId]);
+  const connectionFailure = presentTriageSourceConnectionFailure(code, text,
+    retiredSource?.collections === collections && retiredSource?.sourceQualifiedId === sourceQualifiedId);
   const refusal = presentInternalTaskReadFailure(code, text);
   const canRetry = (failure?.data.retryable ?? rosterFailure?.retryable) !== false;
   const recovery = canRetry
@@ -707,14 +731,13 @@ export function TriageDetailReadFailure(props: Readonly<{
   });
   return <Stack gap="small">
     <ErrorState
-      titleKey={retired ? 'plugins.triage.surface.detail.removedConnection.title'
-        : refusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
-      title={retired ? 'This connection is no longer configured' : refusal ?? 'These details could not be read'}
-      description={retired
-        ? text('plugins.triage.surface.detail.removedConnection.description', 'The connection this entry was read through has been removed or replaced, so its details cannot be opened.')
+      titleKey={connectionFailure === undefined && refusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
+      title={connectionFailure?.title ?? refusal ?? 'These details could not be read'}
+      description={connectionFailure !== undefined ? connectionFailure.description
         : refusal === null ? [age, description].filter(Boolean).join(' ') : undefined}
-      action={retired && props.manageSources !== undefined
-        ? <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="secondary" onPress={props.manageSources} />
+      action={connectionFailure !== undefined
+        ? props.manageSources === undefined ? undefined
+          : <Button titleKey="plugins.triage.surface.sources.manage" title="Manage sources" variant="secondary" onPress={props.manageSources} />
         : canRetry ? <Button titleKey="plugins.triage.surface.actions.retry" title="Retry" variant="secondary" onPress={props.retry} /> : undefined}
     />
     {sourceFailure !== undefined ? <ActionFailureDetails code={sourceFailure.code} requestId={sourceFailure.requestId}
@@ -1251,7 +1274,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     const reading = readTriageDetailReadingLineV1(text, header.kindLabel, header.sourceLabel);
     return <Stack style={DETAIL_FILL_STYLE_V1}>
       {readFailure !== undefined ? (
-        <TriageDetailReadFailure sourceFailure={readFailure} lastReadAtMs={header.lastReadAtMs} retry={completePostMutation} manageSources={props.manageSources} />
+        <TriageDetailReadFailure sourceFailure={readFailure} entrySource={row.entryRef.source}
+          lastReadAtMs={header.lastReadAtMs} retry={completePostMutation} manageSources={props.manageSources} />
       ) : observation === null && detail?.kind !== 'unreachable' ? (
         header.presence === 'absent' ? null : <Stack gap="small">
           <EmptyState
@@ -1294,14 +1318,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           </TriagePostMutationCompletionProvider>
         );
       })() : detail.kind === 'unavailable' ? (
-        <EmptyState
-          titleKey="plugins.triage.surface.detail.removedConnection.title"
-          title="This connection is no longer configured"
-          descriptionKey="plugins.triage.surface.detail.removedConnection.description"
-          description="The connection this entry was read through has been removed or replaced, so its details cannot be opened."
-        />
+        <EmptyState {...presentRetiredTriageSourceConnection(text)} />
       ) : detail.kind === 'unreachable' ? (
-        <TriageDetailReadFailure failure={detail.failure} lastReadAtMs={header.lastReadAtMs} retry={detail.retry} manageSources={props.manageSources} />
+        <TriageDetailReadFailure failure={detail.failure} entrySource={row.entryRef.source}
+          lastReadAtMs={header.lastReadAtMs} retry={detail.retry} manageSources={props.manageSources} />
       ) : detail.kind === 'refused' ? (
         <Banner
           tone="warning"
