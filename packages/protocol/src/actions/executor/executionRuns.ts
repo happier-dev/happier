@@ -136,9 +136,7 @@ export function buildExecutionRunCallOptions(
   targetMachineId?: string | null,
   permissionRequestStore?: unknown,
   workflowObservationSink?: unknown,
-  actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1' | 'onTransportIssued'
-    | 'surface' | 'runtimeAccountId' | 'callerInputConstraints' | 'callerPermissionMode' | 'workspaceWrites'
-    | 'admittedHostWorkflowRequester' | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'externalActionTarget' | 'admittedMachineTarget' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived'>,
+  actionContext?: ActionExecutorContext,
 ): ExecutionRunCallOptions | undefined {
   const origin = normalizeId(originSessionId);
   const target = normalizeId(actionContext?.admittedMachineTarget?.machineId ?? targetMachineId);
@@ -152,6 +150,7 @@ export function buildExecutionRunCallOptions(
     && !actionContext?.admittedHostWorkflowRequester && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !reviewedChildActionContext && !actionContext?.onTransportIssued
     && actionContext?.approvalProfileId === undefined && actionContext?.approvalProfileTeamOrGroupDerived === undefined) return undefined;
   return {
+    ...(actionContext ? { runtimeAccountContext: actionContext } : {}),
     ...(targetServerId ? { serverId: targetServerId } : {}),
     ...(origin ? { originSessionId: origin } : {}),
     ...(target ? { targetMachineId: target } : {}),

@@ -1348,6 +1348,8 @@ type ExecutionRunActionOptions = Readonly<{
   actionCaller?: ActionCaller;
   runtimeAccountId?: string;
   actionRequestId?: string;
+  /** Original admitted caller for the host's installed-Account custody decision; never serialized. */
+  runtimeAccountContext?: ActionExecutorContext;
   externalActionCredential?: ActionExecutorContext['externalActionCredential'];
   externalActionExecutionAuthorization?: ActionExecutorContext['externalActionExecutionAuthorization'];
   /** Exact issuer context retained only across an in-process execution-run handoff. */

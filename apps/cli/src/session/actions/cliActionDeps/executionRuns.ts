@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { withExecutionRunStartFailureDetails, ExecutionRunGetResponseSchema, ExecutionRunGetRequestSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { canUseLocalRuntimeAccount } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { readCliActionBoundSessionId } from '../resolveCliActionCallerSession';
 import type { SessionResumeRequestV1 } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import type { cancelExecutionRunStream, ensureExecutionRun, ensureOrStartExecutionRun, executeExecutionRunAction, getExecutionRun, listExecutionRuns, readExecutionRunStream, startExecutionRun, startExecutionRunStream, stopExecutionRun, waitForExecutionRun } from '@/session/services/executionRuns';
@@ -336,6 +338,8 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
       // Only the exact local daemon can carry an already-admitted start. Check its
       // receiver capability before Resume; public Session RPC cannot retain these facts.
       if (localActionContext && (!params.machineActionDirectTargetTransport
+        || !await canUseLocalRuntimeAccount(opts?.runtimeAccountContext
+          ?? { ...opts, serverId: opts?.serverId ?? params.serverId }, readAccountIdFromToken(params.token), params.serverId)
         || opts?.permissionRequestStore !== undefined || opts?.workflowObservationSink !== undefined
         || !resolveLocalSessionRpcRoute({ sessionId, method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
           token: params.token, ...executionRunAuthorityCeiling(opts), localActionContext }))) return unavailable();

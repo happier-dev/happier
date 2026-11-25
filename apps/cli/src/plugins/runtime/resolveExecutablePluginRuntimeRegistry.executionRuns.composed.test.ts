@@ -16,6 +16,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createCapabilitiesService } from '@/capabilities/service';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
 
 // The native OS peer check is the boundary; local routing, caller admission,
 // contributed Actions and the Session RPC handler all use their real owners.
@@ -26,7 +27,32 @@ vi.mock('@/subprocess/supervision/processCustody', async original => ({
 }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it('starts an attached Run from a contributed Action through the daemon private transport', async () => {
+it.each([
+    { name: 'owner starts an attached Run', approvalContext: {}, allowed: true },
+    { name: 'current Machine custodian starts an attached Run', approvalContext: {
+        runtimeAccountId: 'owner',
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner',
+            machineId: 'contributed-run-machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => true,
+    }, allowed: true },
+    { name: 'Manage guest cannot borrow the installed Account', approvalContext: {
+        runtimeAccountId: 'machine-guest',
+        machineAdmission: { actorAccountId: 'machine-guest', custodianAccountId: 'owner',
+            machineId: 'contributed-run-machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => true,
+    }, allowed: false },
+    { name: 'Machine guest admission takes precedence over runtime Account attribution', approvalContext: {
+        runtimeAccountId: 'owner',
+        machineAdmission: { actorAccountId: 'machine-guest', custodianAccountId: 'owner',
+            machineId: 'contributed-run-machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+        verifyMachineAdmissionCurrent: async () => true,
+    }, allowed: false },
+    { name: 'another Account attribution cannot borrow the installed Account', approvalContext: {
+        requesterWorkAttributionV1: { serverId: 'home', machineId: 'contributed-run-machine',
+            installationId: 'installation', accountId: 'other-account' },
+    }, allowed: false },
+] satisfies readonly { name: string; approvalContext: Partial<ActionExecutorContext>; allowed: boolean }[])(
+'$name through the daemon private transport', async ({ approvalContext, allowed }) => {
     const home = fastify();
     const homeUrl = 'http://contributed-run-home.test';
     const sessionId = 'c123456789012345678901234';
@@ -89,10 +115,16 @@ it('starts an attached Run from a contributed Action through the daemon private 
         const result = await runWithServerHttpBaseUrl(homeUrl, () => runtime.registry.targetActionInvocations!.invoke({
             pluginId: plugin.manifest.id, localId: 'start', input: {}, surface: 'cli',
             approvalContext: { callerPermissionMode: 'read_only', defaultSessionId: sessionId,
-                defaultSessionMachineId: machineId, authority: 'account_automation' },
+                defaultSessionMachineId: machineId, authority: 'account_automation', ...approvalContext },
         }));
-        expect(result, JSON.stringify(result)).toMatchObject({ status: 'executed', value: { runId: 'review-run' } });
-        expect(admitted).toMatchObject([{ callerPermissionMode: 'read_only', authority: 'account_automation' }]);
+        if (allowed) {
+            expect(result, JSON.stringify(result)).toMatchObject({ status: 'executed', value: { runId: 'review-run' } });
+            expect(admitted).toMatchObject([{ callerPermissionMode: 'read_only', authority: 'account_automation' }]);
+        } else {
+            expect(result).toMatchObject({ status: 'failed', code: 'execution_run_target_unavailable',
+                data: { details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } } });
+            expect(admitted).toEqual([]);
+        }
     } finally {
         await retire(); environment.restore(); reloadConfiguration();
         try { await runtime.dispose(); } finally { restoreHttp(); await home.close(); }
