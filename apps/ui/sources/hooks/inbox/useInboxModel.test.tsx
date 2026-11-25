@@ -1857,7 +1857,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } finally { await screen.unmount(); vi.useRealTimers(); }
     });
 
-    it('snoozes actual Review-source attention through its mounted reminder and the Action front door', async () => {
+    it('snoozes actual Review-source attention through its mounted Action, reloads and wakes it exactly once', async () => {
         listRuns.mockResolvedValue(page([]));
         const source = await createPluginTestkit({ manifest: TRIAGE_PLUGIN.manifest, module: TRIAGE_PLUGIN,
             services: { actions: {
@@ -1899,7 +1899,8 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         } });
         const other = createAccountNoticeArtifactFixture({ id: 'other-recipient', ownerAccountId: 'account-b', header: { type: 'decision' } });
         seedArtifacts({ [artifact.id]: artifact, [other.id]: other });
-        const screen = await renderModel(<MountedInboxContent />);
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        let screen = await renderModel(<MountedInboxContent />);
         const remindAt = Date.now() + 3_600_000;
         try {
             const row = model!.items.find(item => item.focus.id === artifact.id)!;
@@ -1914,10 +1915,27 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, rescheduledAt); });
             expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'updates', remindAt: rescheduledAt });
             expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).toMatchObject({ remindAt: rescheduledAt });
+            await screen.unmount();
+            await act(async () => {
+                // Drop the admitted in-memory projection, keeping only the Home's stored bytes.
+                storage.getState().applyArtifacts([], storage.getState().artifacts, 'inboxOpen');
+                const { sync } = await import('@/sync/sync');
+                await sync.fetchArtifactsList({ selection: 'inboxOpen' });
+            });
+            screen = await renderModel(<MountedInboxContent />);
+            const reviewItems = () => model!.items.filter(item => item.focus.id === artifact.id);
+            expect(reviewItems()).toHaveLength(1);
+            expect(reviewItems()[0]).toMatchObject({ key: row.key, view: 'updates', remindAt: rescheduledAt });
+            await act(async () => { await vi.advanceTimersByTimeAsync(rescheduledAt - Date.now() - 1); });
+            expect(reviewItems()).toHaveLength(1);
+            expect(reviewItems()[0]?.view).toBe('updates');
+            await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+            expect(reviewItems()).toHaveLength(1);
+            expect(reviewItems()[0]).toMatchObject({ key: row.key, view: 'needs_you' });
             await act(async () => { await model!.setAccountNoticeReminder(model!.accountNotices[0]!, null); });
             expect(model!.items.find(item => item.focus.id === artifact.id)).toMatchObject({ view: 'needs_you' });
             expect(decodePlainArtifactStoredContent(artifactStore.read(artifact.id)!.header)).not.toHaveProperty('remindAt');
-        } finally { await screen.unmount(); }
+        } finally { await screen.unmount(); vi.useRealTimers(); }
     });
 
     it('does not settle a reopened failure from a stale recovered row', async () => {
