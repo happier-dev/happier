@@ -767,7 +767,10 @@ function projectRequesterApprovalDecision(request: Pick<StoredApprovalRequestV2,
     ...(requester.decisionSource === 'voice' ? { decidedVia: 'voice' as const } : {}) } : undefined;
 }
 
-export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
+export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Readonly<{
+  /** The ordinary Artifact viewer uses the addressed audience without the Inbox's private notice admission. */
+  artifactGetAudience?: 'addressed';
+}>): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     options?: import('./executor/types.js').ActionPrepareOptions) => Promise<ActionPrepareResult>;
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
@@ -5417,7 +5420,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (artifactActionId === 'artifact.get') {
           const opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result);
           if (opened.artifact && !isAddressedArtifactReadAllowedV1(opened.artifact)
-            && !readOwnedNotice(opened.artifact)) return internalKindRefusal;
+            && (hostOptions?.artifactGetAudience === 'addressed' || !readOwnedNotice(opened.artifact))) return internalKindRefusal;
           return { ok: true, result: opened };
         }
         if (artifactActionId === 'artifact.list') {

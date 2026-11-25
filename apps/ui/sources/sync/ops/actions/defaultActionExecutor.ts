@@ -5316,7 +5316,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     resolveServerProfileScopeId: resolveServerProfileScopeIdForIdentifier,
     ...(opts?.projectWorkerAction ? { projectWorkerAction: opts.projectWorkerAction }
       : accountContext ? { projectWorkerAction: createUiProjectWorkerActionV1(accountContext) } : {}),
-  });
+  }, opts?.artifactView ? { artifactGetAudience: 'addressed' } : undefined);
 
   // Surface attribution is owned by the host that constructs the executor, mirroring
   // `apps/cli/src/session/actions/createCliActionExecutor.ts` (`?? 'cli'`). This factory is the

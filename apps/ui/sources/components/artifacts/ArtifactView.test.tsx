@@ -792,6 +792,26 @@ describe('Artifact composed view reads', () => {
                 || request.path === '/v1/artifacts/read')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
+    it('refuses an owned Inbox Notice on a cold ordinary detail read before publishing its body', async () => {
+        const { AccountNoticeArtifactBodyV1Schema, AccountNoticeArtifactHeaderV1Schema } =
+            await import('@happier-dev/protocol/activity/usageNoticeArtifactV1');
+        const content = AccountNoticeArtifactBodyV1Schema.parse({
+            v: 1, source: { kind: 'plugin', pluginId: 'acme.review', itemId: 'review-42' },
+            type: 'update', resolved: false, page: { pageId: 'reviews', subPath: '42' }, body: 'Inbox-only review update',
+        });
+        const header = AccountNoticeArtifactHeaderV1Schema.parse({
+            ...content, kind: 'account_notice.v1', title: 'Private review update', status: 'open',
+        });
+        const { head, served } = await setup('document', undefined, false, request => request.path === '/v1/artifacts/document'
+            ? Response.json({ ...head, header: encodePlainArtifactStoredContent(header),
+                body: encodePlainArtifactStoredContent({ body: JSON.stringify(content) }) }) : undefined, true);
+        const screen = await renderScreen(<OpenView id="document" />);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('artifact:bodyFailed')).not.toBeNull());
+            expect(served.requests.filter(request => request.path === '/v1/artifacts/document')).toHaveLength(1);
+            expect(getStorage().getState().artifacts.document).toBeUndefined();
+        } finally { await screen.unmount(); }
+    });
     it('keeps one cold edit body read when its inventory header arrives during the opening read', async () => {
         const pending = createDeferred<Response>();
         const { served, head, row } = await setup('document', undefined, false,
