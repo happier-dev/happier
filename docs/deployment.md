@@ -5100,6 +5100,10 @@ its typed reason. Successful empty container and owned-network inventory is an
 idempotent absence proof; an unavailable engine is not. Named data volumes remain
 unless explicitly selected for data removal. Plain target teardown keeps
 images available for rollback and leaves source files in place.
+The approval review names the Project and addressed Machines. It uses the
+serving Receipt for recorded services and named volumes, and the prepared
+inventory for the disposition of selected volumes. Volumes outside that
+selection stay. The review details do not change the removal plan.
 Stop and remove supplies `removeEnvironment: true`. Its native proof also
 requires the absence of private receipt and activation image tags belonging to
 that Environment on the admitted runtime Machines. Shared image tags, parent

@@ -361,7 +361,8 @@ export function createOwnServerTeardownForHost(host: Host) {
                             reason: input.reason, removeEnvironment: true, nothingDeployed: true,
                             ...(volumesInput ? { volumes: [] } : {}) });
                         return { input: prepared, preview: normalizeStrictJsonValue({
-                            removal: { subject: { kind: 'ownServer' }, environment: environment.content.name, removeEnvironment: true },
+                            removal: { subject: { kind: 'ownServer' }, environment: environment.content.name,
+                                projectSourceId: environment.environment.projectSourceId, removeEnvironment: true },
                         }) };
                     }
                 }
@@ -369,9 +370,20 @@ export function createOwnServerTeardownForHost(host: Host) {
                     'Update the target Machine daemon to a version that supports native teardown, then prepare a new review.');
                 let sourceIntent: DeploymentOwnServerContentV1['sourceIntent'] | undefined =
                     environment.content.definition.kind === 'stored' ? environment.content.definition : undefined;
+                let serving: Awaited<ReturnType<Host['readReceipt']>> | undefined;
                 if (!prior) {
                     for await (const receipt of host.readBuildHistory!({ environmentId: input.environmentId,
-                        targetLinkId: link.id, environment, context })) { sourceIntent = receipt.content.sourceIntent; break; }
+                        targetLinkId: link.id, environment, context })) {
+                        sourceIntent = receipt.content.sourceIntent;
+                        if (receipt.deployment.id === link.activeDeploymentId) serving = receipt;
+                        break;
+                    }
+                }
+                if (!serving && link.activeDeploymentId) {
+                    // Additional display evidence must not make an admitted removal depend on opening its incumbent.
+                    const receipt = await host.readReceipt({ environmentId: input.environmentId,
+                        deploymentId: link.activeDeploymentId, context }).catch(() => null);
+                    if (receipt?.deployment.targetLinkId === link.id && receipt.deployment.id === link.activeDeploymentId) serving = receipt;
                 }
                 const volumes = prior ? prior.content.teardown?.resources.filter(resource => resource.kind === 'data') ?? []
                     : volumesInput?.length ? await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
@@ -390,6 +402,31 @@ export function createOwnServerTeardownForHost(host: Host) {
                 const reference = prior ? { contentArtifactId: prior.deployment.contentArtifactId,
                     contentHeaderVersion: prior.deployment.contentHeaderVersion, contentBodyVersion: prior.deployment.contentBodyVersion }
                     : await host.createCandidate(environment, content, context);
+                const servingFacts = serving?.content.ownServer;
+                const basis = servingFacts?.approvedInputBasis;
+                const placements = members.map(({ machineId, installationId }) => {
+                    const servesOnlyHere = basis?.members.length === 1 && basis.members[0]?.machineId === machineId
+                        && basis.members[0]?.installationId === installationId;
+                    const services = basis?.runtimeProjections?.find(projection => projection.machineId === machineId
+                        && projection.installationId === installationId)?.services ?? (servesOnlyHere ? basis?.services : undefined);
+                    return { machineId, ...(services ? { services } : {}) };
+                });
+                const reviewedVolumes = new Map<string, { name: string; machineId?: string; removed: boolean }>();
+                for (const source of servingFacts?.sources ?? []) {
+                    if (source.role !== 'runtime' || !members.some(member => member.machineId === source.machineId
+                        && member.installationId === source.installationId)) continue;
+                    for (const { physicalName } of source.namedVolumes ?? []) {
+                        reviewedVolumes.set(JSON.stringify([source.machineId, physicalName]),
+                            { name: physicalName, machineId: source.machineId, removed: false });
+                    }
+                }
+                for (const resource of resources) {
+                    if (resource.kind !== 'data') continue;
+                    reviewedVolumes.set(JSON.stringify([resource.machineId, resource.id]), {
+                        name: resource.id, ...(resource.machineId ? { machineId: resource.machineId } : {}),
+                        removed: resource.disposition === 'remove',
+                    });
+                }
                 return { input: buildDeploymentTeardownInputV1(input, { requestKey: input.requestKey,
                     expectedRevision: input.expectedRevision, targetLinkId: link.id,
                     expectedTargetLinkRevision: input.expectedTargetLinkRevision, candidate: reference }),
@@ -398,8 +435,8 @@ export function createOwnServerTeardownForHost(host: Host) {
                             ? 'Remove this Environment’s containers, owned networks, private image tags, and selected named volumes. Shared image tags and unselected volumes stay.'
                             : 'Remove this target’s containers, owned networks, and selected named volumes. Images and unselected volumes stay.',
                         removal: { subject: { kind: 'ownServer' }, environment: environment.content.name, removeEnvironment: removeEnvironment === true,
-                            volumes: resources.filter(resource => resource.kind === 'data')
-                                .map(resource => ({ name: resource.id, removed: resource.disposition === 'remove' })) },
+                            projectSourceId: environment.environment.projectSourceId, placements,
+                            volumes: [...reviewedVolumes.values()] },
                     }) };
             } catch (error) { return {
                 ...projectDeploymentException(error, { signal: context.signal, phase: 'deployment.teardown.prepare' }),

@@ -7,6 +7,8 @@ import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loop
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
+import { useProjectSourceName } from '@/components/projects/sources/useProjectSources';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -108,6 +110,7 @@ type ReviewMachine = Readonly<{
 
 /** Every Machine the reviewed deploy runs on, by id (a controller's runtime Machines, else the review's own). */
 export function readDeploymentReviewMachineIds(review: DeploymentReviewApproval['review']): readonly string[] {
+  if (isRemoval(review)) return review.placements?.map(placement => placement.machineId) ?? [];
   return readMachines(review).flatMap((machine) => (machine.id ? [machine.id] : []));
 }
 
@@ -141,22 +144,30 @@ function isRemoval(review: DeploymentReviewApproval['review']): review is Deploy
 }
 
 /** What a teardown deletes, where, and what goes with it, as the delete sheet said it before the request. */
-function describeRemovalFields(removal: DeploymentRemovalReviewV1): ApprovalFieldsPresentation {
+function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: MachineNames, projectName: string | null): ApprovalFieldsPresentation {
   const { subject } = removal;
-  const deleted = removal.volumes?.filter(volume => volume.removed).map(volume => volume.name) ?? [];
-  const kept = removal.volumes?.filter(volume => !volume.removed).map(volume => volume.name) ?? [];
+  const describeVolume = ({ name, machineId }: NonNullable<DeploymentRemovalReviewV1['volumes']>[number]) =>
+    machineId && names[machineId] && (removal.placements?.length ?? 0) > 1
+      ? joinHappierFacts(name, names[machineId]) : name;
+  const deleted = removal.volumes?.filter(volume => volume.removed).map(describeVolume) ?? [];
+  const kept = removal.volumes?.filter(volume => !volume.removed).map(describeVolume) ?? [];
   return { rows: [
+    ...field('removal.project', t('capabilities.store.appPage.projectTitle'), projectName),
     ...field('removal.environment', t('projects.deployments.review.environment'), removal.environment, {
       note: removal.removeEnvironment ? t('projects.deployments.review.removalEnvironmentToo') : undefined,
     }),
     ...field('removal.where', t('projects.deployments.review.whereTitle'), subject.kind === 'platformResource' ? subject.platform : null),
+    ...removal.placements?.flatMap(({ machineId, services }, index) =>
+      field(`removal.placement.${index}`, t('projects.deployments.machine'),
+        names[machineId] ?? t('approvals.machineNotKnown'), { note: services?.join(', ') })) ?? [],
     ...field('removal.name', t('projects.deployments.review.createName'),
       subject.kind === 'platformResource' ? subject.name : subject.kind === 'domain' ? subject.hostname : null),
     ...field('removal.domains', t('projects.deployments.factStops'), removal.domains?.length
       ? t('projects.deployments.factStopsDomains', { domains: removal.domains.join(', ') }) : null),
     ...field('removal.data', t('projects.deployments.factData'), joinHappierFacts(
       deleted.length ? t('projects.deployments.review.removalVolumesDeleted', { names: deleted.join(', ') }) : null,
-      kept.length ? t('projects.deployments.review.removalVolumesKept', { names: kept.join(', ') }) : null) || null),
+      kept.length ? t('projects.deployments.review.removalVolumesKept', { names: kept.join(', ') }) : null)
+      || (removal.placements?.length ? t('projects.deployments.factDataValue') : null)),
   ], unrepresentable: null };
 }
 
@@ -281,10 +292,11 @@ function describeReviewFields(
   machines: readonly ReviewMachine[],
   names: MachineNames,
   collectorMachineId: string | null,
+  projectName: string | null,
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
   if (isPlatformCreate(review)) return describeCreateFields(review);
-  if (isRemoval(review)) return describeRemovalFields(review);
+  if (isRemoval(review)) return describeRemovalFields(review, names, projectName);
   const { environment, revision } = review;
   const reviewedVersion = promotion?.sourceRevision ?? revision;
   const replaces = 'replaces' in review ? review.replaces : undefined;
@@ -531,7 +543,11 @@ export const DeploymentReviewApprovalFacts = React.memo(
       technicalRows?: ApprovalFieldsPresentation['rows'];
     }>,
   ) {
-    const machines = React.useMemo(() => readMachines(props.approval.review), [props.approval.review]);
+    const { review } = props.approval;
+    const machines = React.useMemo(() => readMachines(review), [review]);
+    const removalProjectId = isRemoval(review) ? review.projectSourceId ?? null : null;
+    const { binding } = useServerCredentialAccountScopeBinding(removalProjectId ? props.serverId : null);
+    const projectName = useProjectSourceName(binding, removalProjectId);
     const collectorMachineId = machines.find(({ review }) => review.deferredTelemetryCollectorMachineId)
       ?.review.deferredTelemetryCollectorMachineId ?? null;
     const environment = !isRemoval(props.approval.review) && 'environment' in props.approval.review
@@ -539,15 +555,15 @@ export const DeploymentReviewApprovalFacts = React.memo(
     const ids = React.useMemo(() => {
       const ingress = environment?.ingress;
       return [...new Set([
-        ...machines.flatMap((machine) => (machine.id ? [machine.id] : [])),
+        ...readDeploymentReviewMachineIds(review),
         ...(ingress?.kind === 'edgeCaddy' ? [ingress.edgeMachineId] : []),
         ...(collectorMachineId ? [collectorMachineId] : []),
       ])];
-    }, [machines, environment?.ingress, collectorMachineId]);
+    }, [review, environment?.ingress, collectorMachineId]);
     return (
       <NamedMachines serverId={props.serverId} ids={ids}>
         {(names) => (
-          <ReviewFields approval={props.approval} machines={machines} names={names} collectorMachineId={collectorMachineId}
+          <ReviewFields approval={props.approval} machines={machines} names={names} collectorMachineId={collectorMachineId} projectName={projectName}
             serverId={props.serverId} testID={props.testID} decided={props.decided === true} technicalRows={props.technicalRows} />
         )}
       </NamedMachines>
@@ -560,15 +576,16 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   machines: readonly ReviewMachine[];
   names: MachineNames;
   collectorMachineId: string | null;
+  projectName: string | null;
   serverId: string | null;
   testID: string;
   decided: boolean;
   technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
   const presentation = React.useMemo(() => {
-    const facts = describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId);
+    const facts = describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId, props.projectName);
     return props.technicalRows?.length ? { ...facts, rows: [...facts.rows, ...props.technicalRows] } : facts;
-  }, [props.approval, props.machines, props.names, props.collectorMachineId, props.technicalRows]);
+  }, [props.approval, props.machines, props.names, props.collectorMachineId, props.projectName, props.technicalRows]);
   const multiple = props.machines.length > 1;
   return (
     <>

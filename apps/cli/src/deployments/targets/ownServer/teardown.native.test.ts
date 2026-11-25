@@ -126,6 +126,53 @@ it.each(['exact', 'changed-input'] as const)(
         }
     });
 
+it('names the serving Project, installation, services and kept data in a native removal review', async () => {
+    const environment = createDeploymentEnvironmentDetailV1();
+    const link = environment.targetLinks[0].targetLink;
+    const serving = createDeploymentReceiptDetailV1();
+    serving.deployment.id = 'serving-receipt';
+    serving.deployment.environmentId = environment.environment.id;
+    serving.deployment.targetLinkId = link.id;
+    link.activeDeploymentId = serving.deployment.id;
+    const other = createDeploymentReceiptDetailV1();
+    other.deployment.id = 'newer-attempt';
+    other.deployment.environmentId = environment.environment.id;
+    other.deployment.targetLinkId = link.id;
+    const member = link.members[0]!;
+    serving.content.ownServer = {
+        approvedInputBasis: { v: 1, environmentId: environment.environment.id, environmentRevision: environment.environment.revision,
+            targetLinkId: link.id, targetLinkRevision: link.revision, sourceIntent: serving.content.sourceIntent,
+            manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'corner-bakery', toolVersion: '2',
+            services: ['web', 'database'], profiles: [], members: link.members, bindings: [], images: [] },
+        sources: [{ machineId: member.machineId, installationId: member.installationId, role: 'runtime',
+            deploymentId: serving.deployment.id, manifestFingerprint: 'manifest',
+            manifestEntries: [], rootFingerprint: 'root', sharedBinds: [], namedVolumes: [{ volume: 'data', physicalName: 'bakery_data' }] }],
+    };
+    const teardown = createOwnServerTeardownForHost({ serverId: 'home', machineId: member.machineId,
+        credentials: { token: 'test-token', encryption: null }, serverHttpBaseUrl: 'https://unused-home.test',
+        runtime: { async acquire() { throw new Error('Review cannot execute'); },
+            async acquireTeardown() { throw new Error('Review cannot execute'); } },
+        async readEnvironment() { return environment; },
+        async *readBuildHistory() { yield other; yield serving; },
+        async *readHistoryHeaders() { yield other.deployment; yield serving.deployment; },
+        async readReceipt() { return serving; },
+        async writeTransition() { throw new Error('Review cannot settle'); },
+        async findReceipt() { return null; },
+        async createCandidate(_environment, content) {
+            expect(content.teardown?.resources.every(resource => resource.kind !== 'data')).toBe(true);
+            return { contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 };
+        },
+    });
+    const result = await teardown.prepare({ readWorkflowInvocation: async () => { throw new Error('No Workflow invocation'); },
+        input: { serverId: 'home', environmentId: environment.environment.id, targetLinkId: link.id,
+            requestKey: 'remove-serving', reason: 'manual', removeEnvironment: true }, context: {} });
+    expect(result).toMatchObject({ preview: { removal: {
+        projectSourceId: environment.environment.projectSourceId,
+        placements: [{ machineId: member.machineId, services: ['web', 'database'] }],
+        volumes: [{ name: 'bakery_data', machineId: member.machineId, removed: false }],
+    } } });
+});
+
 it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     'removes a never-deployed repository Environment without content or native preparation: %s', async history => {
         const environment = createDeploymentEnvironmentDetailV1();

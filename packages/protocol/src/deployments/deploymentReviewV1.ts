@@ -154,9 +154,11 @@ const DeploymentRemovalReviewV1Schema = z.strictObject({
     z.strictObject({ kind: z.literal('domain'), hostname: z.string() }),
   ]),
   environment: z.optional(z.string()),
+  projectSourceId: z.optional(id),
+  placements: z.optional(z.array(z.strictObject({ machineId: id, services: z.optional(z.array(z.string())) }))),
   removeEnvironment: z.optional(z.boolean()),
   domains: z.optional(z.array(z.string())),
-  volumes: z.optional(z.array(z.strictObject({ name: z.string(), removed: z.boolean() }))),
+  volumes: z.optional(z.array(z.strictObject({ name: z.string(), machineId: z.optional(id), removed: z.boolean() }))),
 });
 export type DeploymentRemovalReviewV1 = z.infer<typeof DeploymentRemovalReviewV1Schema>;
 

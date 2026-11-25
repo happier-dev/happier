@@ -79,6 +79,26 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(text).not.toContain('manual');
   });
 
+  it('names the native placement and serving services with the retained volume decision', async () => {
+    const serverId = getActiveServerSnapshot().serverId;
+    const machine = createMachineFixture({ id: 'serving-machine-id', metadata: { displayName: 'Bakery server',
+      host: 'bakery.local', platform: 'linux', happyCliVersion: '0.0.0-test', happyHomeDir: '/h', homeDir: '/h' } });
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] },
+      machineListStatusByServerId: { [serverId]: 'idle' } });
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview: { removal: {
+      subject: { kind: 'ownServer' }, environment: 'Production',
+      placements: [{ machineId: machine.id, services: ['web', 'database'] }],
+      volumes: [{ name: 'bakery_data', removed: false }],
+    } } } });
+    if (!approval) throw new Error('Expected a typed native removal review');
+    const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={approval} serverId={serverId} testID="native" />);
+    const text = screen.getTextContent();
+    expect(text).toContain('Bakery server');
+    expect(text).toContain('web, database');
+    expect(text).toContain('projects.deployments.review.removalVolumesKept');
+    expect(text).not.toContain(machine.id);
+  });
+
   it('reads a host-reviewed provider create as the decision: what it creates, where, and from what (RAILWAY-VISUAL-ACCEPT D1)', async () => {
     const preview = { actionId: 'deployments.targets.link', hostReviewedContent: { summary: 'Create service checkout-api.',
       deploymentReview: { summary: 'Create service checkout-api.', platformCreate: { platformName: 'Railway', resourceName: 'checkout-api',
