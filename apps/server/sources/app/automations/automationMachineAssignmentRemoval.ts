@@ -135,8 +135,9 @@ export async function removeAutomationMachineAssignmentsTx(
     const census = await machineAssignmentRemovalPublicationScope(params.tx, params);
     const publicationScope = census.scope;
     await acquireWorkflowPublicationLocksInTx(params.tx, publicationScope);
-    const admittedRunIds = new Set((await getWorkflowPublicationAudienceInTx(params.tx, publicationScope)).runIds);
-    beforeAccountChangePublication(params.tx, [params.accountId], async tx => {
+    const admitted = await getWorkflowPublicationAudienceInTx(params.tx, publicationScope);
+    const admittedRunIds = new Set(admitted.runIds);
+    beforeAccountChangePublication(params.tx, admitted.accountIds, async tx => {
         // A definition or Run may commit while this withdrawal's Machine write
         // is uncommitted. Publication orders their shared Account, so replay rather
         // than miss assignments or stranded Runs enumerated before that commit.
