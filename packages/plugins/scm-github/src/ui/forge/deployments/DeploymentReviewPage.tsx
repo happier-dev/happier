@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { forgeCiInvocationFailureV1 } from '@happier-dev/forge-ci/runtime';
 import {
   ForgeCiStateNotice,
   readForgeOperationStateV1,
 } from '@happier-dev/forge-ci/ui';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/plugin-sdk/scm';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -93,9 +95,14 @@ export function GithubDeploymentReviewPage({
                 : { kind: 'unavailable', failure: parsed.data.failure },
           );
         },
-        () => {
-          if (!controller.signal.aborted)
-            setTarget({ kind: 'unavailable', failure: null });
+        (error: unknown) => {
+          if (controller.signal.aborted) return;
+          setTarget({
+            kind: 'unavailable',
+            failure: isPluginError(error)
+              ? forgeCiInvocationFailureV1(error, error.code)
+              : null,
+          });
         },
       );
     return () => {

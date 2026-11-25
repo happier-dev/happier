@@ -367,6 +367,7 @@ export function ForgeCiStateNotice({
       kind={copy.kind}
       title={copy.title}
       description={copy.body}
+      details={[state.failure.code, state.failure.requestId].filter(Boolean).join('\n')}
       {...(onRetry &&
       state.failure.class !== 'permission'
         ? {

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { createForgeCiConformanceVectorsV1 } from '@happier-dev/triage-protocol/ci/testing/v1';
 import { PLUGIN_MANIFEST } from '../../../manifest.js';
@@ -23,6 +23,34 @@ const mounted: PluginUiTestkit[] = [];
 afterEach(async () => { await act(async () => { for (const fixture of mounted.splice(0)) await fixture.dispose(); }); });
 
 describe('deployment notice to the existing review page', () => {
+  it('shows the exact mounted target refusal and never admits a review from it', async () => {
+    const reads: string[] = [];
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+      fixture = await createPluginUiTestkit({
+        identity: { instanceId: 'review-target-refusal', mountNonce: 'review-target-refusal' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: renderSurface,
+        surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination',
+          destination: { pluginId: GITHUB_PLUGIN_ID, localId: 'deployment-review' }, container: 'appPage' }, target: { kind: 'app' } }),
+        subPath: 'repositories/77/runs/81/attempts/2/environments/42',
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { watchResource: async () => ({}), executeAction: async ({ action }) => {
+          if (typeof action !== 'object') throw new Error('Expected qualified target read');
+          reads.push(action.localId);
+          throw new PluginError({ code: 'unavailable', retryable: false, details: { layer: 'placement', phase: 'admission' },
+            diagnostics: [{ code: 'plugin_action_origin_unavailable', severity: 'error' }] });
+        } },
+      });
+    });
+    mounted.push(fixture);
+    expect(reads).toEqual([GITHUB_DEPLOYMENT_REVIEW_TARGET_ACTION_ID]);
+    await fixture.getByText('Couldn’t load this deployment');
+    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+    await fixture.getByText('plugin_action_origin_unavailable');
+    expect(await fixture.queryByRole('button', { name: 'Approve and deploy' })).toBeUndefined();
+  });
+
   it.each(['target-pending', 'ready'] as const)('withdraws a retained review on renderer retirement while %s', async phase => {
     const renderer = new AbortController();
     const vector = createForgeCiConformanceVectorsV1().github;
