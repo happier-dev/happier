@@ -1073,9 +1073,16 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(result).toMatchObject({ ok: false, error: { code: 'target_unavailable' } });
   });
 
-  it('checks every explicit Action fan-out target instead of replacing it with Workflow defaults', async () => {
+  it('checks every bound Review fan-out target instead of replacing it with Workflow defaults', async () => {
     const result = await materialize({ definition: { ...definition, blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
-      input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'] } } }] },
+      input: {
+        instructions: { kind: 'literal', value: 'Review the changes' },
+        reviewRound: { kind: 'literal', value: { reviewId: 'retained-review', roundOrdinal: 1 } },
+        reviewers: { kind: 'literal', value: [
+          { kind: 'engine', engineId: 'agent:happier.agent.codex/codex' },
+          { kind: 'engine', engineId: 'agent:happier.agent.claude/claude' },
+        ] },
+      } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
       admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, {
         ...policyContext, allowLists: { v: 1, allowedRoleIds: null, allowedAgentTargetKeys: ['agent:happier.agent.codex/codex'] },
