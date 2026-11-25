@@ -17,7 +17,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { createDeploymentActions } from './deploymentActions';
-import { deploymentDataTargetOperands, prepareDeploymentBackupConfigurationV1 } from '@happier-dev/deployments';
+import { deploymentBackupTargetOperands, deploymentDataTargetOperands, prepareDeploymentBackupConfigurationV1 } from '@happier-dev/deployments';
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
@@ -96,7 +96,7 @@ export function useDeploymentBackupOperations(props: Readonly<{
   const change = useDeploymentChangePress(props.review, props.onSettled);
   const [result, setResult] = React.useState<string | null>(null);
   // One admitted backup input (its deployment and config revision) for every operation: run, verify and prune.
-  const input = actions && props.detail && configuration ? backupTargetInput(props.detail, configuration) : null;
+  const input = actions && props.detail && configuration ? deploymentBackupTargetOperands(props.detail, configuration) : null;
   const deploymentId = props.detail?.runtimeTargetLink?.activeDeploymentId ?? null;
   const run = actions && input ? () => change.press(async () => {
     setResult(null);
@@ -245,13 +245,6 @@ type Retention = DeploymentBackupConfigurationV1['retention'];
 export { useDeploymentBackupFacts, deploymentBackupAttention, type DeploymentBackupFacts } from './useDeploymentBackupFacts';
 type ActionsFactory = ReturnType<typeof createDeploymentActions>;
 
-/** The exact capture target the finite backup Actions address, or null before anything runs on a Machine. */
-export function backupTargetInput(detail: DeploymentEnvironmentReadDetailV1, configuration: DeploymentBackupConfigurationV1) {
-  const target = deploymentDataTargetOperands(detail);
-  const deploymentId = detail.runtimeTargetLink?.activeDeploymentId;
-  return target && deploymentId ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;
-}
-
 function testOutcome(result: DeploymentBackupTestResultV1): Readonly<{ ok: boolean; line: string }> {
   if (result.kind === 'reachable') return { ok: true, line: t('projects.deployments.settingsSections.destinationReachable') };
   switch (result.reason) {
@@ -276,7 +269,7 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   testID: string;
 }>) {
   const { theme } = useUnistyles();
-  const target = backupTargetInput(props.detail, props.configuration);
+  const target = deploymentBackupTargetOperands(props.detail, props.configuration);
   const [tested, setTested] = React.useState<Readonly<{ ok: boolean; line: string }> | null>(null);
   const [running, setRunning] = React.useState(false);
   const projection = usePluginUiProjectionCurrentness({ serverId: props.detail.environment.serverId,

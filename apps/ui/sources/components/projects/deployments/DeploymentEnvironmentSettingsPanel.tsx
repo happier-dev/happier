@@ -65,7 +65,7 @@ import {
   deploymentBackupAttention,
   useDeploymentBackupFacts,
 } from './DeploymentBackupControls';
-import { deploymentDataTargetOperands } from '@happier-dev/deployments';
+import { deploymentBackupTargetOperands } from '@happier-dev/deployments';
 import { useDeploymentServiceInterruptions } from '@/sync/domains/actionOperations/useActionOperations';
 import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { createDeploymentActions } from './deploymentActions';
@@ -698,10 +698,10 @@ function BackupRows(props: SectionProps) {
   const actions = React.useMemo(() => manager && lifetime && props.review
     ? createDeploymentActions(lifetime, projectSourceId) : null, [manager, lifetime, props.review, projectSourceId]);
   const editing = manager ? props.editing ?? null : null;
-  const target = deploymentDataTargetOperands(props.detail);
-  const deploymentId = props.detail.runtimeTargetLink?.activeDeploymentId;
   const configured = backup && !('notNeeded' in backup) ? backup : null;
-  const factsInput = target && deploymentId && configured ? { ...target, deploymentId, configRevision: configured.configRevision } : null;
+  const databases = props.onOpenDatabase ? props.detail.content.template?.data ?? [] : [];
+  const operationsHere = databases.length === 0;
+  const factsInput = operationsHere && configured ? deploymentBackupTargetOperands(props.detail, configured) : null;
   const backupFacts = useDeploymentBackupFacts(actions, factsInput, true);
   // Without a Database page these operations have no other home; one controller serves the action and the list.
   const backupOperations = useDeploymentBackupOperations({ detail: props.detail, configuration: configured,
@@ -731,8 +731,6 @@ function BackupRows(props: SectionProps) {
   // Owner 2026-11-17: where a Database page exists it owns the backup operations (back up, restore, drill, saved
   // copies) and history (P9); this section keeps the configuration and links there. Without one, the operations have
   // no other home and stay here.
-  const databases = props.onOpenDatabase ? props.detail.content.template?.data ?? [] : [];
-  const operationsHere = databases.length === 0;
   // Read top-down: what is copied, where, when and for how long, then (here only) the copies and what you do with them.
   const configSection = (children: React.ReactNode, restore = false) => (
     <ItemGroup

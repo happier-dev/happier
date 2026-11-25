@@ -1,6 +1,6 @@
 import { readDeploymentMoveEligibility, showDeploymentMoveSheet, type DeploymentMoveEligibility } from './DeploymentMoveSheet';
 import * as React from 'react';
-import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
+import { isDeploymentRollbackSourceEligibleV1, resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { isDeploymentDomainAttachedV1, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { isSameDeploymentName } from './DeploymentEnvironmentCollection';
@@ -883,7 +883,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         move={moveEligibility.kind === 'ready' ? {
           kind: 'ready', open: () => showDeploymentMoveSheet({ detail, move: moveEligibility }),
         } : moveEligibility}
-        onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && receipt.state === 'succeeded')
+        onOpenHistory={activeId !== null && history.result.items.some((receipt) => receipt.id !== activeId && isDeploymentRollbackSourceEligibleV1(receipt.state))
           ? () => selectPage('history') : undefined}
         onOpenSettings={() => selectPage('settings')}
         // The header opener for the Logs companion (ruling 11-08, option a): offered only while Logs is.

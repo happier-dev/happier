@@ -20,6 +20,7 @@ const { storage, useInboxArtifactBodyHydration } = await import('@/sync/domains/
 const { InboxArtifactSourceBoundary, useInboxArtifactBodyDemand, useInboxArtifactItems, useInboxArtifactOpenCount, useInboxArtifactSource } = await import('./useInboxArtifactSource');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { useDeploymentEnvironment } = await import('@/components/projects/deployments/useDeploymentReads');
+const { useDeploymentNoticeHeaders } = await import('./useDeploymentNoticeHeaders');
 const { useDiscussionListRows } = await import('@/sync/ops/discussions/useDiscussionListRows');
 
 afterEach(async () => { standardCleanup(); await account.reset(); });
@@ -67,7 +68,7 @@ it('wakes the mounted badge once when a recipient reminder becomes due and cance
     } finally { await screen.unmount(); vi.useRealTimers(); }
 });
 
-it('cold Environment health lookup reads only the selected association and ignores other arrivals', async () => {
+it('historical deployment notice lookup reads only the selected association and ignores other arrivals', async () => {
     const home = await account.restore({ machines: [] });
     const scope = storage.getState().settingsScope!;
     const base = createDeploymentEnvironmentDetailV1();
@@ -109,30 +110,22 @@ it('cold Environment health lookup reads only the selected association and ignor
         if (!response) throw new Error('Expected Artifact read boundary');
         return { body: await response.json() };
     } });
-    const transport: DeploymentReadTransportV1 = {
-        listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-        readEnvironment: async () => ({ ok: true, value: detail }),
-        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
-        readReceipt: async () => ({ ok: false, failure: { code: 'not_demanded', retryable: false } }),
-    };
-    const controller = createDeploymentReadControllerV1({ scope: { ...scope, projectSourceId: detail.environment.projectSourceId }, transport });
     const renders = createRenderCommitCounter();
     await act(async () => { storage.setState({ isDataReady: true, profileScope: scope }); });
     const hook = await renderHook((demand: DeploymentReadDemandV1) => {
         useRenderCommitCounter(renders);
-        return useDeploymentEnvironment(controller, detail.environment.id, demand);
+        return useDeploymentNoticeHeaders(scope, detail.environment.id, demand.mounted && demand.visible && demand.focused);
     }, { initialProps: { mounted: true, visible: true, focused: true } });
     try {
-        await vi.waitFor(() => expect(hook.getCurrent().snapshot.value).toBeTruthy());
         await vi.waitFor(() => expect(lists).toEqual([[deploymentNoticeIndexedKindV1(detail.environment.id)]]));
-        await vi.waitFor(() => expect(hook.getCurrent().healthNotices.items.map(item => item.artifact.id)).toEqual([selected.id]));
+        await vi.waitFor(() => expect(hook.getCurrent().items.map(item => item.artifact.id)).toEqual([selected.id]));
         expect(bodyReads).toBe(0);
         renders.reset();
         await act(async () => { storage.getState().updateArtifact(other); });
         expect(renders.read()).toEqual({ renders: 0, commits: 0 });
         await act(async () => { storage.getState().updateArtifact(notice(detail.environment.id, selected.id, 'recovered', 4)); });
-        expect(hook.getCurrent().healthNotices.items[0]?.header.healthPhase).toBe('recovered');
-        expect(hook.getCurrent().healthNotices.items[0]?.header.environmentHealth).toMatchObject({ authoritativeRecovery: true, down: 0 });
+        expect(hook.getCurrent().items[0]?.header.healthPhase).toBe('recovered');
+        expect(hook.getCurrent().items[0]?.header.environmentHealth).toMatchObject({ authoritativeRecovery: true, down: 0 });
         expect(renders.read()).toEqual({ renders: 1, commits: 1 });
         expect(lists).toHaveLength(1);
         renders.reset();
@@ -143,21 +136,55 @@ it('cold Environment health lookup reads only the selected association and ignor
         await act(async () => { storage.getState().updateArtifact(notice(detail.environment.id, selected.id, 'open', 5)); });
         expect(renders.read()).toEqual({ renders: 0, commits: 0 });
         await hook.rerender({ mounted: true, visible: true, focused: true });
-        expect(hook.getCurrent().healthNotices.items[0]?.header.healthPhase).toBe('open');
+        expect(hook.getCurrent().items[0]?.header.healthPhase).toBe('open');
         failInventory = true;
-        await act(async () => { hook.getCurrent().healthNotices.retry(); });
-        await vi.waitFor(() => expect(hook.getCurrent().healthNotices.status).toBe('unavailable'));
-        expect(hook.getCurrent().healthNotices.items[0]?.artifact.id).toBe(selected.id);
+        await act(async () => { hook.getCurrent().retry(); });
+        await vi.waitFor(() => expect(hook.getCurrent().failed).toBe(true));
+        expect(hook.getCurrent().items[0]?.artifact.id).toBe(selected.id);
         failInventory = false;
         // Respond with the latest stored header so successful Retry reconciles the published revision.
         boundary.replaceStoredRow(createPlainArtifactHttpFixture(notice(detail.environment.id, selected.id, 'open', 5), scope.accountId));
-        await act(async () => { hook.getCurrent().healthNotices.retry(); });
-        await vi.waitFor(() => expect(hook.getCurrent().healthNotices.status).toBe('ready'));
+        await act(async () => { hook.getCurrent().retry(); });
+        await vi.waitFor(() => expect(hook.getCurrent().membership).toBe('ready'));
         await act(async () => { storage.getState().deleteArtifact(selected.id); });
-        expect(hook.getCurrent().healthNotices).toMatchObject({ status: 'ready', items: [] });
+        expect(hook.getCurrent()).toMatchObject({ membership: 'ready', items: [] });
         await act(async () => { storage.setState({ profileScope: { ...scope, accountId: 'another-account' } }); });
-        expect(hook.getCurrent().healthNotices).toMatchObject({ status: 'unavailable', items: [] });
+        expect(hook.getCurrent()).toMatchObject({ membership: 'idle', items: [] });
         expect(bodyReads).toBe(0);
+    } finally { await hook.unmount(); }
+});
+
+it('opens a cold Environment without requesting its historical health notices', async () => {
+    const home = await account.restore({ machines: [] });
+    const scope = storage.getState().settingsScope!;
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, environment: { ...base.environment, serverId: scope.serverId } };
+    const selectedKind = deploymentNoticeIndexedKindV1(detail.environment.id);
+    const boundary = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
+    let noticeLists = 0;
+    account.home.answer(home.serverId, 'GET /v1/artifacts', { select: async (_input, request) => {
+        const url = new URL(request.url);
+        const kinds: string[] = JSON.parse(url.searchParams.get('kinds') ?? '[]');
+        if (kinds.includes(selectedKind)) noticeLists++;
+        const response = await boundary.handle(url.pathname + url.search, { method: 'GET' });
+        if (!response) throw new Error('Expected Artifact list boundary');
+        return { body: await response.json() };
+    } });
+    const transport: DeploymentReadTransportV1 = {
+        listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: detail }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: false, failure: { code: 'not_demanded', retryable: false } }),
+    };
+    const controller = createDeploymentReadControllerV1({ scope: { ...scope, projectSourceId: detail.environment.projectSourceId }, transport });
+    await act(async () => { storage.setState({ isDataReady: true, profileScope: scope }); });
+    const hook = await renderHook(() => useDeploymentEnvironment(controller, detail.environment.id,
+        { mounted: true, visible: true, focused: true }));
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().snapshot).toMatchObject({ status: 'ready',
+            value: { environment: { id: detail.environment.id } } }));
+        await flushHookEffects();
+        expect(noticeLists).toBe(0);
     } finally { await hook.unmount(); controller.retire(); }
 });
 

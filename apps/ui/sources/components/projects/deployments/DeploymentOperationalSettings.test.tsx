@@ -2,7 +2,7 @@
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
@@ -498,5 +498,77 @@ it('brings the addressed Settings section into view: Open backups lands on Backu
       },
     });
     await vi.waitFor(() => expect(revealed).toEqual(['project-deployments.environment.settings.backups']));
+  } finally { controller.retire(); context.dispose(); }
+});
+
+it.each([true, false])('opens configured Backups with Database route available: %s', async hasDatabasePage => {
+  let historyBoundary: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
+  let historyReads = 0;
+  const serverIdentityId = `srv_${(hasDatabasePage ? 'b' : 'c').repeat(32)}`;
+  const base = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: serverIdentityId }) });
+  const environmentId = base.environment.id;
+  const detail = createDeploymentEnvironmentDetailV1({ ...base, content: { ...base.content,
+    backup: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.destinations', localId: 'open' },
+      occurrenceId: 'nightly', config: {}, credentialBindings: [], ownership: { environmentId, prefix: 'backup/' },
+      sources: [hasDatabasePage ? { kind: 'dump', sourceId: 'database', service: 'postgres', consistency: 'logical' }
+        : { kind: 'volume', sourceId: 'app-files', service: 'app', volume: 'files', consistency: 'stopDuringCopy' }],
+      retention: { kind: 'keepEverything' } },
+    ...(hasDatabasePage ? { template: {
+      templateRef: { sourceId: 'apps', itemId: 'postgres', version: '17', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` },
+      services: ['postgres'], data: [{ engine: 'postgres', service: 'postgres', port: 5432 }],
+    } } : {}),
+  } });
+  home = await createSecretSettingsTestHarness({ mode: 'plain', settings: authoringSettings, token: authoringToken,
+    serverIdentityId, handleRequest: async (path, init) => {
+      if (path === `/v1/deployments/environments/${environmentId}`) {
+        return Response.json({ ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) });
+      }
+      if (path === '/v3/automations/query') {
+        return Response.json({ automations: [], nextCursor: null });
+      }
+      return historyBoundary?.handle(new URL(path, context.endpointUrl), init) ?? null;
+    } });
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const context = await captureLazyActionAccountContext(home.scope.serverId);
+  const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
+  const { ModalProvider } = await import('@/modal');
+  const runtimeTargetLink = selectDeploymentRuntimeTargetLinkV1(detail)!;
+  const member = runtimeTargetLink.members[0]!;
+  historyBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: context.endpointUrl, serverIdentityId,
+    accountId: context.accountId, machineId: member.machineId, installationId: member.installationId,
+    actionId: 'deployments.backups.history', tokenEpoch: 0, execute: () => {
+      historyReads++;
+      return { kind: 'history', environmentId, configRevision: 1, history: { entries: [] } };
+    } });
+  const controller = createDeploymentReadControllerV1({ scope: { ...home.scope, projectSourceId: detail.environment.projectSourceId },
+    transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: detail }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: false, failure: { code: 'not_demanded', retryable: false } }),
+    } });
+  const section = 'project-deployments.environment.settings.backups';
+  const openDatabase = vi.fn();
+  try {
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentSettingsPanel
+      detail={{ ...detail, runtimeTargetLink, memberVersions: {}, secretRevisions: [] }} controller={controller}
+      definitionDocument={{ document: '', change() {} }} demand={{ mounted: true, visible: true, focused: true }}
+      machineName={id => id} environmentTitle={() => null} focusSection="backups" lifetime={context.accountLifetime}
+      review={{ pendingId: null, request() {}, open() {} }} onOpenDatabase={hasDatabasePage ? openDatabase : null}
+    /></ModalProvider>);
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId(`${section}.schedule.on`)).not.toBeNull());
+      if (hasDatabasePage) {
+        await screen.pressByTestIdAsync(`${section}.database.postgres`);
+        expect(openDatabase).toHaveBeenCalledWith('postgres');
+        expect(screen.findByTestId(`${section}.status`)).toBeNull();
+      } else {
+        await vi.waitFor(() => expect(historyReads).toBe(1));
+        expect(screen.findByTestId(`${section}.status`)).not.toBeNull();
+      }
+      await flushHookEffects();
+      expect(historyReads).toBe(hasDatabasePage ? 0 : 1);
+    } finally { await screen.unmount(); }
   } finally { controller.retire(); context.dispose(); }
 });

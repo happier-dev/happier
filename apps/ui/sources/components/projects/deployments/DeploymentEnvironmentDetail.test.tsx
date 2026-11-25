@@ -4129,7 +4129,7 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     } finally { empty.retire(); }
     const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
     const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: servingId, state: 'succeeded' }) });
-    const earlier = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-good', state: 'succeeded' }) });
+    const earlier = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({ id: 'earlier-good', state: 'running_unverified' }) });
     const { controller, detail } = controllerFor({ detail: base, receipt: serving, history: [serving, earlier] });
     try {
       const screen = await render(controller, detail);

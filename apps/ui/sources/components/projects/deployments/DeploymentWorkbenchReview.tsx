@@ -1,3 +1,4 @@
+import { deploymentBackupTargetOperands } from '@happier-dev/deployments';
 import * as React from 'react';
 import { Button, ErrorState, Row, Stack, Text } from '@happier-dev/plugin-ui';
 import type { HostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
@@ -10,7 +11,6 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import {
     DeploymentBackupSectionActions,
-    backupTargetInput,
     deploymentBackupAttention,
     useDeploymentBackupFacts,
     useDeploymentBackupOperations,
@@ -62,7 +62,7 @@ export function DeploymentWorkbenchProductionBackup({ target, scope }: Readonly<
         && configured && 'configRevision' in configured
         && configured.sources.some(source => source.kind === 'dump' && source.service === target.serviceId)
         ? configured : null;
-    const input = configuration && detail ? backupTargetInput(detail, configuration) : null;
+    const input = configuration && detail ? deploymentBackupTargetOperands(detail, configuration) : null;
     const backup = useDeploymentBackupFacts(actions, input, presented);
     const operations = useDeploymentBackupOperations({
         actions: detail?.environment.capabilities.role === 'manager' ? actions : null,
