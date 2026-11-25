@@ -1,6 +1,7 @@
 import type {
   ActionOperationDeclarationV1,
   ActionExecuteResult,
+  ActionExecutorContext,
   ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -89,7 +90,9 @@ export const ActionOperationOwnerUpdateSchema = z.strictObject({ actor: z.option
   domainRef: z.optional(ActionOperationDomainRefV1Schema), observation: z.optional(z.nullable(ActionOperationObservationV1Schema)),
   /** The owner's prepared operand when it differs from the admitted intent (a Move's SOURCE setup review). */
   preparedInput: z.optional(z.unknown()) });
-export type ActionOperationOwnerUpdate = Readonly<z.infer<typeof ActionOperationOwnerUpdateSchema>>;
+export type ActionOperationOwnerUpdate = Readonly<
+  Parameters<NonNullable<ActionExecutorContext['operationOwnerUpdate']>['update']>[0] & { preparedInput?: unknown }
+>;
 
 /** A projection of a lifecycle already owned by another domain. No runner or AbortController is created. */
 export interface ActionOperationDomainOwner {
