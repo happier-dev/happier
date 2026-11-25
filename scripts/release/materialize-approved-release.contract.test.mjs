@@ -22,6 +22,7 @@ function fixture(target = 'preview', confirm = 'release dev to preview', { paddi
   put('apps/ui/app.config.js', 'export default { expo: { version: "1.0.0", name: "fixture" } };\n');
   put('apps/ui/src-tauri/tauri.conf.json', '{"version":"1.0.0","identifier":"fixture"}\n');
   put('apps/ui/CHANGELOG.md', '# Changelog\n');
+  put('apps/ui/sources/changelog/changelog.json', JSON.stringify({ entries: [], latestReleaseId: null }, null, 2));
   put('unrelated.txt', 'base\n');
   // Real checkouts list far more tracked paths than Node's default child-output buffer holds.
   for (let i = 0; i < paddingFiles; i += 1) put(`pad/${'d'.repeat(200)}/${'e'.repeat(200)}/${i}.txt`, '');
@@ -58,6 +59,11 @@ test('approved packet materializes exact notes and lockstep versions, preserving
     expected.hostedDispatch.inputs.authorized_promotion_source_sha = result.sourceSha;
     assert.deepEqual(result.intent, expected);
     assert.equal(f.git('show', 'HEAD:apps/ui/CHANGELOG.md'), notes.trim());
+    // The app bundles What's New from the same commit; a stale bundle fails the UI history check.
+    const bundled = JSON.parse(f.git('show', 'HEAD:apps/ui/sources/changelog/changelog.json'));
+    assert.equal(bundled.latestReleaseId, releaseId);
+    assert.deepEqual(bundled.entries.map((entry) => entry.title), [`Release ${releaseId}`]);
+    assert.doesNotMatch(JSON.stringify(bundled), /happier-release-note-projections/);
     for (const p of ['apps/server/package.json', 'packages/relay-server/package.json']) assert.equal(JSON.parse(f.git('show', `HEAD:${p}`)).version, '3.2.1');
     assert.equal(JSON.parse(f.git('show', 'HEAD:apps/cli/package.json')).version, '2.3.4');
     assert.equal(f.git('diff', '--cached', '--binary'), index);
