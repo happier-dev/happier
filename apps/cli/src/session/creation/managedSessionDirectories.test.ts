@@ -285,6 +285,31 @@ describe('managed session directory ownership', () => {
     expect(await owner.listRecords()).toMatchObject([{ allocationId: allocation.allocationId, sessionId: 'session' }]);
   });
 
+  it('preserves the pre-spawn resume bind failure when withdrawing the replacement also fails', async () => {
+    const { activeServerDir } = await fixture();
+    const bindFailure = Object.assign(new Error('Binding write refused'), { code: 'EACCES' });
+    const cleanupFailure = Object.assign(new Error('Account allocation record unavailable'), { code: 'EIO' });
+    let payloadProtected = false;
+    let bindingRefused = false;
+    const owner = createManagedSessionDirectories({ activeServerDir, protection: {
+      platform: 'win32', windowsAclBoundary: {
+        async applyAndVerify({ path }) {
+          if (path === replacement.directory) payloadProtected = true;
+          if (payloadProtected && path.endsWith('.tmp')) {
+            bindingRefused = true;
+            throw bindFailure;
+          }
+        },
+        async verify({ path }) {
+          if (bindingRefused && basename(path) === `${replacement.allocationId}.json`) throw cleanupFailure;
+        },
+      },
+    } });
+    const replacement = owner.prepareForCreation({ sessionCreationTag: 'resume:session:replacement' });
+    await expect(owner.resolveForSession({ sessionId: 'session', path: join(activeServerDir, 'missing'),
+      approvedNewDirectoryCreation: true, resumeRequestId: 'replacement' })).rejects.toBe(bindFailure);
+  });
+
   it('deletes healthy ownership records even when a neighboring record is malformed', async () => {
     const { activeServerDir, owner } = await fixture();
     const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: 'healthy' });

@@ -227,20 +227,21 @@ export function createManagedSessionDirectories(input: Readonly<{
       await protectPayload(target, record.payloadPlacement, false);
     } };
   };
+  const withdrawFailedAllocation = async (allocationId: string, removePayload: boolean): Promise<void> => {
+    try {
+      if (removePayload) await removeAllocation(allocationId);
+      else await removeProtectedLocalStateFile(recordPath(allocationId), protection);
+    } catch (error) {
+      logger.warn('[MANAGED SESSION DIRECTORY] Failed allocation cleanup', { allocationId, error });
+    }
+  };
   const protectNewAllocation = async (target: ManagedSessionDirectoryAllocation, record: ManagedSessionDirectoryRecord, created: boolean) => {
     let mayHaveCreatedPayload = false;
     try {
       mayHaveCreatedPayload = !await assertContained(target, record.payloadPlacement);
       await protectPayload(target, record.payloadPlacement);
     } catch (error) {
-      if (created) {
-        try {
-          if (mayHaveCreatedPayload) await removeAllocation(target.allocationId);
-          else await removeProtectedLocalStateFile(recordPath(target.allocationId), protection);
-        } catch (cleanupError) {
-          logger.warn('[MANAGED SESSION DIRECTORY] Failed allocation cleanup', { allocationId: target.allocationId, error: cleanupError });
-        }
-      }
+      if (created) await withdrawFailedAllocation(target.allocationId, mayHaveCreatedPayload);
       throw error;
     }
     return { ...target, created };
@@ -337,7 +338,7 @@ export function createManagedSessionDirectories(input: Readonly<{
     } catch (error) {
       // No spawn can consume this new replacement until preparation returns.
       // Preserve older allocations; compensate only the allocation made here.
-      if (created) await removeAllocation(target.allocationId);
+      if (created) await withdrawFailedAllocation(target.allocationId, true);
       throw error;
     }
     return { ok: true, ...target, created };
