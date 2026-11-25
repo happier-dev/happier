@@ -10,6 +10,12 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import * as privacyKit from 'privacy-kit';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { listReviewsInTx } from './reviewListService';
+import { createReviewRecordPortV1, ReviewArtifactHeaderV1Schema, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { projectReviewFindingRoundStatusV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
+import { createReviewCommentOperations } from './comments/operations';
+import { createSqlReviewCommentStore } from './comments/store';
+import { resolveReviewAccessInTx } from './reviewAccess';
 
 describe('durable Review lifecycle metadata', () => {
     const accountId = randomUUID();
@@ -23,6 +29,80 @@ describe('durable Review lifecycle metadata', () => {
     }, 180_000);
     afterAll(async () => {
         await harness?.close();
+    });
+    it('keeps an absent finding unknown after real partial settlement without changing its decision', async () => {
+        const artifactId = randomUUID();
+        const read: ReviewArtifactTransportV1['read'] = async id => {
+            const result = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: accountId, artifactId: id }));
+            if (!result.ok) return null;
+            const header = ReviewArtifactHeaderV1Schema.parse(decodePlainArtifactStoredContent(
+                privacyKit.encodeBase64(result.artifact.header)));
+            const body = decodePlainArtifactStoredContent(privacyKit.encodeBase64(result.artifact.body));
+            if (!body || typeof body !== 'object' || !('body' in body) || typeof body.body !== 'string') {
+                throw new Error('Review body was not opened');
+            }
+            return { artifactId: id, header, body: body.body,
+                revision: { headerVersion: result.artifact.headerVersion, bodyVersion: result.artifact.bodyVersion } };
+        };
+        // Only the Artifact transport is adapted; its real access, CAS and SQLite writers remain in the path.
+        const records = createReviewRecordPortV1({ read,
+            create: async input => {
+                const result = await createArtifact({ actorUserId: accountId, artifactId: input.artifactId,
+                    header: privacyKit.decodeBase64(encodePlainArtifactStoredContent(input.header)),
+                    body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: input.body })),
+                    dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), reviewMetadata: input.reviewMetadata });
+                if (!result.ok) throw new Error(JSON.stringify(result));
+                const opened = await read(input.artifactId);
+                if (!opened) throw new Error('Created Review unavailable');
+                return opened;
+            },
+            update: async input => {
+                const result = await updateArtifact({ actorUserId: accountId, artifactId: input.artifactId,
+                    header: { bytes: privacyKit.decodeBase64(encodePlainArtifactStoredContent(input.header)),
+                        expectedVersion: input.expectedRevision.headerVersion },
+                    body: { bytes: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: input.body })),
+                        expectedVersion: input.expectedRevision.bodyVersion }, reviewMetadata: input.reviewMetadata });
+                if (!result.ok || !result.header || !result.body) throw new Error(JSON.stringify(result));
+                return { ok: true, revision: { headerVersion: result.header.version, bodyVersion: result.body.version } };
+            },
+        });
+        const start = { reviewId: artifactId, title: 'Partial round evidence', subjectKind: 'repository' as const,
+            sourceKind: 'direct' as const, reviewerIds: ['reviewer-a', 'reviewer-b'], startedAt: 10 };
+        const first = await records.start(start);
+        const reviewAccess = await inTx(tx => resolveReviewAccessInTx(tx, { actorAccountId: accountId, reviewId: artifactId }));
+        if (!reviewAccess) throw new Error('Owner Review admission unavailable');
+        const principal = { accountId, actor: { kind: 'user' as const, userId: accountId }, reviewAccess };
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), { now: () => 15, createId: () => randomUUID() });
+        const created = await operations.create({ ...principal, input: { reviewId: artifactId, findingIdentity: 'e'.repeat(64),
+            body: 'Retain this finding decision', anchor: { kind: 'file', filePath: 'reader.ts' },
+            snapshot: { kind: 'none', capturedAt: 15 }, authorIntent: 'open', clientMutationId: randomUUID(),
+            appearance: { roundOrdinal: first.roundOrdinal, runId: 'first-run', reviewerId: 'reviewer-a' } } });
+        const ignored = await operations.transition({ ...principal, input: { reviewId: artifactId, commentId: created.comment.id,
+            expectedState: 'open', expectedServerRevision: created.comment.serverRevision, toState: 'dismissed',
+            reviewTriageStatus: 'reject', reason: 'Not reachable', clientMutationId: randomUUID() } });
+        await records.settle({ ...first, outcome: 'completed', finishedAt: 20, runs: [], reviewerOutcomes: start.reviewerIds.map(key => ({
+            key, outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' } })) });
+        const second = await records.start({ ...start, startedAt: 30, newRound: true });
+        const partial = await records.settle({ ...second, outcome: 'failed', finishedAt: 40, runs: [], reviewerOutcomes: [
+            { key: 'reviewer-a', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' } },
+            { key: 'reviewer-b', outcome: 'failed', errorCode: 'provider_model_not_found' },
+        ] });
+        expect(partial.state).toBe('partial');
+        const record = await records.read(artifactId);
+        expect(record?.rounds.map(round => round.state)).toEqual(['completed', 'partial']);
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({ state: 'partial', currentRoundOrdinal: 2 });
+        const retained = (await operations.get({ ...principal, input: { commentId: created.comment.id, includeHistory: true } })).comment;
+        expect(retained).toMatchObject({ state: 'dismissed', reviewTriageStatus: 'reject', serverRevision: ignored.comment.serverRevision });
+        expect(retained.appearances).toEqual(ignored.comment.appearances);
+        const round = { ...second, state: partial.state, reviewerIds: partial.reviewerIds };
+        expect(projectReviewFindingRoundStatusV1(retained, round)).toBe('unknown');
+        const third = await records.start({ ...start, startedAt: 50, newRound: true });
+        const completed = await records.settle({ ...third, outcome: 'completed', finishedAt: 60, runs: [],
+            reviewerOutcomes: start.reviewerIds.map(key => ({ key, outcome: 'completed', reviewOutcome: 'complete',
+                materialization: { kind: 'complete' } })) });
+        expect(completed.state).toBe('completed');
+        expect(projectReviewFindingRoundStatusV1(retained, { ...third, state: completed.state,
+            reviewerIds: completed.reviewerIds })).toBe('looks_addressed');
     });
     it('keeps clean, failed and cancelled rounds queryable independently of findings or runs', async () => {
         const metadata = { projectSourceId: randomUUID(), workflowId: randomUUID(), subjectKind: 'repository' as const,
