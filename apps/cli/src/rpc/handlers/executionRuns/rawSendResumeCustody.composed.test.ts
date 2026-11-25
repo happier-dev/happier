@@ -130,6 +130,28 @@ describe('raw execution.run.send resume custody (guest on owner Machine, isolati
     expect(launches).toEqual([]);
   });
 
+  it.each(['bounded', 'long_lived'] as const)('(5) after the installed Account changes, the new custodian cannot reach the previous Account\'s %s Run', async runClass => {
+    // Restart under a different sign-in: Run records stay on the Machine home, scoped by their recorded requester.
+    await manager.dispose();
+    manager = new ExecutionRunHostBridge({ parentProvider: 'daemon.executionRuns', cwd: directory, sendAcp: async () => {},
+      runtimeAccountId: 'bob', machineId: 'machine', resolveAccountSettingsSnapshot: baseResolver });
+    vi.spyOn(manager as unknown as { createExecutionRunRuntime(opts: Record<string, unknown>): unknown }, 'createExecutionRunRuntime')
+      .mockImplementation(opts => { launches.push({ runId: opts.runId as string | undefined, resolver: opts.resolveAccountSettingsSnapshot });
+        throw new Error('launch boundary observed'); });
+    const newCustodian = buildActionExecutorContextForRpc({
+      serverId: 'home', callerAuthority: 'present_user', localActionContext: { surface: 'rpc' },
+      machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'bob', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+    } as Parameters<typeof buildActionExecutorContextForRpc>[0]);
+    for (const actionId of ['execution.run.send', 'execution.run.ensure'] as const) {
+      const result = await call(actionId, { runId: `alice-${runClass}`, resume: true,
+        ...(actionId === 'execution.run.send' ? { message: 'After switch', localInputId: `switch-${runClass}` } : {}) }, newCustodian);
+      expect(result, actionId).toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
+    }
+    expect(launches).toEqual([]);
+    expect(credentialReads).toBe(0);
+  });
+
   it('(4a) a guest raw send without resume to their cold Run launches nothing', async () => {
     const result = await call('execution.run.send', { runId: 'bob-bounded', message: 'No resume', localInputId: 'guest-plain' }, raw('bob', 'use'));
     expect(result).toMatchObject({ ok: false });

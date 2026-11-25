@@ -604,4 +604,31 @@ describe('createCliActionExecutorFromCredentials', () => {
     expect(execute).toHaveBeenCalledTimes(delegatedExecutionsBeforeLogout);
     expect(ensureCliActionPolicySettings).toHaveBeenCalledTimes(policyReadsBeforeLogout);
   });
+
+  it('keeps a daemon plugin action on its own Account when the stored sign-in names another', async () => {
+    // The credential store is the boundary: a daemon whose stop was incomplete
+    // stays alive while a later ordinary sign-in stores a different Account.
+    const jwt = (claims: Record<string, unknown>) => `header.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`;
+    const encryption = { type: 'legacy' as const, secret: new Uint8Array(32).fill(1) };
+    const accountA = { token: jwt({ sub: 'account-a' }), encryption };
+    const refreshedA = { token: jwt({ sub: 'account-a', iat: 2 }), encryption };
+    const accountB = { token: jwt({ sub: 'account-b' }), encryption };
+    const readCredentials = vi.fn().mockResolvedValueOnce(refreshedA).mockResolvedValueOnce(accountB);
+    execute.mockResolvedValue({ ok: true, result: { ok: true } });
+    const executor = createCliActionExecutorFromCredentials({ credentials: accountA, readCredentials });
+
+    await expect(executor.execute('session.status.get', { sessionId: 'sess-1' }, { surface: 'plugin' }))
+      .resolves.toEqual({ ok: true, result: { ok: true } });
+    expect(createCliActionExecutor).toHaveBeenLastCalledWith(expect.objectContaining({ token: refreshedA.token }));
+    const executorsBeforeSwitch = createCliActionExecutor.mock.calls.length;
+    const executionsBeforeSwitch = execute.mock.calls.length;
+
+    await expect(executor.execute('session.status.get', { sessionId: 'sess-1' }, { surface: 'plugin' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'provider_authorization_changed', error: 'requester_not_current' });
+    // One credential read per call, as before; Account B's token reaches no executor.
+    expect(readCredentials).toHaveBeenCalledTimes(2);
+    expect(createCliActionExecutor).toHaveBeenCalledTimes(executorsBeforeSwitch);
+    expect(execute).toHaveBeenCalledTimes(executionsBeforeSwitch);
+    expect(JSON.stringify(createCliActionExecutor.mock.calls)).not.toContain(accountB.token);
+  });
 });

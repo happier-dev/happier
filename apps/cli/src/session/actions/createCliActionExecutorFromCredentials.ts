@@ -1076,9 +1076,17 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       idleTtlMs: DEFAULT_SESSION_TRANSCRIPT_FOLLOW_LEASE_IDLE_TTL_MS,
     })
   );
-  const readCurrentCredentials = async (): Promise<StoredCredentials | null> => params.readCredentials
-    ? await params.readCredentials().catch(error => { rethrowRequesterHomeReadFailure(error); return null; })
-    : params.credentials;
+  // This executor acts for the Account it was built with. A fresh read naming
+  // another Account (a sign-in stored while this process lives) is not a refresh.
+  const executorAccountId = readAccountIdFromToken(params.credentials.token);
+  const readCredentialSelection = async (): Promise<Readonly<{ credentials: StoredCredentials | null; accountChanged: boolean }>> => {
+    const current = params.readCredentials
+      ? await params.readCredentials().catch(error => { rethrowRequesterHomeReadFailure(error); return null; })
+      : params.credentials;
+    const accountChanged = Boolean(current && executorAccountId && readAccountIdFromToken(current.token) !== executorAccountId);
+    return { credentials: accountChanged ? null : current, accountChanged };
+  };
+  const readCurrentCredentials = async (): Promise<StoredCredentials | null> => (await readCredentialSelection()).credentials;
   const readApprovalReplayCredentials = async (expectedAccountId?: string) => selectApprovalReplayCredentials(
     params.credentials, await readCurrentCredentials(), expectedAccountId);
   const createExecutor = (
@@ -2552,7 +2560,11 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         const selection = actionId === 'approval.request.decide'
           ? await trace('cli.credentials', () => readApprovalReplayCredentials(rawContext?.runtimeAccountId)) : null;
         if (selection && !selection.ok) return selection;
-        const credentials = selection?.ok ? selection.credentials : await trace('cli.credentials', readCurrentCredentials);
+        const current = selection?.ok ? null : await trace('cli.credentials', readCredentialSelection);
+        if (current?.accountChanged) {
+          return { ok: false, errorCode: 'provider_authorization_changed', error: 'requester_not_current' };
+        }
+        const credentials = selection?.ok ? selection.credentials : current?.credentials;
         if (!credentials) {
           return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
         }
@@ -2745,7 +2757,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
       const signal = combineInvocationSignals(invocationSignal, context?.signal);
       try {
         signal?.throwIfAborted();
-        const outerCredentials = params.readCredentials ? await params.readCredentials() : params.credentials;
+        const outerCredentials = await readCurrentCredentials();
         if (!outerCredentials) return { failure: actionFailure('not_authenticated') };
         const pat = !deploymentAdmission && shouldUsePatPublicActionTransport(outerCredentials, context);
         if (pat && parsed.kind === 'target_copy') {
