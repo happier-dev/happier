@@ -3,6 +3,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import type { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import type { readAccountLaunchProfiles } from '@/settings/profiles/readProfilesFromAccountSettings';
 import type { AiLaunchProfile, AccountSettings, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
@@ -18,6 +19,10 @@ import type { WorkflowSessionConversation } from '@/daemon/workflows/sessionStep
 type Materialization = Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>;
 type RoleSelection = NonNullable<Materialization['roleSelection']>;
 type MachineTarget = WorkflowMaterializationMachineTargetV1;
+
+function workflowMaterializationSourceUnavailable() {
+  return createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
+}
 
 /** Origin selection is a contextual fallback; Role and explicit engine overrides remain Protocol-owned. */
 export function projectWorkflowConversationRoleSelection(origin: WorkflowSessionConversation, machineId: string): RoleSelection {
@@ -73,13 +78,13 @@ export function createCredentialedWorkflowMaterializationHostV1(params: Omit<Wor
       const [{ readAccountIdFromToken }, { bootstrapAccountSettingsContext }, { resolveAccountSettingsScopeKeyForToken }, { getActiveAccountSettingsSnapshotLifetimeToken, getActiveAccountSettingsSnapshot }, { createRoleSourceReader }, { runWithServerHttpBaseUrl }] = await Promise.all([import("@/cloud/decodeJwtPayload"), import("@/settings/accountSettings/bootstrapAccountSettingsContext"), import("@/settings/accountSettings/accountSettingsScopeKey"), import("@/settings/accountSettings/activeAccountSettingsSnapshot"), import("@/session/roles/roleSources"), import("@/api/client/serverHttpBaseUrl")]);
       const scopeKey = resolveAccountSettingsScopeKeyForToken(params.credentials.token);
       if (operation && (operation.credentials.token !== params.credentials.token || !await operation.isCurrent())) {
-        throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+        throw workflowMaterializationSourceUnavailable();
       }
       const current = operation ? operation.readSnapshot()
         : await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking', refresh: 'force',
           honorAccountSettingsModeEnv: false });
       target.signal?.throwIfAborted();
-      if (!current || current.source === 'none' || current.scopeKey !== scopeKey) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+      if (!current || current.source === 'none' || current.scopeKey !== scopeKey) throw workflowMaterializationSourceUnavailable();
       const roleAccount = { credentials: params.credentials,
         scopeKey, operationContext: operation,
         lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), ...(target.signal ? { signal: target.signal } : {}) };
@@ -89,7 +94,7 @@ export function createCredentialedWorkflowMaterializationHostV1(params: Omit<Wor
         const { getActiveAccountSettingsSnapshotLifetimeToken } = await import("@/settings/accountSettings/activeAccountSettingsSnapshot");
         if (operation && !await operation.isCurrent() || readSnapshot()?.scopeKey !== scopeKey
           || !operation && getActiveAccountSettingsSnapshotLifetimeToken() !== roleAccount.lifetimeToken) {
-          throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+          throw workflowMaterializationSourceUnavailable();
         }
       };
       const sourceReader = params.readRoleSources ?? createRoleSourceReader({ artifactStore,
