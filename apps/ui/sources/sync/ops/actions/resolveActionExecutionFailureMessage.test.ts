@@ -14,10 +14,12 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
-    it('explains a code-only refusal when Environment database editing is off', () => {
-        const errorCode = 'database_editing_off';
+    it.each([
+        ['database_editing_off', 'plugins.database.access.editingOff'],
+        ['database_not_an_editor', 'plugins.database.access.notEditor'],
+    ] as const)('explains code-only Database Workbench refusal %s', (errorCode, reasonKey) => {
         expect(presentActionExecutionFailure({ ok: false, errorCode, error: errorCode })).toMatchObject({
-            reason: t('plugins.database.access.editingOff'),
+            reason: t(reasonKey),
             technicalDetails: expect.arrayContaining([expect.objectContaining({ key: 'code', value: errorCode })]),
         });
     });

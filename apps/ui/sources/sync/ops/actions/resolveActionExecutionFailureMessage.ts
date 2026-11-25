@@ -301,6 +301,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const managedRefusal = typeof code === 'string' ? describeManagedAcquisitionRefusal(code) : null;
     if (managedRefusal) return managedRefusal;
     if (code === 'database_editing_off') return t('plugins.database.access.editingOff');
+    if (code === 'database_not_an_editor') return t('plugins.database.access.notEditor');
     const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
     if (deploymentRefusal) return deploymentRefusal.remedy;
     // The Home refused the target Machine as offline (its admission's typed availability diagnostic, carried as the
